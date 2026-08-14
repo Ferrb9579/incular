@@ -1,0 +1,31 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+
+[workspace.dependencies]
+incular = { path = "crates/incular", version = "0.1.0" }
+incular-android = { path = "crates/incular-android", version = "0.1.0" }
+incular-accessibility = { path = "crates/incular-accessibility", version = "0.1.0" }
+incular-animation = { path = "crates/incular-animation", version = "0.1.0" }
+incular-assets = { path = "crates/incular-assets", version = "0.1.0" }
+incular-core = { path = "crates/incular-core", version = "0.1.0" }
+incular-layout = { path = "crates/incular-layout", version = "0.1.0" }
+incular-macros = { path = "crates/incular-macros", version = "0.1.0" }
+incular-ios = { path = "crates/incular-ios", version = "0.1.0" }
+incular-linux = { path = "crates/incular-linux", version = "0.1.0" }
+incular-macos = { path = "crates/incular-macos", version = "0.1.0" }
+incular-painting = { path = "crates/incular-painting", version = "0.1.0" }
+incular-platform = { path = "crates/incular-platform", version = "0.1.0" }
+incular-runtime = { path = "crates/incular-runtime", version = "0.1.0" }
+incular-text = { path = "crates/incular-text", version = "0.1.0" }
+incular-wgpu = { path = "crates/incular-wgpu", version = "0.1.0" }
+incular-widgets = { path = "crates/incular-widgets", version = "0.1.0" }
+incular-windows = { path = "crates/incular-windows", version = "0.1.0" }
+
+wgpu = "30"
+winit = "0.30"

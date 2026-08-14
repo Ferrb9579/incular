@@ -1,0 +1,16 @@
+[package]
+name = "incular-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Text layout and typography foundations for Incular"
+readme = "README.md"
+publish = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+incular-assets = { workspace = true }
+incular-core = { workspace = true }
+incular-painting = { workspace = true }

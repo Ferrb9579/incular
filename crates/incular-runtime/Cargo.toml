@@ -1,0 +1,20 @@
+[package]
+name = "incular-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Application runtime and scheduling foundations for Incular"
+readme = "README.md"
+publish = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+incular-accessibility = { workspace = true }
+incular-animation = { workspace = true }
+incular-assets = { workspace = true }
+incular-core = { workspace = true }
+incular-layout = { workspace = true }
+incular-painting = { workspace = true }
+incular-widgets = { workspace = true }
