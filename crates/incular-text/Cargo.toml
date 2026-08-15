@@ -14,3 +14,6 @@ path = "src/lib.rs"
 incular-assets = { workspace = true }
 incular-core = { workspace = true }
 incular-painting = { workspace = true }
+fontdb = { workspace = true }
+rustybuzz = { workspace = true }
+unicode-linebreak = { workspace = true }

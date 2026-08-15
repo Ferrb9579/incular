@@ -13,3 +13,4 @@ path = "src/lib.rs"
 [dependencies]
 incular-core = { workspace = true }
 winit = { workspace = true }
+raw-window-handle = { workspace = true }

@@ -1,5 +1,6 @@
 # incular-platform
 
-Shared platform abstractions for Incular. Desktop window and event-loop
-integration is initially built on `winit`; platform-specific crates provide
-native APIs on top of this boundary.
+Owns normalized native events, raw window-handle extraction for backend use,
+and the logical/physical DPI boundary. Widgets and runtime receive logical
+coordinates only; Linux converts physical pointer positions through
+`WindowMetrics` before hit testing.

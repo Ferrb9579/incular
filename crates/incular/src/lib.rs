@@ -14,8 +14,22 @@ pub use incular_runtime as runtime;
 pub use incular_text as text;
 pub use incular_widgets as widgets;
 
+/// Common application-facing types for the initial native UI slice.
+pub mod prelude {
+    pub use incular_core::{Color, Offset, Size};
+    pub use incular_layout::{Alignment, Constraints, EdgeInsets};
+    pub use incular_runtime::{Application, BuildContext, Runtime, Signal};
+    pub use incular_text::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
+    pub use incular_widgets::{
+        ActionId, Button, Key, ScrollController, ScrollView, Text, TranslationController, Widget,
+    };
+}
+
 #[cfg(feature = "desktop")]
 pub use incular_platform as platform;
 
 #[cfg(feature = "desktop")]
 pub use incular_wgpu as wgpu;
+
+#[cfg(feature = "desktop")]
+pub use incular_linux as linux;

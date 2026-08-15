@@ -11,8 +11,8 @@ publish = true
 path = "src/lib.rs"
 
 [features]
-default = []
-desktop = ["dep:incular-platform", "dep:incular-wgpu"]
+default = ["desktop"]
+desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux"]
 
 [dependencies]
 incular-accessibility = { workspace = true }
@@ -27,3 +27,4 @@ incular-runtime = { workspace = true }
 incular-text = { workspace = true }
 incular-wgpu = { workspace = true, optional = true }
 incular-widgets = { workspace = true }
+incular-linux = { workspace = true, optional = true }

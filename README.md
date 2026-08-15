@@ -24,5 +24,10 @@ The repository is organized as a layered Cargo workspace:
 - `incular-wgpu` provides the `wgpu` rendering backend.
 - `incular` is the public facade crate.
 
-The project is currently at the workspace-scaffolding stage. Runtime behavior,
-widgets, layout, and rendering APIs will be developed incrementally.
+The second vertical slice adds a real Linux native application path: `winit`
+owns the event loop/window, `wgpu` owns an instanced rectangle surface renderer,
+and a locally reactive counter button updates only its subscribed subtree. Run
+the proof program with `cargo run -p incular --example counter`.
+
+See [the architecture document](docs/ARCHITECTURE.md) for the implemented
+boundaries and intentionally deferred native-surface work.

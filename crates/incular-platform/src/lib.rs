@@ -1,7 +1,131 @@
-//! Shared platform abstractions for Incular.
+//! Platform-owned window data and normalized native events.
 //!
-//! Window creation, event handling, lifecycle integration, and platform-owned
-//! resources will be introduced here. Platform-specific crates build on this
-//! boundary for native APIs.
+//! Layout stays in logical pixels. This crate is the single conversion boundary
+//! between those coordinates and physical surface/window coordinates.
 
-// This crate is an API boundary only until the application lifecycle is designed.
+use incular_core::{InputEvent, Offset, PointerPhase, Size};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhysicalSize {
+    pub width: u32,
+    pub height: u32,
+}
+impl PhysicalSize {
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowMetrics {
+    pub physical_size: PhysicalSize,
+    pub scale_factor: f64,
+}
+impl WindowMetrics {
+    #[must_use]
+    pub fn new(physical_size: PhysicalSize, scale_factor: f64) -> Self {
+        assert!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "scale factor must be positive"
+        );
+        Self {
+            physical_size,
+            scale_factor,
+        }
+    }
+    #[must_use]
+    pub fn logical_size(self) -> Size {
+        Size::new(
+            self.physical_size.width as f32 / self.scale_factor as f32,
+            self.physical_size.height as f32 / self.scale_factor as f32,
+        )
+    }
+    #[must_use]
+    pub fn logical_to_physical(self, offset: Offset) -> Offset {
+        Offset::new(
+            offset.x * self.scale_factor as f32,
+            offset.y * self.scale_factor as f32,
+        )
+    }
+    #[must_use]
+    pub fn physical_to_logical(self, offset: Offset) -> Offset {
+        Offset::new(
+            offset.x / self.scale_factor as f32,
+            offset.y / self.scale_factor as f32,
+        )
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlatformEvent {
+    Input(InputEvent),
+    CloseRequested,
+}
+/// Raw handles are passed only to the GPU backend. The Linux window owner must
+/// outlive the created surface; this is documented at the unsafe GPU boundary.
+#[derive(Clone, Copy, Debug)]
+pub struct RawWindowHandles {
+    pub window: RawWindowHandle,
+    pub display: Option<RawDisplayHandle>,
+}
+#[must_use]
+pub fn raw_window_handles(window: &winit::window::Window) -> RawWindowHandles {
+    RawWindowHandles {
+        window: window
+            .window_handle()
+            .expect("window exposes a raw handle")
+            .as_raw(),
+        display: window.display_handle().ok().map(|handle| handle.as_raw()),
+    }
+}
+#[must_use]
+pub fn normalize_cursor(
+    position: winit::dpi::PhysicalPosition<f64>,
+    metrics: WindowMetrics,
+) -> Offset {
+    metrics.physical_to_logical(Offset::new(position.x as f32, position.y as f32))
+}
+#[must_use]
+pub fn pointer_event(
+    phase: PointerPhase,
+    position: winit::dpi::PhysicalPosition<f64>,
+    metrics: WindowMetrics,
+) -> PlatformEvent {
+    PlatformEvent::Input(InputEvent::Pointer {
+        phase,
+        position: normalize_cursor(position, metrics),
+    })
+}
+/// Normalizes winit line and physical-pixel wheel values into logical pixels.
+/// A line is intentionally a documented 40 logical-pixel convenience step.
+#[must_use]
+pub fn wheel_event(delta: winit::event::MouseScrollDelta, metrics: WindowMetrics) -> PlatformEvent {
+    let delta = match delta {
+        winit::event::MouseScrollDelta::LineDelta(x, y) => Offset::new(x * 40.0, y * 40.0),
+        winit::event::MouseScrollDelta::PixelDelta(position) => {
+            metrics.physical_to_logical(Offset::new(position.x as f32, position.y as f32))
+        }
+    };
+    PlatformEvent::Input(InputEvent::Scroll { delta })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dpi_round_trip_supports_fractional_scales() {
+        let m = WindowMetrics::new(PhysicalSize::new(225, 150), 1.5);
+        assert_eq!(m.logical_size(), Size::new(150., 100.));
+        assert_eq!(
+            m.physical_to_logical(Offset::new(75., 30.)),
+            Offset::new(50., 20.)
+        );
+        assert_eq!(
+            m.logical_to_physical(Offset::new(50., 20.)),
+            Offset::new(75., 30.)
+        );
+    }
+}
