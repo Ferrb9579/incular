@@ -108,3 +108,130 @@ drawn with decrement on pop. This makes nested rounded/path clips an exact
 intersection while restoring sibling and post-clip visibility. Clip masks also
 honor the current rectangular scissor. RRects use the analytic normalized-radius
 shader; paths reuse their existing fill-rule Lyon/GPU mesh cache.
+
+## Retained offscreen group opacity
+
+`PaintCommand::PushOpacity`/`PopOpacity` is lowered as an ordered isolation
+boundary, not as per-descendant alpha. For a partial alpha the child commands
+are rendered in painter order into a transparent target, then a dedicated
+compositor quad samples that target and applies the group alpha exactly once.
+Alpha `0` and `1` use visual fast paths; layout, hit testing, focus, and
+semantics remain independent of opacity.
+
+The offscreen color target uses the configured surface format so all existing
+rectangle, text, image, gradient, path, and stencil pipelines remain compatible.
+Primitive shaders write straight source colors with ordinary source-over
+blending; consequently the transparent target stores premultiplied composited
+RGB plus alpha. The compositor multiplies both sampled RGB and alpha by the
+group alpha and uses premultiplied source-over blending. This avoids applying
+alpha twice and keeps antialiased text, transparent images, and gradient edges
+free of dark fringes.
+
+Targets are tight conservative physical bounds: logical bounds are converted
+with outward floor/ceil rounding and retain their logical origin for the final
+quad. Internal `ClipRect` scissor coordinates are translated into the target;
+`ClipRRect` and `ClipPath` use a target-local `Depth24PlusStencil8` attachment.
+Ancestor clips are carried on the final quad instead of being baked into the
+cached pixels, so clip-inside and clip-outside opacity have distinct, correct
+semantics. Nested opacity groups render their inner target before the outer
+target, with separate passes that never sample an active attachment.
+
+Persistent entries are keyed by stable opacity layer, subtree content
+generation, physical width/height, exact scale factor, target format, and
+device generation. Alpha and ancestor translation are composite-only and reuse
+the entry. A 64 MiB byte budget uses
+least-recently-used eviction; a bounded 16 MiB exact-size target pool keys
+physical width/height, color format, and stencil requirement while recycling
+detached color/stencil attachments for future effects. Surface resize alone
+does not invalidate an entry when its physical bounds remain unchanged, while
+device recreation is represented by a new device generation. `GpuCounters`
+reports cache hits/misses, rerenders, target creation/reuse/eviction, cached
+bytes and peak bytes, render passes, composite draws, fast paths, and maximum
+nested depth.
+
+## Gaussian blur and drop shadows
+
+Effect lowering keeps two retained stages: an isolated source texture keyed by
+subtree generation, source dimensions, scale, format, and device generation;
+and a filtered-result texture keyed by that source generation, physical X/Y
+sigma, expanded dimensions, scale, and device generation. A sigma update thus
+reuses the source but reruns only the filter passes. Translation, shadow offset,
+and shadow color remain outside the expensive source/blur keys. Zero sigma
+bypasses filter allocation and passes.
+
+The blur is a separable GPU Gaussian over premultiplied source pixels. CPU
+coefficients use `exp(-x²/(2σ²))`, a normalized symmetric `ceil(3σ)` support,
+and a quantized physical-sigma kernel cache; one stable pipeline family receives
+the weights through a uniform buffer. The shader explicitly treats samples
+outside the source as transparent, so clamp-to-edge filtering cannot smear an
+opaque edge. Normal blurs use horizontal then vertical passes. Physical sigma
+above 16 selects a documented power-of-two downsample/blur/upsample path until
+the low-resolution sigma is at most 16; this keeps the shader loop bounded at
+97 taps while retaining full-resolution three-sigma bounds. The multi-scale
+path is an efficient approximation, not a claim of exact full-resolution
+Gaussian equivalence.
+
+`DropShadow` uses the same isolated source and blurred result, reads only its
+alpha, then colorizes at composite time with
+`a = color.a * mask` and `rgb_premultiplied = color.rgb * a`. The shadow quad is
+offset and drawn before the normal source quad, so changing offset or color
+does not rerun the blur. Internal clips are already present in the source
+texture; ancestor clips are applied to each final quad. Nested effects retain
+their ordered boundaries rather than algebraically flattening them.
+
+Effect targets use the existing exact-size target pool. Source and filtered
+entries participate in the same 64 MiB retained offscreen budget, while pooled
+temporary attachments remain capped at 16 MiB. LRU budget eviction drops only
+GPU results; a later frame lazily rerenders the source or filter. Effect-specific
+counters expose source hits/misses/rerenders, blur passes and kernel reuse,
+large-blur resampling, shadow composites, pool activity, evictions, and cached
+bytes/peaks.
+
+`WgpuRenderer::effect_debug_tree` prints one text-only line per effect with
+sigma/offset, source and mask cache state, and physical bounds; it is safe to
+surface in diagnostics because it never exposes a GPU pointer.
+
+## Color matrices and effect-chain caching
+
+Color-matrix stages use one stable fullscreen GPU pipeline. The source texture
+is sampled as premultiplied RGBA, unpremultiplied only when alpha is above an
+epsilon, evaluated with the retained 4×5 matrix in straight RGBA, clamped to
+finite normalized values, and premultiplied for the destination. The CPU and
+GPU use the same row-major matrix layout and affine bias. Adjacent matrix
+stages can be fused by `EffectChain`; a matrix on either side of a blur remains
+an explicit pass. `GpuCounters` reports stage hits/misses/rerenders, matrix
+passes, fusions, and retained effect bytes.
+
+Source entries are keyed by subtree generation and physical source geometry.
+Filtered entries additionally key the input generation, matrix (or sigma),
+scale, format, and device generation. Thus a matrix-only change reruns the
+matrix stage but not the source; changing a blur reruns the blur and every
+downstream stage; ancestor translation changes only the composite quad.
+
+## Blend modes and destination promotion
+
+Porter–Duff `SrcOver`, `Src`, `DstOver`, `SrcIn`, `DstIn`, `SrcOut`, `DstOut`,
+`SrcAtop`, `DstAtop`, `Xor`, and `Plus` use fixed-function premultiplied
+attachment blending. `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`,
+`ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`, and
+`Exclusion` use the alpha-aware artistic equation and a destination-sampling
+shader. The shader samples straight RGB only for the blend function and writes
+premultiplied output, matching `incular_painting::blend_premultiplied`.
+
+The presentation surface is never sampled while it is being rendered. When an
+artistic blend appears, the affected scene/composition scope is promoted to two
+sampleable ping-pong targets (sparse scenes use tight physical bounds rather
+than the complete window). Painter-ordered segments render into the current
+target; before a destination read, the current color is copied to the
+alternate target, and the blend pass samples current while writing alternate.
+Nested source scopes use the same graph and copy their final target into the
+retained source texture. `full_frame_intermediate_passes` stays zero for an
+ordinary SrcOver-only frame; target creation/reuse and destination-read draws
+are exposed in the blend counters.
+
+Clips and stencil masks are replayed per segment, so a promotion does not
+change clip or painter-order semantics. Intermediate color targets include
+copy usages for the explicit ping-pong copies; their live and peak bytes are
+reported separately from the source/effect cache budget. `effect_debug_tree`
+reports matrix stage warmth and whether each blend uses the fixed-function or
+destination-read path.

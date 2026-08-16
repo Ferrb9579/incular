@@ -898,7 +898,14 @@ mod tests {
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
-                | PaintCommand::PopClip => {}
+                | PaintCommand::PopClip
+                | PaintCommand::PushOpacity { .. }
+                | PaintCommand::PopOpacity
+                | PaintCommand::PushBlur { .. }
+                | PaintCommand::PushDropShadow { .. }
+                | PaintCommand::PushColorFilter { .. }
+                | PaintCommand::PushBlend { .. }
+                | PaintCommand::PopEffect => {}
             }
         }
         (rect.unwrap(), glyph.unwrap())

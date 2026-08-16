@@ -137,10 +137,13 @@ submitted frames.
 ## Retained compositor, scrolling, and animation
 
 `incular-painting::LayerTree` is a renderer-independent generational arena of
-`Picture`, `Transform`, and axis-aligned `ClipRect` layers. A picture owns an
-`Arc<DisplayList>` and conservative local bounds. Render objects create stable
-transform and picture layers at mount; unmount removes their compositor state.
-Scroll views additionally retain a viewport clip and a content transform.
+`Picture`, `Transform`, axis-aligned `ClipRect`, and `Opacity` layers. A picture
+owns an `Arc<DisplayList>` and conservative local bounds. Render objects create
+stable transform, picture, and (when requested) opacity layers at mount;
+unmount removes their compositor state. Scroll views additionally retain a
+viewport clip and a content transform. An opacity layer stores only normalized
+alpha, subtree bounds, and a content generation; GPU targets remain owned by
+`incular-wgpu`.
 
 Scene submission flattens this retained tree to the existing ordered
 display-list format, accumulating translations and intersecting clips. It
@@ -162,8 +165,38 @@ translation displacement, keeping interactive targets at their visible places.
 
 `incular-animation` owns controller values, curves and interpolation but no
 timer. Runtime supplies monotonic timestamps and requests another frame only
-while an animation remains active. Group opacity, affine clipping, fling
-physics, and virtualization remain future work.
+while an animation remains active. Opacity animation follows the same
+compositor-only path as translation: once an isolated target is warm, alpha
+ticks do not rebuild, relayout, repaint, or rerasterize its child.
+
+### Retained offscreen group opacity
+
+Partial group opacity is isolated in `incular-wgpu`: the ordered child stream
+renders into a transparent, tight physical target and a compositor quad applies
+group alpha once. The target stores premultiplied composited RGB plus alpha;
+the compositor scales both by group alpha and uses premultiplied source-over
+blending. Outward physical floor/ceil rounding and a retained origin prevent
+fractional-edge cropping. Clips inside the group use target-local scissor and
+stencil attachments; ancestor clips remain active on the final quad.
+
+Opacity cache identity is stable layer ID + subtree content generation +
+physical width/height + exact scale factor + target format + device generation.
+Alpha and ancestor translation do not invalidate pixels. A bounded byte budget evicts least-recently-used entries,
+and a separate bounded target pool keys exact-size color/format/stencil targets
+for reuse.
+Surface resize alone does not invalidate a target whose physical bounds remain
+valid; device recreation starts a new generation. Opacity is visual only and
+does not alter hit testing, focus, pointer/keyboard routing, or semantics.
+
+Blur and shadows build on the same retained source/effect cache. Color matrices
+are ordered straight-RGBA stages with adjacent-matrix fusion only; blend modes
+are final composite state and never change source generations. Porter–Duff
+modes use fixed-function premultiplied blending, while artistic modes promote
+only their composition scope to sampleable ping-pong targets so a destination is
+never read from the texture currently being written. Ordinary SrcOver frames
+retain the direct presentation fast path. Backdrop effects, inner shadows,
+custom filters, and further advanced blend modes remain future work on this
+offscreen foundation.
 
 ## Lazy viewports and fixed-extent virtualization
 
@@ -345,3 +378,38 @@ one target-resolution grayscale mask which enters the retained `R8Unorm` atlas;
 there is no hinting policy, supersampling, downsampling, or phase cache. The
 final bitmap is limited to 8 MiB. Scroll and compositor movement remain absent
 from cache identity and never cause raster work.
+
+## Gaussian effects and retained filter resources
+
+Phase 10.1 adds renderer-neutral `GaussianBlur` and `DropShadowEffect` layers.
+Sigma is a logical-pixel value normalized at the painting/widget boundary and
+converted to physical pixels only by `incular-wgpu`. A layer's source
+generation excludes its own sigma, shadow offset, and shadow color, so retained
+compositor updates do not mark the child for build, layout, or paint. Effects
+remain ordinary ordered boundaries: source commands, including internal
+rectangular/rounded/path clips, are isolated first, then the result is filtered
+and composited through the current ancestor clip. Effect expansion is visual
+only; hit testing and semantics continue to use the child's normal geometry.
+
+The backend separates source isolation from filtered results. Source entries
+are keyed by subtree generation, source bounds/dimensions, DPI, format, and
+device generation. Blur entries add physical X/Y sigma, expanded dimensions,
+and the selected downsample factor. A sigma change invalidates only the latter;
+ancestor translation changes only the final quad. A shadow reuses the same
+blurred source-alpha representation when source and sigma are unchanged, then
+colorizes and offsets it during the composite draw before the original source.
+
+Filtering is a true separable Gaussian over premultiplied pixels with a
+normalized symmetric three-sigma kernel generated on the CPU and uploaded via
+one stable GPU pipeline. Samples outside the source are transparent rather than
+clamped opaque edge pixels. For physical sigma above 16, repeated power-of-two
+downsampling keeps the low-resolution sigma in the bounded direct range,
+followed by horizontal/vertical filtering and an upsample. This is explicitly
+an efficient multi-scale approximation; full-resolution effect bounds still
+use outward-rounded three-sigma support.
+
+Effect and source targets share Phase 10's 64 MiB retained offscreen budget and
+16 MiB exact-size transient pool. LRU eviction removes only GPU results and
+recomputes them lazily. `GpuCounters` and compositor debug-tree entries expose
+source/filter cache state, physical bounds, pass counts, kernel reuse,
+downsample/upsample activity, shadow composites, and effect memory usage.

@@ -20,8 +20,9 @@ use incular_assets::ImageHandle;
 use incular_core::{Arena, ArenaId, Color, DirtyFlags, Offset, Rect, Size, Transform};
 use incular_layout::{Alignment, Axis, Constraints, EdgeInsets};
 use incular_painting::{
-    Border, Brush, CornerRadii, DisplayList, FillRule, ImageSampling, LayerId, LayerTree,
-    PaintCommand, Path, RRect, Stroke,
+    BlendMode, Border, Brush, ColorFilter, CornerRadii, DisplayList, DropShadowEffect, FillRule,
+    GaussianBlur, ImageSampling, LayerId, LayerTree, PaintCommand, Path, RRect, Stroke,
+    normalize_opacity, normalize_sigma,
 };
 use incular_text::{TextAlign, TextDiagnostics, TextEngine, TextLayout, TextStyle};
 use std::sync::Arc;
@@ -611,6 +612,352 @@ impl TranslationController {
     }
 }
 
+/// Retained opacity state. Updating this controller changes only the
+/// compositor layer; the child display list and layout remain untouched.
+#[derive(Clone)]
+pub struct OpacityController {
+    opacity: Rc<Cell<f32>>,
+    revision: Rc<Cell<u64>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<f32>>,
+    to: Rc<Cell<f32>>,
+}
+impl std::fmt::Debug for OpacityController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpacityController")
+            .field("opacity", &self.opacity())
+            .finish()
+    }
+}
+impl PartialEq for OpacityController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.opacity, &other.opacity)
+    }
+}
+impl Default for OpacityController {
+    fn default() -> Self {
+        Self {
+            opacity: Rc::new(Cell::new(1.)),
+            revision: Rc::new(Cell::new(0)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(1.)),
+            to: Rc::new(Cell::new(1.)),
+        }
+    }
+}
+impl OpacityController {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn opacity(&self) -> f32 {
+        self.opacity.get()
+    }
+    pub fn set_opacity(&self, opacity: f32) -> bool {
+        let opacity = normalize_opacity(opacity);
+        if self.opacity.get() == opacity {
+            return false;
+        }
+        self.opacity.set(opacity);
+        self.revision.set(self.revision.get().wrapping_add(1));
+        true
+    }
+    pub fn animate_to(&self, target: f32, duration: Duration, now: Instant) {
+        self.from.set(self.opacity());
+        self.to.set(normalize_opacity(target));
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        let t = animation.value();
+        self.set_opacity(self.from.get() + (self.to.get() - self.from.get()) * t)
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
+}
+
+/// Retained Gaussian sigma controller. Ticking changes only compositor
+/// parameters; the child render object is never marked for paint.
+#[derive(Clone)]
+pub struct BlurController {
+    sigma: Rc<Cell<f32>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<f32>>,
+    to: Rc<Cell<f32>>,
+}
+impl std::fmt::Debug for BlurController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlurController")
+            .field("sigma", &self.sigma())
+            .finish()
+    }
+}
+impl PartialEq for BlurController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.sigma, &other.sigma)
+    }
+}
+impl BlurController {
+    #[must_use]
+    pub fn new(sigma: f32) -> Self {
+        let sigma = normalize_sigma(sigma);
+        Self {
+            sigma: Rc::new(Cell::new(sigma)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(sigma)),
+            to: Rc::new(Cell::new(sigma)),
+        }
+    }
+    #[must_use]
+    pub fn sigma(&self) -> f32 {
+        self.sigma.get()
+    }
+    pub fn set_sigma(&self, sigma: f32) -> bool {
+        let sigma = normalize_sigma(sigma);
+        if self.sigma() == sigma {
+            return false;
+        }
+        self.sigma.set(sigma);
+        true
+    }
+    pub fn animate_to(&self, target: f32, duration: Duration, now: Instant) {
+        self.from.set(self.sigma());
+        self.to.set(normalize_sigma(target));
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        let t = animation.value();
+        self.set_sigma(self.from.get() + (self.to.get() - self.from.get()) * t)
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
+}
+impl Default for BlurController {
+    fn default() -> Self {
+        Self::new(0.)
+    }
+}
+
+/// Retained color-matrix controller. Matrix animation is a filter/compositor
+/// update; it never marks the child picture dirty.
+#[derive(Clone)]
+pub struct ColorFilterController {
+    matrix: Rc<Cell<[f32; 20]>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<[f32; 20]>>,
+    to: Rc<Cell<[f32; 20]>>,
+}
+impl std::fmt::Debug for ColorFilterController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ColorFilterController")
+            .field("matrix", &self.matrix())
+            .finish()
+    }
+}
+impl PartialEq for ColorFilterController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.matrix, &other.matrix)
+    }
+}
+impl ColorFilterController {
+    #[must_use]
+    pub fn new(filter: ColorFilter) -> Self {
+        let matrix = filter.to_matrix();
+        Self {
+            matrix: Rc::new(Cell::new(matrix)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(matrix)),
+            to: Rc::new(Cell::new(matrix)),
+        }
+    }
+    #[must_use]
+    pub fn matrix(&self) -> [f32; 20] {
+        self.matrix.get()
+    }
+    #[must_use]
+    pub fn filter(&self) -> ColorFilter {
+        ColorFilter::matrix(self.matrix())
+    }
+    pub fn set_matrix(&self, matrix: [f32; 20]) -> bool {
+        let matrix = ColorFilter::matrix(matrix).to_matrix();
+        if self.matrix() == matrix {
+            return false;
+        }
+        self.matrix.set(matrix);
+        true
+    }
+    pub fn set_filter(&self, filter: ColorFilter) -> bool {
+        self.set_matrix(filter.to_matrix())
+    }
+    pub fn animate_to(&self, target: ColorFilter, duration: Duration, now: Instant) {
+        self.from.set(self.matrix());
+        self.to.set(target.to_matrix());
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        let t = animation.value();
+        let from = self.from.get();
+        let to = self.to.get();
+        let mut matrix = [0.; 20];
+        for index in 0..20 {
+            matrix[index] = from[index] + (to[index] - from[index]) * t;
+        }
+        self.set_matrix(matrix)
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
+}
+impl Default for ColorFilterController {
+    fn default() -> Self {
+        Self::new(ColorFilter::identity())
+    }
+}
+
+/// Compatibility spelling for applications that call a 4×5 filter a color
+/// matrix. It is the same retained controller and has identical invalidation
+/// semantics.
+pub type ColorMatrixController = ColorFilterController;
+
+/// Retained drop-shadow presentation controller. Offset and color are pure
+/// composite properties; sigma changes invalidate only the blurred mask.
+#[derive(Clone)]
+pub struct DropShadowController {
+    offset: Rc<Cell<Offset>>,
+    sigma: Rc<Cell<f32>>,
+    color: Rc<Cell<Color>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<Offset>>,
+    to: Rc<Cell<Offset>>,
+}
+impl std::fmt::Debug for DropShadowController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DropShadowController")
+            .field("offset", &self.offset())
+            .field("sigma", &self.sigma())
+            .field("color", &self.color())
+            .finish()
+    }
+}
+impl PartialEq for DropShadowController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.offset, &other.offset)
+    }
+}
+impl DropShadowController {
+    #[must_use]
+    pub fn new(offset: Offset, sigma: f32, color: Color) -> Self {
+        let offset = finite_offset(offset);
+        let sigma = normalize_sigma(sigma);
+        Self {
+            offset: Rc::new(Cell::new(offset)),
+            sigma: Rc::new(Cell::new(sigma)),
+            color: Rc::new(Cell::new(color)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(offset)),
+            to: Rc::new(Cell::new(offset)),
+        }
+    }
+    #[must_use]
+    pub fn offset(&self) -> Offset {
+        self.offset.get()
+    }
+    #[must_use]
+    pub fn sigma(&self) -> f32 {
+        self.sigma.get()
+    }
+    #[must_use]
+    pub fn color(&self) -> Color {
+        self.color.get()
+    }
+    pub fn set_offset(&self, offset: Offset) -> bool {
+        let offset = finite_offset(offset);
+        if self.offset() == offset {
+            return false;
+        }
+        self.offset.set(offset);
+        true
+    }
+    pub fn set_sigma(&self, sigma: f32) -> bool {
+        let sigma = normalize_sigma(sigma);
+        if self.sigma() == sigma {
+            return false;
+        }
+        self.sigma.set(sigma);
+        true
+    }
+    pub fn set_color(&self, color: Color) -> bool {
+        if self.color() == color {
+            return false;
+        }
+        self.color.set(color);
+        true
+    }
+    pub fn animate_offset_to(&self, target: Offset, duration: Duration, now: Instant) {
+        self.from.set(self.offset());
+        self.to.set(finite_offset(target));
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        let t = animation.value();
+        let from = self.from.get();
+        let to = self.to.get();
+        self.set_offset(Offset::new(
+            from.x + (to.x - from.x) * t,
+            from.y + (to.y - from.y) * t,
+        ))
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
+}
+impl Default for DropShadowController {
+    fn default() -> Self {
+        Self::new(Offset::new(0., 4.), 8., Color::rgba(0, 0, 0, 96))
+    }
+}
+
+fn finite_offset(offset: Offset) -> Offset {
+    Offset::new(
+        if offset.x.is_finite() { offset.x } else { 0. },
+        if offset.y.is_finite() { offset.y } else { 0. },
+    )
+}
+
 /// The first built-in widgets. Their values contain no mutable runtime state.
 #[derive(Clone)]
 pub struct Widget {
@@ -692,6 +1039,34 @@ enum WidgetKind {
     },
     Translate {
         controller: TranslationController,
+        child: Box<Widget>,
+    },
+    Opacity {
+        alpha: f32,
+        controller: Option<OpacityController>,
+        child: Box<Widget>,
+    },
+    Blur {
+        sigma_x: f32,
+        sigma_y: f32,
+        controller: Option<BlurController>,
+        child: Box<Widget>,
+    },
+    DropShadow {
+        offset: Offset,
+        sigma_x: f32,
+        sigma_y: f32,
+        color: Color,
+        controller: Option<DropShadowController>,
+        child: Box<Widget>,
+    },
+    ColorFiltered {
+        filter: ColorFilter,
+        controller: Option<ColorFilterController>,
+        child: Box<Widget>,
+    },
+    Blend {
+        mode: BlendMode,
         child: Box<Widget>,
     },
 }
@@ -858,6 +1233,47 @@ impl std::fmt::Debug for WidgetKind {
                 .field("cache_extent", &config.cache_extent)
                 .finish(),
             Self::Translate { .. } => f.debug_struct("Translate").finish(),
+            Self::Opacity {
+                alpha, controller, ..
+            } => f
+                .debug_struct("Opacity")
+                .field("alpha", alpha)
+                .field("controller", controller)
+                .finish(),
+            Self::Blur {
+                sigma_x,
+                sigma_y,
+                controller,
+                ..
+            } => f
+                .debug_struct("Blur")
+                .field("sigma_x", sigma_x)
+                .field("sigma_y", sigma_y)
+                .field("controller", controller)
+                .finish(),
+            Self::DropShadow {
+                offset,
+                sigma_x,
+                sigma_y,
+                color,
+                controller,
+                ..
+            } => f
+                .debug_struct("DropShadow")
+                .field("offset", offset)
+                .field("sigma_x", sigma_x)
+                .field("sigma_y", sigma_y)
+                .field("color", color)
+                .field("controller", controller)
+                .finish(),
+            Self::ColorFiltered {
+                filter, controller, ..
+            } => f
+                .debug_struct("ColorFiltered")
+                .field("filter", filter)
+                .field("controller", controller)
+                .finish(),
+            Self::Blend { mode, .. } => f.debug_struct("Blend").field("mode", mode).finish(),
         }
     }
 }
@@ -1018,6 +1434,65 @@ impl PartialEq for WidgetKind {
                 },
             ) => Rc::ptr_eq(&a.offset, &c.offset) && b == d,
             (
+                Self::Opacity {
+                    alpha: a,
+                    controller: b,
+                    child: c,
+                },
+                Self::Opacity {
+                    alpha: d,
+                    controller: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::Blur {
+                    sigma_x: a,
+                    sigma_y: b,
+                    controller: c,
+                    child: d,
+                },
+                Self::Blur {
+                    sigma_x: e,
+                    sigma_y: f,
+                    controller: g,
+                    child: h,
+                },
+            ) => a == e && b == f && c == g && d == h,
+            (
+                Self::DropShadow {
+                    offset: a,
+                    sigma_x: b,
+                    sigma_y: c,
+                    color: d,
+                    controller: e,
+                    child: f,
+                },
+                Self::DropShadow {
+                    offset: g,
+                    sigma_x: h,
+                    sigma_y: i,
+                    color: j,
+                    controller: k,
+                    child: l,
+                },
+            ) => a == g && b == h && c == i && d == j && e == k && f == l,
+            (
+                Self::ColorFiltered {
+                    filter: a,
+                    controller: b,
+                    child: c,
+                },
+                Self::ColorFiltered {
+                    filter: d,
+                    controller: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (Self::Blend { mode: a, child: b }, Self::Blend { mode: c, child: d }) => {
+                a == c && b == d
+            }
+            (
                 Self::Align {
                     alignment: a,
                     child: b,
@@ -1056,6 +1531,11 @@ enum WidgetType {
     Scroll,
     VirtualList,
     Translate,
+    Opacity,
+    Blur,
+    DropShadow,
+    ColorFiltered,
+    Blend,
 }
 impl Widget {
     #[must_use]
@@ -1140,7 +1620,12 @@ impl Widget {
             WidgetKind::Padding { child, .. }
             | WidgetKind::Align { child, .. }
             | WidgetKind::Scroll { child, .. }
-            | WidgetKind::Translate { child, .. } => child.bind_callbacks(allocate),
+            | WidgetKind::Translate { child, .. }
+            | WidgetKind::Opacity { child, .. }
+            | WidgetKind::Blur { child, .. }
+            | WidgetKind::DropShadow { child, .. }
+            | WidgetKind::ColorFiltered { child, .. }
+            | WidgetKind::Blend { child, .. } => child.bind_callbacks(allocate),
             WidgetKind::VirtualList { .. } => {}
             WidgetKind::Flex { children, .. } => {
                 for child in children {
@@ -1300,6 +1785,138 @@ impl Widget {
         }
     }
     #[must_use]
+    pub fn opacity(alpha: f32, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Opacity {
+                alpha: normalize_opacity(alpha),
+                controller: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn controlled_opacity(controller: OpacityController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Opacity {
+                alpha: controller.opacity(),
+                controller: Some(controller),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn blur(sigma: f32, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Blur {
+                sigma_x: normalize_sigma(sigma),
+                sigma_y: normalize_sigma(sigma),
+                controller: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn asymmetric_blur(sigma_x: f32, sigma_y: f32, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Blur {
+                sigma_x: normalize_sigma(sigma_x),
+                sigma_y: normalize_sigma(sigma_y),
+                controller: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn controlled_blur(controller: BlurController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Blur {
+                sigma_x: controller.sigma(),
+                sigma_y: controller.sigma(),
+                controller: Some(controller),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn drop_shadow(offset: Offset, sigma: f32, color: Color, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::DropShadow {
+                offset: finite_offset(offset),
+                sigma_x: normalize_sigma(sigma),
+                sigma_y: normalize_sigma(sigma),
+                color,
+                controller: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn controlled_drop_shadow(controller: DropShadowController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::DropShadow {
+                offset: controller.offset(),
+                sigma_x: controller.sigma(),
+                sigma_y: controller.sigma(),
+                color: controller.color(),
+                controller: Some(controller),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn color_filtered(filter: ColorFilter, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::ColorFiltered {
+                filter,
+                controller: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn color_matrix(filter: ColorFilter, child: Self) -> Self {
+        Self::color_filtered(filter, child)
+    }
+    #[must_use]
+    pub fn controlled_color_filtered(controller: ColorFilterController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::ColorFiltered {
+                filter: controller.filter(),
+                controller: Some(controller),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn blend(mode: BlendMode, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Blend {
+                mode,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
     pub fn with_key(mut self, key: impl Into<Key>) -> Self {
         self.key = Some(key.into());
         self
@@ -1341,6 +1958,11 @@ impl Widget {
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
             WidgetKind::VirtualList { .. } => WidgetType::VirtualList,
             WidgetKind::Translate { .. } => WidgetType::Translate,
+            WidgetKind::Opacity { .. } => WidgetType::Opacity,
+            WidgetKind::Blur { .. } => WidgetType::Blur,
+            WidgetKind::DropShadow { .. } => WidgetType::DropShadow,
+            WidgetKind::ColorFiltered { .. } => WidgetType::ColorFiltered,
+            WidgetKind::Blend { .. } => WidgetType::Blend,
         }
     }
     fn children(&self) -> Vec<Widget> {
@@ -1357,7 +1979,12 @@ impl Widget {
             | WidgetKind::Align { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::Translate { child, .. }
-            | WidgetKind::Decorated { child, .. } => {
+            | WidgetKind::Decorated { child, .. }
+            | WidgetKind::Opacity { child, .. }
+            | WidgetKind::Blur { child, .. }
+            | WidgetKind::DropShadow { child, .. }
+            | WidgetKind::ColorFiltered { child, .. }
+            | WidgetKind::Blend { child, .. } => {
                 vec![child.as_ref().clone()]
             }
             WidgetKind::Flex { children, .. } => children.clone(),
@@ -1800,6 +2427,331 @@ impl From<TextArea> for Widget {
     }
 }
 
+/// Declarative retained group opacity. The child is painted into an isolated
+/// compositor target when alpha is between zero and one, so overlapping
+/// descendants are attenuated exactly once.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Opacity {
+    alpha: f32,
+    controller: Option<OpacityController>,
+    child: Widget,
+}
+impl Opacity {
+    #[must_use]
+    pub fn new(alpha: f32, child: impl Into<Widget>) -> Self {
+        Self {
+            alpha: normalize_opacity(alpha),
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controlled(controller: OpacityController, child: impl Into<Widget>) -> Self {
+        Self {
+            alpha: controller.opacity(),
+            controller: Some(controller),
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controller(mut self, controller: OpacityController) -> Self {
+        self.alpha = controller.opacity();
+        self.controller = Some(controller);
+        self
+    }
+    #[must_use]
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = normalize_opacity(alpha);
+        self
+    }
+}
+impl From<Opacity> for Widget {
+    fn from(value: Opacity) -> Self {
+        match value.controller {
+            Some(controller) => Widget::controlled_opacity(controller, value.child),
+            None => Widget::opacity(value.alpha, value.child),
+        }
+    }
+}
+
+/// Declarative Gaussian blur isolation. Sigma is in logical pixels and is
+/// converted to physical pixels by the renderer at the current DPI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Blur {
+    sigma_x: f32,
+    sigma_y: f32,
+    controller: Option<BlurController>,
+    child: Widget,
+}
+impl Blur {
+    #[must_use]
+    pub fn new(sigma: f32, child: impl Into<Widget>) -> Self {
+        Self {
+            sigma_x: normalize_sigma(sigma),
+            sigma_y: normalize_sigma(sigma),
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn asymmetric(sigma_x: f32, sigma_y: f32, child: impl Into<Widget>) -> Self {
+        Self {
+            sigma_x: normalize_sigma(sigma_x),
+            sigma_y: normalize_sigma(sigma_y),
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controlled(controller: BlurController, child: impl Into<Widget>) -> Self {
+        Self {
+            sigma_x: controller.sigma(),
+            sigma_y: controller.sigma(),
+            controller: Some(controller),
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn sigma_x(mut self, sigma: f32) -> Self {
+        self.sigma_x = normalize_sigma(sigma);
+        self.controller = None;
+        self
+    }
+    #[must_use]
+    pub fn sigma_y(mut self, sigma: f32) -> Self {
+        self.sigma_y = normalize_sigma(sigma);
+        self.controller = None;
+        self
+    }
+}
+impl From<Blur> for Widget {
+    fn from(value: Blur) -> Self {
+        match value.controller {
+            Some(controller) => Widget::controlled_blur(controller, value.child),
+            None => Widget::asymmetric_blur(value.sigma_x, value.sigma_y, value.child),
+        }
+    }
+}
+
+/// Declarative arbitrary-subtree drop shadow. The source subtree is isolated
+/// and its alpha is blurred, so text, images, gradients, and paths all share
+/// the same shadow semantics.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DropShadow {
+    offset: Offset,
+    sigma_x: f32,
+    sigma_y: f32,
+    color: Color,
+    controller: Option<DropShadowController>,
+    child: Widget,
+}
+impl DropShadow {
+    #[must_use]
+    pub fn new(offset: Offset, sigma: f32, color: Color, child: impl Into<Widget>) -> Self {
+        Self {
+            offset: finite_offset(offset),
+            sigma_x: normalize_sigma(sigma),
+            sigma_y: normalize_sigma(sigma),
+            color,
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn asymmetric(
+        offset: Offset,
+        sigma_x: f32,
+        sigma_y: f32,
+        color: Color,
+        child: impl Into<Widget>,
+    ) -> Self {
+        Self {
+            offset: finite_offset(offset),
+            sigma_x: normalize_sigma(sigma_x),
+            sigma_y: normalize_sigma(sigma_y),
+            color,
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controlled(controller: DropShadowController, child: impl Into<Widget>) -> Self {
+        Self {
+            offset: controller.offset(),
+            sigma_x: controller.sigma(),
+            sigma_y: controller.sigma(),
+            color: controller.color(),
+            controller: Some(controller),
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn offset(mut self, offset: Offset) -> Self {
+        self.offset = finite_offset(offset);
+        self.controller = None;
+        self
+    }
+    #[must_use]
+    pub fn sigma(mut self, sigma: f32) -> Self {
+        self.sigma_x = normalize_sigma(sigma);
+        self.sigma_y = normalize_sigma(sigma);
+        self.controller = None;
+        self
+    }
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self.controller = None;
+        self
+    }
+}
+impl From<DropShadow> for Widget {
+    fn from(value: DropShadow) -> Self {
+        match value.controller {
+            Some(controller) => Widget::controlled_drop_shadow(controller, value.child),
+            None => Widget::drop_shadow(value.offset, value.sigma_x, value.color, value.child),
+        }
+    }
+}
+
+/// Declarative 4x5 color-matrix stage. The matrix is evaluated in straight
+/// RGBA and converted back to the retained premultiplied texture format.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorFiltered {
+    filter: ColorFilter,
+    controller: Option<ColorFilterController>,
+    child: Widget,
+}
+impl ColorFiltered {
+    #[must_use]
+    pub fn new(filter: ColorFilter, child: impl Into<Widget>) -> Self {
+        Self {
+            filter,
+            controller: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controlled(controller: ColorFilterController, child: impl Into<Widget>) -> Self {
+        Self {
+            filter: controller.filter(),
+            controller: Some(controller),
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn matrix(mut self, matrix: [f32; 20]) -> Self {
+        self.filter = ColorFilter::matrix(matrix);
+        self.controller = None;
+        self
+    }
+    #[must_use]
+    pub fn filter(mut self, filter: ColorFilter) -> Self {
+        self.filter = filter;
+        self.controller = None;
+        self
+    }
+    #[must_use]
+    pub fn controller(mut self, controller: ColorFilterController) -> Self {
+        self.filter = controller.filter();
+        self.controller = Some(controller);
+        self
+    }
+}
+impl From<ColorFiltered> for Widget {
+    fn from(value: ColorFiltered) -> Self {
+        match value.controller {
+            Some(controller) => Widget::controlled_color_filtered(controller, value.child),
+            None => Widget::color_filtered(value.filter, value.child),
+        }
+    }
+}
+
+/// Declarative retained blend group. Destination-dependent modes promote only
+/// the required composition scope to a sampleable intermediate target.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Blend {
+    mode: BlendMode,
+    child: Widget,
+}
+impl Blend {
+    #[must_use]
+    pub fn new(mode: BlendMode, child: impl Into<Widget>) -> Self {
+        Self {
+            mode,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn mode(mut self, mode: BlendMode) -> Self {
+        self.mode = mode;
+        self
+    }
+}
+impl From<Blend> for Widget {
+    fn from(value: Blend) -> Self {
+        Widget::blend(value.mode, value.child)
+    }
+}
+
+/// Small composable builder for ordered retained effects. Each method wraps
+/// the current child, so calls read in the same order as execution.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Effects {
+    child: Widget,
+}
+impl Effects {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn color_filter(mut self, filter: ColorFilter) -> Self {
+        self.child = Widget::color_filtered(filter, self.child);
+        self
+    }
+    #[must_use]
+    pub fn color_matrix(self, filter: ColorFilter) -> Self {
+        self.color_filter(filter)
+    }
+    #[must_use]
+    pub fn blur(mut self, sigma: f32) -> Self {
+        self.child = Widget::blur(sigma, self.child);
+        self
+    }
+    #[must_use]
+    pub fn asymmetric_blur(mut self, sigma_x: f32, sigma_y: f32) -> Self {
+        self.child = Widget::asymmetric_blur(sigma_x, sigma_y, self.child);
+        self
+    }
+    #[must_use]
+    pub fn opacity(mut self, alpha: f32) -> Self {
+        self.child = Widget::opacity(alpha, self.child);
+        self
+    }
+    #[must_use]
+    pub fn drop_shadow(mut self, offset: Offset, sigma: f32, color: Color) -> Self {
+        self.child = Widget::drop_shadow(offset, sigma, color, self.child);
+        self
+    }
+    #[must_use]
+    pub fn blend(mut self, mode: BlendMode) -> Self {
+        self.child = Widget::blend(mode, self.child);
+        self
+    }
+    #[must_use]
+    pub fn build(self) -> Widget {
+        self.child
+    }
+}
+impl From<Effects> for Widget {
+    fn from(value: Effects) -> Self {
+        value.build()
+    }
+}
+
 /// Vertical retained viewport. Keep a [`ScrollController`] outside a rebuild
 /// when application code needs the position to survive a recreated description.
 pub struct ScrollView;
@@ -2035,6 +2987,29 @@ enum RenderKind {
     Translate {
         controller: TranslationController,
     },
+    Opacity {
+        alpha: f32,
+        controller: Option<OpacityController>,
+    },
+    Blur {
+        sigma_x: f32,
+        sigma_y: f32,
+        controller: Option<BlurController>,
+    },
+    DropShadow {
+        offset: Offset,
+        sigma_x: f32,
+        sigma_y: f32,
+        color: Color,
+        controller: Option<DropShadowController>,
+    },
+    ColorFiltered {
+        filter: ColorFilter,
+        controller: Option<ColorFilterController>,
+    },
+    Blend {
+        mode: BlendMode,
+    },
 }
 
 /// Snapshot of one lazy viewport. Semantic integration can expose
@@ -2077,6 +3052,11 @@ struct RenderObject {
     picture: Option<LayerId>,
     clip_layer: Option<LayerId>,
     content_layer: Option<LayerId>,
+    opacity_layer: Option<LayerId>,
+    blur_layer: Option<LayerId>,
+    shadow_layer: Option<LayerId>,
+    color_filter_layer: Option<LayerId>,
+    blend_layer: Option<LayerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2344,11 +3324,32 @@ impl WidgetTree {
         let nodes = self
             .renders
             .iter()
-            .map(|(id, node)| (RenderObjectId(id), node.kind.clone(), node.content_layer))
+            .map(|(id, node)| {
+                (
+                    RenderObjectId(id),
+                    node.kind.clone(),
+                    node.content_layer,
+                    node.opacity_layer,
+                    node.blur_layer,
+                    node.shadow_layer,
+                    node.color_filter_layer,
+                    node.blend_layer,
+                )
+            })
             .collect::<Vec<_>>();
         let mut changed = false;
         let mut active = false;
-        for (_render, kind, content_layer) in nodes {
+        for (
+            _render,
+            kind,
+            content_layer,
+            opacity_layer,
+            blur_layer,
+            shadow_layer,
+            color_filter_layer,
+            blend_layer,
+        ) in nodes
+        {
             match kind {
                 RenderKind::Scroll { controller } => {
                     if let Some(content) = content_layer
@@ -2395,6 +3396,95 @@ impl WidgetTree {
                         && self
                             .compositor
                             .update_transform(content, Transform::translation(controller.offset()))
+                    {
+                        changed = true;
+                    }
+                }
+                RenderKind::Opacity { alpha, controller } => {
+                    if let Some(controller) = controller {
+                        if controller.tick(now) {
+                            self.diagnostics.animation_ticks += 1;
+                        }
+                        active |= controller.is_active();
+                        if let Some(opacity) = opacity_layer
+                            && self
+                                .compositor
+                                .update_opacity(opacity, controller.opacity())
+                        {
+                            changed = true;
+                        }
+                    } else if let Some(opacity) = opacity_layer
+                        && self.compositor.update_opacity(opacity, alpha)
+                    {
+                        changed = true;
+                    }
+                }
+                RenderKind::Blur {
+                    sigma_x,
+                    sigma_y,
+                    controller,
+                } => {
+                    let mut sigma_x = sigma_x;
+                    let mut sigma_y = sigma_y;
+                    if let Some(controller) = controller {
+                        if controller.tick(now) {
+                            self.diagnostics.animation_ticks += 1;
+                        }
+                        active |= controller.is_active();
+                        sigma_x = controller.sigma();
+                        sigma_y = sigma_x;
+                    }
+                    if let Some(layer) = blur_layer
+                        && self
+                            .compositor
+                            .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y))
+                    {
+                        changed = true;
+                    }
+                }
+                RenderKind::DropShadow {
+                    offset,
+                    sigma_x,
+                    sigma_y,
+                    color,
+                    controller,
+                } => {
+                    let mut shadow = DropShadowEffect::asymmetric(offset, sigma_x, sigma_y, color);
+                    if let Some(controller) = controller {
+                        if controller.tick(now) {
+                            self.diagnostics.animation_ticks += 1;
+                        }
+                        active |= controller.is_active();
+                        shadow = DropShadowEffect::new(
+                            controller.offset(),
+                            controller.sigma(),
+                            controller.color(),
+                        );
+                    }
+                    if let Some(layer) = shadow_layer
+                        && self.compositor.update_drop_shadow(layer, shadow)
+                    {
+                        changed = true;
+                    }
+                }
+                RenderKind::ColorFiltered { filter, controller } => {
+                    let mut filter = filter;
+                    if let Some(controller) = controller {
+                        if controller.tick(now) {
+                            self.diagnostics.animation_ticks += 1;
+                        }
+                        active |= controller.is_active();
+                        filter = controller.filter();
+                    }
+                    if let Some(layer) = color_filter_layer
+                        && self.compositor.update_color_filter(layer, filter)
+                    {
+                        changed = true;
+                    }
+                }
+                RenderKind::Blend { mode } => {
+                    if let Some(layer) = blend_layer
+                        && self.compositor.update_blend(layer, mode)
                     {
                         changed = true;
                     }
@@ -3042,7 +4132,15 @@ impl WidgetTree {
                 Rect::from_origin_size(Offset::ZERO, Size::ZERO),
             )
         });
-        let (clip_layer, content_layer) = match &widget.kind {
+        let (
+            clip_layer,
+            content_layer,
+            opacity_layer,
+            blur_layer,
+            shadow_layer,
+            color_filter_layer,
+            blend_layer,
+        ) = match &widget.kind {
             WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. } => {
                 let clip = self
                     .compositor
@@ -3053,7 +4151,7 @@ impl WidgetTree {
                 self.compositor
                     .set_children(layer, std::iter::once(clip).chain(picture).collect());
                 self.compositor.set_children(clip, vec![content]);
-                (Some(clip), Some(content))
+                (Some(clip), Some(content), None, None, None, None, None)
             }
             WidgetKind::Translate { .. } => {
                 // Keep dynamic movement structurally below static layout
@@ -3064,12 +4162,51 @@ impl WidgetTree {
                     .compositor
                     .create_transform(Transform::translation(Offset::ZERO));
                 self.compositor.set_children(layer, vec![content]);
-                (None, Some(content))
+                (None, Some(content), None, None, None, None, None)
+            }
+            WidgetKind::Opacity { alpha, .. } => {
+                let opacity = self.compositor.create_opacity(*alpha);
+                self.compositor.set_children(layer, vec![opacity]);
+                (None, None, Some(opacity), None, None, None, None)
+            }
+            WidgetKind::Blur {
+                sigma_x, sigma_y, ..
+            } => {
+                let blur = self
+                    .compositor
+                    .create_blur(GaussianBlur::new(*sigma_x, *sigma_y));
+                self.compositor.set_children(layer, vec![blur]);
+                (None, None, None, Some(blur), None, None, None)
+            }
+            WidgetKind::DropShadow {
+                offset,
+                sigma_x,
+                sigma_y,
+                color,
+                ..
+            } => {
+                let shadow = self
+                    .compositor
+                    .create_drop_shadow(DropShadowEffect::asymmetric(
+                        *offset, *sigma_x, *sigma_y, *color,
+                    ));
+                self.compositor.set_children(layer, vec![shadow]);
+                (None, None, None, None, Some(shadow), None, None)
+            }
+            WidgetKind::ColorFiltered { filter, .. } => {
+                let color_filter = self.compositor.create_color_filter(*filter);
+                self.compositor.set_children(layer, vec![color_filter]);
+                (None, None, None, None, None, Some(color_filter), None)
+            }
+            WidgetKind::Blend { mode, .. } => {
+                let blend = self.compositor.create_blend(*mode);
+                self.compositor.set_children(layer, vec![blend]);
+                (None, None, None, None, None, None, Some(blend))
             }
             _ => {
                 self.compositor
                     .set_children(layer, picture.into_iter().collect());
-                (None, None)
+                (None, None, None, None, None, None, None)
             }
         };
         let render = self.renders.insert(RenderObject {
@@ -3095,6 +4232,11 @@ impl WidgetTree {
             picture,
             clip_layer,
             content_layer,
+            opacity_layer,
+            blur_layer,
+            shadow_layer,
+            color_filter_layer,
+            blend_layer,
         });
         let id = ElementId(self.elements.insert(Element {
             parent,
@@ -3136,8 +4278,61 @@ impl WidgetTree {
         let old_kind = render_kind(&old);
         let new_kind = render_kind(&widget);
         if old_kind != new_kind {
-            self.renders.get_mut(render.0).expect("present").kind = new_kind;
-            if text_paint_only_change(&old_kind, &render_kind(&widget)) {
+            let opacity_only = opacity_composite_only_change(&old_kind, &new_kind);
+            let effect_only = effect_composite_only_change(&old_kind, &new_kind);
+            self.renders.get_mut(render.0).expect("present").kind = new_kind.clone();
+            if opacity_only {
+                // Alpha is consumed by the retained compositor layer. Keep
+                // paint/layout caches warm for opacity-only rebuilds.
+                if let RenderKind::Opacity { alpha, .. } = new_kind {
+                    if let Some(layer) = self.renders.get(render.0).and_then(|n| n.opacity_layer) {
+                        self.compositor.update_opacity(layer, alpha);
+                    }
+                }
+            } else if effect_only {
+                match new_kind {
+                    RenderKind::Blur {
+                        sigma_x, sigma_y, ..
+                    } => {
+                        if let Some(layer) = self.renders.get(render.0).and_then(|n| n.blur_layer) {
+                            self.compositor
+                                .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y));
+                        }
+                    }
+                    RenderKind::DropShadow {
+                        offset,
+                        sigma_x,
+                        sigma_y,
+                        color,
+                        ..
+                    } => {
+                        if let Some(layer) = self.renders.get(render.0).and_then(|n| n.shadow_layer)
+                        {
+                            self.compositor.update_drop_shadow(
+                                layer,
+                                DropShadowEffect::asymmetric(offset, sigma_x, sigma_y, color),
+                            );
+                        }
+                    }
+                    RenderKind::ColorFiltered { filter, .. } => {
+                        if let Some(layer) = self
+                            .renders
+                            .get(render.0)
+                            .and_then(|node| node.color_filter_layer)
+                        {
+                            self.compositor.update_color_filter(layer, filter);
+                        }
+                    }
+                    RenderKind::Blend { mode } => {
+                        if let Some(layer) =
+                            self.renders.get(render.0).and_then(|node| node.blend_layer)
+                        {
+                            self.compositor.update_blend(layer, mode);
+                        }
+                    }
+                    _ => {}
+                }
+            } else if text_paint_only_change(&old_kind, &new_kind) {
                 self.mark_render_dirty(render, DirtyFlags::PAINT, false);
             } else {
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
@@ -3470,6 +4665,21 @@ impl WidgetTree {
             if let Some(layer) = render.content_layer {
                 self.compositor.remove(layer);
             }
+            if let Some(layer) = render.opacity_layer {
+                self.compositor.remove(layer);
+            }
+            if let Some(layer) = render.blur_layer {
+                self.compositor.remove(layer);
+            }
+            if let Some(layer) = render.shadow_layer {
+                self.compositor.remove(layer);
+            }
+            if let Some(layer) = render.color_filter_layer {
+                self.compositor.remove(layer);
+            }
+            if let Some(layer) = render.blend_layer {
+                self.compositor.remove(layer);
+            }
             self.compositor.remove(render.layer);
         }
         self.unmounted.push(id);
@@ -3493,20 +4703,57 @@ impl WidgetTree {
             .into_iter()
             .filter_map(|child| self.render_id(child))
             .collect();
-        {
+        let children_changed = {
             let node = self.renders.get_mut(render.0).expect("mounted");
+            let changed = node.children != render_children;
             node.children = render_children.clone();
-            node.dirty.insert(DirtyFlags::LAYOUT | DirtyFlags::PAINT);
-        }
-        let (layer, picture, content_layer) = {
+            if changed {
+                node.dirty.insert(DirtyFlags::LAYOUT | DirtyFlags::PAINT);
+            }
+            changed
+        };
+        let (
+            layer,
+            picture,
+            content_layer,
+            opacity_layer,
+            blur_layer,
+            shadow_layer,
+            color_filter_layer,
+            blend_layer,
+        ) = {
             let node = self.renders.get(render.0).expect("mounted");
-            (node.layer, node.picture, node.content_layer)
+            (
+                node.layer,
+                node.picture,
+                node.content_layer,
+                node.opacity_layer,
+                node.blur_layer,
+                node.shadow_layer,
+                node.color_filter_layer,
+                node.blend_layer,
+            )
         };
         let child_layers = render_children
             .iter()
             .filter_map(|child| self.renders.get(child.0).map(|render| render.layer))
             .collect::<Vec<_>>();
-        if let Some(content) = content_layer {
+        if let Some(opacity) = opacity_layer {
+            self.compositor.set_children(opacity, child_layers);
+            self.compositor.set_children(layer, vec![opacity]);
+        } else if let Some(blur) = blur_layer {
+            self.compositor.set_children(blur, child_layers);
+            self.compositor.set_children(layer, vec![blur]);
+        } else if let Some(shadow) = shadow_layer {
+            self.compositor.set_children(shadow, child_layers);
+            self.compositor.set_children(layer, vec![shadow]);
+        } else if let Some(color_filter) = color_filter_layer {
+            self.compositor.set_children(color_filter, child_layers);
+            self.compositor.set_children(layer, vec![color_filter]);
+        } else if let Some(blend) = blend_layer {
+            self.compositor.set_children(blend, child_layers);
+            self.compositor.set_children(layer, vec![blend]);
+        } else if let Some(content) = content_layer {
             self.compositor.set_children(content, child_layers);
         } else {
             let mut layers = Vec::with_capacity(child_layers.len() + 1);
@@ -3517,7 +4764,9 @@ impl WidgetTree {
         for child in render_children {
             self.renders.get_mut(child.0).expect("mounted").parent = Some(render);
         }
-        self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+        if children_changed {
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+        }
     }
     fn mark_render_dirty(&mut self, id: RenderObjectId, flags: DirtyFlags, propagate_layout: bool) {
         let mut current = Some(id);
@@ -3771,6 +5020,27 @@ impl WidgetTree {
                 (size, Vec::new())
             }
             RenderKind::Translate { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::Opacity { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::Blur { .. }
+            | RenderKind::DropShadow { .. }
+            | RenderKind::ColorFiltered { .. }
+            | RenderKind::Blend { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
                     let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
@@ -4192,7 +5462,12 @@ fn widget_text(widget: &Widget) -> Option<String> {
         WidgetKind::Padding { child, .. }
         | WidgetKind::Align { child, .. }
         | WidgetKind::Scroll { child, .. }
-        | WidgetKind::Translate { child, .. } => widget_text(child),
+        | WidgetKind::Translate { child, .. }
+        | WidgetKind::Opacity { child, .. }
+        | WidgetKind::Blur { child, .. }
+        | WidgetKind::DropShadow { child, .. }
+        | WidgetKind::ColorFiltered { child, .. }
+        | WidgetKind::Blend { child, .. } => widget_text(child),
         WidgetKind::Flex { children, .. } => {
             let text: String = children
                 .iter()
@@ -4285,6 +5560,43 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
             controller: controller.clone(),
         },
+        WidgetKind::Opacity {
+            alpha, controller, ..
+        } => RenderKind::Opacity {
+            alpha: *alpha,
+            controller: controller.clone(),
+        },
+        WidgetKind::Blur {
+            sigma_x,
+            sigma_y,
+            controller,
+            ..
+        } => RenderKind::Blur {
+            sigma_x: *sigma_x,
+            sigma_y: *sigma_y,
+            controller: controller.clone(),
+        },
+        WidgetKind::DropShadow {
+            offset,
+            sigma_x,
+            sigma_y,
+            color,
+            controller,
+            ..
+        } => RenderKind::DropShadow {
+            offset: *offset,
+            sigma_x: *sigma_x,
+            sigma_y: *sigma_y,
+            color: *color,
+            controller: controller.clone(),
+        },
+        WidgetKind::ColorFiltered {
+            filter, controller, ..
+        } => RenderKind::ColorFiltered {
+            filter: *filter,
+            controller: controller.clone(),
+        },
+        WidgetKind::Blend { mode, .. } => RenderKind::Blend { mode: *mode },
     }
 }
 
@@ -4385,6 +5697,26 @@ fn text_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
         && old_style.style == new_style.style
         && old_style.line_height == new_style.line_height
         && old_style.letter_spacing == new_style.letter_spacing
+}
+
+fn opacity_composite_only_change(old: &RenderKind, new: &RenderKind) -> bool {
+    matches!(
+        (old, new),
+        (RenderKind::Opacity { .. }, RenderKind::Opacity { .. })
+    )
+}
+
+fn effect_composite_only_change(old: &RenderKind, new: &RenderKind) -> bool {
+    matches!(
+        (old, new),
+        (RenderKind::Blur { .. }, RenderKind::Blur { .. })
+            | (RenderKind::DropShadow { .. }, RenderKind::DropShadow { .. })
+            | (
+                RenderKind::ColorFiltered { .. },
+                RenderKind::ColorFiltered { .. }
+            )
+            | (RenderKind::Blend { .. }, RenderKind::Blend { .. })
+    )
 }
 
 fn text_field_display(value: &TextEditingValue, placeholder: &str) -> String {
@@ -4503,7 +5835,14 @@ mod tests {
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
-                | PaintCommand::PopClip => {}
+                | PaintCommand::PopClip
+                | PaintCommand::PushOpacity { .. }
+                | PaintCommand::PopOpacity
+                | PaintCommand::PushBlur { .. }
+                | PaintCommand::PushDropShadow { .. }
+                | PaintCommand::PushColorFilter { .. }
+                | PaintCommand::PushBlend { .. }
+                | PaintCommand::PopEffect => {}
             }
         }
         origins
@@ -4531,7 +5870,14 @@ mod tests {
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
-                | PaintCommand::PopClip => {}
+                | PaintCommand::PopClip
+                | PaintCommand::PushOpacity { .. }
+                | PaintCommand::PopOpacity
+                | PaintCommand::PushBlur { .. }
+                | PaintCommand::PushDropShadow { .. }
+                | PaintCommand::PushColorFilter { .. }
+                | PaintCommand::PushBlend { .. }
+                | PaintCommand::PopEffect => {}
             }
         }
         origins
@@ -4748,6 +6094,46 @@ mod tests {
                 .filter(|origin| origin.x < 80.)
                 .collect::<Vec<_>>(),
             vec![Offset::new(15., 0.), Offset::new(15., 20.)]
+        );
+    }
+    #[test]
+    fn transparent_opacity_keeps_hit_testing_and_semantics() {
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::opacity(0., Button::new("Still active").into()))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(140., 60.)));
+        tree.update_semantics();
+        assert!(tree.hit_test(Offset::new(10., 10.)).is_some());
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.role == SemanticRole::Button)
+        );
+    }
+    #[test]
+    fn effect_parameter_animation_is_compositor_only_and_keeps_semantics() {
+        let blur = BlurController::new(2.);
+        let mut tree = WidgetTree::new();
+        tree.mount(Blur::controlled(blur.clone(), Button::new("Still active")).into())
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(140., 60.)));
+        let _ = tree.paint();
+        let paints = tree.diagnostics().paints;
+        let _ = tree.update_compositor(Instant::now());
+        assert!(blur.set_sigma(14.));
+        let (changed, _) = tree.update_compositor(Instant::now());
+        assert!(changed);
+        let list = tree.paint();
+        assert!(list.commands().iter().any(|command| {
+            matches!(command, PaintCommand::PushBlur { blur, .. } if blur.sigma_x == 14.)
+        }));
+        assert_eq!(tree.diagnostics().paints, paints);
+        tree.update_semantics();
+        assert!(tree.hit_test(Offset::new(10., 10.)).is_some());
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.role == SemanticRole::Button)
         );
     }
     #[test]
@@ -5162,5 +6548,31 @@ mod tests {
         assert_eq!(controller.value().selection.extent, 9);
         tree.text_field_set_caret(root, Offset::new(5., 55.), false, Instant::now());
         assert!(controller.value().selection.extent >= 10);
+    }
+
+    #[test]
+    fn color_filter_and_blend_updates_stay_in_the_retained_compositor() {
+        let controller = ColorFilterController::new(ColorFilter::grayscale(0.));
+        let widget = ColorFiltered::controlled(
+            controller.clone(),
+            Blend::new(
+                BlendMode::Multiply,
+                Widget::box_(Size::new(80., 40.), Color::rgba(200, 80, 40, 255)),
+            ),
+        );
+        let mut tree = WidgetTree::new();
+        tree.mount(widget.into()).expect("mount effect tree");
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let _ = tree.paint();
+        let before = tree.diagnostics();
+        assert!(controller.set_filter(ColorFilter::sepia(1.)));
+        let (changed, _) = tree.update_compositor(Instant::now());
+        let after = tree.diagnostics();
+        assert!(changed);
+        assert_eq!(after.paints, before.paints);
+        assert!(after.composites > before.composites);
+        let debug = tree.compositor_debug_tree();
+        assert!(debug.contains("ColorFilter"));
+        assert!(debug.contains("Blend"));
     }
 }

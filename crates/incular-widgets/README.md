@@ -100,3 +100,57 @@ widgets place a second, inner transform below that placement: it holds only
 `-scroll_offset` or animation displacement. This keeps normal layout, retained
 picture reuse, clipping, and hit testing in the same coordinate model without
 turning compositor updates into repaint work.
+
+## Group opacity
+
+`Opacity::new(0.5, child)` adds a retained isolation boundary. The child is
+painted normally and the GPU compositor applies the group alpha once to the
+final offscreen result, so overlapping descendants do not receive alpha
+independently. Alpha is normalized to `0..=1`; non-finite values become zero.
+Opacity does not imply `IgnorePointer` or hidden semantics: a transparent
+button remains hit-testable and represented in the semantic tree.
+
+For high-frequency fades, keep an `OpacityController` outside the declarative
+builder and use `Opacity::controlled(controller, child)` (or
+`Widget::controlled_opacity`). Controller ticks update only the retained
+compositor property. Once the isolated child is warm, changing alpha does not
+rebuild, relayout, repaint, rerasterize text, upload images, or retessellate
+paths.
+
+## Gaussian blur and subtree shadows
+
+`Blur::new(sigma, child)` and `DropShadow::new(offset, sigma, color, child)`
+are retained compositor widgets. `Blur::asymmetric` and
+`DropShadow::asymmetric` accept separate X/Y sigmas. Sigma is in logical
+pixels, uses a finite three-sigma visual support, and is normalized at the
+public boundary. The child remains the hit-test and semantic target; visual
+filter expansion never enlarges its interaction bounds.
+
+For high-frequency updates, keep a `BlurController` or
+`DropShadowController` outside the declarative builder and use the corresponding
+`controlled` constructor. Sigma animation recomputes only the cached GPU
+filter result. Shadow offset and color changes are composite-only while the
+source and sigma remain unchanged, so the isolated source and Gaussian mask
+stay warm. `DropShadow` is defined from the child's isolated alpha and is drawn
+behind the original subtree; it is not a rectangle inferred from widget bounds.
+
+## Color filters, blend modes, and ordered effects
+
+`ColorFiltered::new(ColorFilter::grayscale(1.), child)` adds a retained
+straight-RGBA matrix stage. `Blend::new(BlendMode::Multiply, child)` adds a
+retained final-composite mode. `Effects::new(child)` is a deliberately small
+builder: calling `.color_filter(...).blur(...).opacity(...)` wraps the current
+child at each step, so the call order is the execution order. It does not
+flatten across a blur or shadow.
+
+For animated matrices, keep a `ColorFilterController` outside the rebuilt
+description and use `ColorFiltered::controlled`. Controller ticks update only
+the compositor/filter layer (`BUILD = 0`, `LAYOUT = 0`, `PAINT = 0`); the source
+picture and any unchanged upstream stage remain warm. Blend modes are discrete
+and intentionally have no animation controller.
+
+The widget tree gives each color filter and blend a stable layer ID. Updating a
+matrix or blend mode changes that retained property without changing the
+source generation. A downstream stage observes its input generation, so a
+change before a blur invalidates that blur while a change after it does not.
+Visual filter bounds do not change hit testing, focus, or semantics geometry.

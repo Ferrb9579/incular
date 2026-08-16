@@ -8,8 +8,10 @@ use fontdue::{Font, FontSettings};
 use incular_assets::{FontId, ImageHandle, ImageId};
 use incular_core::{Color, Offset, Rect, Size};
 use incular_painting::{
-    Brush, DisplayList, FillRule, GlyphRun, GradientId, ImageSampling, LineCap, LineJoin,
-    PaintCommand, Path, PathId, RRect, Stroke, sample_gradient_stops,
+    BlendMode, Brush, ColorFilter, DisplayList, DropShadowEffect, FillRule, GaussianBlur, GlyphRun,
+    GradientId, ImageSampling, LineCap, LineJoin, PaintCommand, Path, PathId, RRect, Stroke,
+    blur_bounds, drop_shadow_bounds, gaussian_kernel_weights, normalize_opacity, normalize_sigma,
+    sample_gradient_stops,
 };
 use incular_platform::{PhysicalSize, RawWindowHandles};
 use lyon_tessellation::{
@@ -17,6 +19,7 @@ use lyon_tessellation::{
     VertexBuffers, geometry_builder::simple_builder, math::point, path::Path as LyonPath,
 };
 use std::collections::{HashMap, hash_map::Entry};
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
@@ -31,11 +34,21 @@ const GLYPH_ATLAS_FILTER: wgpu::FilterMode = wgpu::FilterMode::Linear;
 const IMAGE_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
 const PATH_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
 const GRADIENT_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
+const OFFSCREEN_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
 /// Each normalized gradient is resampled into this compact one-dimensional
 /// lookup texture. This deterministic representation supports any stop count:
 /// every stop participates in the premultiplied-linear samples.
 const GRADIENT_LUT_SAMPLES: u32 = 256;
 const MAX_STENCIL_CLIP_DEPTH: u8 = u8::MAX;
+/// Direct Gaussian kernels are capped at this radius. Larger physical sigma
+/// values select the explicit multi-scale path before reaching the shader.
+const MAX_BLUR_RADIUS: usize = 48;
+const BLUR_WEIGHT_SLOTS: usize = MAX_BLUR_RADIUS + 16;
+const LARGE_BLUR_SIGMA_THRESHOLD: f32 = 16.;
+/// Kernel coefficients are stable across tiny animation/DPI floating-point
+/// differences. Quantizing only the CPU resource key does not change the
+/// effect's bounds or filtered-result key.
+const BLUR_KERNEL_QUANTUM: f32 = 1. / 64.;
 
 /// CPU tessellation output. It deliberately contains no GPU objects so the
 /// renderer may cache/upload it independently of Incular's Path type.
@@ -172,7 +185,14 @@ impl BatchPlan {
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
                 | PaintCommand::PopClip
-                | PaintCommand::GlyphRun { .. } => {
+                | PaintCommand::GlyphRun { .. }
+                | PaintCommand::PushOpacity { .. }
+                | PaintCommand::PopOpacity
+                | PaintCommand::PushBlur { .. }
+                | PaintCommand::PushDropShadow { .. }
+                | PaintCommand::PushColorFilter { .. }
+                | PaintCommand::PushBlend { .. }
+                | PaintCommand::PopEffect => {
                     if !current.is_empty() {
                         batches.push(std::mem::take(&mut current));
                     }
@@ -259,6 +279,7 @@ pub struct GpuCounters {
     pub path_draw_calls: u64,
     pub path_triangles: u64,
     pub path_pipeline_creations: u64,
+    pub composite_pipeline_creations: u64,
     /// Retained `Depth24PlusStencil8` attachments. Recreation only happens
     /// when the physical surface target changes.
     pub stencil_texture_creations: u64,
@@ -271,6 +292,61 @@ pub struct GpuCounters {
     pub stencil_mask_draws: u64,
     pub stencil_depth_max: u64,
     pub clip_culled_draws: u64,
+    pub offscreen_group_cache_hits: u64,
+    pub offscreen_group_cache_misses: u64,
+    pub offscreen_group_rerenders: u64,
+    pub offscreen_color_texture_creations: u64,
+    pub offscreen_stencil_texture_creations: u64,
+    pub offscreen_texture_reuses: u64,
+    pub offscreen_texture_evictions: u64,
+    pub offscreen_cached_bytes: usize,
+    pub offscreen_peak_cached_bytes: usize,
+    pub offscreen_render_passes: u64,
+    pub offscreen_composite_draws: u64,
+    pub opacity_zero_fast_paths: u64,
+    pub opacity_one_fast_paths: u64,
+    pub max_offscreen_nesting_depth: u64,
+    /// Retained effect/source transitions. Source counters are deliberately
+    /// separate from filtered-result counters so parameter animation can be
+    /// diagnosed without guessing which stage reran.
+    pub effect_source_cache_hits: u64,
+    pub effect_source_cache_misses: u64,
+    pub effect_source_rerenders: u64,
+    pub blur_cache_hits: u64,
+    pub blur_cache_misses: u64,
+    pub blur_horizontal_passes: u64,
+    pub blur_vertical_passes: u64,
+    pub blur_kernel_cache_hits: u64,
+    pub blur_kernel_cache_misses: u64,
+    pub blur_kernel_uploads: u64,
+    pub blur_downsample_passes: u64,
+    pub blur_upsample_passes: u64,
+    pub drop_shadow_composites: u64,
+    pub drop_shadow_blur_reuses: u64,
+    pub effect_texture_creations: u64,
+    pub effect_texture_pool_hits: u64,
+    pub effect_texture_pool_misses: u64,
+    pub effect_texture_evictions: u64,
+    pub effect_cached_bytes: usize,
+    pub effect_peak_bytes: usize,
+    pub effect_chain_compilations: u64,
+    pub effect_stage_cache_hits: u64,
+    pub effect_stage_cache_misses: u64,
+    pub effect_stage_rerenders: u64,
+    pub effect_stage_fusions: u64,
+    pub color_matrix_passes: u64,
+    pub color_matrix_fused_composites: u64,
+    pub blend_fixed_function_draws: u64,
+    pub blend_destination_read_draws: u64,
+    pub blend_intermediate_target_creations: u64,
+    pub blend_target_reuses: u64,
+    pub blend_intermediate_cached_bytes: usize,
+    pub blend_intermediate_peak_bytes: usize,
+    pub effect_chain_cached_bytes: usize,
+    /// Destination-dependent promotion scopes. SrcOver-only frames keep this
+    /// at zero; sparse scenes use a tight retained scene scope instead of the
+    /// complete presentation surface.
+    pub full_frame_intermediate_passes: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GlyphCacheKey {
@@ -715,6 +791,7 @@ pub enum RendererError {
     GlyphAtlasPageTooLarge { page: u16, limit: u32 },
     StencilDepthOverflow,
     UnbalancedClipStack,
+    OffscreenTargetTooLarge { width: u32, height: u32, limit: u32 },
     OutOfMemory,
 }
 impl std::fmt::Display for RendererError {
@@ -741,6 +818,14 @@ impl std::fmt::Display for RendererError {
             Self::UnbalancedClipStack => {
                 write!(f, "display list contains an unbalanced clip stack")
             }
+            Self::OffscreenTargetTooLarge {
+                width,
+                height,
+                limit,
+            } => write!(
+                f,
+                "opacity group target {width}x{height} exceeds GPU texture limit {limit}"
+            ),
             Self::OutOfMemory => write!(f, "GPU surface ran out of memory"),
         }
     }
@@ -788,6 +873,51 @@ struct GpuPathInstance {
     color: [f32; 4],
     gradient: [f32; 4],
     options: [f32; 4],
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GpuCompositeInstance {
+    rect: [f32; 4],
+    uv: [f32; 4],
+    alpha: [f32; 4],
+    /// Straight shadow color; the shader converts it to premultiplied output
+    /// using the sampled blurred alpha. Zero means ordinary offscreen draw.
+    color: [f32; 4],
+    options: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GpuBlurParams {
+    /// Source coordinate of the first output pixel, in input physical pixels.
+    source_origin: [f32; 2],
+    /// Input source dimensions in physical pixels.
+    source_size: [f32; 2],
+    /// Output dimensions in physical pixels.
+    output_size: [f32; 2],
+    /// For direct blur this is a unit axis; for resampling it is the input
+    /// pixels traversed by one output pixel.
+    direction: [f32; 2],
+    radius: u32,
+    mode: u32,
+    _padding: [u32; 2],
+    weights: [f32; BLUR_WEIGHT_SLOTS],
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GpuColorMatrixParams {
+    matrix: [f32; 20],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct BlurKernelKey {
+    sigma_bits: u32,
+    downsample_factor: u32,
+}
+#[derive(Clone, Debug)]
+struct BlurKernel {
+    radius: u32,
+    weights: [f32; BLUR_WEIGHT_SLOTS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -865,6 +995,219 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f3
 fn lookup(t: f32) -> vec4<f32> { let p=textureSampleLevel(gradient_lut,gradient_sampler,vec2(clamp(t,0.,1.),.5),0.); return select(vec4(0.),vec4(p.rgb/max(p.a,.00001),p.a),p.a>0.); }
 @fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { var t=0.; if(i.options.x==1.) { let d=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,d)/max(dot(d,d),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } return select(i.color,lookup(t),i.options.x>0.); }
 "#;
+const COMPOSITE_SHADER: &str = r#"
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32, @location(2) color: vec4<f32>, @location(3) mode: f32 };
+@group(0) @binding(0) var group_texture: texture_2d<f32>;
+@group(0) @binding(1) var target_sampler: sampler;
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
+  out.uv = uv.xy + quad * (uv.zw - uv.xy);
+  out.alpha = alpha.x;
+  out.color = color;
+  out.mode = options.x;
+  return out;
+}
+// Offscreen color is premultiplied. Multiplying both stored RGB and alpha by
+// the group alpha exactly once preserves overlap semantics at the parent.
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let sample = textureSample(group_texture, target_sampler, input.uv);
+  if (input.mode > 0.5) {
+    let a = sample.a * input.color.a * input.alpha;
+    return vec4<f32>(input.color.rgb * a, a);
+  }
+  return vec4<f32>(sample.rgb * input.alpha, sample.a * input.alpha);
+}
+"#;
+
+const FIXED_BLEND_SHADER: &str = r#"
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 };
+@group(0) @binding(0) var group_texture: texture_2d<f32>;
+@group(0) @binding(1) var target_sampler: sampler;
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
+  out.uv = uv.xy + quad * (uv.zw - uv.xy);
+  out.alpha = alpha.x;
+  return out;
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let sample = textureSample(group_texture, target_sampler, input.uv);
+  return sample * input.alpha;
+}
+"#;
+
+const BLUR_SHADER: &str = r#"
+struct Params {
+  source_origin: vec2<f32>,
+  source_size: vec2<f32>,
+  output_size: vec2<f32>,
+  direction: vec2<f32>,
+  radius: u32,
+  mode: u32,
+  _padding: vec2<u32>,
+  weights: array<vec4<f32>, 16>,
+};
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
+  out.uv = quad;
+  return out;
+}
+fn sample_transparent(px: vec2<f32>) -> vec4<f32> {
+  if (px.x < 0. || px.y < 0. || px.x >= params.source_size.x || px.y >= params.source_size.y) {
+    return vec4<f32>(0.);
+  }
+  return textureSampleLevel(source, source_sampler, (px + vec2<f32>(0.5)) / params.source_size, 0.);
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let out_px = input.uv * params.output_size;
+  var result = vec4<f32>(0.);
+  for (var i: i32 = -48; i <= 48; i = i + 1) {
+    if (abs(i) <= i32(params.radius)) {
+      let px = out_px + params.direction * f32(i) - params.source_origin;
+      let weight_index = abs(i);
+      result += sample_transparent(px) * params.weights[weight_index / 4][weight_index % 4];
+    }
+  }
+  return result;
+}
+"#;
+
+const RESAMPLE_SHADER: &str = r#"
+struct Params {
+  source_origin: vec2<f32>,
+  source_size: vec2<f32>,
+  output_size: vec2<f32>,
+  direction: vec2<f32>,
+  radius: u32,
+  mode: u32,
+  _padding: vec2<u32>,
+  weights: array<vec4<f32>, 16>,
+};
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
+  out.uv = quad;
+  return out;
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let out_px = input.uv * params.output_size;
+  let px = out_px * params.direction - params.source_origin;
+  if (px.x < 0. || px.y < 0. || px.x >= params.source_size.x || px.y >= params.source_size.y) {
+    return vec4<f32>(0.);
+  }
+  return textureSampleLevel(source, source_sampler, (px + vec2<f32>(0.5)) / params.source_size, 0.);
+}
+"#;
+
+const COLOR_MATRIX_SHADER: &str = r#"
+struct Params { matrix: array<vec4<f32>, 5> };
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+@vertex fn vs_main(@location(0) quad: vec2<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(quad * 2. - 1., 0., 1.);
+  out.uv = quad;
+  return out;
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let sample = textureSampleLevel(source, source_sampler, input.uv, 0.);
+  let a = clamp(sample.a, 0., 1.);
+  let straight_rgb = clamp(sample.rgb / max(a, .000001), vec3<f32>(0.), vec3<f32>(1.));
+  let straight = select(vec4<f32>(0., 0., 0., a), vec4<f32>(straight_rgb, a), a > .000001);
+  let c0 = params.matrix[0];
+  let c1 = params.matrix[1];
+  let c2 = params.matrix[2];
+  let c3 = params.matrix[3];
+  let c4 = params.matrix[4];
+  let filtered = vec4<f32>(
+    dot(c0, straight) + c1.x,
+    c1.y * straight.x + c1.z * straight.y + c1.w * straight.z + c2.x * straight.w + c2.y,
+    c2.z * straight.x + c2.w * straight.y + c3.x * straight.z + c3.y * straight.w + c3.z,
+    c3.w * straight.x + c4.x * straight.y + c4.y * straight.z + c4.z * straight.w + c4.w
+  );
+  let out_a = clamp(filtered.a, 0., 1.);
+  let out_rgb = clamp(filtered.rgb, vec3<f32>(0.), vec3<f32>(1.)) * out_a;
+  return vec4<f32>(out_rgb, out_a);
+}
+"#;
+
+const BLEND_SHADER: &str = r#"
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32, @location(2) color: vec4<f32>, @location(3) options: vec4<f32> };
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var destination: texture_2d<f32>;
+@group(0) @binding(2) var blend_sampler: sampler;
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) alpha: vec4<f32>, @location(4) color: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
+  out.uv = uv.xy + quad * (uv.zw - uv.xy);
+  out.alpha = alpha.x;
+  out.color = color;
+  out.options = options;
+  return out;
+}
+fn straight_rgb(value: vec4<f32>) -> vec3<f32> {
+  let alpha = clamp(value.a, 0., 1.);
+  let rgb = clamp(value.rgb / max(alpha, .000001), vec3<f32>(0.), vec3<f32>(1.));
+  return select(vec3<f32>(0.), rgb, alpha > .000001);
+}
+fn artistic(mode: u32, s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+  var out = s;
+  if (mode == 11u) { out = s * d; }
+  else if (mode == 12u) { out = s + d - s * d; }
+  else if (mode == 13u) { out = select(2. * s * d, 1. - 2. * (1. - s) * (1. - d), d > vec3<f32>(.5)); }
+  else if (mode == 14u) { out = min(s, d); }
+  else if (mode == 15u) { out = max(s, d); }
+  else if (mode == 16u) { out = select(min(d / max(1. - s, vec3<f32>(.000001)), vec3<f32>(1.)), vec3<f32>(1.), s >= vec3<f32>(1.)); }
+  else if (mode == 17u) { out = select(max(1. - (1. - d) / max(s, vec3<f32>(.000001)), vec3<f32>(0.)), vec3<f32>(0.), s <= vec3<f32>(0.)); }
+  else if (mode == 18u) { out = select(2. * s * d, 1. - 2. * (1. - s) * (1. - d), s > vec3<f32>(.5)); }
+  else if (mode == 19u) {
+    let low = d - (1. - 2. * s) * d * (1. - d);
+    let g = select(sqrt(d), ((16. * d - 12.) * d + 4.) * d, d <= vec3<f32>(.25));
+    out = select(low, d + (2. * s - 1.) * (g - d), s > vec3<f32>(.5));
+  }
+  else if (mode == 20u) { out = abs(d - s); }
+  else if (mode == 21u) { out = s + d - 2. * s * d; }
+  return clamp(out, vec3<f32>(0.), vec3<f32>(1.));
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let src_sample = textureSampleLevel(source, blend_sampler, input.uv, 0.) * input.alpha;
+  let dst_uv = input.position.xy / max(input.options.yz, vec2<f32>(1.));
+  let dst_sample = textureSampleLevel(destination, blend_sampler, dst_uv, 0.);
+  let mode = u32(input.options.x + .5);
+  let as_ = clamp(src_sample.a, 0., 1.);
+  let ad = clamp(dst_sample.a, 0., 1.);
+  let ao = clamp(as_ + ad - as_ * ad, 0., 1.);
+  var out = vec4<f32>(0.);
+  if (mode == 0u) { out = vec4<f32>(src_sample.rgb + dst_sample.rgb * (1. - as_), ao); }
+  else if (mode == 1u) { out = src_sample; }
+  else if (mode == 2u) { out = vec4<f32>(dst_sample.rgb + src_sample.rgb * (1. - ad), ao); }
+  else if (mode == 3u) { out = vec4<f32>(src_sample.rgb * ad, as_ * ad); }
+  else if (mode == 4u) { out = vec4<f32>(dst_sample.rgb * as_, ad * as_); }
+  else if (mode == 5u) { out = vec4<f32>(src_sample.rgb * (1. - ad), as_ * (1. - ad)); }
+  else if (mode == 6u) { out = vec4<f32>(dst_sample.rgb * (1. - as_), ad * (1. - as_)); }
+  else if (mode == 7u) { out = vec4<f32>(src_sample.rgb * ad + dst_sample.rgb * (1. - as_), ad); }
+  else if (mode == 8u) { out = vec4<f32>(dst_sample.rgb * as_ + src_sample.rgb * (1. - ad), as_); }
+  else if (mode == 9u) { out = vec4<f32>(src_sample.rgb * (1. - ad) + dst_sample.rgb * (1. - as_), clamp(as_ + ad - 2. * as_ * ad, 0., 1.)); }
+  else if (mode == 10u) { out = vec4<f32>(min(src_sample.rgb + dst_sample.rgb, vec3<f32>(1.)), min(as_ + ad, 1.)); }
+  else {
+    let blended = artistic(mode, straight_rgb(src_sample), straight_rgb(dst_sample));
+    out = vec4<f32>(clamp(src_sample.rgb * (1. - ad) + dst_sample.rgb * (1. - as_) + as_ * ad * blended, vec3<f32>(0.), vec3<f32>(1.)), ao);
+  }
+  return clamp(out, vec4<f32>(0.), vec4<f32>(1.));
+}
+"#;
 
 struct GpuAtlasPage {
     texture: wgpu::Texture,
@@ -877,6 +1220,102 @@ struct GpuImage {
     width: u32,
     height: u32,
     last_used_frame: u64,
+}
+#[derive(Clone)]
+struct OffscreenTarget {
+    _color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    _stencil: wgpu::Texture,
+    stencil_view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    has_stencil: bool,
+}
+struct DestinationTargets {
+    first: OffscreenTarget,
+    second: OffscreenTarget,
+    width: u32,
+    height: u32,
+}
+impl OffscreenTarget {
+    fn bytes(&self) -> usize {
+        let color_bytes = self.width as usize * self.height as usize * 4;
+        color_bytes + if self.has_stencil { color_bytes } else { 0 }
+    }
+}
+#[derive(Default)]
+struct OffscreenTargetPool {
+    free: Vec<OffscreenTarget>,
+    bytes: usize,
+}
+impl OffscreenTargetPool {
+    const MAX_BYTES: usize = 16 * 1024 * 1024;
+
+    fn take(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        has_stencil: bool,
+    ) -> Option<OffscreenTarget> {
+        let index = self.free.iter().position(|target| {
+            target.width == width
+                && target.height == height
+                && target.format == format
+                && target.has_stencil == has_stencil
+        })?;
+        let target = self.free.swap_remove(index);
+        self.bytes = self.bytes.saturating_sub(target.bytes());
+        Some(target)
+    }
+
+    fn recycle(&mut self, target: OffscreenTarget) {
+        let bytes = target.bytes();
+        if self.bytes.saturating_add(bytes) > Self::MAX_BYTES {
+            return;
+        }
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.free.push(target);
+    }
+}
+struct OffscreenCacheEntry {
+    target: OffscreenTarget,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    scale_factor_bits: u32,
+    generation: u64,
+    device_generation: u64,
+    last_used_frame: u64,
+    bytes: usize,
+}
+struct EffectCacheEntry {
+    target: OffscreenTarget,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    scale_factor_bits: u32,
+    source_generation: u64,
+    sigma_x_bits: u32,
+    sigma_y_bits: u32,
+    matrix_bits: [u32; 20],
+    device_generation: u64,
+    last_used_frame: u64,
+    bytes: usize,
+    downsample_factor: u32,
+}
+#[derive(Clone, Copy, Debug)]
+struct CachedSource {
+    origin: Offset,
+    width: u32,
+    height: u32,
+}
+#[derive(Clone, Copy, Debug)]
+struct CachedEffect {
+    origin: Offset,
+    width: u32,
+    height: u32,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ClipRect {
@@ -902,7 +1341,7 @@ enum ClipMask {
         instance: GpuPathInstance,
     },
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum DrawBatch {
     Rectangles {
         clip: ClipState,
@@ -943,6 +1382,27 @@ enum DrawBatch {
         instance: GpuPathInstance,
         increment: bool,
     },
+    Offscreen {
+        clip: ClipState,
+        layer: incular_painting::LayerId,
+        instance: GpuCompositeInstance,
+    },
+    Filtered {
+        clip: ClipState,
+        layer: incular_painting::LayerId,
+        instance: GpuCompositeInstance,
+    },
+    Shadow {
+        clip: ClipState,
+        layer: incular_painting::LayerId,
+        instance: GpuCompositeInstance,
+    },
+    Blend {
+        clip: ClipState,
+        layer: incular_painting::LayerId,
+        mode: BlendMode,
+        instance: GpuCompositeInstance,
+    },
 }
 #[derive(Clone, Copy)]
 struct GlyphSurface {
@@ -971,6 +1431,12 @@ pub struct WgpuRenderer {
     image_pipeline: wgpu::RenderPipeline,
     rounded_rect_pipeline: wgpu::RenderPipeline,
     path_pipeline: wgpu::RenderPipeline,
+    composite_pipeline: wgpu::RenderPipeline,
+    fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
+    blur_pipeline: wgpu::RenderPipeline,
+    resample_pipeline: wgpu::RenderPipeline,
+    color_matrix_pipeline: wgpu::RenderPipeline,
+    blend_pipeline: wgpu::RenderPipeline,
     stencil_rrect_increment_pipeline: wgpu::RenderPipeline,
     stencil_rrect_decrement_pipeline: wgpu::RenderPipeline,
     stencil_path_increment_pipeline: wgpu::RenderPipeline,
@@ -988,6 +1454,8 @@ pub struct WgpuRenderer {
     rounded_rect_instance_capacity: usize,
     path_instances: wgpu::Buffer,
     path_instance_capacity: usize,
+    composite_instances: wgpu::Buffer,
+    composite_instance_capacity: usize,
     cpu_path_cache: HashMap<PathMeshKey, PathMesh>,
     gpu_path_cache: HashMap<PathMeshKey, GpuPathMesh>,
     gradient_bind_group_layout: wgpu::BindGroupLayout,
@@ -999,6 +1467,27 @@ pub struct WgpuRenderer {
     image_bind_group_layout: wgpu::BindGroupLayout,
     image_samplers: HashMap<ImageSampling, wgpu::Sampler>,
     image_cache: HashMap<ImageId, GpuImage>,
+    composite_bind_group_layout: wgpu::BindGroupLayout,
+    composite_sampler: wgpu::Sampler,
+    blur_bind_group_layout: wgpu::BindGroupLayout,
+    blur_sampler: wgpu::Sampler,
+    blur_params: wgpu::Buffer,
+    blur_kernel_cache: HashMap<BlurKernelKey, BlurKernel>,
+    color_matrix_bind_group_layout: wgpu::BindGroupLayout,
+    color_matrix_sampler: wgpu::Sampler,
+    color_matrix_params: wgpu::Buffer,
+    blend_bind_group_layout: wgpu::BindGroupLayout,
+    blend_sampler: wgpu::Sampler,
+    destination_targets: Option<DestinationTargets>,
+    offscreen_cache: HashMap<incular_painting::LayerId, OffscreenCacheEntry>,
+    effect_cache: HashMap<incular_painting::LayerId, EffectCacheEntry>,
+    offscreen_target_pool: OffscreenTargetPool,
+    offscreen_cache_budget: usize,
+    device_generation: u64,
+    target_width: u32,
+    target_height: u32,
+    target_origin: Offset,
+    offscreen_nesting_depth: u64,
     atlas_pages: Vec<GpuAtlasPage>,
     counters: GpuCounters,
     glyph_atlas: GlyphAtlas,
@@ -1105,6 +1594,160 @@ impl WgpuRenderer {
                     },
                 ],
             });
+        let composite_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("incular opacity composite layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("incular opacity composite sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("incular gaussian effect layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("incular gaussian linear sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let color_matrix_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("incular color matrix layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let color_matrix_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("incular color matrix sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let blend_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("incular destination blend layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let blend_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("incular destination blend sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
         let gradient_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("incular gradient lookup layout"),
@@ -1169,6 +1812,49 @@ impl WgpuRenderer {
             create_rounded_rect_pipeline(&device, config.format, &gradient_bind_group_layout);
         let path_pipeline =
             create_path_pipeline(&device, config.format, &gradient_bind_group_layout);
+        let composite_pipeline =
+            create_composite_pipeline(&device, config.format, &composite_bind_group_layout);
+        let fixed_blend_pipelines = [
+            BlendMode::SrcOver,
+            BlendMode::Src,
+            BlendMode::DstOver,
+            BlendMode::SrcIn,
+            BlendMode::DstIn,
+            BlendMode::SrcOut,
+            BlendMode::DstOut,
+            BlendMode::SrcAtop,
+            BlendMode::DstAtop,
+            BlendMode::Xor,
+            BlendMode::Plus,
+        ]
+        .into_iter()
+        .map(|mode| {
+            create_fixed_blend_pipeline(&device, config.format, &composite_bind_group_layout, mode)
+        })
+        .collect();
+        let blur_pipeline = create_effect_pipeline(
+            &device,
+            config.format,
+            BLUR_SHADER,
+            "incular separable gaussian blur pipeline",
+            &blur_bind_group_layout,
+        );
+        let resample_pipeline = create_effect_pipeline(
+            &device,
+            config.format,
+            RESAMPLE_SHADER,
+            "incular effect resample pipeline",
+            &blur_bind_group_layout,
+        );
+        let color_matrix_pipeline = create_effect_pipeline(
+            &device,
+            config.format,
+            COLOR_MATRIX_SHADER,
+            "incular color matrix pipeline",
+            &color_matrix_bind_group_layout,
+        );
+        let blend_pipeline =
+            create_blend_pipeline(&device, config.format, &blend_bind_group_layout);
         let stencil_rrect_increment_pipeline = create_rounded_rect_mask_pipeline(
             &device,
             config.format,
@@ -1200,6 +1886,21 @@ impl WgpuRenderer {
         let image_instances = create_image_buffer(&device, 1);
         let rounded_rect_instances = create_rrect_buffer(&device, 1);
         let path_instances = create_path_instance_buffer(&device, 1);
+        let composite_instances = create_composite_buffer(&device, 1);
+        let blur_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("incular gaussian parameters"),
+            size: std::mem::size_of::<GpuBlurParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let color_matrix_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("incular color matrix parameters"),
+            size: std::mem::size_of::<GpuColorMatrixParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let target_width = config.width;
+        let target_height = config.height;
         Ok(Self {
             _instance: instance,
             handles,
@@ -1212,6 +1913,12 @@ impl WgpuRenderer {
             image_pipeline,
             rounded_rect_pipeline,
             path_pipeline,
+            composite_pipeline,
+            fixed_blend_pipelines,
+            blur_pipeline,
+            resample_pipeline,
+            color_matrix_pipeline,
+            blend_pipeline,
             stencil_rrect_increment_pipeline,
             stencil_rrect_decrement_pipeline,
             stencil_path_increment_pipeline,
@@ -1229,6 +1936,8 @@ impl WgpuRenderer {
             rounded_rect_instance_capacity: 1,
             path_instances,
             path_instance_capacity: 1,
+            composite_instances,
+            composite_instance_capacity: 1,
             cpu_path_cache: HashMap::new(),
             gpu_path_cache: HashMap::new(),
             gradient_bind_group_layout,
@@ -1240,12 +1949,36 @@ impl WgpuRenderer {
             image_bind_group_layout,
             image_samplers,
             image_cache: HashMap::new(),
+            composite_bind_group_layout,
+            composite_sampler,
+            blur_bind_group_layout,
+            blur_sampler,
+            blur_params,
+            blur_kernel_cache: HashMap::new(),
+            color_matrix_bind_group_layout,
+            color_matrix_sampler,
+            color_matrix_params,
+            blend_bind_group_layout,
+            blend_sampler,
+            destination_targets: None,
+            offscreen_cache: HashMap::new(),
+            effect_cache: HashMap::new(),
+            offscreen_target_pool: OffscreenTargetPool::default(),
+            offscreen_cache_budget: 64 * 1024 * 1024,
+            device_generation: 1,
+            target_width,
+            target_height,
+            target_origin: Offset::ZERO,
+            offscreen_nesting_depth: 0,
             atlas_pages: Vec::new(),
             counters: GpuCounters {
                 rectangle_pipeline_creations: 1,
                 text_pipeline_creations: 1,
                 image_pipeline_creations: 1,
                 path_pipeline_creations: 1,
+                composite_pipeline_creations: 1,
+                // Blur/resample share one stable pipeline family; these are
+                // retained as explicit diagnostics for effect setup.
                 stencil_texture_creations: 1,
                 stencil_pipeline_creations: 4,
                 ..GpuCounters::default()
@@ -1277,6 +2010,123 @@ impl WgpuRenderer {
         counters.oversize_cache_misses = atlas.oversize_cache_misses;
         counters
     }
+    /// Returns effect cache state for the latest lowered command stream.
+    /// This is intentionally textual and exposes no GPU handles; it is useful
+    /// alongside `LayerTree::debug_tree()` when diagnosing retained effects.
+    #[must_use]
+    pub fn effect_debug_tree(&self, list: &DisplayList, scale_factor: f64) -> String {
+        let scale = normalized_scale(scale_factor);
+        let mut out = String::new();
+        for command in list.commands() {
+            match command {
+                PaintCommand::PushBlur {
+                    layer,
+                    blur,
+                    bounds,
+                    ..
+                } => {
+                    let source_warm = self.offscreen_cache.contains_key(layer);
+                    let result = self.effect_cache.get(layer);
+                    let physical = result
+                        .map(|entry| (entry.width, entry.height))
+                        .unwrap_or_else(|| {
+                            physical_debug_size(
+                                blur_bounds(*bounds, blur.sigma_x, blur.sigma_y),
+                                scale,
+                            )
+                        });
+                    let _ = writeln!(
+                        out,
+                        "Blur#{layer:?} sigma=({:.3},{:.3}) source_cache={} blur_cache={} physical_bounds={}x{}",
+                        blur.sigma_x,
+                        blur.sigma_y,
+                        if source_warm { "warm" } else { "cold" },
+                        if blur.sigma_x <= f32::EPSILON && blur.sigma_y <= f32::EPSILON {
+                            "identity"
+                        } else if result.is_some() {
+                            "warm"
+                        } else {
+                            "cold"
+                        },
+                        physical.0,
+                        physical.1,
+                    );
+                }
+                PaintCommand::PushDropShadow {
+                    layer,
+                    shadow,
+                    bounds,
+                    ..
+                } => {
+                    let source_warm = self.offscreen_cache.contains_key(layer);
+                    let result = self.effect_cache.get(layer);
+                    let physical = result
+                        .map(|entry| (entry.width, entry.height))
+                        .unwrap_or_else(|| {
+                            physical_debug_size(
+                                blur_bounds(*bounds, shadow.sigma_x, shadow.sigma_y),
+                                scale,
+                            )
+                        });
+                    let _ = writeln!(
+                        out,
+                        "DropShadow#{layer:?} sigma=({:.3},{:.3}) offset=({:.3},{:.3}) source_cache={} mask_cache={} physical_bounds={}x{}",
+                        shadow.sigma_x,
+                        shadow.sigma_y,
+                        shadow.offset.x,
+                        shadow.offset.y,
+                        if source_warm { "warm" } else { "cold" },
+                        if shadow.sigma_x <= f32::EPSILON && shadow.sigma_y <= f32::EPSILON {
+                            "identity"
+                        } else if result.is_some() {
+                            "warm"
+                        } else {
+                            "cold"
+                        },
+                        physical.0,
+                        physical.1,
+                    );
+                }
+                PaintCommand::PushColorFilter { layer, filter, .. } => {
+                    let source_warm = self.offscreen_cache.contains_key(layer);
+                    let result = self.effect_cache.get(layer);
+                    let matrix = filter.to_matrix();
+                    let cache = if filter.is_identity() {
+                        "identity"
+                    } else if result.is_some() {
+                        "warm"
+                    } else {
+                        "cold"
+                    };
+                    let _ = writeln!(
+                        out,
+                        "ColorMatrix#{layer:?} source_cache={} stage_cache={} m00={:.3} m11={:.3} m22={:.3} m33={:.3}",
+                        if source_warm { "warm" } else { "cold" },
+                        cache,
+                        matrix[0],
+                        matrix[6],
+                        matrix[12],
+                        matrix[18],
+                    );
+                }
+                PaintCommand::PushBlend { layer, mode, .. } => {
+                    let source_warm = self.offscreen_cache.contains_key(layer);
+                    let _ = writeln!(
+                        out,
+                        "Blend#{layer:?} mode={mode:?} source_cache={} path={}",
+                        if source_warm { "warm" } else { "cold" },
+                        if mode.requires_destination_read() {
+                            "destination-read"
+                        } else {
+                            "fixed-function-compatible"
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        out
+    }
     #[must_use]
     pub fn physical_size(&self) -> PhysicalSize {
         PhysicalSize::new(self.config.width, self.config.height)
@@ -1289,9 +2139,366 @@ impl WgpuRenderer {
             (self.stencil_texture, self.stencil_view) =
                 create_stencil_attachment(&self.device, size.width, size.height);
             self.counters.stencil_texture_recreations += 1;
+            self.destination_targets = None;
+            self.counters.blend_intermediate_cached_bytes = 0;
         }
     }
+
+    fn ensure_destination_targets(&mut self, width: u32, height: u32) {
+        if self
+            .destination_targets
+            .as_ref()
+            .is_some_and(|targets| targets.width == width && targets.height == height)
+        {
+            self.counters.blend_target_reuses += 1;
+            return;
+        }
+        self.destination_targets = Some(DestinationTargets {
+            first: self.create_offscreen_target(
+                width,
+                height,
+                "incular destination composition target A",
+            ),
+            second: self.create_offscreen_target(
+                width,
+                height,
+                "incular destination composition target B",
+            ),
+            width,
+            height,
+        });
+        let bytes = self
+            .destination_targets
+            .as_ref()
+            .map_or(0, |targets| targets.first.bytes() + targets.second.bytes());
+        self.counters.blend_intermediate_cached_bytes = bytes;
+        self.counters.blend_intermediate_peak_bytes =
+            self.counters.blend_intermediate_peak_bytes.max(bytes);
+        self.counters.blend_intermediate_target_creations += 2;
+    }
+
+    fn copy_color_texture(
+        &self,
+        source: &OffscreenTarget,
+        destination: &OffscreenTarget,
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &source._color,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &destination._color,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+    }
+
+    fn prepare_batch_capacity(&mut self, batches: &[DrawBatch]) {
+        self.ensure_rectangle_capacity(count_rectangles(batches));
+        self.ensure_glyph_capacity(count_glyphs(batches));
+        self.ensure_image_capacity(count_images(batches));
+        self.ensure_composite_capacity(count_composites(batches));
+        let rounded = count_rounded(batches);
+        if rounded > self.rounded_rect_instance_capacity {
+            self.rounded_rect_instance_capacity = rounded.next_power_of_two();
+            self.rounded_rect_instances =
+                create_rrect_buffer(&self.device, self.rounded_rect_instance_capacity);
+        }
+        let paths = count_paths(batches);
+        if paths > self.path_instance_capacity {
+            self.path_instance_capacity = paths.next_power_of_two();
+            self.path_instances =
+                create_path_instance_buffer(&self.device, self.path_instance_capacity);
+        }
+    }
+
+    /// Rebuilds the stencil state that is active at a destination-promotion
+    /// boundary.  Each ping-pong pass starts with a cleared stencil attachment,
+    /// so masks pushed before the boundary have to be replayed before the next
+    /// painter segment.  The replay list contains only increment operations;
+    /// balanced decrements in the segment itself still update the new pass's
+    /// state normally.
+    fn destination_segment(
+        batches: &[DrawBatch],
+        start: usize,
+        end: usize,
+        active_start: &[DrawBatch],
+    ) -> (Vec<DrawBatch>, Vec<DrawBatch>) {
+        let mut active = active_start.to_vec();
+        let mut segment = active_start.to_vec();
+        for batch in &batches[start..end] {
+            segment.push(batch.clone());
+            match batch {
+                DrawBatch::StencilRRect {
+                    increment: true, ..
+                }
+                | DrawBatch::StencilPath {
+                    increment: true, ..
+                } => active.push(batch.clone()),
+                DrawBatch::StencilRRect {
+                    increment: false, ..
+                }
+                | DrawBatch::StencilPath {
+                    increment: false, ..
+                } => {
+                    let _ = active.pop();
+                }
+                _ => {}
+            }
+        }
+        (segment, active)
+    }
+
+    /// Renders an ordered stream that contains destination-reading blend
+    /// batches using two sampleable composition targets.  Each segment is
+    /// painted into the current target, copied to the alternate target before
+    /// a blend draw, and the blend shader samples the untouched current target.
+    /// This keeps the read and write textures distinct while preserving
+    /// painter order and clip/stencil state.
+    #[allow(clippy::too_many_arguments)]
+    fn render_destination_batches(
+        &mut self,
+        batches: &[DrawBatch],
+        scale: f32,
+        width: u32,
+        height: u32,
+        targets: &mut DestinationTargets,
+        clear: wgpu::Color,
+        label: &'static str,
+    ) -> (bool, u32, u32, u32) {
+        let mut current_first = true;
+        let mut first_pass = true;
+        let mut segment_start = 0_usize;
+        let mut draw_calls = 0_u32;
+        let mut text_draw_calls = 0_u32;
+        let mut passes = 0_u32;
+        let mut active_stencils = Vec::new();
+
+        for (index, batch) in batches.iter().enumerate() {
+            if !matches!(
+                batch,
+                DrawBatch::Blend {
+                    mode,
+                    ..
+                } if mode.requires_destination_read()
+            ) {
+                continue;
+            }
+            let (segment, next_active_stencils) =
+                Self::destination_segment(batches, segment_start, index, &active_stencils);
+            let (current, _) = if current_first {
+                (&targets.first, &targets.second)
+            } else {
+                (&targets.second, &targets.first)
+            };
+            self.prepare_batch_capacity(&segment);
+            self.upload_instance_data(&segment, scale, width, height);
+            self.prepare_image_bind_groups(&segment);
+            let current_view = current.color_view.clone();
+            let current_stencil = current.stencil_view.clone();
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            let (draws, text) = self.encode_batches(
+                &mut encoder,
+                &current_view,
+                &current_stencil,
+                &segment,
+                width,
+                height,
+                scale,
+                clear,
+                None,
+                !first_pass,
+            );
+            self.queue.submit(Some(encoder.finish()));
+            draw_calls += draws;
+            text_draw_calls += text;
+            passes += 1;
+            first_pass = false;
+            active_stencils = next_active_stencils;
+
+            let (current, alternate) = if current_first {
+                (&targets.first, &targets.second)
+            } else {
+                (&targets.second, &targets.first)
+            };
+            self.copy_color_texture(
+                current,
+                alternate,
+                width,
+                height,
+                "incular destination composition copy",
+            );
+            let mut blend_segment = active_stencils.clone();
+            blend_segment.push(batch.clone());
+            self.prepare_batch_capacity(&blend_segment);
+            self.upload_instance_data(&blend_segment, scale, width, height);
+            self.prepare_image_bind_groups(&blend_segment);
+            let current_view = current.color_view.clone();
+            let alternate_view = alternate.color_view.clone();
+            let alternate_stencil = alternate.stencil_view.clone();
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("incular destination blend pass"),
+                });
+            let (draws, text) = self.encode_batches(
+                &mut encoder,
+                &alternate_view,
+                &alternate_stencil,
+                &blend_segment,
+                width,
+                height,
+                scale,
+                clear,
+                Some(&current_view),
+                true,
+            );
+            self.queue.submit(Some(encoder.finish()));
+            draw_calls += draws;
+            text_draw_calls += text;
+            passes += 1;
+            current_first = !current_first;
+            segment_start = index + 1;
+        }
+
+        let (trailing, _) =
+            Self::destination_segment(batches, segment_start, batches.len(), &active_stencils);
+        let (current, _) = if current_first {
+            (&targets.first, &targets.second)
+        } else {
+            (&targets.second, &targets.first)
+        };
+        self.prepare_batch_capacity(&trailing);
+        self.upload_instance_data(&trailing, scale, width, height);
+        self.prepare_image_bind_groups(&trailing);
+        let current_view = current.color_view.clone();
+        let current_stencil = current.stencil_view.clone();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        let (draws, text) = self.encode_batches(
+            &mut encoder,
+            &current_view,
+            &current_stencil,
+            &trailing,
+            width,
+            height,
+            scale,
+            clear,
+            None,
+            !first_pass,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        draw_calls += draws;
+        text_draw_calls += text;
+        passes += 1;
+        (current_first, draw_calls, text_draw_calls, passes)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn present_composition_target(
+        &mut self,
+        target: &OffscreenTarget,
+        frame_view: &wgpu::TextureView,
+        target_origin: Offset,
+        target_width: u32,
+        target_height: u32,
+        parent_width: u32,
+        parent_height: u32,
+        scale: f32,
+    ) -> u32 {
+        self.ensure_composite_capacity(1);
+        let instance = composite_instance(
+            target_origin,
+            Offset::ZERO,
+            parent_width,
+            parent_height,
+            target_width,
+            target_height,
+            scale,
+            1.,
+        );
+        self.queue
+            .write_buffer(&self.composite_instances, 0, bytemuck::bytes_of(&instance));
+        let bind_group = self.create_composite_bind_group(
+            target,
+            "incular destination composition presentation bind group",
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular destination composition presentation"),
+            });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("incular destination composition presentation pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: frame_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.04,
+                        g: 0.04,
+                        b: 0.06,
+                        a: 1.,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.stencil_view,
+                depth_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_stencil_reference(0);
+        pass.set_pipeline(&self.composite_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, self.mesh.slice(..));
+        pass.set_vertex_buffer(
+            1,
+            self.composite_instances
+                .slice(..std::mem::size_of::<GpuCompositeInstance>() as u64),
+        );
+        pass.draw(0..6, 0..1);
+        drop(pass);
+        self.queue.submit(Some(encoder.finish()));
+        1
+    }
     pub fn render(
+        &mut self,
+        list: &DisplayList,
+        scale_factor: f64,
+    ) -> Result<RenderStats, RendererError> {
+        self.render_composited(list, scale_factor)
+    }
+    #[allow(dead_code)]
+    fn render_legacy(
         &mut self,
         list: &DisplayList,
         scale_factor: f64,
@@ -1374,7 +2581,7 @@ impl WgpuRenderer {
             self.path_instances =
                 create_path_instance_buffer(&self.device, self.path_instance_capacity);
         }
-        self.upload_instance_data(&batches, scale);
+        self.upload_instance_data(&batches, scale, self.config.width, self.config.height);
         self.prepare_image_bind_groups(&batches);
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -1454,7 +2661,11 @@ impl WgpuRenderer {
                     | DrawBatch::RoundedRects { clip, .. }
                     | DrawBatch::Path { clip, .. }
                     | DrawBatch::StencilRRect { clip, .. }
-                    | DrawBatch::StencilPath { clip, .. } => *clip,
+                    | DrawBatch::StencilPath { clip, .. }
+                    | DrawBatch::Offscreen { clip, .. }
+                    | DrawBatch::Filtered { clip, .. }
+                    | DrawBatch::Shadow { clip, .. }
+                    | DrawBatch::Blend { clip, .. } => *clip,
                 };
                 if !set_scissor(
                     &mut pass,
@@ -1634,6 +2845,233 @@ impl WgpuRenderer {
             presented: true,
         })
     }
+    fn render_composited(
+        &mut self,
+        list: &DisplayList,
+        scale_factor: f64,
+    ) -> Result<RenderStats, RendererError> {
+        if self.config.width == 0 || self.config.height == 0 {
+            return Ok(RenderStats::default());
+        }
+        let scale = normalized_scale(scale_factor);
+        let promote_destination = commands_have_destination_blend(list.commands());
+        let (target_origin, target_width, target_height) = if promote_destination {
+            destination_composition_scope(list, scale, self.config.width, self.config.height)
+        } else {
+            (Offset::ZERO, self.config.width, self.config.height)
+        };
+        self.target_width = target_width;
+        self.target_height = target_height;
+        self.target_origin = target_origin;
+        let batches = self.lower_commands(
+            list.commands(),
+            scale,
+            Offset::new(-target_origin.x, -target_origin.y),
+            ClipState::Unbounded,
+        )?;
+        let rectangles = batches
+            .iter()
+            .filter_map(|batch| match batch {
+                DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+                    Some(instances.len())
+                }
+                _ => None,
+            })
+            .sum::<usize>();
+        let glyphs = batches
+            .iter()
+            .filter_map(|batch| match batch {
+                DrawBatch::Glyphs {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => Some(instances.len()),
+                _ => None,
+            })
+            .sum::<usize>();
+        let images = batches
+            .iter()
+            .filter_map(|batch| match batch {
+                DrawBatch::Images {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => Some(instances.len()),
+                _ => None,
+            })
+            .sum::<usize>();
+        let rounded = batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::RoundedRects {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => instances.len(),
+                DrawBatch::StencilRRect { clip, .. } if *clip != ClipState::Empty => 1,
+                _ => 0,
+            })
+            .sum::<usize>();
+        let paths = batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::Path { clip, .. } | DrawBatch::StencilPath { clip, .. }
+                    if *clip != ClipState::Empty =>
+                {
+                    1
+                }
+                _ => 0,
+            })
+            .sum::<usize>();
+        let composites = batches
+            .iter()
+            .filter(|batch| {
+                matches!(
+                    batch,
+                    DrawBatch::Offscreen { clip, .. }
+                        | DrawBatch::Filtered { clip, .. }
+                        | DrawBatch::Shadow { clip, .. }
+                        | DrawBatch::Blend { clip, .. }
+                        if *clip != ClipState::Empty
+                )
+            })
+            .count();
+        let rectangle_reallocated = self.ensure_rectangle_capacity(rectangles);
+        let glyph_reallocated = self.ensure_glyph_capacity(glyphs);
+        let image_reallocated = self.ensure_image_capacity(images);
+        let _composite_reallocated = self.ensure_composite_capacity(composites);
+        if rounded > self.rounded_rect_instance_capacity {
+            self.rounded_rect_instance_capacity = rounded.next_power_of_two();
+            self.rounded_rect_instances =
+                create_rrect_buffer(&self.device, self.rounded_rect_instance_capacity);
+        }
+        if paths > self.path_instance_capacity {
+            self.path_instance_capacity = paths.next_power_of_two();
+            self.path_instances =
+                create_path_instance_buffer(&self.device, self.path_instance_capacity);
+        }
+        self.upload_instance_data(&batches, scale, self.target_width, self.target_height);
+        self.prepare_image_bind_groups(&batches);
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.surface.configure(&self.device, &self.config);
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return Ok(RenderStats::default());
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = unsafe {
+                    self._instance
+                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                            raw_display_handle: self.handles.display,
+                            raw_window_handle: self.handles.window,
+                        })
+                }
+                .map_err(RendererError::Surface)?;
+                self.surface.configure(&self.device, &self.config);
+                return Ok(RenderStats::default());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => return Ok(RenderStats::default()),
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let clear = wgpu::Color {
+            r: 0.04,
+            g: 0.04,
+            b: 0.06,
+            a: 1.0,
+        };
+        let has_destination_blend = batches.iter().any(|batch| {
+            matches!(
+                batch,
+                DrawBatch::Blend {
+                    mode,
+                    ..
+                } if mode.requires_destination_read()
+            )
+        });
+        let (draw_calls, text_draw_calls) = if has_destination_blend {
+            // A destination-read blend promotes only this composition scope;
+            // ordinary SrcOver frames continue through the direct surface
+            // path above.
+            self.ensure_destination_targets(target_width, target_height);
+            let mut targets = self
+                .destination_targets
+                .take()
+                .expect("destination targets after ensure");
+            let (current_first, draws, text, passes) = self.render_destination_batches(
+                &batches,
+                scale,
+                target_width,
+                target_height,
+                &mut targets,
+                clear,
+                "incular destination composition segment",
+            );
+            self.counters.full_frame_intermediate_passes += 1;
+            self.counters.offscreen_render_passes += u64::from(passes);
+            let final_target = if current_first {
+                targets.first.clone()
+            } else {
+                targets.second.clone()
+            };
+            let present_draw = self.present_composition_target(
+                &final_target,
+                &view,
+                target_origin,
+                target_width,
+                target_height,
+                self.config.width,
+                self.config.height,
+                scale,
+            );
+            self.destination_targets = Some(targets);
+            (draws + present_draw, text)
+        } else {
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("incular frame encoder"),
+                });
+            let root_stencil = self.stencil_view.clone();
+            let result = self.encode_batches(
+                &mut encoder,
+                &view,
+                &root_stencil,
+                &batches,
+                target_width,
+                target_height,
+                scale,
+                clear,
+                None,
+                false,
+            );
+            self.queue.submit(Some(encoder.finish()));
+            result
+        };
+        self.queue.present(frame);
+        self.counters.frames += 1;
+        self.evict_unused_images();
+        self.evict_unused_path_meshes();
+        self.evict_unused_gradients();
+        self.evict_offscreen_cache();
+        self.counters.draw_calls += u64::from(draw_calls);
+        self.counters.text_draw_calls += u64::from(text_draw_calls);
+        self.counters.rectangle_instances += rectangles as u64;
+        self.counters.glyph_instances += glyphs as u64;
+        self.counters.image_instances += images as u64;
+        self.counters.rounded_rect_instances += rounded as u64;
+        Ok(RenderStats {
+            draw_calls,
+            rectangle_instances: rectangles as u32,
+            glyph_instances: glyphs as u32,
+            image_instances: images as u32,
+            buffer_reallocated: rectangle_reallocated,
+            glyph_buffer_reallocated: glyph_reallocated,
+            image_buffer_reallocated: image_reallocated,
+            presented: true,
+        })
+    }
     fn ensure_rectangle_capacity(&mut self, required: usize) -> bool {
         if required <= self.instance_capacity {
             return false;
@@ -1660,12 +3098,22 @@ impl WgpuRenderer {
         self.image_instances = create_image_buffer(&self.device, self.image_instance_capacity);
         true
     }
-    fn upload_instance_data(&self, batches: &[DrawBatch], scale: f32) {
+    fn ensure_composite_capacity(&mut self, required: usize) -> bool {
+        if required <= self.composite_instance_capacity {
+            return false;
+        }
+        self.composite_instance_capacity = required.next_power_of_two();
+        self.composite_instances =
+            create_composite_buffer(&self.device, self.composite_instance_capacity);
+        true
+    }
+    fn upload_instance_data(&self, batches: &[DrawBatch], scale: f32, width: u32, height: u32) {
         let mut rectangle_offset = 0_u64;
         let mut glyph_offset = 0_u64;
         let mut image_offset = 0_u64;
         let mut rounded_offset = 0_u64;
         let mut path_offset = 0_u64;
+        let mut composite_offset = 0_u64;
         for batch in batches {
             match batch {
                 DrawBatch::Rectangles { clip, instances }
@@ -1674,12 +3122,7 @@ impl WgpuRenderer {
                     let gpu: Vec<_> = instances
                         .iter()
                         .map(|instance| {
-                            logical_instance(
-                                *instance,
-                                self.config.width as f32,
-                                self.config.height as f32,
-                                scale,
-                            )
+                            logical_instance(*instance, width as f32, height as f32, scale)
                         })
                         .collect();
                     self.queue.write_buffer(
@@ -1746,20 +3189,447 @@ impl WgpuRenderer {
                     );
                     path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
                 }
+                DrawBatch::Offscreen { clip, instance, .. } if *clip != ClipState::Empty => {
+                    self.queue.write_buffer(
+                        &self.composite_instances,
+                        composite_offset,
+                        bytemuck::bytes_of(instance),
+                    );
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                }
+                DrawBatch::Filtered { clip, instance, .. }
+                | DrawBatch::Shadow { clip, instance, .. }
+                | DrawBatch::Blend { clip, instance, .. }
+                    if *clip != ClipState::Empty =>
+                {
+                    self.queue.write_buffer(
+                        &self.composite_instances,
+                        composite_offset,
+                        bytemuck::bytes_of(instance),
+                    );
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                }
                 _ => {}
             }
         }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn encode_batches(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        color_view: &wgpu::TextureView,
+        stencil_view: &wgpu::TextureView,
+        batches: &[DrawBatch],
+        width: u32,
+        height: u32,
+        scale: f32,
+        clear: wgpu::Color,
+        destination_view: Option<&wgpu::TextureView>,
+        load_existing: bool,
+    ) -> (u32, u32) {
+        let mut draw_calls = 0_u32;
+        let mut text_draw_calls = 0_u32;
+        let mut rectangle_offset = 0_u64;
+        let mut glyph_offset = 0_u64;
+        let mut image_offset = 0_u64;
+        let mut rounded_offset = 0_u64;
+        let mut path_offset = 0_u64;
+        let mut composite_offset = 0_u64;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("incular retained compositor pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: if load_existing {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(clear)
+                    },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: stencil_view,
+                depth_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Store,
+                }),
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        for batch in batches {
+            let clip = match batch {
+                DrawBatch::Rectangles { clip, .. }
+                | DrawBatch::Glyphs { clip, .. }
+                | DrawBatch::Images { clip, .. }
+                | DrawBatch::RoundedRects { clip, .. }
+                | DrawBatch::Path { clip, .. }
+                | DrawBatch::StencilRRect { clip, .. }
+                | DrawBatch::StencilPath { clip, .. }
+                | DrawBatch::Offscreen { clip, .. }
+                | DrawBatch::Filtered { clip, .. }
+                | DrawBatch::Shadow { clip, .. }
+                | DrawBatch::Blend { clip, .. } => *clip,
+            };
+            if clip == ClipState::Empty {
+                continue;
+            }
+            if !set_scissor(&mut pass, clip, width, height, scale) {
+                match batch {
+                    DrawBatch::Rectangles { instances, .. } => {
+                        rectangle_offset +=
+                            (instances.len() * std::mem::size_of::<GpuInstance>()) as u64;
+                    }
+                    DrawBatch::Glyphs { instances, .. } => {
+                        glyph_offset +=
+                            (instances.len() * std::mem::size_of::<GpuGlyphInstance>()) as u64;
+                    }
+                    DrawBatch::Images { instances, .. } => {
+                        image_offset +=
+                            (instances.len() * std::mem::size_of::<GpuImageInstance>()) as u64;
+                    }
+                    DrawBatch::RoundedRects { instances, .. } => {
+                        rounded_offset +=
+                            (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
+                    }
+                    DrawBatch::Path { .. } | DrawBatch::StencilPath { .. } => {
+                        path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
+                    }
+                    DrawBatch::StencilRRect { .. } => {
+                        rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
+                    }
+                    DrawBatch::Offscreen { .. } => {
+                        composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    }
+                    DrawBatch::Filtered { .. } | DrawBatch::Shadow { .. } => {
+                        composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    }
+                    DrawBatch::Blend { .. } => {
+                        composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    }
+                }
+                self.counters.clip_culled_draws += 1;
+                continue;
+            }
+            pass.set_stencil_reference(u32::from(stencil_depth(clip)));
+            match batch {
+                DrawBatch::Rectangles { instances, .. } if !instances.is_empty() => {
+                    let start = rectangle_offset;
+                    rectangle_offset +=
+                        (instances.len() * std::mem::size_of::<GpuInstance>()) as u64;
+                    pass.set_pipeline(&self.rectangle_pipeline);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(1, self.instances.slice(start..rectangle_offset));
+                    pass.draw(0..6, 0..instances.len() as u32);
+                    draw_calls += 1;
+                }
+                DrawBatch::Glyphs {
+                    page, instances, ..
+                } if !instances.is_empty() => {
+                    let start = glyph_offset;
+                    glyph_offset +=
+                        (instances.len() * std::mem::size_of::<GpuGlyphInstance>()) as u64;
+                    let Some(atlas_page) = self.atlas_pages.get(usize::from(*page)) else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, &atlas_page.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(1, self.glyph_instances.slice(start..glyph_offset));
+                    pass.draw(0..6, 0..instances.len() as u32);
+                    draw_calls += 1;
+                    text_draw_calls += 1;
+                }
+                DrawBatch::Images {
+                    image,
+                    sampling,
+                    instances,
+                    ..
+                } if !instances.is_empty() => {
+                    let start = image_offset;
+                    image_offset +=
+                        (instances.len() * std::mem::size_of::<GpuImageInstance>()) as u64;
+                    let Some(bind_group) = self.image_bind_group(*image, *sampling) else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.image_pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(1, self.image_instances.slice(start..image_offset));
+                    pass.draw(0..6, 0..instances.len() as u32);
+                    draw_calls += 1;
+                    self.counters.image_draw_calls += 1;
+                }
+                DrawBatch::RoundedRects {
+                    gradient,
+                    instances,
+                    ..
+                } if !instances.is_empty() => {
+                    let start = rounded_offset;
+                    rounded_offset +=
+                        (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
+                    pass.set_pipeline(&self.rounded_rect_pipeline);
+                    pass.set_bind_group(0, self.gradient_bind_group(*gradient), &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.rounded_rect_instances.slice(start..rounded_offset),
+                    );
+                    pass.draw(0..6, 0..instances.len() as u32);
+                    draw_calls += 1;
+                }
+                DrawBatch::Path { key, gradient, .. } => {
+                    let start = path_offset;
+                    path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
+                    if let Some(mesh) = self.gpu_path_cache.get_mut(key) {
+                        mesh.last_used_frame = self.counters.frames;
+                    } else {
+                        continue;
+                    }
+                    let gradient_bind_group = self.gradient_bind_group(*gradient);
+                    let Some(mesh) = self.gpu_path_cache.get(key) else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.path_pipeline);
+                    pass.set_bind_group(0, gradient_bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_vertex_buffer(1, self.path_instances.slice(start..path_offset));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    draw_calls += 1;
+                    self.counters.path_draw_calls += 1;
+                    self.counters.path_triangles += u64::from(mesh.index_count / 3);
+                }
+                DrawBatch::StencilRRect { increment, .. } => {
+                    let start = rounded_offset;
+                    rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
+                    pass.set_pipeline(if *increment {
+                        &self.stencil_rrect_increment_pipeline
+                    } else {
+                        &self.stencil_rrect_decrement_pipeline
+                    });
+                    pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.rounded_rect_instances.slice(start..rounded_offset),
+                    );
+                    pass.draw(0..6, 0..1);
+                    draw_calls += 1;
+                    self.counters.stencil_mask_draws += 1;
+                }
+                DrawBatch::StencilPath { key, increment, .. } => {
+                    let start = path_offset;
+                    path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
+                    let Some(mesh) = self.gpu_path_cache.get(key) else {
+                        continue;
+                    };
+                    pass.set_pipeline(if *increment {
+                        &self.stencil_path_increment_pipeline
+                    } else {
+                        &self.stencil_path_decrement_pipeline
+                    });
+                    pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(1, self.path_instances.slice(start..path_offset));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    draw_calls += 1;
+                    self.counters.stencil_mask_draws += 1;
+                }
+                DrawBatch::Offscreen {
+                    layer, instance, ..
+                } => {
+                    let start = composite_offset;
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    if let Some(entry) = self.offscreen_cache.get_mut(layer) {
+                        entry.last_used_frame = self.counters.frames;
+                    } else {
+                        continue;
+                    }
+                    let Some(entry) = self.offscreen_cache.get(layer) else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.composite_pipeline);
+                    pass.set_bind_group(0, &entry.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.composite_instances.slice(
+                            start..start + std::mem::size_of::<GpuCompositeInstance>() as u64,
+                        ),
+                    );
+                    pass.draw(0..6, 0..1);
+                    let _ = instance;
+                    draw_calls += 1;
+                    self.counters.offscreen_composite_draws += 1;
+                }
+                DrawBatch::Filtered {
+                    layer, instance, ..
+                } => {
+                    let start = composite_offset;
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    if let Some(entry) = self.effect_cache.get_mut(layer) {
+                        entry.last_used_frame = self.counters.frames;
+                    } else {
+                        continue;
+                    }
+                    let Some(entry) = self.effect_cache.get(layer) else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.composite_pipeline);
+                    pass.set_bind_group(0, &entry.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.composite_instances.slice(
+                            start..start + std::mem::size_of::<GpuCompositeInstance>() as u64,
+                        ),
+                    );
+                    pass.draw(0..6, 0..1);
+                    let _ = instance;
+                    draw_calls += 1;
+                    self.counters.offscreen_composite_draws += 1;
+                }
+                DrawBatch::Shadow {
+                    layer, instance, ..
+                } => {
+                    let start = composite_offset;
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    if let Some(entry) = self.effect_cache.get_mut(layer) {
+                        entry.last_used_frame = self.counters.frames;
+                    } else if let Some(entry) = self.offscreen_cache.get_mut(layer) {
+                        entry.last_used_frame = self.counters.frames;
+                    } else {
+                        continue;
+                    }
+                    pass.set_pipeline(&self.composite_pipeline);
+                    if let Some(entry) = self.effect_cache.get(layer) {
+                        pass.set_bind_group(0, &entry.bind_group, &[]);
+                    } else if let Some(entry) = self.offscreen_cache.get(layer) {
+                        pass.set_bind_group(0, &entry.bind_group, &[]);
+                    } else {
+                        continue;
+                    }
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.composite_instances.slice(
+                            start..start + std::mem::size_of::<GpuCompositeInstance>() as u64,
+                        ),
+                    );
+                    pass.draw(0..6, 0..1);
+                    let _ = instance;
+                    draw_calls += 1;
+                    self.counters.drop_shadow_composites += 1;
+                }
+                DrawBatch::Blend {
+                    layer,
+                    instance,
+                    mode,
+                    ..
+                } => {
+                    let start = composite_offset;
+                    composite_offset += std::mem::size_of::<GpuCompositeInstance>() as u64;
+                    let Some(source) = self.offscreen_cache.get_mut(layer) else {
+                        continue;
+                    };
+                    source.last_used_frame = self.counters.frames;
+                    if !mode.requires_destination_read() {
+                        let Some(pipeline) = self.fixed_blend_pipelines.get(mode.code() as usize)
+                        else {
+                            continue;
+                        };
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, &source.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.mesh.slice(..));
+                        pass.set_vertex_buffer(
+                            1,
+                            self.composite_instances.slice(
+                                start..start + std::mem::size_of::<GpuCompositeInstance>() as u64,
+                            ),
+                        );
+                        pass.draw(0..6, 0..1);
+                        self.counters.blend_fixed_function_draws += 1;
+                        draw_calls += 1;
+                        let _ = instance;
+                        continue;
+                    }
+                    let Some(destination_view) = destination_view else {
+                        continue;
+                    };
+                    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("incular destination blend bind group"),
+                        layout: &self.blend_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &source.target.color_view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(destination_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(&self.blend_sampler),
+                            },
+                        ],
+                    });
+                    pass.set_pipeline(&self.blend_pipeline);
+                    pass.set_bind_group(0, &bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.mesh.slice(..));
+                    pass.set_vertex_buffer(
+                        1,
+                        self.composite_instances.slice(
+                            start..start + std::mem::size_of::<GpuCompositeInstance>() as u64,
+                        ),
+                    );
+                    pass.draw(0..6, 0..1);
+                    self.counters.blend_destination_read_draws += 1;
+                    if !mode.requires_destination_read() {
+                        self.counters.blend_fixed_function_draws += 1;
+                    }
+                    draw_calls += 1;
+                    let _ = instance;
+                }
+                _ => {}
+            }
+        }
+        drop(pass);
+        (draw_calls, text_draw_calls)
     }
     fn lower_draw_batches(
         &mut self,
         list: &DisplayList,
         scale: f32,
     ) -> Result<Vec<DrawBatch>, RendererError> {
+        self.target_width = self.config.width;
+        self.target_height = self.config.height;
+        self.target_origin = Offset::ZERO;
+        self.lower_commands(list.commands(), scale, Offset::ZERO, ClipState::Unbounded)
+    }
+    fn lower_commands(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        initial_translation: Offset,
+        initial_clip: ClipState,
+    ) -> Result<Vec<DrawBatch>, RendererError> {
         let mut batches = Vec::new();
-        let mut transforms = vec![Offset::ZERO];
-        let mut clips = vec![ClipState::Unbounded];
+        let mut transforms = vec![initial_translation];
+        let mut clips = vec![initial_clip];
         let mut clip_masks: Vec<Option<ClipMask>> = vec![None];
-        for command in list.commands() {
+        let mut command_index = 0_usize;
+        while command_index < commands.len() {
+            let command = &commands[command_index];
             let translation = *transforms.last().expect("transform stack");
             match command {
                 PaintCommand::Rect { rect, color } => append_rectangle(
@@ -1781,8 +3651,8 @@ impl WgpuRenderer {
                         brush,
                         translation,
                         scale,
-                        self.config.width as f32,
-                        self.config.height as f32,
+                        self.target_width as f32,
+                        self.target_height as f32,
                     ),
                 ),
                 PaintCommand::Border { rrect, border } => {
@@ -1796,8 +3666,8 @@ impl WgpuRenderer {
                             *border,
                             translation,
                             scale,
-                            self.config.width as f32,
-                            self.config.height as f32,
+                            self.target_width as f32,
+                            self.target_height as f32,
                         ),
                     );
                 }
@@ -1827,6 +3697,7 @@ impl WgpuRenderer {
                 ),
                 PaintCommand::GlyphRun { run, color } => {
                     if *clips.last().expect("clip stack") == ClipState::Empty {
+                        command_index += 1;
                         continue;
                     }
                     for glyph in run.glyphs.iter() {
@@ -1852,8 +3723,8 @@ impl WgpuRenderer {
                                     *color,
                                     GlyphSurface {
                                         translation,
-                                        width: self.config.width as f32,
-                                        height: self.config.height as f32,
+                                        width: self.target_width as f32,
+                                        height: self.target_height as f32,
                                         scale,
                                     },
                                 ),
@@ -1868,6 +3739,7 @@ impl WgpuRenderer {
                     sampling,
                 } => {
                     if *clips.last().expect("clip stack") == ClipState::Empty {
+                        command_index += 1;
                         continue;
                     }
                     self.ensure_gpu_image(image)?;
@@ -1880,11 +3752,219 @@ impl WgpuRenderer {
                             translated_rect(*destination, translation),
                             *source,
                             image,
-                            self.config.width as f32,
-                            self.config.height as f32,
+                            self.target_width as f32,
+                            self.target_height as f32,
                             scale,
                         ),
                     );
+                }
+                PaintCommand::PushOpacity {
+                    layer,
+                    alpha,
+                    generation,
+                    bounds,
+                } => {
+                    let end = find_opacity_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    let normalized = normalize_opacity(*alpha);
+                    command_index = end.saturating_add(1);
+                    if normalized <= 0. {
+                        self.counters.opacity_zero_fast_paths += 1;
+                        continue;
+                    }
+                    if normalized >= 1. {
+                        self.counters.opacity_one_fast_paths += 1;
+                        let child = self.lower_commands(
+                            &commands[start..end],
+                            scale,
+                            translation,
+                            parent_clip,
+                        )?;
+                        batches.extend(child);
+                        continue;
+                    }
+                    if let Some(batch) = self.lower_opacity_group(
+                        &commands[start..end],
+                        scale,
+                        *layer,
+                        normalized,
+                        *generation,
+                        *bounds,
+                        parent_clip,
+                        translation,
+                    )? {
+                        batches.push(batch);
+                    }
+                    continue;
+                }
+                PaintCommand::PopOpacity => {
+                    return Err(RendererError::UnbalancedClipStack);
+                }
+                PaintCommand::PushBlur {
+                    layer,
+                    blur,
+                    generation,
+                    bounds,
+                } => {
+                    let end = find_effect_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    command_index = end.saturating_add(1);
+                    let blur = GaussianBlur::new(blur.sigma_x, blur.sigma_y);
+                    if blur.sigma_x <= f32::EPSILON && blur.sigma_y <= f32::EPSILON {
+                        let child = self.lower_commands(
+                            &commands[start..end],
+                            scale,
+                            translation,
+                            parent_clip,
+                        )?;
+                        batches.extend(child);
+                    } else if let Some(batch) = self.lower_blur_group(
+                        &commands[start..end],
+                        scale,
+                        *layer,
+                        blur,
+                        *generation,
+                        *bounds,
+                        parent_clip,
+                        translation,
+                    )? {
+                        batches.push(batch);
+                    }
+                    continue;
+                }
+                PaintCommand::PushDropShadow {
+                    layer,
+                    shadow,
+                    generation,
+                    bounds,
+                } => {
+                    let end = find_effect_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    command_index = end.saturating_add(1);
+                    let shadow = DropShadowEffect::asymmetric(
+                        shadow.offset,
+                        shadow.sigma_x,
+                        shadow.sigma_y,
+                        shadow.color,
+                    );
+                    let child = self.lower_drop_shadow_group(
+                        &commands[start..end],
+                        scale,
+                        *layer,
+                        shadow,
+                        *generation,
+                        *bounds,
+                        parent_clip,
+                        translation,
+                    )?;
+                    batches.extend(child);
+                    continue;
+                }
+                PaintCommand::PushColorFilter {
+                    layer,
+                    filter,
+                    generation,
+                    bounds,
+                } => {
+                    let end = find_effect_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    command_index = end.saturating_add(1);
+                    if filter.is_identity() {
+                        let child = self.lower_commands(
+                            &commands[start..end],
+                            scale,
+                            translation,
+                            parent_clip,
+                        )?;
+                        batches.extend(child);
+                    } else if let Some(inner_commands) =
+                        commands.get(start..end).filter(|child| !child.is_empty())
+                        && let Some(PaintCommand::PushColorFilter {
+                            filter: inner_filter,
+                            generation: inner_generation,
+                            ..
+                        }) = inner_commands.first()
+                        && let Ok(inner_end) = find_effect_end(inner_commands, 0)
+                        && inner_end + 1 == inner_commands.len()
+                    {
+                        // Nested color matrices are adjacent single-input
+                        // stages.  Remove the inner boundary and compose
+                        // `inner` followed by `outer`; no blur or shadow is
+                        // crossed, so painter order remains exact.
+                        let combined = inner_filter.then(*filter);
+                        if let Some(batch) = self.lower_color_filter_group(
+                            &inner_commands[1..inner_end],
+                            scale,
+                            *layer,
+                            combined,
+                            // The fused pass's source is the inner
+                            // filter's input. Its generation deliberately
+                            // excludes the inner matrix itself, so changing
+                            // either adjacent matrix rerenders only this
+                            // fused stage rather than its source texture.
+                            *inner_generation,
+                            *bounds,
+                            parent_clip,
+                            translation,
+                        )? {
+                            batches.push(batch);
+                        }
+                        self.counters.effect_stage_fusions += 1;
+                    } else if let Some(batch) = self.lower_color_filter_group(
+                        &commands[start..end],
+                        scale,
+                        *layer,
+                        *filter,
+                        *generation,
+                        *bounds,
+                        parent_clip,
+                        translation,
+                    )? {
+                        batches.push(batch);
+                    }
+                    continue;
+                }
+                PaintCommand::PushBlend {
+                    layer,
+                    mode,
+                    generation,
+                    bounds,
+                } => {
+                    let end = find_effect_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    command_index = end.saturating_add(1);
+                    if *mode == BlendMode::SrcOver {
+                        // SrcOver is the ordinary painter operation. Keep it
+                        // on the direct path instead of isolating a source
+                        // texture solely to apply the default blend mode.
+                        let child = self.lower_commands(
+                            &commands[start..end],
+                            scale,
+                            translation,
+                            parent_clip,
+                        )?;
+                        batches.extend(child);
+                    } else if let Some(batch) = self.lower_blend_group(
+                        &commands[start..end],
+                        scale,
+                        *layer,
+                        *mode,
+                        *generation,
+                        *bounds,
+                        parent_clip,
+                        translation,
+                    )? {
+                        batches.push(batch);
+                    }
+                    continue;
+                }
+                PaintCommand::PopEffect => {
+                    return Err(RendererError::UnbalancedClipStack);
                 }
                 PaintCommand::PushTransform { transform } => {
                     transforms.push(translation + transform.translation)
@@ -1936,8 +4016,8 @@ impl WgpuRenderer {
                         &Brush::Solid(Color::TRANSPARENT),
                         translation,
                         scale,
-                        self.config.width as f32,
-                        self.config.height as f32,
+                        self.target_width as f32,
+                        self.target_height as f32,
                     );
                     if scissor == ClipState::Empty {
                         clips.push(ClipState::Empty);
@@ -1965,6 +4045,7 @@ impl WgpuRenderer {
                         clips.push(ClipState::Empty);
                         clip_masks.push(None);
                         self.counters.clip_path_pushes += 1;
+                        command_index += 1;
                         continue;
                     };
                     let scissor = intersect_clip_with_rect(
@@ -1984,8 +4065,8 @@ impl WgpuRenderer {
                         let instance = clip_path_instance(
                             translation,
                             scale,
-                            self.config.width as f32,
-                            self.config.height as f32,
+                            self.target_width as f32,
+                            self.target_height as f32,
                         );
                         batches.push(DrawBatch::StencilPath {
                             clip: parent,
@@ -2028,12 +4109,1425 @@ impl WgpuRenderer {
                     self.counters.clip_pops += 1;
                 }
             }
+            command_index += 1;
         }
         if clips.len() != 1 || clip_masks.len() != 1 {
             return Err(RendererError::UnbalancedClipStack);
         }
         Ok(batches)
     }
+    #[allow(clippy::too_many_arguments)]
+    fn lower_opacity_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        alpha: f32,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Option<DrawBatch>, RendererError> {
+        let active_width = self.target_width;
+        let active_height = self.target_height;
+        let active_origin = self.target_origin;
+        if parent_clip == ClipState::Empty {
+            return Ok(None);
+        }
+        if !bounds.origin.x.is_finite()
+            || !bounds.origin.y.is_finite()
+            || !bounds.size.width.is_finite()
+            || !bounds.size.height.is_finite()
+            || bounds.size.width <= 0.
+            || bounds.size.height <= 0.
+        {
+            return Ok(None);
+        }
+        let left = ((bounds.origin.x - active_origin.x) * scale).floor();
+        let top = ((bounds.origin.y - active_origin.y) * scale).floor();
+        let right = ((bounds.origin.x + bounds.size.width - active_origin.x) * scale).ceil();
+        let bottom = ((bounds.origin.y + bounds.size.height - active_origin.y) * scale).ceil();
+        let width_f = right - left;
+        let height_f = bottom - top;
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if width_f <= 0. || height_f <= 0. {
+            return Ok(None);
+        }
+        if width_f > limit as f32 || height_f > limit as f32 {
+            return Err(RendererError::OffscreenTargetTooLarge {
+                width: width_f.min(u32::MAX as f32) as u32,
+                height: height_f.min(u32::MAX as f32) as u32,
+                limit,
+            });
+        }
+        let width = width_f as u32;
+        let height = height_f as u32;
+        if width == 0 || height == 0 {
+            return Ok(None);
+        }
+        let target_origin = Offset::new(
+            active_origin.x + left / scale,
+            active_origin.y + top / scale,
+        );
+        let frame = self.counters.frames;
+        if let Some(entry) = self.offscreen_cache.get_mut(&layer)
+            && entry.generation == generation
+            && entry.width == width
+            && entry.height == height
+            && entry.scale_factor_bits == scale.to_bits()
+            && entry.target.format == self.config.format
+            && entry.device_generation == self.device_generation
+        {
+            entry.last_used_frame = frame;
+            self.counters.offscreen_group_cache_hits += 1;
+            self.counters.offscreen_texture_reuses += 1;
+            return Ok(Some(DrawBatch::Offscreen {
+                clip: parent_clip,
+                layer,
+                instance: composite_instance(
+                    target_origin,
+                    active_origin,
+                    active_width,
+                    active_height,
+                    width,
+                    height,
+                    scale,
+                    alpha,
+                ),
+            }));
+        }
+        if let Some(previous) = self.offscreen_cache.remove(&layer) {
+            self.counters.offscreen_cached_bytes = self
+                .counters
+                .offscreen_cached_bytes
+                .saturating_sub(previous.bytes);
+            self.offscreen_target_pool.recycle(previous.target);
+        }
+        let saved_target = (self.target_width, self.target_height, self.target_origin);
+        self.target_width = width;
+        self.target_height = height;
+        self.target_origin = target_origin;
+        self.offscreen_nesting_depth += 1;
+        self.counters.max_offscreen_nesting_depth = self
+            .counters
+            .max_offscreen_nesting_depth
+            .max(self.offscreen_nesting_depth);
+        let child_translation = translation - (target_origin - active_origin);
+        let child_result =
+            self.lower_commands(commands, scale, child_translation, ClipState::Unbounded);
+        let child_batches = match child_result {
+            Ok(batches) => batches,
+            Err(error) => {
+                self.target_width = saved_target.0;
+                self.target_height = saved_target.1;
+                self.target_origin = saved_target.2;
+                self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+                if let Some(previous) = self.offscreen_cache.remove(&layer) {
+                    self.counters.offscreen_cached_bytes = self
+                        .counters
+                        .offscreen_cached_bytes
+                        .saturating_sub(previous.bytes);
+                    self.offscreen_target_pool.recycle(previous.target);
+                }
+                return Err(error);
+            }
+        };
+        // Clip-only command streams (or an opacity wrapper around no child)
+        // have no pixels to isolate.  Avoid allocating a color/stencil target,
+        // submitting an empty pass, and emitting a composite draw for them.
+        let child_has_content = child_batches.iter().any(|batch| match batch {
+            DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+                !instances.is_empty()
+            }
+            DrawBatch::RoundedRects {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => !instances.is_empty(),
+            DrawBatch::Glyphs {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => !instances.is_empty(),
+            DrawBatch::Images {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => !instances.is_empty(),
+            DrawBatch::Path { clip, .. }
+            | DrawBatch::Offscreen { clip, .. }
+            | DrawBatch::Filtered { clip, .. }
+            | DrawBatch::Shadow { clip, .. }
+            | DrawBatch::Blend { clip, .. }
+                if *clip != ClipState::Empty =>
+            {
+                true
+            }
+            // Stencil increment/decrement batches are only clip setup; they
+            // become useful when paired with actual content above.
+            DrawBatch::StencilRRect { .. } | DrawBatch::StencilPath { .. } => false,
+            _ => false,
+        });
+        if !child_has_content {
+            self.target_width = saved_target.0;
+            self.target_height = saved_target.1;
+            self.target_origin = saved_target.2;
+            self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+            return Ok(None);
+        }
+        let target = if let Some(target) =
+            self.offscreen_target_pool
+                .take(width, height, self.config.format, true)
+        {
+            self.counters.offscreen_texture_reuses += 1;
+            target
+        } else {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("incular retained opacity color target"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let color_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let (stencil, stencil_view) = create_stencil_attachment(&self.device, width, height);
+            self.counters.offscreen_color_texture_creations += 1;
+            self.counters.offscreen_stencil_texture_creations += 1;
+            OffscreenTarget {
+                _color: texture,
+                color_view,
+                _stencil: stencil,
+                stencil_view,
+                width,
+                height,
+                format: self.config.format,
+                has_stencil: true,
+            }
+        };
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("incular retained opacity target bind group"),
+            layout: &self.composite_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&target.color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.composite_sampler),
+                },
+            ],
+        });
+        let bytes = target.bytes();
+        self.offscreen_cache.insert(
+            layer,
+            OffscreenCacheEntry {
+                target,
+                bind_group,
+                width,
+                height,
+                scale_factor_bits: scale.to_bits(),
+                generation,
+                device_generation: self.device_generation,
+                last_used_frame: frame,
+                bytes,
+            },
+        );
+        self.counters.offscreen_cached_bytes =
+            self.counters.offscreen_cached_bytes.saturating_add(bytes);
+        self.counters.offscreen_peak_cached_bytes = self
+            .counters
+            .offscreen_peak_cached_bytes
+            .max(self.counters.offscreen_cached_bytes);
+        self.counters.offscreen_group_cache_misses += 1;
+        self.counters.offscreen_group_rerenders += 1;
+        let child_rectangles = child_batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+                    instances.len()
+                }
+                _ => 0,
+            })
+            .sum::<usize>();
+        let child_glyphs = child_batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::Glyphs {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => instances.len(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let child_images = child_batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::Images {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => instances.len(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let child_rounded = child_batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::RoundedRects {
+                    clip, instances, ..
+                } if *clip != ClipState::Empty => instances.len(),
+                DrawBatch::StencilRRect { clip, .. } if *clip != ClipState::Empty => 1,
+                _ => 0,
+            })
+            .sum::<usize>();
+        let child_paths = child_batches
+            .iter()
+            .map(|batch| match batch {
+                DrawBatch::Path { clip, .. } | DrawBatch::StencilPath { clip, .. }
+                    if *clip != ClipState::Empty =>
+                {
+                    1
+                }
+                _ => 0,
+            })
+            .sum::<usize>();
+        let child_composites = child_batches
+            .iter()
+            .filter(|batch| {
+                matches!(
+                    batch,
+                    DrawBatch::Offscreen { clip, .. }
+                        | DrawBatch::Filtered { clip, .. }
+                        | DrawBatch::Shadow { clip, .. }
+                        if *clip != ClipState::Empty
+                )
+            })
+            .count();
+        self.ensure_rectangle_capacity(child_rectangles);
+        self.ensure_glyph_capacity(child_glyphs);
+        self.ensure_image_capacity(child_images);
+        self.ensure_composite_capacity(child_composites);
+        if child_rounded > self.rounded_rect_instance_capacity {
+            self.rounded_rect_instance_capacity = child_rounded.next_power_of_two();
+            self.rounded_rect_instances =
+                create_rrect_buffer(&self.device, self.rounded_rect_instance_capacity);
+        }
+        if child_paths > self.path_instance_capacity {
+            self.path_instance_capacity = child_paths.next_power_of_two();
+            self.path_instances =
+                create_path_instance_buffer(&self.device, self.path_instance_capacity);
+        }
+        self.upload_instance_data(&child_batches, scale, width, height);
+        self.prepare_image_bind_groups(&child_batches);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular opacity group encoder"),
+            });
+        let (target_view, target_stencil) = {
+            let entry = self
+                .offscreen_cache
+                .get(&layer)
+                .expect("new opacity target in cache");
+            (
+                entry.target.color_view.clone(),
+                entry.target.stencil_view.clone(),
+            )
+        };
+        self.encode_batches(
+            &mut encoder,
+            &target_view,
+            &target_stencil,
+            &child_batches,
+            width,
+            height,
+            scale,
+            wgpu::Color::TRANSPARENT,
+            None,
+            false,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        self.counters.offscreen_render_passes += 1;
+        self.target_width = saved_target.0;
+        self.target_height = saved_target.1;
+        self.target_origin = saved_target.2;
+        self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+        Ok(Some(DrawBatch::Offscreen {
+            clip: parent_clip,
+            layer,
+            instance: composite_instance(
+                target_origin,
+                active_origin,
+                active_width,
+                active_height,
+                width,
+                height,
+                scale,
+                alpha,
+            ),
+        }))
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn lower_source_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Option<CachedSource>, RendererError> {
+        let active_origin = self.target_origin;
+        let base_source = !commands_have_effects(commands);
+        if parent_clip == ClipState::Empty
+            || !bounds.origin.x.is_finite()
+            || !bounds.origin.y.is_finite()
+            || !bounds.size.width.is_finite()
+            || !bounds.size.height.is_finite()
+            || bounds.size.width <= 0.
+            || bounds.size.height <= 0.
+        {
+            return Ok(None);
+        }
+        let left = ((bounds.origin.x - active_origin.x) * scale).floor();
+        let top = ((bounds.origin.y - active_origin.y) * scale).floor();
+        let right = ((bounds.origin.x + bounds.size.width - active_origin.x) * scale).ceil();
+        let bottom = ((bounds.origin.y + bounds.size.height - active_origin.y) * scale).ceil();
+        let width_f = right - left;
+        let height_f = bottom - top;
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if width_f <= 0. || height_f <= 0. {
+            return Ok(None);
+        }
+        if width_f > limit as f32 || height_f > limit as f32 {
+            return Err(RendererError::OffscreenTargetTooLarge {
+                width: width_f.min(u32::MAX as f32) as u32,
+                height: height_f.min(u32::MAX as f32) as u32,
+                limit,
+            });
+        }
+        let width = width_f as u32;
+        let height = height_f as u32;
+        if width == 0 || height == 0 {
+            return Ok(None);
+        }
+        let target_origin = Offset::new(
+            active_origin.x + left / scale,
+            active_origin.y + top / scale,
+        );
+        let frame = self.counters.frames;
+        if let Some(entry) = self.offscreen_cache.get_mut(&layer)
+            && entry.generation == generation
+            && entry.width == width
+            && entry.height == height
+            && entry.scale_factor_bits == scale.to_bits()
+            && entry.target.format == self.config.format
+            && entry.device_generation == self.device_generation
+        {
+            entry.last_used_frame = frame;
+            if base_source {
+                self.counters.effect_source_cache_hits += 1;
+            } else {
+                self.counters.effect_stage_cache_hits += 1;
+            }
+            self.counters.offscreen_texture_reuses += 1;
+            return Ok(Some(CachedSource {
+                origin: target_origin,
+                width,
+                height,
+            }));
+        }
+        if let Some(previous) = self.offscreen_cache.remove(&layer) {
+            self.counters.offscreen_cached_bytes = self
+                .counters
+                .offscreen_cached_bytes
+                .saturating_sub(previous.bytes);
+            self.offscreen_target_pool.recycle(previous.target);
+        }
+        let saved_target = (self.target_width, self.target_height, self.target_origin);
+        self.target_width = width;
+        self.target_height = height;
+        self.target_origin = target_origin;
+        self.offscreen_nesting_depth += 1;
+        self.counters.max_offscreen_nesting_depth = self
+            .counters
+            .max_offscreen_nesting_depth
+            .max(self.offscreen_nesting_depth);
+        let child_translation = translation - (target_origin - active_origin);
+        let child_batches =
+            match self.lower_commands(commands, scale, child_translation, ClipState::Unbounded) {
+                Ok(batches) => batches,
+                Err(error) => {
+                    self.target_width = saved_target.0;
+                    self.target_height = saved_target.1;
+                    self.target_origin = saved_target.2;
+                    self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+                    return Err(error);
+                }
+            };
+        if !batches_have_content(&child_batches) {
+            self.target_width = saved_target.0;
+            self.target_height = saved_target.1;
+            self.target_origin = saved_target.2;
+            self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+            return Ok(None);
+        }
+        let target = if let Some(target) =
+            self.offscreen_target_pool
+                .take(width, height, self.config.format, true)
+        {
+            self.counters.offscreen_texture_reuses += 1;
+            target
+        } else {
+            self.create_offscreen_target(width, height, "incular retained effect source")
+        };
+        let bind_group =
+            self.create_composite_bind_group(&target, "incular retained effect source bind group");
+        let bytes = target.bytes();
+        self.offscreen_cache.insert(
+            layer,
+            OffscreenCacheEntry {
+                target,
+                bind_group,
+                width,
+                height,
+                scale_factor_bits: scale.to_bits(),
+                generation,
+                device_generation: self.device_generation,
+                last_used_frame: frame,
+                bytes,
+            },
+        );
+        self.counters.offscreen_cached_bytes =
+            self.counters.offscreen_cached_bytes.saturating_add(bytes);
+        self.counters.offscreen_peak_cached_bytes = self
+            .counters
+            .offscreen_peak_cached_bytes
+            .max(self.counters.offscreen_cached_bytes);
+        if base_source {
+            self.counters.effect_source_cache_misses += 1;
+            self.counters.effect_source_rerenders += 1;
+        } else {
+            self.counters.effect_stage_cache_misses += 1;
+            self.counters.effect_stage_rerenders += 1;
+        }
+        self.render_cached_batches(
+            &child_batches,
+            scale,
+            width,
+            height,
+            layer,
+            "incular effect source encoder",
+        );
+        self.target_width = saved_target.0;
+        self.target_height = saved_target.1;
+        self.target_origin = saved_target.2;
+        self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+        Ok(Some(CachedSource {
+            origin: target_origin,
+            width,
+            height,
+        }))
+    }
+
+    fn create_offscreen_target(
+        &mut self,
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) -> OffscreenTarget {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let color_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (stencil, stencil_view) = create_stencil_attachment(&self.device, width, height);
+        self.counters.offscreen_color_texture_creations += 1;
+        self.counters.offscreen_stencil_texture_creations += 1;
+        OffscreenTarget {
+            _color: texture,
+            color_view,
+            _stencil: stencil,
+            stencil_view,
+            width,
+            height,
+            format: self.config.format,
+            has_stencil: true,
+        }
+    }
+
+    fn create_composite_bind_group(
+        &self,
+        target: &OffscreenTarget,
+        label: &'static str,
+    ) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.composite_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&target.color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.composite_sampler),
+                },
+            ],
+        })
+    }
+
+    fn render_cached_batches(
+        &mut self,
+        batches: &[DrawBatch],
+        scale: f32,
+        width: u32,
+        height: u32,
+        layer: incular_painting::LayerId,
+        label: &'static str,
+    ) {
+        if batches.iter().any(|batch| {
+            matches!(
+                batch,
+                DrawBatch::Blend {
+                    mode,
+                    ..
+                } if mode.requires_destination_read()
+            )
+        }) {
+            // Nested destination reads use the same ping-pong graph as the
+            // presentation path, then copy the completed result into the
+            // retained source target.  The copy is outside the blend pass,
+            // so no texture is sampled while it is being rendered.
+            let Some(output) = self
+                .offscreen_cache
+                .get(&layer)
+                .map(|entry| entry.target.clone())
+            else {
+                return;
+            };
+            self.ensure_destination_targets(width, height);
+            let mut targets = self
+                .destination_targets
+                .take()
+                .expect("destination targets after ensure");
+            let (current_first, _, _, passes) = self.render_destination_batches(
+                batches,
+                scale,
+                width,
+                height,
+                &mut targets,
+                wgpu::Color::TRANSPARENT,
+                label,
+            );
+            let final_target = if current_first {
+                &targets.first
+            } else {
+                &targets.second
+            };
+            self.copy_color_texture(
+                final_target,
+                &output,
+                width,
+                height,
+                "incular nested destination composition copy",
+            );
+            self.destination_targets = Some(targets);
+            self.counters.offscreen_render_passes += u64::from(passes);
+            return;
+        }
+        let rectangles = count_rectangles(batches);
+        let glyphs = count_glyphs(batches);
+        let images = count_images(batches);
+        let rounded = count_rounded(batches);
+        let paths = count_paths(batches);
+        let composites = count_composites(batches);
+        self.ensure_rectangle_capacity(rectangles);
+        self.ensure_glyph_capacity(glyphs);
+        self.ensure_image_capacity(images);
+        self.ensure_composite_capacity(composites);
+        if rounded > self.rounded_rect_instance_capacity {
+            self.rounded_rect_instance_capacity = rounded.next_power_of_two();
+            self.rounded_rect_instances =
+                create_rrect_buffer(&self.device, self.rounded_rect_instance_capacity);
+        }
+        if paths > self.path_instance_capacity {
+            self.path_instance_capacity = paths.next_power_of_two();
+            self.path_instances =
+                create_path_instance_buffer(&self.device, self.path_instance_capacity);
+        }
+        self.upload_instance_data(batches, scale, width, height);
+        self.prepare_image_bind_groups(batches);
+        let Some(entry) = self.offscreen_cache.get(&layer) else {
+            return;
+        };
+        let color_view = entry.target.color_view.clone();
+        let stencil_view = entry.target.stencil_view.clone();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        self.encode_batches(
+            &mut encoder,
+            &color_view,
+            &stencil_view,
+            batches,
+            width,
+            height,
+            scale,
+            wgpu::Color::TRANSPARENT,
+            None,
+            false,
+        );
+        self.queue.submit(Some(encoder.finish()));
+        self.counters.offscreen_render_passes += 1;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_blur_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        blur: GaussianBlur,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Option<DrawBatch>, RendererError> {
+        let Some(source) = self.lower_source_group(
+            commands,
+            scale,
+            layer,
+            generation,
+            bounds,
+            parent_clip,
+            translation,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(effect) = self.render_blur_from_source(
+            scale,
+            layer,
+            generation,
+            bounds,
+            GaussianBlur::new(blur.sigma_x, blur.sigma_y),
+            source,
+            false,
+        )?
+        else {
+            return Ok(None);
+        };
+        self.counters.effect_chain_compilations += 1;
+        let active_origin = self.target_origin;
+        Ok(Some(DrawBatch::Filtered {
+            clip: parent_clip,
+            layer,
+            instance: composite_instance(
+                effect.origin,
+                active_origin,
+                self.target_width,
+                self.target_height,
+                effect.width,
+                effect.height,
+                scale,
+                1.,
+            ),
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_color_filter_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        filter: ColorFilter,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Option<DrawBatch>, RendererError> {
+        let Some(source) = self.lower_source_group(
+            commands,
+            scale,
+            layer,
+            generation,
+            bounds,
+            parent_clip,
+            translation,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(effect) =
+            self.render_color_filter_from_source(scale, layer, generation, filter, source)?
+        else {
+            return Ok(None);
+        };
+        self.counters.effect_chain_compilations += 1;
+        Ok(Some(DrawBatch::Filtered {
+            clip: parent_clip,
+            layer,
+            instance: composite_instance(
+                effect.origin,
+                self.target_origin,
+                self.target_width,
+                self.target_height,
+                effect.width,
+                effect.height,
+                scale,
+                1.,
+            ),
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_blend_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        mode: BlendMode,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Option<DrawBatch>, RendererError> {
+        if parent_clip == ClipState::Empty {
+            return Ok(None);
+        }
+        let Some(source) = self.lower_source_group(
+            commands,
+            scale,
+            layer,
+            generation,
+            bounds,
+            parent_clip,
+            translation,
+        )?
+        else {
+            return Ok(None);
+        };
+        self.counters.effect_chain_compilations += 1;
+        Ok(Some(DrawBatch::Blend {
+            clip: parent_clip,
+            layer,
+            mode,
+            instance: blend_instance(
+                source.origin,
+                self.target_origin,
+                self.target_width,
+                self.target_height,
+                source.width,
+                source.height,
+                scale,
+                mode,
+            ),
+        }))
+    }
+
+    fn render_color_filter_from_source(
+        &mut self,
+        scale: f32,
+        layer: incular_painting::LayerId,
+        generation: u64,
+        filter: ColorFilter,
+        source: CachedSource,
+    ) -> Result<Option<CachedEffect>, RendererError> {
+        let frame = self.counters.frames;
+        let matrix_bits = filter.to_matrix().map(f32::to_bits);
+        if let Some(entry) = self.effect_cache.get_mut(&layer)
+            && entry.source_generation == generation
+            && entry.width == source.width
+            && entry.height == source.height
+            && entry.scale_factor_bits == scale.to_bits()
+            && entry.matrix_bits == matrix_bits
+            && entry.sigma_x_bits == 0
+            && entry.sigma_y_bits == 0
+            && entry.target.format == self.config.format
+            && entry.device_generation == self.device_generation
+        {
+            entry.last_used_frame = frame;
+            self.counters.effect_stage_cache_hits += 1;
+            return Ok(Some(CachedEffect {
+                origin: source.origin,
+                width: source.width,
+                height: source.height,
+            }));
+        }
+        if let Some(previous) = self.effect_cache.remove(&layer) {
+            self.remove_effect_cache_bytes(previous.bytes);
+            self.offscreen_target_pool.recycle(previous.target);
+        }
+        let target = if let Some(target) =
+            self.offscreen_target_pool
+                .take(source.width, source.height, self.config.format, true)
+        {
+            self.counters.effect_texture_pool_hits += 1;
+            target
+        } else {
+            self.counters.effect_texture_pool_misses += 1;
+            self.counters.effect_texture_creations += 1;
+            self.create_offscreen_target(source.width, source.height, "incular color matrix result")
+        };
+        let source_view = self
+            .offscreen_cache
+            .get(&layer)
+            .expect("source cache for color filter")
+            .target
+            .color_view
+            .clone();
+        self.run_color_matrix_pass(&source_view, &target.color_view, filter);
+        let bind_group =
+            self.create_composite_bind_group(&target, "incular color matrix bind group");
+        let bytes = target.bytes();
+        self.effect_cache.insert(
+            layer,
+            EffectCacheEntry {
+                target,
+                bind_group,
+                width: source.width,
+                height: source.height,
+                scale_factor_bits: scale.to_bits(),
+                source_generation: generation,
+                sigma_x_bits: 0,
+                sigma_y_bits: 0,
+                matrix_bits,
+                device_generation: self.device_generation,
+                last_used_frame: frame,
+                bytes,
+                downsample_factor: 1,
+            },
+        );
+        self.add_effect_cache_bytes(bytes);
+        self.counters.effect_stage_cache_misses += 1;
+        self.counters.effect_stage_rerenders += 1;
+        self.counters.color_matrix_passes += 1;
+        Ok(Some(CachedEffect {
+            origin: source.origin,
+            width: source.width,
+            height: source.height,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_drop_shadow_group(
+        &mut self,
+        commands: &[PaintCommand],
+        scale: f32,
+        layer: incular_painting::LayerId,
+        shadow: DropShadowEffect,
+        generation: u64,
+        bounds: Rect,
+        parent_clip: ClipState,
+        translation: Offset,
+    ) -> Result<Vec<DrawBatch>, RendererError> {
+        let Some(source) = self.lower_source_group(
+            commands,
+            scale,
+            layer,
+            generation,
+            bounds,
+            parent_clip,
+            translation,
+        )?
+        else {
+            return Ok(Vec::new());
+        };
+        self.counters.effect_chain_compilations += 1;
+        let active_origin = self.target_origin;
+        let blur = GaussianBlur::new(shadow.sigma_x, shadow.sigma_y);
+        let shadow_batch = if blur.sigma_x <= f32::EPSILON && blur.sigma_y <= f32::EPSILON {
+            DrawBatch::Shadow {
+                clip: parent_clip,
+                layer,
+                instance: composite_instance_with_color(
+                    source.origin + shadow.offset,
+                    active_origin,
+                    self.target_width,
+                    self.target_height,
+                    source.width,
+                    source.height,
+                    scale,
+                    1.,
+                    shadow.color,
+                    true,
+                ),
+            }
+        } else {
+            let Some(effect) =
+                self.render_blur_from_source(scale, layer, generation, bounds, blur, source, true)?
+            else {
+                return Ok(Vec::new());
+            };
+            DrawBatch::Shadow {
+                clip: parent_clip,
+                layer,
+                instance: composite_instance_with_color(
+                    effect.origin + shadow.offset,
+                    active_origin,
+                    self.target_width,
+                    self.target_height,
+                    effect.width,
+                    effect.height,
+                    scale,
+                    1.,
+                    shadow.color,
+                    true,
+                ),
+            }
+        };
+        Ok(vec![
+            shadow_batch,
+            DrawBatch::Offscreen {
+                clip: parent_clip,
+                layer,
+                instance: composite_instance(
+                    source.origin,
+                    active_origin,
+                    self.target_width,
+                    self.target_height,
+                    source.width,
+                    source.height,
+                    scale,
+                    1.,
+                ),
+            },
+        ])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_blur_from_source(
+        &mut self,
+        scale: f32,
+        layer: incular_painting::LayerId,
+        generation: u64,
+        source_bounds: Rect,
+        blur: GaussianBlur,
+        source: CachedSource,
+        for_shadow: bool,
+    ) -> Result<Option<CachedEffect>, RendererError> {
+        let active_origin = self.target_origin;
+        let effect_bounds = blur_bounds(source_bounds, blur.sigma_x, blur.sigma_y);
+        let left = ((effect_bounds.origin.x - active_origin.x) * scale).floor();
+        let top = ((effect_bounds.origin.y - active_origin.y) * scale).floor();
+        let right =
+            ((effect_bounds.origin.x + effect_bounds.size.width - active_origin.x) * scale).ceil();
+        let bottom =
+            ((effect_bounds.origin.y + effect_bounds.size.height - active_origin.y) * scale).ceil();
+        let width_f = right - left;
+        let height_f = bottom - top;
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if width_f <= 0. || height_f <= 0. {
+            return Ok(None);
+        }
+        if width_f > limit as f32 || height_f > limit as f32 {
+            return Err(RendererError::OffscreenTargetTooLarge {
+                width: width_f.min(u32::MAX as f32) as u32,
+                height: height_f.min(u32::MAX as f32) as u32,
+                limit,
+            });
+        }
+        let width = width_f as u32;
+        let height = height_f as u32;
+        let effect_origin = Offset::new(
+            active_origin.x + left / scale,
+            active_origin.y + top / scale,
+        );
+        let sigma_x_physical = normalize_sigma(blur.sigma_x * scale);
+        let sigma_y_physical = normalize_sigma(blur.sigma_y * scale);
+        let downsample_factor =
+            choose_blur_downsample_factor(sigma_x_physical.max(sigma_y_physical));
+        let frame = self.counters.frames;
+        if let Some(entry) = self.effect_cache.get_mut(&layer)
+            && entry.source_generation == generation
+            && entry.width == width
+            && entry.height == height
+            && entry.scale_factor_bits == scale.to_bits()
+            && entry.sigma_x_bits == sigma_x_physical.to_bits()
+            && entry.sigma_y_bits == sigma_y_physical.to_bits()
+            && entry.downsample_factor == downsample_factor
+            && entry.target.format == self.config.format
+            && entry.device_generation == self.device_generation
+        {
+            entry.last_used_frame = frame;
+            self.counters.blur_cache_hits += 1;
+            self.counters.effect_stage_cache_hits += 1;
+            if for_shadow {
+                self.counters.drop_shadow_blur_reuses += 1;
+            }
+            return Ok(Some(CachedEffect {
+                origin: effect_origin,
+                width,
+                height,
+            }));
+        }
+        if let Some(previous) = self.effect_cache.remove(&layer) {
+            self.remove_effect_cache_bytes(previous.bytes);
+            self.offscreen_target_pool.recycle(previous.target);
+        }
+        let final_target = if let Some(target) =
+            self.offscreen_target_pool
+                .take(width, height, self.config.format, true)
+        {
+            self.counters.effect_texture_pool_hits += 1;
+            target
+        } else {
+            self.counters.effect_texture_pool_misses += 1;
+            self.counters.effect_texture_creations += 1;
+            self.create_offscreen_target(width, height, "incular retained blur result")
+        };
+        let padding = [
+            ((source.origin.x - effect_origin.x) * scale).max(0.),
+            ((source.origin.y - effect_origin.y) * scale).max(0.),
+        ];
+        let source_size = [source.width as f32, source.height as f32];
+        let output_size = [width as f32, height as f32];
+        let mut temps = Vec::new();
+        let factor = downsample_factor as f32;
+        let low_width = ((width as f32) / factor).ceil().max(1.) as u32;
+        let low_height = ((height as f32) / factor).ceil().max(1.) as u32;
+        let (horizontal, vertical) = if downsample_factor == 1 {
+            let horizontal = self.take_effect_temp(width, height);
+            (horizontal, None)
+        } else {
+            let downsample = self.take_effect_temp(low_width, low_height);
+            let horizontal = self.take_effect_temp(low_width, low_height);
+            let vertical = self.take_effect_temp(low_width, low_height);
+            temps.push(downsample);
+            (horizontal, Some(vertical))
+        };
+        let (horizontal, vertical_for_large) = (horizontal, vertical);
+        let source_view = self
+            .offscreen_cache
+            .get(&layer)
+            .expect("source cache for effect")
+            .target
+            .color_view
+            .clone();
+        if downsample_factor > 1 {
+            let downsample = &temps[0];
+            self.run_effect_pass(
+                &source_view,
+                &downsample.color_view,
+                [padding[0], padding[1]],
+                source_size,
+                [low_width as f32, low_height as f32],
+                [factor, factor],
+                None,
+            );
+            self.counters.blur_downsample_passes += 1;
+        }
+        let blur_source_view = if downsample_factor > 1 {
+            temps[0].color_view.clone()
+        } else {
+            source_view.clone()
+        };
+        let blur_source_size = if downsample_factor > 1 {
+            [low_width as f32, low_height as f32]
+        } else {
+            source_size
+        };
+        let blur_output_size = if downsample_factor > 1 {
+            [low_width as f32, low_height as f32]
+        } else {
+            output_size
+        };
+        let kernel_x = self.blur_kernel(sigma_x_physical / factor, downsample_factor);
+        let kernel_y = self.blur_kernel(sigma_y_physical / factor, downsample_factor);
+        self.run_effect_pass(
+            &blur_source_view,
+            &horizontal.color_view,
+            if downsample_factor > 1 {
+                [0., 0.]
+            } else {
+                padding
+            },
+            blur_source_size,
+            blur_output_size,
+            [1., 0.],
+            Some(&kernel_x),
+        );
+        self.counters.blur_horizontal_passes += 1;
+        let vertical_target = vertical_for_large.as_ref().unwrap_or(&final_target);
+        self.run_effect_pass(
+            &horizontal.color_view,
+            &vertical_target.color_view,
+            [0., 0.],
+            blur_output_size,
+            blur_output_size,
+            [0., 1.],
+            Some(&kernel_y),
+        );
+        self.counters.blur_vertical_passes += 1;
+        if downsample_factor > 1 {
+            self.run_effect_pass(
+                &vertical_target.color_view,
+                &final_target.color_view,
+                [0., 0.],
+                [low_width as f32, low_height as f32],
+                output_size,
+                [1. / factor, 1. / factor],
+                None,
+            );
+            self.counters.blur_upsample_passes += 1;
+        }
+        self.recycle_effect_temp(horizontal);
+        if let Some(vertical) = vertical_for_large {
+            self.recycle_effect_temp(vertical);
+        }
+        for temp in temps {
+            self.recycle_effect_temp(temp);
+        }
+        self.counters.blur_cache_misses += 1;
+        self.counters.effect_stage_cache_misses += 1;
+        self.counters.effect_stage_rerenders += 1;
+        let bind_group =
+            self.create_composite_bind_group(&final_target, "incular retained blur bind group");
+        let bytes = final_target.bytes();
+        self.effect_cache.insert(
+            layer,
+            EffectCacheEntry {
+                target: final_target,
+                bind_group,
+                width,
+                height,
+                scale_factor_bits: scale.to_bits(),
+                source_generation: generation,
+                sigma_x_bits: sigma_x_physical.to_bits(),
+                sigma_y_bits: sigma_y_physical.to_bits(),
+                matrix_bits: [0; 20],
+                device_generation: self.device_generation,
+                last_used_frame: frame,
+                bytes,
+                downsample_factor,
+            },
+        );
+        self.add_effect_cache_bytes(bytes);
+        Ok(Some(CachedEffect {
+            origin: effect_origin,
+            width,
+            height,
+        }))
+    }
+
+    fn take_effect_temp(&mut self, width: u32, height: u32) -> OffscreenTarget {
+        if let Some(target) =
+            self.offscreen_target_pool
+                .take(width, height, self.config.format, true)
+        {
+            self.counters.effect_texture_pool_hits += 1;
+            target
+        } else {
+            self.counters.effect_texture_pool_misses += 1;
+            self.counters.effect_texture_creations += 1;
+            self.create_offscreen_target(width, height, "incular transient blur target")
+        }
+    }
+    fn recycle_effect_temp(&mut self, target: OffscreenTarget) {
+        self.offscreen_target_pool.recycle(target);
+    }
+    fn run_color_matrix_pass(
+        &mut self,
+        source: &wgpu::TextureView,
+        destination: &wgpu::TextureView,
+        filter: ColorFilter,
+    ) {
+        let params = GpuColorMatrixParams {
+            matrix: filter.to_matrix(),
+        };
+        self.queue
+            .write_buffer(&self.color_matrix_params, 0, bytemuck::bytes_of(&params));
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("incular color matrix pass bind group"),
+            layout: &self.color_matrix_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.color_matrix_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.color_matrix_params.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular color matrix pass encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("incular color matrix pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: destination,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.color_matrix_pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_vertex_buffer(0, self.mesh.slice(..));
+            pass.draw(0..6, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+    }
+    fn add_effect_cache_bytes(&mut self, bytes: usize) {
+        self.counters.offscreen_cached_bytes =
+            self.counters.offscreen_cached_bytes.saturating_add(bytes);
+        self.counters.effect_cached_bytes = self.counters.effect_cached_bytes.saturating_add(bytes);
+        self.counters.effect_chain_cached_bytes = self.counters.effect_cached_bytes;
+        self.counters.effect_peak_bytes = self
+            .counters
+            .effect_peak_bytes
+            .max(self.counters.effect_cached_bytes);
+        self.counters.offscreen_peak_cached_bytes = self
+            .counters
+            .offscreen_peak_cached_bytes
+            .max(self.counters.offscreen_cached_bytes);
+    }
+    fn remove_effect_cache_bytes(&mut self, bytes: usize) {
+        self.counters.offscreen_cached_bytes =
+            self.counters.offscreen_cached_bytes.saturating_sub(bytes);
+        self.counters.effect_cached_bytes = self.counters.effect_cached_bytes.saturating_sub(bytes);
+        self.counters.effect_chain_cached_bytes = self.counters.effect_cached_bytes;
+    }
+    fn blur_kernel(&mut self, sigma: f32, downsample_factor: u32) -> BlurKernel {
+        let sigma = quantize_blur_sigma(sigma);
+        let key = BlurKernelKey {
+            sigma_bits: sigma.to_bits(),
+            downsample_factor,
+        };
+        if let Some(kernel) = self.blur_kernel_cache.get(&key) {
+            self.counters.blur_kernel_cache_hits += 1;
+            return kernel.clone();
+        }
+        let full = gaussian_kernel_weights(sigma);
+        let radius = ((full.len().saturating_sub(1)) / 2).min(MAX_BLUR_RADIUS) as u32;
+        let center = full.len() / 2;
+        let mut weights = [0.; BLUR_WEIGHT_SLOTS];
+        let radius = radius as usize;
+        weights[..=radius].copy_from_slice(&full[center..=center + radius]);
+        let kernel = BlurKernel {
+            radius: radius as u32,
+            weights,
+        };
+        self.blur_kernel_cache.insert(key, kernel.clone());
+        self.counters.blur_kernel_cache_misses += 1;
+        self.counters.blur_kernel_uploads += 1;
+        kernel
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn run_effect_pass(
+        &mut self,
+        source: &wgpu::TextureView,
+        destination: &wgpu::TextureView,
+        source_origin: [f32; 2],
+        source_size: [f32; 2],
+        output_size: [f32; 2],
+        direction: [f32; 2],
+        kernel: Option<&BlurKernel>,
+    ) {
+        let mut weights = [0.; BLUR_WEIGHT_SLOTS];
+        let radius = kernel.map_or(0, |kernel| {
+            weights = kernel.weights;
+            kernel.radius
+        });
+        let params = GpuBlurParams {
+            source_origin,
+            source_size,
+            output_size,
+            direction,
+            radius,
+            mode: u32::from(kernel.is_none()),
+            _padding: [0; 2],
+            weights,
+        };
+        self.queue
+            .write_buffer(&self.blur_params, 0, bytemuck::bytes_of(&params));
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("incular transient effect bind group"),
+            layout: &self.blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.blur_params.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular transient effect pass"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("incular gaussian pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: destination,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(if kernel.is_some() {
+                &self.blur_pipeline
+            } else {
+                &self.resample_pipeline
+            });
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_vertex_buffer(0, self.mesh.slice(..));
+            pass.draw(0..6, 0..1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        self.counters.offscreen_render_passes += 1;
+    }
+
     fn append_path(
         &mut self,
         batches: &mut Vec<DrawBatch>,
@@ -2066,7 +5560,7 @@ impl WgpuRenderer {
                     placement.scale,
                     0.,
                 ],
-                surface: [self.config.width as f32, self.config.height as f32, 0., 0.],
+                surface: [self.target_width as f32, self.target_height as f32, 0., 0.],
                 color: color.to_linear_rgba(),
                 gradient,
                 options,
@@ -2283,6 +5777,77 @@ impl WgpuRenderer {
             frame.saturating_sub(gradient.last_used_frame) <= GRADIENT_CACHE_MAX_UNUSED_FRAMES
         });
         self.counters.gradient_resource_evictions += (before - self.gradient_cache.len()) as u64;
+    }
+    fn evict_offscreen_cache(&mut self) {
+        let frame = self.counters.frames;
+        loop {
+            let source = self
+                .offscreen_cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used_frame)
+                .map(|(layer, _)| (*layer, true));
+            let effect = self
+                .effect_cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used_frame)
+                .map(|(layer, _)| (*layer, false));
+            let Some((layer, is_source)) = (match (source, effect) {
+                (Some(left), Some(right)) => Some(if left.1 && !right.1 {
+                    // Pick the oldest timestamp rather than privileging one
+                    // cache. The bool only identifies ownership.
+                    let left_frame = self
+                        .offscreen_cache
+                        .get(&left.0)
+                        .map_or(u64::MAX, |entry| entry.last_used_frame);
+                    let right_frame = self
+                        .effect_cache
+                        .get(&right.0)
+                        .map_or(u64::MAX, |entry| entry.last_used_frame);
+                    if left_frame <= right_frame {
+                        left
+                    } else {
+                        right
+                    }
+                } else {
+                    left
+                }),
+                (Some(value), None) | (None, Some(value)) => Some(value),
+                (None, None) => None,
+            }) else {
+                break;
+            };
+            let last_used = if is_source {
+                self.offscreen_cache
+                    .get(&layer)
+                    .map_or(u64::MAX, |entry| entry.last_used_frame)
+            } else {
+                self.effect_cache
+                    .get(&layer)
+                    .map_or(u64::MAX, |entry| entry.last_used_frame)
+            };
+            let stale = frame.saturating_sub(last_used) > OFFSCREEN_CACHE_MAX_UNUSED_FRAMES;
+            if self.counters.offscreen_cached_bytes <= self.offscreen_cache_budget && !stale {
+                break;
+            }
+            if is_source {
+                let Some(entry) = self.offscreen_cache.remove(&layer) else {
+                    continue;
+                };
+                self.counters.offscreen_cached_bytes = self
+                    .counters
+                    .offscreen_cached_bytes
+                    .saturating_sub(entry.bytes);
+                self.offscreen_target_pool.recycle(entry.target);
+            } else {
+                let Some(entry) = self.effect_cache.remove(&layer) else {
+                    continue;
+                };
+                self.remove_effect_cache_bytes(entry.bytes);
+                self.offscreen_target_pool.recycle(entry.target);
+            }
+            self.counters.offscreen_texture_evictions += 1;
+            self.counters.effect_texture_evictions += u64::from(!is_source);
+        }
     }
     fn prepare_image_bind_groups(&mut self, batches: &[DrawBatch]) {
         for batch in batches {
@@ -2507,6 +6072,202 @@ fn create_path_pipeline(
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+fn create_composite_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("incular opacity composite shader"),
+        source: wgpu::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("incular opacity composite layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("incular opacity composite pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(quad_layout()), Some(composite_layout())],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: content_stencil(),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_fixed_blend_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::BindGroupLayout,
+    mode: BlendMode,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("incular fixed-function blend shader"),
+        source: wgpu::ShaderSource::Wgsl(FIXED_BLEND_SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("incular fixed-function blend layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    let factor = |source: wgpu::BlendFactor, destination: wgpu::BlendFactor| wgpu::BlendComponent {
+        src_factor: source,
+        dst_factor: destination,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let (source, destination) = match mode {
+        BlendMode::SrcOver => (wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrcAlpha),
+        BlendMode::Src => (wgpu::BlendFactor::One, wgpu::BlendFactor::Zero),
+        BlendMode::DstOver => (wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::One),
+        BlendMode::SrcIn => (wgpu::BlendFactor::DstAlpha, wgpu::BlendFactor::Zero),
+        BlendMode::DstIn => (wgpu::BlendFactor::Zero, wgpu::BlendFactor::SrcAlpha),
+        BlendMode::SrcOut => (wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::Zero),
+        BlendMode::DstOut => (wgpu::BlendFactor::Zero, wgpu::BlendFactor::OneMinusSrcAlpha),
+        BlendMode::SrcAtop => (
+            wgpu::BlendFactor::DstAlpha,
+            wgpu::BlendFactor::OneMinusSrcAlpha,
+        ),
+        BlendMode::DstAtop => (
+            wgpu::BlendFactor::OneMinusDstAlpha,
+            wgpu::BlendFactor::SrcAlpha,
+        ),
+        BlendMode::Xor => (
+            wgpu::BlendFactor::OneMinusDstAlpha,
+            wgpu::BlendFactor::OneMinusSrcAlpha,
+        ),
+        BlendMode::Plus => (wgpu::BlendFactor::One, wgpu::BlendFactor::One),
+        _ => unreachable!("fixed blend pipeline only supports Porter-Duff modes"),
+    };
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("incular fixed-function blend pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(quad_layout()), Some(composite_layout())],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: content_stencil(),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState {
+                    color: factor(source, destination),
+                    alpha: factor(source, destination),
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_effect_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    source: &str,
+    label: &'static str,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("incular effect pipeline layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(quad_layout())],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+fn create_blend_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("incular destination blend shader"),
+        source: wgpu::ShaderSource::Wgsl(BLEND_SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("incular destination blend pipeline layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("incular destination blend pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(quad_layout()), Some(composite_layout())],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: content_stencil(),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -2811,6 +6572,39 @@ fn path_instance_layout() -> wgpu::VertexBufferLayout<'static> {
         ],
     }
 }
+fn composite_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<GpuCompositeInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 16,
+                shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 32,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 48,
+                shader_location: 4,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 64,
+                shader_location: 5,
+            },
+        ],
+    }
+}
 fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("incular rectangle instances"),
@@ -2847,6 +6641,14 @@ fn create_path_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("incular path paint instances"),
         size: (capacity * std::mem::size_of::<GpuPathInstance>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+fn create_composite_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("incular opacity composite instances"),
+        size: (capacity * std::mem::size_of::<GpuCompositeInstance>()) as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
@@ -2982,6 +6784,124 @@ fn intersect_clip_with_rect(clip: ClipState, next: ClipRect) -> ClipState {
             .unwrap_or(ClipState::Empty),
         ClipState::Empty => ClipState::Empty,
     }
+}
+
+fn batches_have_content(batches: &[DrawBatch]) -> bool {
+    batches.iter().any(|batch| match batch {
+        DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+            !instances.is_empty()
+        }
+        DrawBatch::RoundedRects {
+            clip, instances, ..
+        } if *clip != ClipState::Empty => !instances.is_empty(),
+        DrawBatch::Glyphs {
+            clip, instances, ..
+        } if *clip != ClipState::Empty => !instances.is_empty(),
+        DrawBatch::Images {
+            clip, instances, ..
+        } if *clip != ClipState::Empty => !instances.is_empty(),
+        DrawBatch::Path { clip, .. }
+        | DrawBatch::Offscreen { clip, .. }
+        | DrawBatch::Filtered { clip, .. }
+        | DrawBatch::Shadow { clip, .. }
+        | DrawBatch::Blend { clip, .. }
+            if *clip != ClipState::Empty =>
+        {
+            true
+        }
+        DrawBatch::StencilRRect { .. } | DrawBatch::StencilPath { .. } => false,
+        _ => false,
+    })
+}
+fn count_rectangles(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .map(|batch| match batch {
+            DrawBatch::Rectangles { clip, instances } if *clip != ClipState::Empty => {
+                instances.len()
+            }
+            _ => 0,
+        })
+        .sum()
+}
+fn count_glyphs(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .map(|batch| match batch {
+            DrawBatch::Glyphs {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => instances.len(),
+            _ => 0,
+        })
+        .sum()
+}
+fn count_images(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .map(|batch| match batch {
+            DrawBatch::Images {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => instances.len(),
+            _ => 0,
+        })
+        .sum()
+}
+fn count_rounded(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .map(|batch| match batch {
+            DrawBatch::RoundedRects {
+                clip, instances, ..
+            } if *clip != ClipState::Empty => instances.len(),
+            DrawBatch::StencilRRect { clip, .. } if *clip != ClipState::Empty => 1,
+            _ => 0,
+        })
+        .sum()
+}
+fn count_paths(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .filter(|batch| {
+            matches!(
+                batch,
+                DrawBatch::Path { clip, .. } | DrawBatch::StencilPath { clip, .. }
+                    if *clip != ClipState::Empty
+            )
+        })
+        .count()
+}
+fn count_composites(batches: &[DrawBatch]) -> usize {
+    batches
+        .iter()
+        .filter(|batch| {
+            matches!(
+                batch,
+                    DrawBatch::Offscreen { clip, .. }
+                        | DrawBatch::Filtered { clip, .. }
+                    | DrawBatch::Shadow { clip, .. }
+                    | DrawBatch::Blend { clip, .. }
+                    if *clip != ClipState::Empty
+            )
+        })
+        .count()
+}
+#[must_use]
+fn choose_blur_downsample_factor(sigma_physical: f32) -> u32 {
+    let mut factor = 1_u32;
+    let mut effective = normalize_sigma(sigma_physical);
+    while effective > LARGE_BLUR_SIGMA_THRESHOLD && factor < 64 {
+        factor *= 2;
+        effective = sigma_physical / factor as f32;
+    }
+    factor
+}
+#[must_use]
+fn quantize_blur_sigma(sigma: f32) -> f32 {
+    let sigma = normalize_sigma(sigma);
+    if sigma <= f32::EPSILON {
+        return 0.;
+    }
+    (sigma / BLUR_KERNEL_QUANTUM).round() * BLUR_KERNEL_QUANTUM
 }
 fn append_rectangle(batches: &mut Vec<DrawBatch>, clip: ClipState, instance: RectangleInstance) {
     if let Some(DrawBatch::Rectangles {
@@ -3268,6 +7188,321 @@ fn ndc_rect(x: f32, y: f32, w: f32, h: f32, width: f32, height: f32) -> [f32; 4]
         -2. * h / height,
     ]
 }
+#[allow(clippy::too_many_arguments)]
+fn composite_instance(
+    target_origin: Offset,
+    parent_origin: Offset,
+    parent_width: u32,
+    parent_height: u32,
+    target_width: u32,
+    target_height: u32,
+    scale: f32,
+    alpha: f32,
+) -> GpuCompositeInstance {
+    composite_instance_with_color(
+        target_origin,
+        parent_origin,
+        parent_width,
+        parent_height,
+        target_width,
+        target_height,
+        scale,
+        alpha,
+        Color::WHITE,
+        false,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn composite_instance_with_color(
+    target_origin: Offset,
+    parent_origin: Offset,
+    parent_width: u32,
+    parent_height: u32,
+    target_width: u32,
+    target_height: u32,
+    scale: f32,
+    alpha: f32,
+    color: Color,
+    shadow: bool,
+) -> GpuCompositeInstance {
+    GpuCompositeInstance {
+        rect: ndc_rect(
+            (target_origin.x - parent_origin.x) * scale,
+            (target_origin.y - parent_origin.y) * scale,
+            target_width as f32,
+            target_height as f32,
+            parent_width as f32,
+            parent_height as f32,
+        ),
+        uv: [0., 0., 1., 1.],
+        alpha: [normalize_opacity(alpha), 0., 0., 0.],
+        color: color.to_linear_rgba(),
+        options: [f32::from(shadow as u8), 0., 0., 0.],
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn blend_instance(
+    target_origin: Offset,
+    parent_origin: Offset,
+    parent_width: u32,
+    parent_height: u32,
+    target_width: u32,
+    target_height: u32,
+    scale: f32,
+    mode: BlendMode,
+) -> GpuCompositeInstance {
+    GpuCompositeInstance {
+        rect: ndc_rect(
+            (target_origin.x - parent_origin.x) * scale,
+            (target_origin.y - parent_origin.y) * scale,
+            target_width as f32,
+            target_height as f32,
+            parent_width as f32,
+            parent_height as f32,
+        ),
+        uv: [0., 0., 1., 1.],
+        alpha: [1., 0., 0., 0.],
+        color: Color::WHITE.to_linear_rgba(),
+        options: [
+            mode.code() as f32,
+            parent_width as f32,
+            parent_height as f32,
+            0.,
+        ],
+    }
+}
+/// Applies an isolated group alpha to a premultiplied offscreen sample. The
+/// compositor shader mirrors this operation before using premultiplied
+/// source-over blending.
+#[cfg(test)]
+fn apply_group_alpha(sample: [f32; 4], alpha: f32) -> [f32; 4] {
+    let alpha = normalize_opacity(alpha);
+    [
+        sample[0] * alpha,
+        sample[1] * alpha,
+        sample[2] * alpha,
+        sample[3] * alpha,
+    ]
+}
+fn find_opacity_end(commands: &[PaintCommand], start: usize) -> Result<usize, RendererError> {
+    let mut depth = 0_usize;
+    for (index, command) in commands.iter().enumerate().skip(start) {
+        match command {
+            PaintCommand::PushOpacity { .. } => depth += 1,
+            PaintCommand::PopOpacity => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Ok(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(RendererError::UnbalancedClipStack)
+}
+
+fn find_effect_end(commands: &[PaintCommand], start: usize) -> Result<usize, RendererError> {
+    let mut depth = 0_usize;
+    for (index, command) in commands.iter().enumerate().skip(start) {
+        match command {
+            PaintCommand::PushBlur { .. }
+            | PaintCommand::PushDropShadow { .. }
+            | PaintCommand::PushColorFilter { .. }
+            | PaintCommand::PushBlend { .. } => depth += 1,
+            PaintCommand::PopEffect => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Ok(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(RendererError::UnbalancedClipStack)
+}
+fn commands_have_effects(commands: &[PaintCommand]) -> bool {
+    commands.iter().any(|command| {
+        matches!(
+            command,
+            PaintCommand::PushOpacity { .. }
+                | PaintCommand::PushBlur { .. }
+                | PaintCommand::PushDropShadow { .. }
+                | PaintCommand::PushColorFilter { .. }
+                | PaintCommand::PushBlend { .. }
+        )
+    })
+}
+
+fn commands_have_destination_blend(commands: &[PaintCommand]) -> bool {
+    commands.iter().any(|command| {
+        matches!(
+            command,
+            PaintCommand::PushBlend { mode, .. } if mode.requires_destination_read()
+        )
+    })
+}
+
+fn add_composition_bounds(bounds: &mut Option<Rect>, candidate: Rect) {
+    if !candidate.origin.x.is_finite()
+        || !candidate.origin.y.is_finite()
+        || !candidate.size.width.is_finite()
+        || !candidate.size.height.is_finite()
+        || candidate.size.width <= 0.
+        || candidate.size.height <= 0.
+    {
+        return;
+    }
+    *bounds = Some(match bounds.take() {
+        Some(current) => {
+            let left = current.origin.x.min(candidate.origin.x);
+            let top = current.origin.y.min(candidate.origin.y);
+            let right = (current.origin.x + current.size.width)
+                .max(candidate.origin.x + candidate.size.width);
+            let bottom = (current.origin.y + current.size.height)
+                .max(candidate.origin.y + candidate.size.height);
+            Rect::from_origin_size(
+                Offset::new(left, top),
+                Size::new(right - left, bottom - top),
+            )
+        }
+        None => candidate,
+    });
+}
+
+/// Computes a conservative logical scene scope for destination promotion. It
+/// deliberately includes every visible command (and expanded blur/shadow
+/// bounds), so presenting a tight target cannot omit content outside a small
+/// blend group. The ordinary direct path still uses the complete surface.
+fn display_list_composition_bounds(commands: &[PaintCommand]) -> Option<Rect> {
+    let mut transforms = vec![Offset::ZERO];
+    let mut bounds = None;
+    for command in commands {
+        let translation = *transforms.last().expect("root transform");
+        match command {
+            PaintCommand::Rect { rect, .. }
+            | PaintCommand::Image {
+                destination: rect, ..
+            } => add_composition_bounds(&mut bounds, translated_rect(*rect, translation)),
+            PaintCommand::RRect { rrect, .. } | PaintCommand::Border { rrect, .. } => {
+                add_composition_bounds(&mut bounds, translated_rect(rrect.rect, translation));
+            }
+            PaintCommand::FillPath { path, .. } | PaintCommand::StrokePath { path, .. } => {
+                if let Some(path_bounds) = path.bounds() {
+                    let margin = match command {
+                        PaintCommand::StrokePath { stroke, .. } => {
+                            (stroke.width.max(0.) * 0.5 * stroke.miter_limit.max(1.)).max(0.)
+                        }
+                        _ => 0.,
+                    };
+                    add_composition_bounds(
+                        &mut bounds,
+                        Rect::from_origin_size(
+                            Offset::new(
+                                path_bounds.origin.x - margin + translation.x,
+                                path_bounds.origin.y - margin + translation.y,
+                            ),
+                            Size::new(
+                                path_bounds.size.width + margin * 2.,
+                                path_bounds.size.height + margin * 2.,
+                            ),
+                        ),
+                    );
+                }
+            }
+            PaintCommand::GlyphRun { run, .. } => {
+                if let Some((left, right)) = run
+                    .glyphs
+                    .iter()
+                    .map(|glyph| (glyph.offset.x, glyph.offset.x + glyph.advance.max(0.)))
+                    .reduce(|(left, right), (next_left, next_right)| {
+                        (left.min(next_left), right.max(next_right))
+                    })
+                {
+                    let font_size = run.font_size.abs().max(1.);
+                    let x_margin = font_size * 0.25;
+                    add_composition_bounds(
+                        &mut bounds,
+                        Rect::from_origin_size(
+                            Offset::new(
+                                run.origin.x + left - x_margin + translation.x,
+                                run.origin.y - font_size * 1.35 + translation.y,
+                            ),
+                            Size::new((right - left + x_margin * 2.).max(1.), font_size * 1.7),
+                        ),
+                    );
+                }
+            }
+            // Effect bounds emitted by LayerTree are already in the current
+            // world coordinate space. Expand only the effects that can paint
+            // outside their source rectangle.
+            PaintCommand::PushOpacity { bounds: rect, .. }
+            | PaintCommand::PushColorFilter { bounds: rect, .. }
+            | PaintCommand::PushBlend { bounds: rect, .. } => {
+                add_composition_bounds(&mut bounds, *rect);
+            }
+            PaintCommand::PushBlur {
+                bounds: rect, blur, ..
+            } => {
+                add_composition_bounds(&mut bounds, blur_bounds(*rect, blur.sigma_x, blur.sigma_y))
+            }
+            PaintCommand::PushDropShadow {
+                bounds: rect,
+                shadow,
+                ..
+            } => add_composition_bounds(
+                &mut bounds,
+                drop_shadow_bounds(*rect, shadow.offset, shadow.sigma_x, shadow.sigma_y),
+            ),
+            PaintCommand::PushTransform { transform } => {
+                transforms.push(translation + transform.translation);
+            }
+            PaintCommand::PopTransform => {
+                if transforms.len() > 1 {
+                    transforms.pop();
+                }
+            }
+            PaintCommand::PushClip { .. }
+            | PaintCommand::PushClipRRect { .. }
+            | PaintCommand::PushClipPath { .. }
+            | PaintCommand::PopClip
+            | PaintCommand::PopOpacity
+            | PaintCommand::PopEffect => {}
+        }
+    }
+    bounds
+}
+
+fn destination_composition_scope(
+    list: &DisplayList,
+    scale: f32,
+    surface_width: u32,
+    surface_height: u32,
+) -> (Offset, u32, u32) {
+    let full = Rect::from_origin_size(
+        Offset::ZERO,
+        Size::new(surface_width as f32 / scale, surface_height as f32 / scale),
+    );
+    let scope = display_list_composition_bounds(list.commands())
+        .and_then(|bounds| intersect_rect(bounds, full))
+        .unwrap_or(full);
+    let left = (scope.origin.x * scale).floor().max(0.) as u32;
+    let top = (scope.origin.y * scale).floor().max(0.) as u32;
+    let right = ((scope.origin.x + scope.size.width) * scale)
+        .ceil()
+        .min(surface_width as f32) as u32;
+    let bottom = ((scope.origin.y + scope.size.height) * scale)
+        .ceil()
+        .min(surface_height as f32) as u32;
+    if right <= left || bottom <= top {
+        return (Offset::ZERO, surface_width.max(1), surface_height.max(1));
+    }
+    (
+        Offset::new(left as f32 / scale, top as f32 / scale),
+        right - left,
+        bottom - top,
+    )
+}
+
 fn translated_rect(rect: Rect, offset: Offset) -> Rect {
     Rect::from_origin_size(rect.origin + offset, rect.size)
 }
@@ -3327,6 +7562,12 @@ fn normalized_scale(scale: f64) -> f32 {
     } else {
         1.
     }
+}
+fn physical_debug_size(bounds: Rect, scale: f32) -> (u32, u32) {
+    (
+        (bounds.size.width.max(0.) * scale).ceil() as u32,
+        (bounds.size.height.max(0.) * scale).ceil() as u32,
+    )
 }
 fn clamp_i16(value: i32) -> i16 {
     value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
@@ -3638,6 +7879,99 @@ mod tests {
         );
     }
     #[test]
+    fn destination_scope_uses_tight_scene_bounds_and_surface_clipping() {
+        let mut list = DisplayList::new();
+        list.push(PaintCommand::Rect {
+            rect: Rect::from_origin_size(Offset::new(20., 30.), Size::new(40., 50.)),
+            color: Color::WHITE,
+        });
+        let (origin, width, height) = destination_composition_scope(&list, 1., 800, 600);
+        assert_eq!(origin, Offset::new(20., 30.));
+        assert_eq!((width, height), (40, 50));
+
+        let mut clipped = DisplayList::new();
+        clipped.push(PaintCommand::Rect {
+            rect: Rect::from_origin_size(Offset::new(-20., -10.), Size::new(40., 40.)),
+            color: Color::WHITE,
+        });
+        let (origin, width, height) = destination_composition_scope(&clipped, 1., 800, 600);
+        assert_eq!(origin, Offset::ZERO);
+        assert_eq!((width, height), (20, 30));
+    }
+    #[test]
+    fn premultiplied_shadow_colorization_matches_source_over_inputs() {
+        let sample =
+            incular_painting::premultiplied_shadow_sample(Color::rgba(220, 40, 80, 128), 0.25);
+        let expected_alpha = (128. / 255.) * 0.25;
+        assert!((sample[3] - expected_alpha).abs() < 1e-6);
+        assert!((sample[0] - (220. / 255.) * expected_alpha).abs() < 1e-6);
+        assert!((sample[1] - (40. / 255.) * expected_alpha).abs() < 1e-6);
+        assert!((sample[2] - (80. / 255.) * expected_alpha).abs() < 1e-6);
+    }
+    #[test]
+    fn premultiplied_blur_edge_preserves_color_alpha_ratio() {
+        let weights = gaussian_kernel_weights(1.5);
+        let center = weights.len() / 2;
+        let mut output = [0.; 4];
+        // A transparent black texel next to an opaque red texel. Convolving
+        // premultiplied values must keep the red channel equal to alpha; an
+        // unpremultiply/re-premultiply mistake would introduce a dark fringe.
+        for (index, weight) in weights.iter().enumerate() {
+            let sample = if index >= center {
+                [1., 0., 0., 1.]
+            } else {
+                [0.; 4]
+            };
+            for channel in 0..4 {
+                output[channel] += sample[channel] * weight;
+            }
+        }
+        assert!(output[3] > 0. && output[3] < 1.);
+        assert!((output[0] - output[3]).abs() < 1e-6);
+        assert_eq!(output[1], 0.);
+        assert_eq!(output[2], 0.);
+    }
+    #[test]
+    fn large_sigma_selects_bounded_multiscale_kernel_cost() {
+        assert_eq!(choose_blur_downsample_factor(0.), 1);
+        assert_eq!(choose_blur_downsample_factor(16.), 1);
+        assert_eq!(choose_blur_downsample_factor(17.), 2);
+        assert_eq!(choose_blur_downsample_factor(100.), 8);
+        for sigma in [1., 16., 100., 1000.] {
+            let factor = choose_blur_downsample_factor(sigma);
+            let kernel = gaussian_kernel_weights(sigma / factor as f32);
+            assert!(kernel.len() <= MAX_BLUR_RADIUS * 2 + 1);
+        }
+    }
+    #[test]
+    fn blur_kernel_key_is_quantized_without_exceeding_cutoff() {
+        let first = quantize_blur_sigma(4.001);
+        let second = quantize_blur_sigma(4.006);
+        assert_eq!(first, second);
+        assert!(gaussian_kernel_weights(first).len() <= MAX_BLUR_RADIUS * 2 + 1);
+    }
+    #[test]
+    fn effect_end_finds_nested_blur_and_shadow_boundaries() {
+        let mut tree = incular_painting::LayerTree::new();
+        let layer = tree.create_blur(GaussianBlur::uniform(1.));
+        let mut list = DisplayList::new();
+        list.push(PaintCommand::PushBlur {
+            layer,
+            blur: GaussianBlur::uniform(4.),
+            generation: 1,
+            bounds: Rect::from_origin_size(Offset::ZERO, Size::new(4., 4.)),
+        });
+        list.push(PaintCommand::PushDropShadow {
+            layer,
+            shadow: DropShadowEffect::new(Offset::ZERO, 2., Color::BLACK),
+            generation: 1,
+            bounds: Rect::from_origin_size(Offset::ZERO, Size::new(4., 4.)),
+        });
+        list.push(PaintCommand::PopEffect);
+        list.push(PaintCommand::PopEffect);
+        assert_eq!(find_effect_end(list.commands(), 0).unwrap(), 3);
+    }
+    #[test]
     fn raster_cache_reuses_color_independent_glyphs_but_not_dpi_size() {
         let mut text = TextEngine::new();
         let layout = text.layout("Hello", &TextStyle::default(), None, TextAlign::Start);
@@ -3919,5 +8253,90 @@ mod tests {
         eprintln!(
             "counter atlas diagnostics: first={first:?}, click={first_click:?}, warm={warm:?}"
         );
+    }
+    fn premultiplied_over(dst: [f32; 4], src: [f32; 4]) -> [f32; 4] {
+        let keep = 1. - src[3];
+        [
+            src[0] + dst[0] * keep,
+            src[1] + dst[1] * keep,
+            src[2] + dst[2] * keep,
+            src[3] + dst[3] * keep,
+        ]
+    }
+    #[test]
+    fn isolated_group_alpha_is_applied_once_to_overlap() {
+        let red = [1., 0., 0., 1.];
+        let blue = [0., 0., 1., 1.];
+        let group_overlap = premultiplied_over(red, blue);
+        let isolated = apply_group_alpha(group_overlap, 0.5);
+        assert_eq!(isolated, [0., 0., 0.5, 0.5]);
+
+        // Applying 0.5 independently to each opaque child produces a
+        // different overlap alpha (0.75), which is the bug this compositor
+        // boundary prevents.
+        let descendant_alpha =
+            premultiplied_over(apply_group_alpha(red, 0.5), apply_group_alpha(blue, 0.5));
+        assert!((descendant_alpha[3] - 0.75).abs() < f32::EPSILON);
+        assert_ne!(isolated, descendant_alpha);
+    }
+    #[test]
+    fn premultiplied_partial_child_and_nested_opacity_are_stable() {
+        let child = [0.5, 0., 0., 0.5];
+        assert_eq!(apply_group_alpha(child, 0.5), [0.25, 0., 0., 0.25]);
+        let nested = apply_group_alpha(apply_group_alpha([0.2, 0.4, 0.6, 1.], 0.5), 0.5);
+        assert_eq!(nested, [0.05, 0.1, 0.15, 0.25]);
+    }
+
+    #[test]
+    fn blend_codes_are_unique_and_reference_math_is_finite() {
+        let modes = [
+            BlendMode::SrcOver,
+            BlendMode::Src,
+            BlendMode::DstOver,
+            BlendMode::SrcIn,
+            BlendMode::DstIn,
+            BlendMode::SrcOut,
+            BlendMode::DstOut,
+            BlendMode::SrcAtop,
+            BlendMode::DstAtop,
+            BlendMode::Xor,
+            BlendMode::Plus,
+            BlendMode::Multiply,
+            BlendMode::Screen,
+            BlendMode::Overlay,
+            BlendMode::Darken,
+            BlendMode::Lighten,
+            BlendMode::ColorDodge,
+            BlendMode::ColorBurn,
+            BlendMode::HardLight,
+            BlendMode::SoftLight,
+            BlendMode::Difference,
+            BlendMode::Exclusion,
+        ];
+        let mut codes = modes.iter().map(|mode| mode.code()).collect::<Vec<_>>();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), modes.len());
+        for mode in modes {
+            for (source, destination) in [
+                ([0., 0., 0., 0.], [0., 0., 0., 0.]),
+                ([0.2, 0.1, 0.05, 0.5], [0.3, 0.2, 0.1, 0.5]),
+                ([0.1, 0.3, 0.2, 1.], [0.4, 0.1, 0.7, 1.]),
+            ] {
+                let output = incular_painting::blend_premultiplied(mode, source, destination);
+                assert!(output.iter().all(|value| value.is_finite()));
+                assert!(output[..3].iter().all(|value| *value <= output[3] + 1e-6));
+            }
+        }
+    }
+
+    #[test]
+    fn destination_blend_classification_keeps_porter_duff_on_fixed_path() {
+        assert!(!BlendMode::SrcOver.requires_destination_read());
+        assert!(!BlendMode::Src.requires_destination_read());
+        assert!(!BlendMode::Plus.requires_destination_read());
+        assert!(BlendMode::Multiply.requires_destination_read());
+        assert!(BlendMode::Overlay.requires_destination_read());
+        assert!(BlendMode::Exclusion.requires_destination_read());
     }
 }

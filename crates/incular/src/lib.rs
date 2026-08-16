@@ -28,17 +28,20 @@ pub mod prelude {
     };
     pub use incular_layout::{Alignment, Constraints, EdgeInsets};
     pub use incular_painting::{
-        Border, Brush, CornerRadii, Decoration, FillRule, GradientId, GradientStop, GradientStops,
-        ImageSampling, LineCap, LineJoin, LinearGradient, Path, PathBuilder, PathId, RRect,
-        RadialGradient, Stroke,
+        BlendMode, Border, Brush, ColorFilter, ColorMatrix, CornerRadii, Decoration,
+        DropShadowEffect, Effect, EffectChain, FillRule, GaussianBlur, GradientId, GradientStop,
+        GradientStops, ImageSampling, LineCap, LineJoin, LinearGradient, Path, PathBuilder, PathId,
+        RRect, RadialGradient, Stroke, blend_premultiplied,
     };
     pub use incular_runtime::{
         Application, BuildContext, EditingDiagnostics, FocusDiagnostics, Runtime, Signal,
     };
     pub use incular_text::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
     pub use incular_widgets::{
-        ActionId, Button, DecoratedBox, Icon, Image, ImageFit, Key, PathView, ScrollController,
-        ScrollView, ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, Text, TextArea,
+        ActionId, Blend, Blur, BlurController, Button, ColorFilterController, ColorFiltered,
+        ColorMatrixController, DecoratedBox, DropShadow, DropShadowController, Effects, Icon,
+        Image, ImageFit, Key, Opacity, OpacityController, PathView, ScrollController, ScrollView,
+        ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, Text, TextArea,
         TextEditingController, TextEditingValue, TextField, TextRange, TextSelection,
         TranslationController, VirtualList, Widget, icons,
     };
