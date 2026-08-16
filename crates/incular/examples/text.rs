@@ -1,4 +1,4 @@
-//! Text shaping, logical wrapping, colors, and mixed Unicode on a HiDPI window.
+//! Text shaping and grayscale glyph-raster quality on a HiDPI window.
 use incular::prelude::*;
 
 fn main() {
@@ -8,6 +8,55 @@ fn main() {
                 .style(TextStyle {
                     size: 28.0,
                     color: Color::rgba(255, 210, 120, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("12 px — H E F   O C S G   A V W M   0123456789")
+                .style(TextStyle {
+                    size: 12.0,
+                    color: Color::rgba(235, 240, 250, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("14 px — The quick brown fox jumps over the lazy dog.")
+                .style(TextStyle {
+                    size: 14.0,
+                    color: Color::rgba(235, 240, 250, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("16 px — H E F   O C S G   A V W M")
+                .style(TextStyle {
+                    size: 16.0,
+                    color: Color::rgba(235, 240, 250, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("20 px — Smooth grayscale coverage")
+                .style(TextStyle {
+                    size: 20.0,
+                    color: Color::rgba(150, 220, 255, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("28 px — Curves O C S G and diagonals A V W M")
+                .style(TextStyle {
+                    size: 28.0,
+                    color: Color::rgba(220, 195, 255, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("40 px — Incular text")
+                .style(TextStyle {
+                    size: 40.0,
+                    color: Color::rgba(255, 235, 180, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("56 px — AVOCS")
+                .style(TextStyle {
+                    size: 56.0,
+                    color: Color::rgba(255, 255, 255, 255),
                     ..TextStyle::default()
                 })
                 .into(),
@@ -27,6 +76,29 @@ fn main() {
                     ..TextStyle::default()
                 })
                 .into(),
+            Text::new("Font fallback: Hello — नमस्ते — 日本語 — مرحبا")
+                .style(TextStyle {
+                    size: 20.0,
+                    color: Color::rgba(160, 230, 190, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            Text::new("Greek Ελληνικά · Cyrillic Привет · Hebrew שלום · Thai สวัสดี")
+                .style(TextStyle {
+                    size: 16.0,
+                    color: Color::rgba(220, 210, 255, 255),
+                    ..TextStyle::default()
+                })
+                .into(),
+            DecoratedBox::new(
+                Text::new("Dark text on a light rectangle").style(TextStyle {
+                    size: 20.0,
+                    color: Color::rgba(25, 30, 40, 255),
+                    ..TextStyle::default()
+                }),
+            )
+            .background(Color::rgba(240, 244, 250, 255))
+            .into(),
         ])
     })
     .expect("valid typography application");

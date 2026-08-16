@@ -17,3 +17,7 @@ incular-painting = { workspace = true }
 fontdb = { workspace = true }
 rustybuzz = { workspace = true }
 unicode-linebreak = { workspace = true }
+unicode-bidi = { workspace = true }
+unicode-script = { workspace = true }
+unicode-segmentation = { workspace = true }
+ttf-parser = { workspace = true }

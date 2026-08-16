@@ -3878,10 +3878,12 @@ impl WidgetTree {
                     if let Some(layout) = self.renders.get(id.0).expect("live").text_layout.clone()
                     {
                         for line in layout.lines.iter() {
-                            cache.push(PaintCommand::GlyphRun {
-                                run: line.run.clone(),
-                                color: style.color,
-                            });
+                            for run in line.runs.iter() {
+                                cache.push(PaintCommand::GlyphRun {
+                                    run: run.clone(),
+                                    color: style.color,
+                                });
+                            }
                         }
                     }
                 }
@@ -3992,10 +3994,12 @@ impl WidgetTree {
                             style.color
                         };
                         for line in layout.lines.iter() {
-                            cache.push(PaintCommand::GlyphRun {
-                                run: line.run.clone(),
-                                color,
-                            });
+                            for run in line.runs.iter() {
+                                cache.push(PaintCommand::GlyphRun {
+                                    run: run.clone(),
+                                    color,
+                                });
+                            }
                         }
                         cache.push(PaintCommand::PopTransform);
                         cache.push(PaintCommand::PopClip);
@@ -4400,7 +4404,7 @@ fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
         return line.width;
     }
     let mut x = 0.;
-    for glyph in line.run.glyphs.iter() {
+    for glyph in line.glyphs.iter() {
         if glyph.cluster as usize >= byte {
             break;
         }
@@ -4413,7 +4417,7 @@ fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
         return line.end;
     }
     let mut best = 0usize;
-    for glyph in line.run.glyphs.iter() {
+    for glyph in line.glyphs.iter() {
         let midpoint = glyph.offset.x + glyph.advance / 2.;
         if x < midpoint {
             return glyph.cluster as usize;

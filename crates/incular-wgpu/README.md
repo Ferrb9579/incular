@@ -4,12 +4,51 @@ Owns Incular's native `wgpu` surface, retained rectangle/text/image pipelines, s
 unit quad, and geometrically grown instance buffers. It consumes ordered
 renderer-neutral display lists without leaking `wgpu` types upstream.
 
-Text shaping remains in `incular-text`. This crate keys grayscale glyph masks
-by font ID, glyph ID, and physical raster size, stores them in retained
-page-growing `R8Unorm` atlas textures, and uploads only a missing glyph region.
-The text pipeline samples coverage with straight-alpha source-over blending;
-foreground color is per instance, so color-only changes reuse masks. Logical
-layout stays DPI-independent while raster masks scale with the device factor.
+Text shaping remains in `incular-text`. Layout positions, advances, line
+metrics, and font sizes are logical pixels. This crate turns each logical font
+size into a DPI-specific physical raster request (`logical_size × scale`,
+rounded to a physical raster size), keys grayscale masks by font ID, glyph ID,
+and physical size, then stores them in retained page-growing
+`R8Unorm` atlas textures.
+Changing a window from 1x to 2x therefore requests new 2x masks without
+reshaping the logical paragraph; movement and scroll offsets are deliberately
+not cache-key inputs.
+
+## Glyph rasterization
+
+Production masks are generated solely by `fontdue` 0.9: a simple,
+platform-independent rasterizer whose stable grayscale masks are visually
+verified in Incular's current atlas pipeline. A `Fontdue` object is parsed once
+per `FontId`; glyph-cache misses reuse that parsed object. The cache identity is
+exactly `(FontId, glyph ID, rounded physical raster size)`. There is no backend
+switch, hinting policy, supersampling, downsampling, or fractional-raster phase.
+Fractional layout and compositor placement remain normal GPU quad placement, so
+they never create extra masks. `GlyphAtlas::debug_glyph` reports the real
+logical size, scale, physical raster size, bitmap dimensions, bearing, and atlas
+allocation.
+
+Text fallback does not change the atlas topology. Each font-specific logical run carries its own stable `FontId` (font bytes plus OpenType collection face index). Fontdue receives that collection index through `FontSettings`, so a shaped TTC/OTC face is rasterized as the same face. Mixed-script paragraphs safely share R8 atlas pages: warm Latin masks remain warm while a fallback run uploads only its own glyphs. Color glyph tables are a future non-R8 boundary and are not interpreted as alpha masks.
+
+Normal glyphs use retained 1024×1024 atlas pages. A bitmap allocation occupying
+at least one quarter of a normal page receives a dedicated oversize page, so a
+display glyph cannot fragment the UI-text pool. `GlyphAtlas::memory` reports
+normal/oversize page counts, bytes, content area, and allocated area. Pages are
+retained for the renderer lifetime today; an 8 MiB CPU bitmap safety limit and
+1024 ppem request limit reject unsupported giant requests instead of silently
+downsampling them. GPU page dimensions remain 1024; a future larger-page policy
+must query the adapter limit first.
+
+Each allocation has a one-physical-pixel zero-coverage border. The visible
+content rectangle excludes that border; its UVs name the texel-edge bounds of
+the content rectangle, so a physical-size quad samples its own texel centers
+without cropping the first or last coverage texel. The atlas uses linear
+minification/magnification filtering and clamp-to-edge addressing. This keeps
+grayscale antialiasing smooth at fractional placement while the zero border
+prevents adjacent glyph coverage from bleeding. The text pipeline samples that
+coverage as `text_alpha × coverage` and uses straight-alpha source-over
+blending; coverage is never treated as sRGB color or thresholded.
+`coverage_histogram` is available for development checks against accidental
+binary masks.
 
 Rectangle and glyph batches are consecutive display-list segments, preserving
 painter order. Atlas page or rectangular scissor changes split text batches;

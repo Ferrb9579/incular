@@ -78,11 +78,25 @@ baseline/line metrics and contiguous glyph arrays through renderer-neutral
 
 The GPU boundary applies the existing single DPI scale factor to glyph raster
 size without changing logical layout. `incular-wgpu` owns a retained glyph atlas
-keyed by font, glyph ID, and physical size. Each stable atlas page maps to one
+keyed by font, glyph ID, and rounded physical raster size.
+Each stable atlas page maps to one
 retained `R8Unorm` GPU texture; a cache miss rasterizes once and uploads only
-that glyph's padded subregion. Glyphs use a static quad, retained growable
-instance buffer, per-instance UV/color data, and a coverage shader with
-straight-alpha source-over blending. Color-only text changes reuse atlas masks.
+that glyph's padded subregion. The padding is one zero-coverage physical texel
+on every side, and each physical-size quad maps UVs to the content rectangle's
+texel edges. Linear atlas filtering therefore preserves grayscale coverage at
+fractional placement without sampling neighboring glyphs. Glyphs use a static
+quad, retained growable instance buffer, per-instance UV/color data, and a
+coverage shader with straight-alpha source-over blending. A DPI change requests
+new physical masks while retaining shaped layout; color-only and translation
+changes reuse atlas masks.
+
+The production `fontdue` grayscale backend rasterizes at the rounded physical
+size and never changes shaped advances or logical layout. Scroll and compositor
+translation are never cache inputs. Glyphs consuming at least a quarter of a 1024×1024 page
+go to dedicated oversize pages, keeping the normal UI atlas intact. The atlas
+reports normal/oversize bytes and area, rejects requests above 1024 ppem or an
+8 MiB bitmap safety limit, and leaves future larger-page selection dependent on
+the adapter's texture-dimension limit.
 
 The backend lowers display lists into consecutive compatible rectangle and
 glyph batches, never a global "all rectangles then all text" pass. It splits
@@ -317,3 +331,17 @@ The stencil stack is depth-counted (maximum 255 nested non-rectangular clips),
 cleared for every target frame, and combines with the active rectangular
 scissor. Path masks share the fill-rule keyed retained Lyon/GPU mesh cache;
 rounded masks share the analytic RRect radius convention.
+
+## Font fallback
+
+`incular-text` owns the renderer-neutral `fontdb` database and resolves `SystemUi`, generic, named, and application fallback families before shaping. Coverage is checked for whole grapheme clusters and cached by style/fallback chain/database generation; a one-time per-script candidate index avoids a full installed-font scan for every character. Each resolved face shapes its own Rustybuzz run, preserving its advances and bidi direction. A logical line carries several `GlyphRun`s on one baseline plus flattened caret/hit-test geometry. `FontId` incorporates collection-face identity, so `incular-wgpu` safely keys all fallback glyph masks in the shared Fontdue/R8 atlas. Color glyph formats remain explicitly outside the current alpha-mask path.
+
+## Text coverage quality
+
+`incular-wgpu` rasterizes each shaped glyph with a parsed, cached Fontdue font
+at `logical size × window scale`, rounded to its physical raster size. The
+production key is `(FontId, glyph ID, physical raster size)`. Fontdue returns
+one target-resolution grayscale mask which enters the retained `R8Unorm` atlas;
+there is no hinting policy, supersampling, downsampling, or phase cache. The
+final bitmap is limited to 8 MiB. Scroll and compositor movement remain absent
+from cache identity and never cause raster work.

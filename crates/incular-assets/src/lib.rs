@@ -253,6 +253,7 @@ pub struct FontId(pub u64);
 pub struct FontHandle {
     id: FontId,
     bytes: Arc<[u8]>,
+    face_index: u32,
 }
 impl FontHandle {
     #[must_use]
@@ -260,6 +261,17 @@ impl FontHandle {
         Self {
             id,
             bytes: bytes.into(),
+            face_index: 0,
+        }
+    }
+    /// Creates a handle for a face in an OpenType collection. The caller owns
+    /// the identity: collection index must be included in `id`.
+    #[must_use]
+    pub fn with_face_index(id: FontId, bytes: impl Into<Arc<[u8]>>, face_index: u32) -> Self {
+        Self {
+            id,
+            bytes: bytes.into(),
+            face_index,
         }
     }
     #[must_use]
@@ -270,11 +282,16 @@ impl FontHandle {
     pub fn bytes(&self) -> &Arc<[u8]> {
         &self.bytes
     }
+    #[must_use]
+    pub const fn face_index(&self) -> u32 {
+        self.face_index
+    }
 }
 impl fmt::Debug for FontHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FontHandle")
             .field("id", &self.id)
+            .field("face_index", &self.face_index)
             .finish_non_exhaustive()
     }
 }

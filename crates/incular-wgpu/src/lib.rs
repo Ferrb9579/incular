@@ -17,10 +17,17 @@ use lyon_tessellation::{
     VertexBuffers, geometry_builder::simple_builder, math::point, path::Path as LyonPath,
 };
 use std::collections::{HashMap, hash_map::Entry};
+use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
 const ATLAS_PAGE_SIZE: u16 = 1024;
 const ATLAS_PADDING: u16 = 1;
+const OVERSIZE_PAGE_AREA_DIVISOR: u32 = 4;
+/// Prevent an untrusted font size from causing a multi-gigabyte CPU bitmap
+/// allocation before the renderer can reject it.
+const MAX_GLYPH_BITMAP_BYTES: usize = 8 * 1024 * 1024;
+const MAX_GLYPH_RASTER_PPEM: f32 = 1024.;
+const GLYPH_ATLAS_FILTER: wgpu::FilterMode = wgpu::FilterMode::Linear;
 const IMAGE_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
 const PATH_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
 const GRADIENT_CACHE_MAX_UNUSED_FRAMES: u64 = 600;
@@ -203,6 +210,20 @@ pub struct GpuCounters {
     pub glyphs_skipped: u64,
     pub glyph_atlas_uploads: u64,
     pub glyph_atlas_pages: u64,
+    pub micro_glyph_rasters: u64,
+    pub small_glyph_rasters: u64,
+    pub normal_glyph_rasters: u64,
+    pub large_glyph_rasters: u64,
+    pub huge_glyph_rasters: u64,
+    pub oversize_glyph_rasters: u64,
+    /// Parsed Fontdue objects created on a `FontId` cache miss.
+    pub font_parser_cache_misses: u64,
+    pub font_parser_cache_hits: u64,
+    pub rasterizer_errors: u64,
+    /// Aggregate cold raster time; cache hits do not contribute.
+    pub raster_time_total: Duration,
+    pub oversize_cache_hits: u64,
+    pub oversize_cache_misses: u64,
     pub atlas_texture_recreations: u64,
     pub text_draw_calls: u64,
     pub text_pipeline_creations: u64,
@@ -255,8 +276,85 @@ pub struct GpuCounters {
 pub struct GlyphCacheKey {
     pub font: FontId,
     pub glyph: u16,
+    /// Rounded physical ppem. Fontdue accepts a scalar size, while the cache
+    /// remains deterministic across equal logical size/DPI requests.
     pub physical_size: u16,
 }
+/// Physical-pixel class used to select and explain raster behavior.  These
+/// bounds are intentionally expressed in ppem, never logical widget pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GlyphSizeClass {
+    Micro,
+    Small,
+    Normal,
+    Large,
+    Huge,
+}
+
+const fn size_class(ppem: u16) -> GlyphSizeClass {
+    match ppem {
+        0..=7 => GlyphSizeClass::Micro,
+        8..=15 => GlyphSizeClass::Small,
+        16..=95 => GlyphSizeClass::Normal,
+        96..=255 => GlyphSizeClass::Large,
+        _ => GlyphSizeClass::Huge,
+    }
+}
+
+/// Which retained atlas pool owns a mask.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GlyphAtlasClass {
+    #[default]
+    Normal,
+    Oversize,
+}
+
+/// The renderer's DPI-specific request for a grayscale glyph mask.
+///
+/// Layout and shaping stay in logical pixels; only this request enters the
+/// physical-pixel raster cache.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphRasterRequest {
+    pub logical_font_size: f32,
+    pub scale_factor: f32,
+    pub physical_size: u16,
+    pub supported: bool,
+}
+impl GlyphRasterRequest {
+    #[must_use]
+    pub fn new(logical_font_size: f32, scale_factor: f64) -> Self {
+        let scale_factor = normalized_scale(scale_factor);
+        let physical_size = logical_font_size * scale_factor;
+        Self {
+            logical_font_size,
+            scale_factor,
+            physical_size: physical_size.round().clamp(1., f32::from(u16::MAX)) as u16,
+            supported: physical_size.is_finite()
+                && (1. ..=MAX_GLYPH_RASTER_PPEM).contains(&physical_size),
+        }
+    }
+}
+/// Deterministic information for diagnosing a cached glyph without logging on
+/// the hot path. Atlas rectangles are physical texels; font size is logical.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphRasterDebug {
+    pub font: FontId,
+    pub glyph: u16,
+    pub logical_font_size: f32,
+    pub scale_factor: f32,
+    pub requested_physical_size: u16,
+    pub atlas_class: GlyphAtlasClass,
+    pub bitmap_size: [u16; 2],
+    pub bitmap_bytes: usize,
+    pub bearing: [i16; 2],
+    pub atlas_page: u16,
+    pub allocation_rect: [u16; 4],
+    pub content_rect: [u16; 4],
+    pub uv_rect: [f32; 4],
+}
+/// Glyph coverage is sampled with bilinear filtering. Padding is intentionally
+/// exposed for diagnostics and atlas invariant tests.
+pub const GLYPH_ATLAS_PADDING: u16 = ATLAS_PADDING;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AtlasEntry {
     pub page: u16,
@@ -264,6 +362,7 @@ pub struct AtlasEntry {
     pub y: u16,
     pub width: u16,
     pub height: u16,
+    pub atlas_class: GlyphAtlasClass,
     /// Physical-pixel raster bounds relative to the shaped baseline origin.
     pub bearing_x: i16,
     pub bearing_y: i16,
@@ -273,10 +372,19 @@ impl AtlasEntry {
     pub fn uv_rect(self) -> [f32; 4] {
         let page = f32::from(ATLAS_PAGE_SIZE);
         [
-            (f32::from(self.x) + 0.5) / page,
-            (f32::from(self.y) + 0.5) / page,
-            (f32::from(self.x + self.width) - 0.5) / page,
-            (f32::from(self.y + self.height) - 0.5) / page,
+            f32::from(self.x) / page,
+            f32::from(self.y) / page,
+            f32::from(self.x + self.width) / page,
+            f32::from(self.y + self.height) / page,
+        ]
+    }
+    #[must_use]
+    pub fn allocation_rect(self) -> [u16; 4] {
+        [
+            self.x - ATLAS_PADDING,
+            self.y - ATLAS_PADDING,
+            self.width + ATLAS_PADDING * 2,
+            self.height + ATLAS_PADDING * 2,
         ]
     }
 }
@@ -285,17 +393,69 @@ pub struct RasterizedGlyph {
     pub entry: AtlasEntry,
     pub bitmap: Option<Vec<u8>>,
 }
+/// Compact diagnostic for checking that a coverage mask has not accidentally
+/// become binary during rasterization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CoverageHistogram {
+    pub transparent: usize,
+    pub opaque: usize,
+    pub intermediate: usize,
+}
+
+#[must_use]
+pub fn coverage_histogram(bytes: &[u8]) -> CoverageHistogram {
+    let mut histogram = CoverageHistogram::default();
+    for &value in bytes {
+        match value {
+            0 => histogram.transparent += 1,
+            u8::MAX => histogram.opaque += 1,
+            _ => histogram.intermediate += 1,
+        }
+    }
+    histogram
+}
+
 #[derive(Default)]
 struct AtlasPage {
     next_x: u16,
     next_y: u16,
     row_height: u16,
+    class: GlyphAtlasClass,
+    content_area: u32,
+    allocated_area: u32,
+}
+impl AtlasPage {
+    fn normal() -> Self {
+        Self {
+            class: GlyphAtlasClass::Normal,
+            ..Self::default()
+        }
+    }
+    fn oversize() -> Self {
+        Self {
+            class: GlyphAtlasClass::Oversize,
+            ..Self::default()
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GlyphAtlasMemory {
+    pub normal_pages: u16,
+    pub normal_bytes: usize,
+    pub normal_content_area: u64,
+    pub normal_allocated_area: u64,
+    pub oversize_pages: u16,
+    pub oversize_bytes: usize,
+    pub oversize_content_area: u64,
+    pub oversize_allocated_area: u64,
 }
 /// CPU metadata for retained atlas pages. `WgpuRenderer` maps each page index
 /// lazily to one persistent `R8Unorm` texture; entries never move or compact.
 pub struct GlyphAtlas {
     pages: Vec<AtlasPage>,
     entries: HashMap<GlyphCacheKey, AtlasEntry>,
+    /// Parsed once per stable font identity, then reused for every uncached
+    /// glyph bitmap. `FontSettings::collection_index` preserves TTC/OTC faces.
     fonts: HashMap<FontId, Font>,
     counters: GpuCounters,
 }
@@ -308,7 +468,7 @@ impl GlyphAtlas {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pages: vec![AtlasPage::default()],
+            pages: vec![AtlasPage::normal()],
             entries: HashMap::new(),
             fonts: HashMap::new(),
             counters: GpuCounters {
@@ -325,47 +485,102 @@ impl GlyphAtlas {
     pub fn entry(&self, key: GlyphCacheKey) -> Option<AtlasEntry> {
         self.entries.get(&key).copied()
     }
+    #[must_use]
+    pub fn memory(&self) -> GlyphAtlasMemory {
+        let mut memory = GlyphAtlasMemory::default();
+        let page_bytes = usize::from(ATLAS_PAGE_SIZE).pow(2);
+        for page in &self.pages {
+            match page.class {
+                GlyphAtlasClass::Normal => {
+                    memory.normal_pages += 1;
+                    memory.normal_bytes += page_bytes;
+                    memory.normal_content_area += u64::from(page.content_area);
+                    memory.normal_allocated_area += u64::from(page.allocated_area);
+                }
+                GlyphAtlasClass::Oversize => {
+                    memory.oversize_pages += 1;
+                    memory.oversize_bytes += page_bytes;
+                    memory.oversize_content_area += u64::from(page.content_area);
+                    memory.oversize_allocated_area += u64::from(page.allocated_area);
+                }
+            }
+        }
+        memory
+    }
     pub fn lookup_or_rasterize(
         &mut self,
         run: &GlyphRun,
         glyph: u16,
         scale: f64,
     ) -> Option<RasterizedGlyph> {
+        let request = GlyphRasterRequest::new(run.font_size, scale);
+        if !request.supported {
+            self.counters.glyphs_skipped += 1;
+            return None;
+        }
         let key = GlyphCacheKey {
             font: run.font.id(),
             glyph,
-            physical_size: (run.font_size * normalized_scale(scale))
-                .round()
-                .clamp(1., f32::from(u16::MAX)) as u16,
+            physical_size: request.physical_size,
         };
         if let Some(entry) = self.entries.get(&key).copied() {
             self.counters.glyph_cache_hits += 1;
+            if entry.atlas_class == GlyphAtlasClass::Oversize {
+                self.counters.oversize_cache_hits += 1;
+            }
             return Some(RasterizedGlyph {
                 entry,
                 bitmap: None,
             });
         }
         self.counters.glyph_cache_misses += 1;
-        if let Entry::Vacant(entry) = self.fonts.entry(key.font) {
-            entry
-                .insert(Font::from_bytes(run.font.bytes().as_ref(), FontSettings::default()).ok()?);
+        let font = match self.fonts.entry(key.font) {
+            Entry::Occupied(entry) => {
+                self.counters.font_parser_cache_hits += 1;
+                entry.into_mut()
+            }
+            Entry::Vacant(entry) => {
+                let settings = FontSettings {
+                    collection_index: run.font.face_index(),
+                    ..FontSettings::default()
+                };
+                let parsed = Font::from_bytes(run.font.bytes().as_ref(), settings).ok()?;
+                self.counters.font_parser_cache_misses += 1;
+                entry.insert(parsed)
+            }
+        };
+        let started = Instant::now();
+        let (metrics, bitmap) = font.rasterize_indexed(key.glyph, f32::from(key.physical_size));
+        self.counters.raster_time_total = self
+            .counters
+            .raster_time_total
+            .saturating_add(started.elapsed());
+        let bitmap_bytes = metrics.width.checked_mul(metrics.height)?;
+        if bitmap_bytes > MAX_GLYPH_BITMAP_BYTES || bitmap.len() != bitmap_bytes {
+            self.counters.glyphs_skipped += 1;
+            return None;
         }
-        let (metrics, bitmap) = self
-            .fonts
-            .get(&key.font)
-            .expect("cached font")
-            .rasterize_indexed(key.glyph, f32::from(key.physical_size));
+        let width = u16::try_from(metrics.width).ok()?;
+        let height = u16::try_from(metrics.height).ok()?;
         self.counters.glyphs_rasterized += 1;
+        match size_class(request.physical_size) {
+            GlyphSizeClass::Micro => self.counters.micro_glyph_rasters += 1,
+            GlyphSizeClass::Small => self.counters.small_glyph_rasters += 1,
+            GlyphSizeClass::Normal => self.counters.normal_glyph_rasters += 1,
+            GlyphSizeClass::Large => self.counters.large_glyph_rasters += 1,
+            GlyphSizeClass::Huge => self.counters.huge_glyph_rasters += 1,
+        }
         let bearing_x = clamp_i16(metrics.xmin);
         let bearing_y = clamp_i16(metrics.ymin);
         // Spaces deliberately have a cache entry but no texture write or quad.
-        if metrics.width == 0 || metrics.height == 0 {
+        if width == 0 || height == 0 {
             let entry = AtlasEntry {
                 page: 0,
                 x: 0,
                 y: 0,
                 width: 0,
                 height: 0,
+                atlas_class: GlyphAtlasClass::Normal,
                 bearing_x,
                 bearing_y,
             };
@@ -375,17 +590,41 @@ impl GlyphAtlas {
                 bitmap: None,
             });
         }
-        let entry = self.allocate(
-            metrics.width.min(usize::from(u16::MAX)) as u16,
-            metrics.height.min(usize::from(u16::MAX)) as u16,
-            bearing_x,
-            bearing_y,
-        )?;
+        let entry = self.allocate(width, height, bearing_x, bearing_y)?;
+        if entry.atlas_class == GlyphAtlasClass::Oversize {
+            self.counters.oversize_glyph_rasters += 1;
+            self.counters.oversize_cache_misses += 1;
+        }
         self.entries.insert(key, entry);
         self.counters.glyph_atlas_uploads += 1;
         Some(RasterizedGlyph {
             entry,
             bitmap: Some(bitmap),
+        })
+    }
+    /// Returns cache metadata for a glyph already requested at `scale`.
+    #[must_use]
+    pub fn debug_glyph(&self, run: &GlyphRun, glyph: u16, scale: f64) -> Option<GlyphRasterDebug> {
+        let request = GlyphRasterRequest::new(run.font_size, scale);
+        let entry = self.entry(GlyphCacheKey {
+            font: run.font.id(),
+            glyph,
+            physical_size: request.physical_size,
+        })?;
+        Some(GlyphRasterDebug {
+            font: run.font.id(),
+            glyph,
+            logical_font_size: request.logical_font_size,
+            scale_factor: request.scale_factor,
+            requested_physical_size: request.physical_size,
+            atlas_class: entry.atlas_class,
+            bitmap_size: [entry.width, entry.height],
+            bitmap_bytes: usize::from(entry.width) * usize::from(entry.height),
+            bearing: [entry.bearing_x, entry.bearing_y],
+            atlas_page: entry.page,
+            allocation_rect: entry.allocation_rect(),
+            content_rect: [entry.x, entry.y, entry.width, entry.height],
+            uv_rect: entry.uv_rect(),
         })
     }
     fn allocate(
@@ -400,29 +639,58 @@ impl GlyphAtlas {
         if stored_width > ATLAS_PAGE_SIZE || stored_height > ATLAS_PAGE_SIZE {
             return None;
         }
-        let page_index = self.pages.len() - 1;
-        let page = self.pages.last_mut().expect("atlas page");
+        let stored_area = u32::from(stored_width) * u32::from(stored_height);
+        let page_area = u32::from(ATLAS_PAGE_SIZE) * u32::from(ATLAS_PAGE_SIZE);
+        if stored_area >= page_area / OVERSIZE_PAGE_AREA_DIVISOR {
+            let page_index = self.pages.len();
+            let mut page = AtlasPage::oversize();
+            let entry = AtlasEntry {
+                page: page_index.try_into().ok()?,
+                x: ATLAS_PADDING,
+                y: ATLAS_PADDING,
+                width,
+                height,
+                atlas_class: GlyphAtlasClass::Oversize,
+                bearing_x,
+                bearing_y,
+            };
+            page.next_x = stored_width;
+            page.row_height = stored_height;
+            page.content_area = u32::from(width) * u32::from(height);
+            page.allocated_area = stored_area;
+            self.pages.push(page);
+            self.counters.glyph_atlas_pages += 1;
+            return Some(entry);
+        }
+        let page_index = self
+            .pages
+            .iter()
+            .rposition(|page| page.class == GlyphAtlasClass::Normal)?;
+        let page = &mut self.pages[page_index];
         if page.next_x + stored_width > ATLAS_PAGE_SIZE {
             page.next_x = 0;
             page.next_y = page.next_y.saturating_add(page.row_height);
             page.row_height = 0;
         }
         if page.next_y + stored_height > ATLAS_PAGE_SIZE {
-            self.pages.push(AtlasPage::default());
+            self.pages.push(AtlasPage::normal());
             self.counters.glyph_atlas_pages += 1;
             return self.allocate(width, height, bearing_x, bearing_y);
         }
         let entry = AtlasEntry {
-            page: page_index as u16,
+            page: page_index.try_into().ok()?,
             x: page.next_x + ATLAS_PADDING,
             y: page.next_y + ATLAS_PADDING,
             width,
             height,
+            atlas_class: GlyphAtlasClass::Normal,
             bearing_x,
             bearing_y,
         };
         page.next_x += stored_width;
         page.row_height = page.row_height.max(stored_height);
+        page.content_area += u32::from(width) * u32::from(height);
+        page.allocated_area += stored_area;
         Some(entry)
     }
 }
@@ -444,6 +712,7 @@ pub enum RendererError {
     Device(wgpu::RequestDeviceError),
     Surface(wgpu::CreateSurfaceError),
     ImageTooLarge { width: u32, height: u32, limit: u32 },
+    GlyphAtlasPageTooLarge { page: u16, limit: u32 },
     StencilDepthOverflow,
     UnbalancedClipStack,
     OutOfMemory,
@@ -461,6 +730,10 @@ impl std::fmt::Display for RendererError {
             } => write!(
                 f,
                 "image {width}x{height} exceeds GPU texture limit {limit}"
+            ),
+            Self::GlyphAtlasPageTooLarge { page, limit } => write!(
+                f,
+                "glyph atlas page {page}x{page} exceeds GPU texture limit {limit}"
             ),
             Self::StencilDepthOverflow => {
                 write!(f, "nested non-rectangular clip depth exceeds 255")
@@ -753,6 +1026,13 @@ impl WgpuRenderer {
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
             .map_err(RendererError::Device)?;
+        let texture_limit = device.limits().max_texture_dimension_2d;
+        if texture_limit < u32::from(ATLAS_PAGE_SIZE) {
+            return Err(RendererError::GlyphAtlasPageTooLarge {
+                page: ATLAS_PAGE_SIZE,
+                limit: texture_limit,
+            });
+        }
         let config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .expect("surface config");
@@ -795,8 +1075,11 @@ impl WgpuRenderer {
             label: Some("incular glyph atlas sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            // Coverage masks can be positioned at fractional physical pixels.
+            // Bilinear filtering preserves grayscale antialiasing; each atlas
+            // allocation has a zero-coverage border to prevent glyph bleed.
+            mag_filter: GLYPH_ATLAS_FILTER,
+            min_filter: GLYPH_ATLAS_FILTER,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
@@ -980,6 +1263,18 @@ impl WgpuRenderer {
         counters.glyphs_skipped = atlas.glyphs_skipped;
         counters.glyph_atlas_uploads = atlas.glyph_atlas_uploads;
         counters.glyph_atlas_pages = atlas.glyph_atlas_pages;
+        counters.micro_glyph_rasters = atlas.micro_glyph_rasters;
+        counters.small_glyph_rasters = atlas.small_glyph_rasters;
+        counters.normal_glyph_rasters = atlas.normal_glyph_rasters;
+        counters.large_glyph_rasters = atlas.large_glyph_rasters;
+        counters.huge_glyph_rasters = atlas.huge_glyph_rasters;
+        counters.oversize_glyph_rasters = atlas.oversize_glyph_rasters;
+        counters.font_parser_cache_hits = atlas.font_parser_cache_hits;
+        counters.font_parser_cache_misses = atlas.font_parser_cache_misses;
+        counters.rasterizer_errors = atlas.rasterizer_errors;
+        counters.raster_time_total = atlas.raster_time_total;
+        counters.oversize_cache_hits = atlas.oversize_cache_hits;
+        counters.oversize_cache_misses = atlas.oversize_cache_misses;
         counters
     }
     #[must_use]
@@ -2038,26 +2333,39 @@ impl WgpuRenderer {
     fn upload_glyph(&mut self, entry: AtlasEntry, bitmap: &[u8]) {
         self.ensure_atlas_page(entry.page);
         let page = &self.atlas_pages[usize::from(entry.page)];
+        let padded_width = usize::from(entry.width + ATLAS_PADDING * 2);
+        let padded_height = usize::from(entry.height + ATLAS_PADDING * 2);
+        // A freshly allocated texture has undefined contents. Explicitly write
+        // the allocation, including its transparent border, before enabling
+        // linear filtering so adjacent glyphs can never bleed into this mask.
+        let mut padded = vec![0_u8; padded_width * padded_height];
+        for row in 0..usize::from(entry.height) {
+            let source_start = row * usize::from(entry.width);
+            let destination_start =
+                (row + usize::from(ATLAS_PADDING)) * padded_width + usize::from(ATLAS_PADDING);
+            padded[destination_start..destination_start + usize::from(entry.width)]
+                .copy_from_slice(&bitmap[source_start..source_start + usize::from(entry.width)]);
+        }
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &page.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d {
-                    x: u32::from(entry.x),
-                    y: u32::from(entry.y),
+                    x: u32::from(entry.x - ATLAS_PADDING),
+                    y: u32::from(entry.y - ATLAS_PADDING),
                     z: 0,
                 },
                 aspect: wgpu::TextureAspect::All,
             },
-            bitmap,
+            &padded,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(u32::from(entry.width)),
-                rows_per_image: Some(u32::from(entry.height)),
+                bytes_per_row: Some(padded_width as u32),
+                rows_per_image: Some(padded_height as u32),
             },
             wgpu::Extent3d {
-                width: u32::from(entry.width),
-                height: u32::from(entry.height),
+                width: padded_width as u32,
+                height: padded_height as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -3230,7 +3538,10 @@ mod tests {
         let first = atlas.allocate(1000, 700, 0, 0).unwrap();
         let second = atlas.allocate(1000, 700, 0, 0).unwrap();
         assert_ne!(first.page, second.page);
-        assert_eq!(atlas.counters().glyph_atlas_pages, 2);
+        assert_eq!(first.atlas_class, GlyphAtlasClass::Oversize);
+        assert_eq!(second.atlas_class, GlyphAtlasClass::Oversize);
+        // One retained normal UI page plus one dedicated page per giant glyph.
+        assert_eq!(atlas.counters().glyph_atlas_pages, 3);
     }
     #[test]
     fn atlas_uvs_use_the_allocated_region() {
@@ -3240,13 +3551,47 @@ mod tests {
             y: 20,
             width: 10,
             height: 4,
+            atlas_class: GlyphAtlasClass::Normal,
             bearing_x: -2,
             bearing_y: 3,
         };
         assert_eq!(
             entry.uv_rect(),
-            [11.5 / 1024., 20.5 / 1024., 20.5 / 1024., 23.5 / 1024.]
+            [11. / 1024., 20. / 1024., 21. / 1024., 24. / 1024.]
         );
+        assert_eq!(entry.allocation_rect(), [10, 19, 12, 6]);
+    }
+    #[test]
+    fn physical_raster_requests_cover_supported_dpi_scales_once() {
+        for (scale, physical) in [
+            (1.0, 16),
+            (1.25, 20),
+            (1.5, 24),
+            (1.75, 28),
+            (2.0, 32),
+            (2.5, 40),
+            (3.0, 48),
+        ] {
+            let request = GlyphRasterRequest::new(16., scale);
+            assert_eq!(request.physical_size, physical);
+            assert_eq!(request.logical_font_size, 16.);
+            assert_eq!(request.scale_factor, scale as f32);
+        }
+    }
+    #[test]
+    fn glyph_atlas_uses_linear_coverage_filtering() {
+        assert_eq!(GLYPH_ATLAS_FILTER, wgpu::FilterMode::Linear);
+        assert_eq!(GLYPH_ATLAS_PADDING, 1);
+    }
+    #[test]
+    fn atlas_padding_keeps_odd_sized_content_inside_allocation() {
+        let mut atlas = GlyphAtlas::new();
+        let entry = atlas.allocate(7, 9, -1, 2).expect("odd glyph fits");
+        assert_eq!(entry.allocation_rect(), [0, 0, 9, 11]);
+        assert_eq!(entry.x, GLYPH_ATLAS_PADDING);
+        assert_eq!(entry.y, GLYPH_ATLAS_PADDING);
+        assert!(entry.x + entry.width + GLYPH_ATLAS_PADDING <= ATLAS_PAGE_SIZE);
+        assert!(entry.y + entry.height + GLYPH_ATLAS_PADDING <= ATLAS_PAGE_SIZE);
     }
     #[test]
     fn glyph_quad_uses_baseline_and_bearings() {
@@ -3256,6 +3601,7 @@ mod tests {
             y: 1,
             width: 8,
             height: 10,
+            atlas_class: GlyphAtlasClass::Normal,
             bearing_x: -2,
             bearing_y: -3,
         };
@@ -3295,7 +3641,7 @@ mod tests {
     fn raster_cache_reuses_color_independent_glyphs_but_not_dpi_size() {
         let mut text = TextEngine::new();
         let layout = text.layout("Hello", &TextStyle::default(), None, TextAlign::Start);
-        let run = &layout.lines[0].run;
+        let run = &layout.lines[0].runs[0];
         let glyph = run.glyphs[0].id;
         let mut atlas = GlyphAtlas::new();
         let first = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap().entry;
@@ -3303,17 +3649,19 @@ mod tests {
         // it in each instance, so a color-only repaint is a cache hit.
         let same_color_changed = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap().entry;
         let higher_dpi = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap().entry;
+        let one_x_request = GlyphRasterRequest::new(run.font_size, 1.0);
+        let two_x_request = GlyphRasterRequest::new(run.font_size, 2.0);
         assert_eq!(first, same_color_changed);
         assert_ne!(
             GlyphCacheKey {
                 font: run.font.id(),
                 glyph,
-                physical_size: run.font_size as u16
+                physical_size: one_x_request.physical_size,
             },
             GlyphCacheKey {
                 font: run.font.id(),
                 glyph,
-                physical_size: (run.font_size * 2.) as u16
+                physical_size: two_x_request.physical_size,
             }
         );
         assert!(
@@ -3321,7 +3669,7 @@ mod tests {
                 .entry(GlyphCacheKey {
                     font: run.font.id(),
                     glyph,
-                    physical_size: (run.font_size * 2.) as u16
+                    physical_size: two_x_request.physical_size,
                 })
                 .is_some()
         );
@@ -3329,13 +3677,224 @@ mod tests {
         assert_eq!(atlas.counters().glyph_cache_hits, 1);
     }
     #[test]
+    fn dpi_change_creates_one_new_variant_then_warms() {
+        let mut text = TextEngine::new();
+        let layout = text.layout("H", &TextStyle::default(), None, TextAlign::Start);
+        let run = &layout.lines[0].runs[0];
+        let glyph = run.glyphs[0].id;
+        let mut atlas = GlyphAtlas::new();
+        let _ = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap();
+        let one_x = atlas.counters();
+        let _ = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap();
+        let two_x = atlas.counters();
+        let _ = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap();
+        let warm_two_x = atlas.counters();
+        assert_eq!(two_x.glyphs_rasterized - one_x.glyphs_rasterized, 1);
+        assert_eq!(two_x.glyph_atlas_uploads - one_x.glyph_atlas_uploads, 1);
+        assert_eq!(warm_two_x.glyphs_rasterized, two_x.glyphs_rasterized);
+        assert_eq!(warm_two_x.glyph_atlas_uploads, two_x.glyph_atlas_uploads);
+    }
+    #[test]
+    fn glyph_debug_reports_logical_and_physical_units() {
+        let mut text = TextEngine::new();
+        let layout = text.layout("H", &TextStyle::default(), None, TextAlign::Start);
+        let run = &layout.lines[0].runs[0];
+        let glyph = run.glyphs[0].id;
+        let mut atlas = GlyphAtlas::new();
+        let _ = atlas.lookup_or_rasterize(run, glyph, 1.5).unwrap();
+        let info = atlas
+            .debug_glyph(run, glyph, 1.5)
+            .expect("cached diagnostic");
+        assert_eq!(info.logical_font_size, run.font_size);
+        assert_eq!(
+            info.requested_physical_size,
+            (run.font_size * 1.5).round() as u16
+        );
+        assert_eq!(
+            info.allocation_rect[2],
+            info.bitmap_size[0] + 2 * GLYPH_ATLAS_PADDING
+        );
+        assert_eq!(
+            info.allocation_rect[3],
+            info.bitmap_size[1] + 2 * GLYPH_ATLAS_PADDING
+        );
+        assert_eq!(
+            info.bitmap_bytes,
+            usize::from(info.bitmap_size[0]) * usize::from(info.bitmap_size[1])
+        );
+    }
+    #[test]
+    fn raster_size_class_uses_physical_ppem() {
+        assert_eq!(
+            size_class(GlyphRasterRequest::new(6., 1.).physical_size),
+            GlyphSizeClass::Micro
+        );
+        assert_eq!(
+            size_class(GlyphRasterRequest::new(6., 2.).physical_size),
+            GlyphSizeClass::Small
+        );
+        assert_eq!(
+            size_class(GlyphRasterRequest::new(6., 3.).physical_size),
+            GlyphSizeClass::Normal
+        );
+        assert_eq!(
+            size_class(GlyphRasterRequest::new(48., 2.).physical_size),
+            GlyphSizeClass::Large
+        );
+        assert_eq!(
+            size_class(GlyphRasterRequest::new(256., 2.).physical_size),
+            GlyphSizeClass::Huge
+        );
+    }
+    #[test]
+    fn micro_normal_and_huge_masks_are_safe_and_warm() {
+        let mut text = TextEngine::new();
+        let mut atlas = GlyphAtlas::new();
+        for size in [
+            4., 5., 6., 7., 8., 9., 10., 11., 12., 14., 16., 18., 20., 24., 32., 48., 64., 96.,
+            128., 192., 256., 384., 512., 768., 1024.,
+        ] {
+            let layout = text.layout(
+                "H",
+                &TextStyle {
+                    size,
+                    ..TextStyle::default()
+                },
+                None,
+                TextAlign::Start,
+            );
+            let run = &layout.lines[0].runs[0];
+            let glyph = run.glyphs[0].id;
+            let first = atlas
+                .lookup_or_rasterize(run, glyph, 1.)
+                .expect("supported size");
+            assert!(first.entry.width > 0 && first.entry.height > 0);
+            assert!(first.entry.x + first.entry.width + GLYPH_ATLAS_PADDING <= ATLAS_PAGE_SIZE);
+            assert!(first.entry.y + first.entry.height + GLYPH_ATLAS_PADDING <= ATLAS_PAGE_SIZE);
+            assert!(atlas.lookup_or_rasterize(run, glyph, 1.).is_some());
+        }
+        assert!(atlas.counters().micro_glyph_rasters >= 4);
+        assert!(atlas.counters().normal_glyph_rasters > 0);
+        assert!(atlas.counters().huge_glyph_rasters > 0);
+    }
+    #[test]
+    fn oversize_pages_are_separate_from_normal_ui_atlas() {
+        let mut atlas = GlyphAtlas::new();
+        let ui = atlas.allocate(20, 20, 0, 0).expect("ui glyph");
+        let before = atlas.memory();
+        let huge = atlas.allocate(700, 700, 0, 0).expect("oversize glyph");
+        let memory = atlas.memory();
+        assert_eq!(ui.atlas_class, GlyphAtlasClass::Normal);
+        assert_eq!(huge.atlas_class, GlyphAtlasClass::Oversize);
+        assert_ne!(ui.page, huge.page);
+        assert_eq!(memory.normal_pages, before.normal_pages);
+        assert_eq!(memory.normal_allocated_area, before.normal_allocated_area);
+        assert_eq!(memory.oversize_pages, 1);
+        assert_eq!(memory.oversize_bytes, usize::from(ATLAS_PAGE_SIZE).pow(2));
+    }
+    #[test]
+    fn unsupported_gigantic_requests_are_rejected_without_rasterizing() {
+        let request = GlyphRasterRequest::new(1_000_000_000., 1.);
+        assert!(!request.supported);
+        let mut text = TextEngine::new();
+        let layout = text.layout(
+            "H",
+            &TextStyle {
+                size: 1_000_000_000.,
+                ..TextStyle::default()
+            },
+            None,
+            TextAlign::Start,
+        );
+        let run = &layout.lines[0].runs[0];
+        let mut atlas = GlyphAtlas::new();
+        assert!(
+            atlas
+                .lookup_or_rasterize(run, run.glyphs[0].id, 1.)
+                .is_none()
+        );
+        assert_eq!(atlas.counters().glyphs_rasterized, 0);
+    }
+    #[test]
+    fn fractional_gpu_placement_reuses_one_fontdue_mask() {
+        let mut text = TextEngine::new();
+        let layout = text.layout("H", &TextStyle::default(), None, TextAlign::Start);
+        let run = &layout.lines[0].runs[0];
+        let glyph = run.glyphs[0].id;
+        let mut atlas = GlyphAtlas::new();
+        let first = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry;
+        let cold = atlas.counters();
+        for _x in [0., 0.25, 0.5, 0.75] {
+            assert_eq!(
+                atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry,
+                first
+            );
+        }
+        let warm = atlas.counters();
+        assert_eq!(warm.glyphs_rasterized, cold.glyphs_rasterized);
+        assert_eq!(warm.glyph_atlas_uploads, cold.glyph_atlas_uploads);
+    }
+    #[test]
+    fn glyph_cache_keeps_font_ids_separate() {
+        let mut text = TextEngine::new();
+        let layout = text.layout("H", &TextStyle::default(), None, TextAlign::Start);
+        let run = &layout.lines[0].runs[0];
+        let glyph = run.glyphs[0].id;
+        let mut alternate = (**run).clone();
+        alternate.font = incular_assets::FontHandle::with_face_index(
+            FontId(run.font.id().0.wrapping_add(1)),
+            run.font.bytes().clone(),
+            run.font.face_index(),
+        );
+
+        let mut atlas = GlyphAtlas::new();
+        let first = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry;
+        let before_alternate = atlas.counters();
+        let second = atlas
+            .lookup_or_rasterize(&alternate, glyph, 1.)
+            .unwrap()
+            .entry;
+        let after_alternate = atlas.counters();
+
+        let physical_size = GlyphRasterRequest::new(run.font_size, 1.).physical_size;
+        assert!(
+            atlas
+                .entry(GlyphCacheKey {
+                    font: run.font.id(),
+                    glyph,
+                    physical_size,
+                })
+                .is_some()
+        );
+        assert!(
+            atlas
+                .entry(GlyphCacheKey {
+                    font: alternate.font.id(),
+                    glyph,
+                    physical_size,
+                })
+                .is_some()
+        );
+        assert_ne!(first, second);
+        assert_eq!(
+            after_alternate.glyphs_rasterized - before_alternate.glyphs_rasterized,
+            1
+        );
+        assert_eq!(
+            after_alternate.font_parser_cache_misses - before_alternate.font_parser_cache_misses,
+            1
+        );
+    }
+    #[test]
     fn counter_text_warms_the_atlas_incrementally() {
         fn rasterize(atlas: &mut GlyphAtlas, text: &mut TextEngine, value: &str) {
             for label in ["Incular Counter", value, "Increment"] {
                 let layout = text.layout(label, &TextStyle::default(), None, TextAlign::Start);
                 for line in layout.lines.iter() {
-                    for glyph in line.run.glyphs.iter() {
-                        let _ = atlas.lookup_or_rasterize(&line.run, glyph.id, 1.0);
+                    for run in line.runs.iter() {
+                        for glyph in run.glyphs.iter() {
+                            let _ = atlas.lookup_or_rasterize(run, glyph.id, 1.0);
+                        }
                     }
                 }
             }
