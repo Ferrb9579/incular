@@ -29,5 +29,5 @@ fn main() {
         ])
     })
     .expect("valid animation application");
-    incular::linux::run_application(app).expect("native animation application");
+    incular::run(app).expect("native animation application");
 }

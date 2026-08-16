@@ -12,7 +12,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux"]
+desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux", "dep:incular-windows", "dep:incular-macos"]
 
 [dependencies]
 incular-accessibility = { workspace = true }
@@ -28,3 +28,5 @@ incular-text = { workspace = true }
 incular-wgpu = { workspace = true, optional = true }
 incular-widgets = { workspace = true }
 incular-linux = { workspace = true, optional = true }
+incular-windows = { workspace = true, optional = true }
+incular-macos = { workspace = true, optional = true }

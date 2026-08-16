@@ -21,5 +21,5 @@ fn main() {
         ])
     })
     .expect("valid text field application");
-    incular::linux::run_application(app).expect("native text field application");
+    incular::run(app).expect("native text field application");
 }

@@ -1,6 +1,4 @@
-//! Windows platform integration for Incular.
-//!
-//! Window lifecycle, input, display scaling, menus, accessibility, and
-//! Windows-specific resource access will be introduced here.
-
-// This crate is an API boundary only until the Windows platform model is designed.
+//! Windows desktop backend using Incular's shared winit/wgpu runner contract.
+#[path = "../../incular-linux/src/lib.rs"]
+mod desktop_runner;
+pub use desktop_runner::{RunError, run_application, run_window};

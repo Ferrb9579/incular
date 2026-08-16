@@ -31,3 +31,16 @@ the proof program with `cargo run -p incular --example counter`.
 
 See [the architecture document](docs/ARCHITECTURE.md) for the implemented
 boundaries and intentionally deferred native-surface work.
+# Incular
+
+## Platform support
+
+| Feature | Linux | Windows | macOS | Android | iOS |
+| --- | --- | --- | --- | --- | --- |
+| Shared winit/wgpu runner source | Implemented | Source parity | Source parity | Planned | Planned |
+| Native runtime verification | Linux | Not run here | Not run here | Planned | Planned |
+| Accessibility OS adapter | Planned | Planned | Planned | Planned | Planned |
+
+Applications use `incular::run(app)`; target-selected desktop crates own the
+native window integration while Runtime, widgets, and the wgpu renderer remain
+portable.

@@ -15,5 +15,5 @@ fn main() {
         ScrollView::vertical(controller.clone(), Widget::column(items.clone()))
     })
     .expect("valid scrolling application");
-    incular::linux::run_application(app).expect("native scroll application");
+    incular::run(app).expect("native scroll application");
 }

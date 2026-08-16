@@ -7,6 +7,10 @@ backend can rasterize/draw without reshaping. Render objects cache local lists;
 backends must preserve command order, transforms, and rectangular clips when
 lowering rectangle and glyph operations.
 
+`PaintCommand::Image` carries an `ImageHandle`, a pixel-space source rectangle,
+and a local logical destination rectangle. It follows normal painter order,
+transforms, and clipping without exposing GPU resources.
+
 Phase 4 adds `LayerTree`: stable generational `Picture`, `Transform`, and
 `ClipRect` layers. Pictures retain `Arc<DisplayList>` payloads, transforms and
 clips change independently, and flattening produces only the transient ordered

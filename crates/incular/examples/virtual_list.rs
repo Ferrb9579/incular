@@ -15,5 +15,5 @@ fn main() {
         })
     })
     .expect("valid virtual-list application");
-    incular::linux::run_application(app).expect("native virtual-list application");
+    incular::run(app).expect("native virtual-list application");
 }

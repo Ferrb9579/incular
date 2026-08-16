@@ -11,10 +11,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+use incular_accessibility::{
+    Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
+    SemanticsDiagnostics, SemanticsTree, TextSelection as SemanticTextSelection,
+};
 use incular_animation::AnimationController;
+use incular_assets::ImageHandle;
 use incular_core::{Arena, ArenaId, Color, DirtyFlags, Offset, Rect, Size, Transform};
 use incular_layout::{Alignment, Axis, Constraints, EdgeInsets};
-use incular_painting::{DisplayList, LayerId, LayerTree, PaintCommand};
+use incular_painting::{
+    Border, Brush, CornerRadii, DisplayList, FillRule, ImageSampling, LayerId, LayerTree,
+    PaintCommand, Path, RRect, Stroke,
+};
 use incular_text::{TextAlign, TextDiagnostics, TextEngine, TextLayout, TextStyle};
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
@@ -608,12 +616,32 @@ impl TranslationController {
 pub struct Widget {
     key: Option<Key>,
     kind: WidgetKind,
+    semantics: SemanticProperties,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SemanticProperties {
+    label: Option<String>,
+    description: Option<String>,
+    hidden: bool,
 }
 #[derive(Clone)]
 enum WidgetKind {
     Box {
         size: Size,
         color: Color,
+    },
+    Shape {
+        path: Arc<Path>,
+        fill: Option<Brush>,
+        stroke: Option<(Brush, Stroke)>,
+        size: Option<Size>,
+    },
+    Decorated {
+        size: Option<Size>,
+        background: Option<Brush>,
+        border: Option<Border>,
+        radius: CornerRadii,
+        child: Box<Widget>,
     },
     Button {
         size: Size,
@@ -626,6 +654,14 @@ enum WidgetKind {
         text: String,
         style: TextStyle,
         align: TextAlign,
+    },
+    Image {
+        image: ImageHandle,
+        width: Option<f32>,
+        height: Option<f32>,
+        fit: ImageFit,
+        alignment: Alignment,
+        sampling: ImageSampling,
     },
     TextField {
         controller: TextEditingController,
@@ -727,7 +763,7 @@ impl std::fmt::Debug for Widget {
 }
 impl PartialEq for Widget {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key && self.kind == other.kind
+        self.key == other.key && self.kind == other.kind && self.semantics == other.semantics
     }
 }
 impl std::fmt::Debug for WidgetKind {
@@ -737,6 +773,31 @@ impl std::fmt::Debug for WidgetKind {
                 .debug_struct("Box")
                 .field("size", size)
                 .field("color", color)
+                .finish(),
+            Self::Shape {
+                path,
+                fill,
+                stroke,
+                size,
+            } => f
+                .debug_struct("PathView")
+                .field("path", &path.id())
+                .field("fill", fill)
+                .field("stroke", stroke)
+                .field("size", size)
+                .finish(),
+            Self::Decorated {
+                size,
+                background,
+                border,
+                radius,
+                ..
+            } => f
+                .debug_struct("DecoratedBox")
+                .field("size", size)
+                .field("background", background)
+                .field("border", border)
+                .field("radius", radius)
                 .finish(),
             Self::Button {
                 size,
@@ -754,6 +815,21 @@ impl std::fmt::Debug for WidgetKind {
                 .field("text", text)
                 .field("style", style)
                 .field("align", align)
+                .finish(),
+            Self::Image {
+                image,
+                width,
+                height,
+                fit,
+                alignment,
+                sampling: _,
+            } => f
+                .debug_struct("Image")
+                .field("id", &image.id())
+                .field("width", width)
+                .field("height", height)
+                .field("fit", fit)
+                .field("alignment", alignment)
                 .finish(),
             Self::TextField { placeholder, .. } => f
                 .debug_struct("TextField")
@@ -789,6 +865,36 @@ impl PartialEq for WidgetKind {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Box { size: a, color: b }, Self::Box { size: c, color: d }) => a == c && b == d,
+            (
+                Self::Shape {
+                    path: a,
+                    fill: b,
+                    stroke: c,
+                    size: d,
+                },
+                Self::Shape {
+                    path: e,
+                    fill: f,
+                    stroke: g,
+                    size: h,
+                },
+            ) => a == e && b == f && c == g && d == h,
+            (
+                Self::Decorated {
+                    size: a,
+                    background: b,
+                    border: c,
+                    radius: d,
+                    child: e,
+                },
+                Self::Decorated {
+                    size: f,
+                    background: g,
+                    border: h,
+                    radius: i,
+                    child: j,
+                },
+            ) => a == f && b == g && c == h && d == i && e == j,
             (
                 Self::Button {
                     size: a,
@@ -827,6 +933,24 @@ impl PartialEq for WidgetKind {
                     align: f,
                 },
             ) => a == d && b == e && c == f,
+            (
+                Self::Image {
+                    image: a,
+                    width: b,
+                    height: c,
+                    fit: d,
+                    alignment: e,
+                    sampling: k,
+                },
+                Self::Image {
+                    image: f,
+                    width: g,
+                    height: h,
+                    fit: i,
+                    alignment: j,
+                    sampling: l,
+                },
+            ) => a == f && b == g && c == h && d == i && e == j && k == l,
             (
                 Self::TextField {
                     controller: a,
@@ -920,6 +1044,9 @@ impl PartialEq for WidgetKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WidgetType {
     Box,
+    Shape,
+    Decorated,
+    Image,
     Button,
     Text,
     TextField,
@@ -936,11 +1063,50 @@ impl Widget {
         Self {
             key: None,
             kind: WidgetKind::Box { size, color },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
     pub fn fixed_box(size: Size, color: Color) -> Self {
         Self::box_(size, color)
+    }
+    #[must_use]
+    fn shape(
+        path: Arc<Path>,
+        fill: Option<Brush>,
+        stroke: Option<(Brush, Stroke)>,
+        size: Option<Size>,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Shape {
+                path,
+                fill,
+                stroke,
+                size,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    fn decorated(
+        size: Option<Size>,
+        background: Option<Brush>,
+        border: Option<Border>,
+        radius: CornerRadii,
+        child: Widget,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Decorated {
+                size,
+                background,
+                border,
+                radius,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
     }
     #[must_use]
     pub fn button(size: Size, color: Color, action: ActionId) -> Self {
@@ -953,6 +1119,7 @@ impl Widget {
                 callback: None,
                 child: None,
             },
+            semantics: SemanticProperties::default(),
         }
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
@@ -980,7 +1147,12 @@ impl Widget {
                     child.bind_callbacks(allocate);
                 }
             }
-            WidgetKind::Box { .. } | WidgetKind::Text { .. } | WidgetKind::TextField { .. } => {}
+            WidgetKind::Box { .. }
+            | WidgetKind::Shape { .. }
+            | WidgetKind::Decorated { .. }
+            | WidgetKind::Text { .. }
+            | WidgetKind::TextField { .. }
+            | WidgetKind::Image { .. } => {}
         }
     }
     #[must_use]
@@ -992,6 +1164,7 @@ impl Widget {
                 style: TextStyle::default(),
                 align: TextAlign::Start,
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1003,6 +1176,29 @@ impl Widget {
                 style,
                 align,
             },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    fn image(
+        image: ImageHandle,
+        width: Option<f32>,
+        height: Option<f32>,
+        fit: ImageFit,
+        alignment: Alignment,
+        sampling: ImageSampling,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Image {
+                image,
+                width,
+                height,
+                fit,
+                alignment,
+                sampling,
+            },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1024,6 +1220,7 @@ impl Widget {
                 on_submit,
                 multiline,
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1034,6 +1231,7 @@ impl Widget {
                 padding,
                 child: Box::new(child),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1044,6 +1242,7 @@ impl Widget {
                 alignment,
                 child: Box::new(child),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1054,6 +1253,7 @@ impl Widget {
                 axis: Axis::Horizontal,
                 children: children.into(),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1064,6 +1264,7 @@ impl Widget {
                 axis: Axis::Vertical,
                 children: children.into(),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1074,6 +1275,7 @@ impl Widget {
                 controller,
                 child: Box::new(child),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1083,6 +1285,7 @@ impl Widget {
             kind: WidgetKind::VirtualList {
                 config: Rc::new(config),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
@@ -1093,11 +1296,30 @@ impl Widget {
                 controller,
                 child: Box::new(child),
             },
+            semantics: SemanticProperties::default(),
         }
     }
     #[must_use]
     pub fn with_key(mut self, key: impl Into<Key>) -> Self {
         self.key = Some(key.into());
+        self
+    }
+    /// Overrides the accessible label contributed by this meaningful widget.
+    #[must_use]
+    pub fn accessibility_label(mut self, label: impl Into<String>) -> Self {
+        self.semantics.label = Some(label.into());
+        self
+    }
+    /// Adds a screen-reader description without changing visible text.
+    #[must_use]
+    pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
+        self.semantics.description = Some(description.into());
+        self
+    }
+    /// Excludes this widget and its implementation-detail subtree from semantics.
+    #[must_use]
+    pub fn exclude_semantics(mut self) -> Self {
+        self.semantics.hidden = true;
         self
     }
     #[must_use]
@@ -1107,6 +1329,9 @@ impl Widget {
     fn type_(&self) -> WidgetType {
         match self.kind {
             WidgetKind::Box { .. } => WidgetType::Box,
+            WidgetKind::Shape { .. } => WidgetType::Shape,
+            WidgetKind::Decorated { .. } => WidgetType::Decorated,
+            WidgetKind::Image { .. } => WidgetType::Image,
             WidgetKind::Button { .. } => WidgetType::Button,
             WidgetKind::Text { .. } => WidgetType::Text,
             WidgetKind::TextField { .. } => WidgetType::TextField,
@@ -1120,21 +1345,314 @@ impl Widget {
     }
     fn children(&self) -> Vec<Widget> {
         match &self.kind {
-            WidgetKind::Box { .. } | WidgetKind::Text { .. } | WidgetKind::TextField { .. } => {
-                Vec::new()
-            }
+            WidgetKind::Box { .. }
+            | WidgetKind::Shape { .. }
+            | WidgetKind::Text { .. }
+            | WidgetKind::TextField { .. }
+            | WidgetKind::Image { .. } => Vec::new(),
             WidgetKind::Button { child, .. } => {
                 child.iter().map(|child| child.as_ref().clone()).collect()
             }
             WidgetKind::Padding { child, .. }
             | WidgetKind::Align { child, .. }
             | WidgetKind::Scroll { child, .. }
-            | WidgetKind::Translate { child, .. } => {
+            | WidgetKind::Translate { child, .. }
+            | WidgetKind::Decorated { child, .. } => {
                 vec![child.as_ref().clone()]
             }
             WidgetKind::Flex { children, .. } => children.clone(),
             WidgetKind::VirtualList { .. } => Vec::new(),
         }
+    }
+}
+
+/// Renderer-neutral image sizing policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImageFit {
+    Fill,
+    #[default]
+    Contain,
+    Cover,
+    None,
+    ScaleDown,
+}
+/// A declarative raster image. It retains only a shared asset handle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Image {
+    image: ImageHandle,
+    width: Option<f32>,
+    height: Option<f32>,
+    fit: ImageFit,
+    alignment: Alignment,
+    sampling: ImageSampling,
+}
+impl Image {
+    #[must_use]
+    pub fn new(image: ImageHandle) -> Self {
+        Self {
+            image,
+            width: None,
+            height: None,
+            fit: ImageFit::Contain,
+            alignment: Alignment::CENTER,
+            sampling: ImageSampling::Linear,
+        }
+    }
+    #[must_use]
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+    #[must_use]
+    pub fn fit(mut self, fit: ImageFit) -> Self {
+        self.fit = fit;
+        self
+    }
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+    #[must_use]
+    pub fn sampling(mut self, sampling: ImageSampling) -> Self {
+        self.sampling = sampling;
+        self
+    }
+}
+impl From<Image> for Widget {
+    fn from(value: Image) -> Self {
+        Widget::image(
+            value.image,
+            value.width,
+            value.height,
+            value.fit,
+            value.alignment,
+            value.sampling,
+        )
+    }
+}
+
+/// Immutable declarative vector shape. Its coordinates remain local; normal
+/// layout and compositor translation position it without changing PathId.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathView {
+    path: Arc<Path>,
+    fill: Option<Brush>,
+    stroke: Option<(Brush, Stroke)>,
+    size: Option<Size>,
+}
+impl PathView {
+    #[must_use]
+    pub fn new(path: impl Into<Arc<Path>>) -> Self {
+        Self {
+            path: path.into(),
+            fill: None,
+            stroke: None,
+            size: None,
+        }
+    }
+    #[must_use]
+    pub fn fill(mut self, brush: impl Into<Brush>) -> Self {
+        self.fill = Some(brush.into());
+        self
+    }
+    #[must_use]
+    pub fn stroke(mut self, brush: impl Into<Brush>, stroke: Stroke) -> Self {
+        self.stroke = Some((brush.into(), stroke));
+        self
+    }
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(size);
+        self
+    }
+}
+impl From<PathView> for Widget {
+    fn from(value: PathView) -> Self {
+        Widget::shape(value.path, value.fill, value.stroke, value.size)
+    }
+}
+
+/// Reusable vector icon backed by the same retained Path renderer as PathView.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Icon {
+    path: Arc<Path>,
+    size: f32,
+    brush: Brush,
+}
+impl Icon {
+    #[must_use]
+    pub fn new(path: impl Into<Arc<Path>>) -> Self {
+        Self {
+            path: path.into(),
+            size: 24.,
+            brush: Color::WHITE.into(),
+        }
+    }
+    #[must_use]
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = size.max(0.);
+        self
+    }
+    #[must_use]
+    pub fn brush(mut self, brush: impl Into<Brush>) -> Self {
+        self.brush = brush.into();
+        self
+    }
+}
+impl From<Icon> for Widget {
+    fn from(value: Icon) -> Self {
+        PathView::new(value.path)
+            .fill(value.brush)
+            .size(Size::new(value.size, value.size))
+            .into()
+    }
+}
+
+/// Small shared demo icons. Each function returns the same immutable `Path`,
+/// so repeated icons share PathId and retained tessellation/GPU meshes.
+pub mod icons {
+    use super::*;
+    use std::sync::OnceLock;
+    fn path(build: impl FnOnce(&mut incular_painting::PathBuilder)) -> Arc<Path> {
+        let mut builder = Path::builder();
+        build(&mut builder);
+        Arc::new(builder.build())
+    }
+    #[must_use]
+    pub fn check() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(3., 12.))
+                    .line_to(Offset::new(9., 18.))
+                    .line_to(Offset::new(21., 4.))
+                    .line_to(Offset::new(18., 2.))
+                    .line_to(Offset::new(9., 14.))
+                    .line_to(Offset::new(5., 10.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+    #[must_use]
+    pub fn close() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(3., 5.))
+                    .line_to(Offset::new(5., 3.))
+                    .line_to(Offset::new(12., 10.))
+                    .line_to(Offset::new(19., 3.))
+                    .line_to(Offset::new(21., 5.))
+                    .line_to(Offset::new(14., 12.))
+                    .line_to(Offset::new(21., 19.))
+                    .line_to(Offset::new(19., 21.))
+                    .line_to(Offset::new(12., 14.))
+                    .line_to(Offset::new(5., 21.))
+                    .line_to(Offset::new(3., 19.))
+                    .line_to(Offset::new(10., 12.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+    #[must_use]
+    pub fn plus() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(10., 3.))
+                    .line_to(Offset::new(14., 3.))
+                    .line_to(Offset::new(14., 10.))
+                    .line_to(Offset::new(21., 10.))
+                    .line_to(Offset::new(21., 14.))
+                    .line_to(Offset::new(14., 14.))
+                    .line_to(Offset::new(14., 21.))
+                    .line_to(Offset::new(10., 21.))
+                    .line_to(Offset::new(10., 14.))
+                    .line_to(Offset::new(3., 14.))
+                    .line_to(Offset::new(3., 10.))
+                    .line_to(Offset::new(10., 10.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+    #[must_use]
+    pub fn chevron_right() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(7., 3.))
+                    .line_to(Offset::new(10., 0.))
+                    .line_to(Offset::new(22., 12.))
+                    .line_to(Offset::new(10., 24.))
+                    .line_to(Offset::new(7., 21.))
+                    .line_to(Offset::new(16., 12.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+}
+
+/// A small background/border wrapper. It intentionally does not clip children;
+/// true rounded clipping belongs to Phase 9.1C.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecoratedBox {
+    child: Widget,
+    size: Option<Size>,
+    background: Option<Brush>,
+    border: Option<Border>,
+    radius: CornerRadii,
+}
+impl DecoratedBox {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+            size: None,
+            background: None,
+            border: None,
+            radius: CornerRadii::default(),
+        }
+    }
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(size);
+        self
+    }
+    #[must_use]
+    pub fn background(mut self, brush: impl Into<Brush>) -> Self {
+        self.background = Some(brush.into());
+        self
+    }
+    #[must_use]
+    pub fn border(mut self, border: Border) -> Self {
+        self.border = Some(border);
+        self
+    }
+    #[must_use]
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = CornerRadii::uniform(radius);
+        self
+    }
+}
+impl From<DecoratedBox> for Widget {
+    fn from(value: DecoratedBox) -> Self {
+        Widget::decorated(
+            value.size,
+            value.background,
+            value.border,
+            value.radius,
+            value.child,
+        )
     }
 }
 
@@ -1419,6 +1937,7 @@ impl From<Button> for Widget {
                 callback: value.callback,
                 child: Some(Box::new(label)),
             },
+            semantics: SemanticProperties::default(),
         }
     }
 }
@@ -1462,6 +1981,18 @@ enum RenderKind {
         desired: Size,
         color: Color,
     },
+    Shape {
+        path: Arc<Path>,
+        fill: Option<Brush>,
+        stroke: Option<(Brush, Stroke)>,
+        desired: Size,
+    },
+    Decorated {
+        desired: Option<Size>,
+        background: Option<Brush>,
+        border: Option<Border>,
+        radius: CornerRadii,
+    },
     Button {
         desired: Size,
         color: Color,
@@ -1479,6 +2010,14 @@ enum RenderKind {
         text: String,
         style: TextStyle,
         align: TextAlign,
+    },
+    Image {
+        image: ImageHandle,
+        width: Option<f32>,
+        height: Option<f32>,
+        fit: ImageFit,
+        alignment: Alignment,
+        sampling: ImageSampling,
     },
     TextField {
         controller: TextEditingController,
@@ -1559,6 +2098,17 @@ pub struct ScrollbarDragDiagnostics {
     pub thumb_top: f32,
     pub scroll_offset: f32,
 }
+struct SemanticBuild {
+    element: ElementId,
+    parent: Option<ElementId>,
+    role: SemanticRole,
+    label: Option<String>,
+    value: Option<String>,
+    description: Option<String>,
+    bounds: Rect,
+    state: SemanticState,
+    actions: Vec<SemanticActionKind>,
+}
 
 /// Persistent UI state. IDs become invalid immediately after unmount.
 pub struct WidgetTree {
@@ -1573,6 +2123,8 @@ pub struct WidgetTree {
     next_action: u64,
     pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
     scrollbar_drag: Option<ScrollbarDrag>,
+    semantics: SemanticsTree,
+    semantic_ids: HashMap<ElementId, SemanticNodeId>,
 }
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -1594,6 +2146,8 @@ impl WidgetTree {
             next_action: 1,
             pending_handlers: Vec::new(),
             scrollbar_drag: None,
+            semantics: SemanticsTree::new(),
+            semantic_ids: HashMap::new(),
         }
     }
     pub fn mount(&mut self, widget: Widget) -> Result<ElementId, TreeError> {
@@ -1641,6 +2195,33 @@ impl WidgetTree {
     #[must_use]
     pub fn diagnostics(&self) -> Diagnostics {
         self.diagnostics
+    }
+    /// Retained, renderer-independent semantic tree. It reflects meaningful
+    /// controls, rather than paint commands or compositor pictures.
+    #[must_use]
+    pub fn semantics(&self) -> &SemanticsTree {
+        &self.semantics
+    }
+    #[must_use]
+    pub fn semantics_diagnostics(&self) -> SemanticsDiagnostics {
+        self.semantics.diagnostics()
+    }
+    #[must_use]
+    pub fn semantic_node_for_element(&self, element: ElementId) -> Option<SemanticNodeId> {
+        self.semantic_ids.get(&element).copied()
+    }
+    #[must_use]
+    pub fn element_for_semantic_node(&self, node: SemanticNodeId) -> Option<ElementId> {
+        self.semantic_ids
+            .iter()
+            .find_map(|(element, current)| (*current == node).then_some(*element))
+    }
+    #[must_use]
+    pub fn semantics_debug_dump(&self) -> String {
+        self.semantics.debug_dump()
+    }
+    pub fn note_semantic_action(&mut self) {
+        self.semantics.note_action();
     }
     pub fn take_unmounted(&mut self) -> Vec<ElementId> {
         std::mem::take(&mut self.unmounted)
@@ -1855,6 +2436,27 @@ impl WidgetTree {
             false
         }
     }
+    /// Applies a semantic page action to the controller owned by this viewport.
+    pub fn semantic_scroll(&mut self, id: ElementId, forward: bool) -> bool {
+        let Some(render) = self.render_id(id) else {
+            return false;
+        };
+        let controller = match &self.renders.get(render.0).expect("live").kind {
+            RenderKind::Scroll { controller } => controller.clone(),
+            RenderKind::VirtualList { config } => config.controller.clone(),
+            _ => return false,
+        };
+        let delta = if forward {
+            controller.viewport_extent()
+        } else {
+            -controller.viewport_extent()
+        };
+        let changed = controller.scroll_by(delta);
+        if changed {
+            self.diagnostics.scroll_events += 1;
+        }
+        changed
+    }
     /// Handles overlay scrollbar hit testing and capture. A thumb drag maps
     /// directly to the same controller used by wheel input; a track click
     /// pages one viewport toward the pointer.
@@ -1984,6 +2586,196 @@ impl WidgetTree {
         self.refresh_virtual_ranges();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints);
+        }
+    }
+    /// Synchronizes the retained semantic arena after layout/compositor state
+    /// is valid. Non-semantic layout widgets merge their descendants into the
+    /// closest meaningful semantic ancestor.
+    pub fn update_semantics(&mut self) {
+        let mut built = Vec::new();
+        if let Some(root) = self.root {
+            self.collect_semantics(root, None, &mut built);
+        }
+        let live: HashSet<_> = built.iter().map(|node| node.element).collect();
+        let stale: Vec<_> = self
+            .semantic_ids
+            .iter()
+            .filter_map(|(element, node)| (!live.contains(element)).then_some((*element, *node)))
+            .collect();
+        for (element, node) in stale {
+            self.semantic_ids.remove(&element);
+            let _ = self.semantics.remove(node);
+        }
+        for build in &built {
+            let id = *self.semantic_ids.entry(build.element).or_insert_with(|| {
+                self.semantics.insert(SemanticNode {
+                    id: SemanticNodeId(ArenaId::from_parts(0, 0)),
+                    role: build.role,
+                    label: build.label.clone(),
+                    value: build.value.clone(),
+                    description: build.description.clone(),
+                    bounds: build.bounds,
+                    state: build.state.clone(),
+                    actions: build.actions.clone(),
+                    children: Vec::new(),
+                })
+            });
+            let children = built
+                .iter()
+                .filter(|child| child.parent == Some(build.element))
+                .filter_map(|child| self.semantic_ids.get(&child.element).copied())
+                .collect();
+            let _ = self.semantics.update(
+                id,
+                SemanticNode {
+                    id,
+                    role: build.role,
+                    label: build.label.clone(),
+                    value: build.value.clone(),
+                    description: build.description.clone(),
+                    bounds: build.bounds,
+                    state: build.state.clone(),
+                    actions: build.actions.clone(),
+                    children,
+                },
+            );
+        }
+        self.semantics.set_root(
+            built
+                .iter()
+                .find(|node| node.parent.is_none())
+                .and_then(|node| self.semantic_ids.get(&node.element).copied()),
+        );
+    }
+    fn collect_semantics(
+        &self,
+        element: ElementId,
+        semantic_parent: Option<ElementId>,
+        out: &mut Vec<SemanticBuild>,
+    ) {
+        let Some(entry) = self.elements.get(element.0) else {
+            return;
+        };
+        if entry.widget.semantics.hidden {
+            return;
+        }
+        let render = match self.renders.get(entry.render.0) {
+            Some(render) => render,
+            None => return,
+        };
+        let (role, default_label, value, state, actions) = match &entry.widget.kind {
+            WidgetKind::Button { .. } => (
+                Some(SemanticRole::Button),
+                widget_text(&entry.widget),
+                None,
+                SemanticState {
+                    enabled: true,
+                    focused: render.button_state == ButtonState::Focused,
+                    focusable: true,
+                    ..SemanticState::default()
+                },
+                vec![SemanticActionKind::Focus, SemanticActionKind::Activate],
+            ),
+            WidgetKind::Text { text, .. } => (
+                Some(SemanticRole::Text),
+                Some(text.clone()),
+                None,
+                SemanticState::default(),
+                vec![],
+            ),
+            WidgetKind::TextField {
+                controller,
+                multiline,
+                ..
+            } => {
+                let value = controller.value();
+                (
+                    Some(if *multiline {
+                        SemanticRole::TextArea
+                    } else {
+                        SemanticRole::TextField
+                    }),
+                    None,
+                    Some(value.text),
+                    SemanticState {
+                        enabled: true,
+                        focused: render.focused,
+                        focusable: true,
+                        editable: true,
+                        multiline: *multiline,
+                        selection: Some(SemanticTextSelection {
+                            base: value.selection.base,
+                            extent: value.selection.extent,
+                        }),
+                        ..SemanticState::default()
+                    },
+                    vec![
+                        SemanticActionKind::Focus,
+                        SemanticActionKind::SetText,
+                        SemanticActionKind::SetSelection,
+                    ],
+                )
+            }
+            WidgetKind::Scroll { controller, .. } => (
+                Some(SemanticRole::ScrollView),
+                None,
+                Some(format!(
+                    "{:.0}/{:.0}",
+                    controller.offset(),
+                    controller.max_offset()
+                )),
+                SemanticState::default(),
+                vec![
+                    SemanticActionKind::ScrollForward,
+                    SemanticActionKind::ScrollBackward,
+                ],
+            ),
+            WidgetKind::VirtualList { config } => (
+                Some(SemanticRole::List),
+                None,
+                None,
+                SemanticState {
+                    set_size: Some(config.item_count),
+                    ..SemanticState::default()
+                },
+                vec![
+                    SemanticActionKind::ScrollForward,
+                    SemanticActionKind::ScrollBackward,
+                ],
+            ),
+            _ => (None, None, None, SemanticState::default(), vec![]),
+        };
+        let this_parent = if let Some(role) = role {
+            let mut state = state;
+            if let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0)) {
+                if let WidgetKind::VirtualList { config } = &parent.widget.kind {
+                    if let Some(slot) = parent.children.iter().position(|child| *child == element) {
+                        state.item_index = parent.virtual_indices.get(slot).copied();
+                        state.set_size = Some(config.item_count);
+                    }
+                }
+            }
+            out.push(SemanticBuild {
+                element,
+                parent: semantic_parent,
+                role,
+                label: entry.widget.semantics.label.clone().or(default_label),
+                value,
+                description: entry.widget.semantics.description.clone(),
+                bounds: Rect::from_origin_size(self.render_origin(entry.render), render.size),
+                state,
+                actions,
+            });
+            Some(element)
+        } else {
+            semantic_parent
+        };
+        // A Button deliberately merges its visual label/icon subtree into the
+        // one control node. Other containers preserve logical child order.
+        if !matches!(entry.widget.kind, WidgetKind::Button { .. }) {
+            for child in &entry.children {
+                self.collect_semantics(*child, this_parent, out);
+            }
         }
     }
     #[must_use]
@@ -2235,9 +3027,12 @@ impl WidgetTree {
         let picture = matches!(
             widget.kind,
             WidgetKind::Box { .. }
+                | WidgetKind::Shape { .. }
+                | WidgetKind::Decorated { .. }
                 | WidgetKind::Button { .. }
                 | WidgetKind::Text { .. }
                 | WidgetKind::TextField { .. }
+                | WidgetKind::Image { .. }
                 | WidgetKind::Scroll { .. }
                 | WidgetKind::VirtualList { .. }
         )
@@ -2752,7 +3547,26 @@ impl WidgetTree {
             (n.kind.clone(), n.children.clone())
         };
         let (size, offsets) = match kind {
-            RenderKind::Box { desired, .. } => (constraints.constrain(desired), Vec::new()),
+            RenderKind::Box { desired, .. } | RenderKind::Shape { desired, .. } => {
+                (constraints.constrain(desired), Vec::new())
+            }
+            RenderKind::Decorated { desired, .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let child_size = self.renders.get(child.0).expect("live").size;
+                    let wanted = desired.unwrap_or(child_size);
+                    let size = constraints.constrain(Size::new(
+                        wanted.width.max(child_size.width),
+                        wanted.height.max(child_size.height),
+                    ));
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (
+                        constraints.constrain(desired.unwrap_or(Size::ZERO)),
+                        Vec::new(),
+                    )
+                }
+            }
             RenderKind::Button { desired, .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
@@ -2845,6 +3659,22 @@ impl WidgetTree {
                 node.text_layout = Some(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
+            }
+            RenderKind::Image {
+                image,
+                width,
+                height,
+                ..
+            } => {
+                let intrinsic = image.decoded();
+                let ratio = intrinsic.width() as f32 / intrinsic.height() as f32;
+                let natural = match (width, height) {
+                    (Some(w), Some(h)) => Size::new(w, h),
+                    (Some(w), None) => Size::new(w, w / ratio),
+                    (None, Some(h)) => Size::new(h * ratio, h),
+                    (None, None) => Size::new(intrinsic.width() as f32, intrinsic.height() as f32),
+                };
+                (constraints.constrain(natural), Vec::new())
             }
             RenderKind::TextField {
                 controller,
@@ -2992,6 +3822,38 @@ impl WidgetTree {
                     rect: Rect::from_origin_size(Offset::ZERO, size),
                     color,
                 }),
+                RenderKind::Shape {
+                    path, fill, stroke, ..
+                } => {
+                    if let Some(brush) = fill {
+                        cache.push(PaintCommand::FillPath {
+                            path: path.clone(),
+                            brush,
+                            fill_rule: FillRule::NonZero,
+                        });
+                    }
+                    if let Some((brush, stroke)) = stroke {
+                        cache.push(PaintCommand::StrokePath {
+                            path,
+                            brush,
+                            stroke,
+                        });
+                    }
+                }
+                RenderKind::Decorated {
+                    background,
+                    border,
+                    radius,
+                    ..
+                } => {
+                    let rrect = RRect::new(Rect::from_origin_size(Offset::ZERO, size), radius);
+                    if let Some(brush) = background {
+                        cache.push(PaintCommand::RRect { rrect, brush });
+                    }
+                    if let Some(border) = border {
+                        cache.push(PaintCommand::Border { rrect, border });
+                    }
+                }
                 RenderKind::Button { color, .. } => {
                     let state = self.renders.get(id.0).expect("live").button_state;
                     let adjust = match state {
@@ -3001,14 +3863,15 @@ impl WidgetTree {
                         ButtonState::Pressed => -24,
                     };
                     let shift = |value: u8| (value as i16 + adjust).clamp(0, 255) as u8;
-                    cache.push(PaintCommand::Rect {
-                        rect: Rect::from_origin_size(Offset::ZERO, size),
-                        color: Color::rgba(
+                    cache.push(PaintCommand::RRect {
+                        rrect: RRect::uniform(Rect::from_origin_size(Offset::ZERO, size), 6.),
+                        brush: Color::rgba(
                             shift(color.red),
                             shift(color.green),
                             shift(color.blue),
                             color.alpha,
-                        ),
+                        )
+                        .into(),
                     });
                 }
                 RenderKind::Text { style, .. } => {
@@ -3021,6 +3884,31 @@ impl WidgetTree {
                             });
                         }
                     }
+                }
+                RenderKind::Image {
+                    image,
+                    fit,
+                    alignment,
+                    sampling,
+                    ..
+                } => {
+                    let intrinsic = image.decoded();
+                    let source = Rect::from_origin_size(
+                        Offset::ZERO,
+                        Size::new(intrinsic.width() as f32, intrinsic.height() as f32),
+                    );
+                    let (source, destination) = image_fit_rects(
+                        source,
+                        Rect::from_origin_size(Offset::ZERO, size),
+                        fit,
+                        alignment,
+                    );
+                    cache.push(PaintCommand::Image {
+                        image,
+                        source,
+                        destination,
+                        sampling,
+                    });
                 }
                 RenderKind::TextField {
                     controller,
@@ -3193,13 +4081,13 @@ impl WidgetTree {
         } else if node.scrollbar_hovered {
             thumb = Color::rgba(190, 202, 230, 220);
         }
-        cache.push(PaintCommand::Rect {
-            rect: geometry.track,
-            color: ScrollbarStyle::default().track_color,
+        cache.push(PaintCommand::RRect {
+            rrect: RRect::uniform(geometry.track, ScrollbarStyle::default().width * 0.5),
+            brush: ScrollbarStyle::default().track_color.into(),
         });
-        cache.push(PaintCommand::Rect {
-            rect: geometry.thumb,
-            color: thumb,
+        cache.push(PaintCommand::RRect {
+            rrect: RRect::uniform(geometry.thumb, ScrollbarStyle::default().width * 0.5),
+            brush: thumb.into(),
         });
     }
     fn hit_test_render(
@@ -3292,11 +4180,54 @@ impl WidgetTree {
         })
     }
 }
+
+fn widget_text(widget: &Widget) -> Option<String> {
+    match &widget.kind {
+        WidgetKind::Text { text, .. } => Some(text.clone()),
+        WidgetKind::Button { child, .. } => child.as_deref().and_then(widget_text),
+        WidgetKind::Padding { child, .. }
+        | WidgetKind::Align { child, .. }
+        | WidgetKind::Scroll { child, .. }
+        | WidgetKind::Translate { child, .. } => widget_text(child),
+        WidgetKind::Flex { children, .. } => {
+            let text: String = children
+                .iter()
+                .filter_map(widget_text)
+                .collect::<Vec<_>>()
+                .join(" ");
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    }
+}
 fn render_kind(widget: &Widget) -> RenderKind {
     match &widget.kind {
         WidgetKind::Box { size, color } => RenderKind::Box {
             desired: *size,
             color: *color,
+        },
+        WidgetKind::Shape {
+            path,
+            fill,
+            stroke,
+            size,
+        } => RenderKind::Shape {
+            path: path.clone(),
+            fill: fill.clone(),
+            stroke: stroke.clone(),
+            desired: size.unwrap_or_else(|| path.bounds().map_or(Size::ZERO, |bounds| bounds.size)),
+        },
+        WidgetKind::Decorated {
+            size,
+            background,
+            border,
+            radius,
+            ..
+        } => RenderKind::Decorated {
+            desired: *size,
+            background: background.clone(),
+            border: *border,
+            radius: *radius,
         },
         WidgetKind::Button { size, color, .. } => RenderKind::Button {
             desired: *size,
@@ -3306,6 +4237,21 @@ fn render_kind(widget: &Widget) -> RenderKind {
             text: text.clone(),
             style: style.clone(),
             align: *align,
+        },
+        WidgetKind::Image {
+            image,
+            width,
+            height,
+            fit,
+            alignment,
+            sampling,
+        } => RenderKind::Image {
+            image: image.clone(),
+            width: *width,
+            height: *height,
+            fit: *fit,
+            alignment: *alignment,
+            sampling: *sampling,
         },
         WidgetKind::TextField {
             controller,
@@ -3335,6 +4281,80 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
             controller: controller.clone(),
         },
+    }
+}
+
+/// Returns the pixel source crop and logical destination for a fit operation.
+#[must_use]
+pub fn image_fit_rects(
+    source: Rect,
+    bounds: Rect,
+    fit: ImageFit,
+    alignment: Alignment,
+) -> (Rect, Rect) {
+    if source.size.width == 0.
+        || source.size.height == 0.
+        || bounds.size.width == 0.
+        || bounds.size.height == 0.
+    {
+        return (source, Rect::from_origin_size(bounds.origin, Size::ZERO));
+    }
+    if fit == ImageFit::Fill {
+        return (source, bounds);
+    }
+    let sx = bounds.size.width / source.size.width;
+    let sy = bounds.size.height / source.size.height;
+    let scale = match fit {
+        ImageFit::Cover => sx.max(sy),
+        ImageFit::None => 1.,
+        ImageFit::ScaleDown => sx.min(sy).min(1.),
+        _ => sx.min(sy),
+    };
+    let rendered = Size::new(source.size.width * scale, source.size.height * scale);
+    if fit == ImageFit::Cover {
+        let crop = Size::new(
+            (bounds.size.width / scale).min(source.size.width),
+            (bounds.size.height / scale).min(source.size.height),
+        );
+        let x = source.origin.x + (source.size.width - crop.width) * (alignment.x + 1.) / 2.;
+        let y = source.origin.y + (source.size.height - crop.height) * (alignment.y + 1.) / 2.;
+        return (Rect::from_origin_size(Offset::new(x, y), crop), bounds);
+    }
+    let origin = Offset::new(
+        bounds.origin.x + (bounds.size.width - rendered.width) * (alignment.x + 1.) / 2.,
+        bounds.origin.y + (bounds.size.height - rendered.height) * (alignment.y + 1.) / 2.,
+    );
+    (source, Rect::from_origin_size(origin, rendered))
+}
+
+#[cfg(test)]
+mod image_fit_tests {
+    use super::*;
+    #[test]
+    fn contain_cover_fill_and_scale_down_are_deterministic() {
+        let source = Rect::from_origin_size(Offset::ZERO, Size::new(400., 200.));
+        let bounds = Rect::from_origin_size(Offset::ZERO, Size::new(200., 200.));
+        let (_, contain) = image_fit_rects(source, bounds, ImageFit::Contain, Alignment::CENTER);
+        assert_eq!(contain.size, Size::new(200., 100.));
+        let (cover_source, cover_destination) =
+            image_fit_rects(source, bounds, ImageFit::Cover, Alignment::CENTER);
+        assert_eq!(cover_destination, bounds);
+        assert_eq!(cover_source.size, Size::new(200., 200.));
+        assert_eq!(
+            image_fit_rects(source, bounds, ImageFit::Fill, Alignment::CENTER).1,
+            bounds
+        );
+        assert_eq!(
+            image_fit_rects(
+                Rect::from_origin_size(Offset::ZERO, Size::new(40., 20.)),
+                bounds,
+                ImageFit::ScaleDown,
+                Alignment::CENTER
+            )
+            .1
+            .size,
+            Size::new(40., 20.)
+        );
     }
 }
 fn text_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
@@ -3471,7 +4491,14 @@ mod tests {
                     origins.push(rect.origin + *transforms.last().unwrap());
                 }
                 PaintCommand::GlyphRun { .. }
+                | PaintCommand::Image { .. }
+                | PaintCommand::RRect { .. }
+                | PaintCommand::Border { .. }
+                | PaintCommand::FillPath { .. }
+                | PaintCommand::StrokePath { .. }
                 | PaintCommand::PushClip { .. }
+                | PaintCommand::PushClipRRect { .. }
+                | PaintCommand::PushClipPath { .. }
                 | PaintCommand::PopClip => {}
             }
         }
@@ -3492,8 +4519,34 @@ mod tests {
                     origins.push(run.origin + *transforms.last().unwrap());
                 }
                 PaintCommand::Rect { .. }
+                | PaintCommand::Image { .. }
+                | PaintCommand::RRect { .. }
+                | PaintCommand::Border { .. }
+                | PaintCommand::FillPath { .. }
+                | PaintCommand::StrokePath { .. }
                 | PaintCommand::PushClip { .. }
+                | PaintCommand::PushClipRRect { .. }
+                | PaintCommand::PushClipPath { .. }
                 | PaintCommand::PopClip => {}
+            }
+        }
+        origins
+    }
+    fn rrect_origins(list: &DisplayList) -> Vec<Offset> {
+        let mut transforms = vec![Offset::ZERO];
+        let mut origins = Vec::new();
+        for command in list.commands() {
+            match command {
+                PaintCommand::PushTransform { transform } => {
+                    transforms.push(*transforms.last().unwrap() + transform.translation);
+                }
+                PaintCommand::PopTransform => {
+                    transforms.pop();
+                }
+                PaintCommand::RRect { rrect, .. } => {
+                    origins.push(rrect.rect.origin + *transforms.last().unwrap());
+                }
+                _ => {}
             }
         }
         origins
@@ -3643,7 +4696,7 @@ mod tests {
         .unwrap();
         tree.layout(Constraints::tight(Size::new(200., 120.)));
         let list = tree.paint();
-        let button_origin = rect_origins(&list)[1];
+        let button_origin = rrect_origins(&list)[0];
         let label_origin = glyph_origins(&list)[0];
         assert_eq!(button_origin.y, 30.);
         assert!(label_origin.y >= button_origin.y);

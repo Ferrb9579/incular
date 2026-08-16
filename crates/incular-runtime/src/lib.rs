@@ -1,4 +1,5 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
+use incular_accessibility::{SemanticAction, SemanticNodeId};
 use incular_core::{ImeEvent, InputEvent, KeyCode, KeyEvent, Offset, PointerPhase};
 use incular_layout::Constraints;
 use incular_painting::DisplayList;
@@ -230,6 +231,61 @@ impl Runtime {
     #[must_use]
     pub fn focused_element(&self) -> Option<ElementId> {
         self.focused
+    }
+    /// Dispatches an owned semantic action through the same control state used
+    /// by pointer and keyboard input. Native adapters queue these requests;
+    /// they never borrow mutable element storage.
+    pub fn dispatch_semantic_action(
+        &mut self,
+        node: SemanticNodeId,
+        action: SemanticAction,
+    ) -> bool {
+        let Some(element) = self.tree.element_for_semantic_node(node) else {
+            return false;
+        };
+        self.tree.note_semantic_action();
+        let handled = match action {
+            SemanticAction::Focus => {
+                self.set_focus(Some(element));
+                true
+            }
+            SemanticAction::Activate => self
+                .tree
+                .action_for_element(element)
+                .and_then(|action| self.handlers.get(&action).cloned())
+                .map(|callback| {
+                    callback();
+                    true
+                })
+                .unwrap_or(false),
+            SemanticAction::SetText(text) => self
+                .tree
+                .text_controller(element)
+                .map(|controller| {
+                    controller.set_text(text);
+                    true
+                })
+                .unwrap_or(false),
+            SemanticAction::SetSelection { base, extent } => self
+                .tree
+                .text_controller(element)
+                .map(|controller| {
+                    let length = controller.text().len();
+                    controller.set_selection(incular_widgets::TextSelection {
+                        base: base.min(length),
+                        extent: extent.min(length),
+                    });
+                    true
+                })
+                .unwrap_or(false),
+            SemanticAction::ScrollForward => self.tree.semantic_scroll(element, true),
+            SemanticAction::ScrollBackward => self.tree.semantic_scroll(element, false),
+            SemanticAction::Increment | SemanticAction::Decrement => false,
+        };
+        if handled {
+            self.frame_requested = true;
+        }
+        handled
     }
     #[must_use]
     pub fn focus_diagnostics(&self) -> FocusDiagnostics {
@@ -573,6 +629,7 @@ impl Runtime {
         }
         self.prune_handlers();
         let (composited, animations_active) = self.tree.update_compositor(now);
+        self.tree.update_semantics();
         let display_list = self.tree.paint();
         self.frame_requested = !self.pending.is_empty()
             || !self.reactive.borrow().queued.is_empty()
@@ -684,11 +741,136 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use incular_accessibility::{Role as SemanticRole, SemanticAction};
     use incular_core::{Color, Offset, Size};
     use incular_painting::{DisplayList, PaintCommand};
     use incular_widgets::{Button, VirtualList};
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    fn semantic_node(
+        runtime: &Runtime,
+        role: SemanticRole,
+    ) -> incular_accessibility::SemanticNodeId {
+        runtime
+            .tree()
+            .semantics()
+            .iter()
+            .find_map(|(id, node)| (node.role == role).then_some(id))
+            .expect("semantic node")
+    }
+
+    #[test]
+    fn semantic_actions_share_logical_button_and_editing_state() {
+        use incular_widgets::{TextEditingController, TextField};
+        let hits = Rc::new(Cell::new(0));
+        let controller = TextEditingController::with_text("Ada");
+        let mut runtime = Runtime::new(Widget::column(vec![
+            Button::new("Increment")
+                .on_press({
+                    let hits = hits.clone();
+                    move || hits.set(hits.get() + 1)
+                })
+                .into(),
+            TextField::new(controller.clone()).into(),
+        ]))
+        .unwrap();
+        let root = runtime.tree().root().unwrap();
+        runtime
+            .schedule_update(
+                root,
+                Widget::column(vec![
+                    Button::new("Increment")
+                        .on_press({
+                            let hits = hits.clone();
+                            move || hits.set(hits.get() + 1)
+                        })
+                        .into(),
+                    TextField::new(controller.clone()).into(),
+                ]),
+            )
+            .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(300., 200.)))
+            .unwrap();
+        let button = semantic_node(&runtime, SemanticRole::Button);
+        let field = semantic_node(&runtime, SemanticRole::TextField);
+        assert!(runtime.dispatch_semantic_action(button, SemanticAction::Activate));
+        assert_eq!(hits.get(), 1);
+        assert!(runtime.dispatch_semantic_action(field, SemanticAction::Focus));
+        assert_eq!(
+            runtime.focused_element(),
+            runtime.tree().element_for_semantic_node(field)
+        );
+        assert!(runtime.dispatch_semantic_action(field, SemanticAction::SetText("hello".into())));
+        assert!(
+            runtime.dispatch_semantic_action(
+                field,
+                SemanticAction::SetSelection { base: 1, extent: 4 }
+            )
+        );
+        assert_eq!(controller.text(), "hello");
+        assert_eq!(
+            controller.value().selection,
+            incular_widgets::TextSelection { base: 1, extent: 4 }
+        );
+    }
+
+    #[test]
+    fn virtual_list_semantics_are_bounded_and_follow_materialization() {
+        let controller = incular_widgets::ScrollController::new();
+        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+            1_000_000,
+            40.,
+            controller.clone(),
+            |index| Button::new(format!("Item {index}")),
+        ))
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(200., 600.)))
+            .unwrap();
+        let initial = runtime.tree().semantics().len();
+        assert!(initial < 100, "{initial}");
+        let list = semantic_node(&runtime, SemanticRole::List);
+        assert_eq!(
+            runtime
+                .tree()
+                .semantics()
+                .node(list)
+                .unwrap()
+                .state
+                .set_size,
+            Some(1_000_000)
+        );
+        controller.jump_to(900_000. * 40.);
+        runtime
+            .run_frame(Constraints::tight(Size::new(200., 600.)))
+            .unwrap();
+        assert!(runtime.tree().semantics().len() < 100);
+        assert!(runtime.tree().semantics().iter().any(|(_, node)| {
+            node.label
+                .as_deref()
+                .is_some_and(|label| label.contains("900000"))
+        }));
+    }
+
+    #[test]
+    fn semantic_scroll_uses_existing_controller() {
+        let controller = incular_widgets::ScrollController::new();
+        let mut runtime = Runtime::new(incular_widgets::ScrollView::vertical(
+            controller.clone(),
+            Widget::fixed_box(Size::new(100., 2000.), Color::WHITE),
+        ))
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(100., 200.)))
+            .unwrap();
+        let scroll = semantic_node(&runtime, SemanticRole::ScrollView);
+        assert!(runtime.dispatch_semantic_action(scroll, SemanticAction::ScrollForward));
+        assert!(controller.offset() > 0.);
+        assert!(runtime.dispatch_semantic_action(scroll, SemanticAction::ScrollBackward));
+        assert_eq!(controller.offset(), 0.);
+    }
 
     fn picture_origins(list: &DisplayList) -> (Offset, Offset) {
         let mut transforms = vec![Offset::ZERO];
@@ -708,7 +890,15 @@ mod tests {
                 PaintCommand::GlyphRun { run, .. } => {
                     glyph = Some(run.origin + *transforms.last().unwrap());
                 }
-                PaintCommand::PushClip { .. } | PaintCommand::PopClip => {}
+                PaintCommand::Image { .. }
+                | PaintCommand::RRect { .. }
+                | PaintCommand::Border { .. }
+                | PaintCommand::FillPath { .. }
+                | PaintCommand::StrokePath { .. }
+                | PaintCommand::PushClip { .. }
+                | PaintCommand::PushClipRRect { .. }
+                | PaintCommand::PushClipPath { .. }
+                | PaintCommand::PopClip => {}
             }
         }
         (rect.unwrap(), glyph.unwrap())

@@ -3,6 +3,10 @@
 Widget contracts, the widget tree, built-in components, layout integration,
 build context, lifecycle, and future state handling for Incular. Components
 such as buttons, text fields, lists, and containers belong in this crate.
+
+`Image` uses decoded intrinsic dimensions for layout and supports explicit
+width/height plus `Fill`, `Contain`, `Cover`, `None`, and `ScaleDown` fits.
+It stores a shared asset handle, not bytes or GPU resources.
 # incular-widgets
 
 Owns declarative built-in `Widget` descriptions and the persistent
@@ -14,6 +18,17 @@ paint caches are regenerated only for paint-dirty render objects.
 
 This crate depends on core, layout, and painting; it owns neither scheduling,
 native input loops, nor GPU resources.
+
+## Vector painting
+
+`PathView::new(path).fill(brush).stroke(brush, stroke)` is the public immutable
+path widget. Its default size is the path's intrinsic local bounds; `.size(...)`
+requests a layout size without rewriting path vertices. `Icon` wraps a shared
+immutable path and routes through the same renderer; `icons::{check, close,
+plus, chevron_right}` provide small reusable examples. `DecoratedBox` paints an
+analytic RRect background and optional border behind its child, including
+linear/radial `Brush` gradients. It deliberately provides no child clipping
+promise until true rounded clipping arrives in Phase 9.1C.
 
 The current built-ins include a target-oriented `button` with an `ActionId`.
 Runtime resolves it through persistent render hit testing; widgets never see

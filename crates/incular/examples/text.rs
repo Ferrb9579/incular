@@ -30,5 +30,5 @@ fn main() {
         ])
     })
     .expect("valid typography application");
-    incular::linux::run_application(app).expect("native typography application");
+    incular::run(app).expect("native typography application");
 }

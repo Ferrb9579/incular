@@ -453,6 +453,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
+name = "euclid"
+version = "0.22.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -482,6 +491,12 @@ dependencies = [
  "crc32fast",
  "miniz_oxide",
 ]
+
+[[package]]
+name = "float_next_after"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
 name = "foldhash"
@@ -715,10 +730,23 @@ checksum = "e6506c6c10786659413faa717ceebcb8f70731c0a60cbae39795fdf114519c1a"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "tiff",
+ "zune-core 0.5.3",
+ "zune-jpeg 0.5.15",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -731,6 +759,7 @@ dependencies = [
  "incular-core",
  "incular-layout",
  "incular-linux",
+ "incular-macos",
  "incular-macros",
  "incular-painting",
  "incular-platform",
@@ -738,6 +767,7 @@ dependencies = [
  "incular-text",
  "incular-wgpu",
  "incular-widgets",
+ "incular-windows",
 ]
 
 [[package]]
@@ -745,7 +775,6 @@ name = "incular-accessibility"
 version = "0.1.0"
 dependencies = [
  "incular-core",
- "incular-widgets",
 ]
 
 [[package]]
@@ -767,6 +796,7 @@ dependencies = [
 name = "incular-assets"
 version = "0.1.0"
 dependencies = [
+ "image",
  "incular-core",
 ]
 
@@ -808,8 +838,15 @@ dependencies = [
 name = "incular-macos"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "incular-core",
+ "incular-layout",
  "incular-platform",
+ "incular-runtime",
+ "incular-wgpu",
+ "incular-widgets",
+ "pollster",
+ "winit",
 ]
 
 [[package]]
@@ -870,6 +907,7 @@ dependencies = [
  "incular-painting",
  "incular-platform",
  "incular-text",
+ "lyon_tessellation",
  "raw-window-handle",
  "wgpu",
 ]
@@ -878,7 +916,9 @@ dependencies = [
 name = "incular-widgets"
 version = "0.1.0"
 dependencies = [
+ "incular-accessibility",
  "incular-animation",
+ "incular-assets",
  "incular-core",
  "incular-layout",
  "incular-painting",
@@ -890,8 +930,15 @@ dependencies = [
 name = "incular-windows"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "incular-core",
+ "incular-layout",
  "incular-platform",
+ "incular-runtime",
+ "incular-wgpu",
+ "incular-widgets",
+ "pollster",
+ "winit",
 ]
 
 [[package]]
@@ -1066,6 +1113,38 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+
+[[package]]
+name = "lyon_geom"
+version = "1.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4336502e29e32af93cf2dad2214ed6003c17ceb5bd499df77b1de663b9042b92"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "num-traits",
+]
+
+[[package]]
+name = "lyon_path"
+version = "1.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c463f9c428b7fc5ec885dcd39ce4aa61e29111d0e33483f6f98c74e89d8621e"
+dependencies = [
+ "lyon_geom",
+ "num-traits",
+]
+
+[[package]]
+name = "lyon_tessellation"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e43b7e44161571868f5c931d12583592c223c5583eef86b08aa02b7048a3552"
+dependencies = [
+ "float_next_after",
+ "lyon_path",
+ "num-traits",
+]
 
 [[package]]
 name = "memchr"
@@ -2103,7 +2182,7 @@ dependencies = [
  "half",
  "quick-error",
  "weezl",
- "zune-jpeg",
+ "zune-jpeg 0.4.21",
 ]
 
 [[package]]
@@ -3004,10 +3083,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
 
 [[package]]
+name = "zune-core"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d56377fd46368984a170bc5aac5567e52ca5da874caa60bea39fcbca78fb658b"
+
+[[package]]
 name = "zune-jpeg"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
 dependencies = [
- "zune-core",
+ "zune-core 0.4.12",
+]
+
+[[package]]
+name = "zune-jpeg"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
+dependencies = [
+ "zune-core 0.5.3",
 ]

@@ -18,5 +18,5 @@ fn main() {
         ])
     })
     .expect("valid application");
-    incular::linux::run_application(app).expect("native counter application");
+    incular::run(app).expect("native counter application");
 }
