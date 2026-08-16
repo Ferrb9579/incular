@@ -1,7 +1,8 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
-use incular_core::{InputEvent, Offset, PointerPhase};
+use incular_core::{ImeEvent, InputEvent, KeyCode, KeyEvent, Offset, PointerPhase};
 use incular_layout::Constraints;
 use incular_painting::DisplayList;
+use incular_platform::{Clipboard, MemoryClipboard};
 use incular_widgets::{
     ActionId, ButtonState, Diagnostics, ElementId, TreeError, Widget, WidgetTree,
 };
@@ -161,6 +162,21 @@ pub struct EventTarget {
     pub element: ElementId,
     pub action: Option<ActionId>,
 }
+/// Debug-facing focus state without exposing native event-loop details.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FocusDiagnostics {
+    pub focused_element: Option<ElementId>,
+    pub text_pointer_capture: Option<ElementId>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditingDiagnostics {
+    pub key_down_received: u64,
+    pub key_up_received: u64,
+    pub backspace_commands: u64,
+    pub delete_commands: u64,
+    pub text_commits: u64,
+    pub ime_events: u64,
+}
 /// Platform-neutral scheduler; it owns no window or GPU resource.
 pub struct Runtime {
     tree: WidgetTree,
@@ -169,10 +185,13 @@ pub struct Runtime {
     reactive: Rc<RefCell<ReactiveQueue>>,
     builders: HashMap<ElementId, Box<dyn FnMut() -> Widget>>,
     handlers: HashMap<ActionId, Rc<dyn Fn()>>,
-    next_action: u64,
     hovered_button: Option<ElementId>,
     pressed_button: Option<ElementId>,
     last_pointer: Offset,
+    focused: Option<ElementId>,
+    captured_text_field: Option<ElementId>,
+    clipboard: Box<dyn Clipboard>,
+    editing_diagnostics: EditingDiagnostics,
     frame_requested: bool,
 }
 impl Runtime {
@@ -190,10 +209,13 @@ impl Runtime {
             })),
             builders: HashMap::new(),
             handlers: HashMap::new(),
-            next_action: 1,
             hovered_button: None,
             pressed_button: None,
             last_pointer: Offset::ZERO,
+            focused: None,
+            captured_text_field: None,
+            clipboard: Box::new(MemoryClipboard::default()),
+            editing_diagnostics: EditingDiagnostics::default(),
             frame_requested: true,
         })
     }
@@ -204,6 +226,27 @@ impl Runtime {
     #[must_use]
     pub fn tree_mut(&mut self) -> &mut WidgetTree {
         &mut self.tree
+    }
+    #[must_use]
+    pub fn focused_element(&self) -> Option<ElementId> {
+        self.focused
+    }
+    #[must_use]
+    pub fn focus_diagnostics(&self) -> FocusDiagnostics {
+        FocusDiagnostics {
+            focused_element: self.focused,
+            text_pointer_capture: self.captured_text_field,
+        }
+    }
+    #[must_use]
+    pub const fn editing_diagnostics(&self) -> EditingDiagnostics {
+        self.editing_diagnostics
+    }
+    pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
+        self.clipboard = clipboard;
+    }
+    pub fn set_clipboard_text(&mut self, text: impl Into<String>) {
+        self.clipboard.set_text(text.into());
     }
     pub fn register_builder(
         &mut self,
@@ -236,16 +279,34 @@ impl Runtime {
     #[must_use]
     pub fn handle_input(&mut self, event: InputEvent) -> Option<EventTarget> {
         let InputEvent::Pointer { phase, position } = event else {
-            if let InputEvent::Scroll { delta } = event {
-                // The platform normalizes wheel values to logical pixels. The
-                // latest pointer position selects the nearest viewport.
-                if self.tree.scroll_at(self.last_pointer, delta) {
-                    self.frame_requested = true;
+            match event {
+                InputEvent::Scroll { delta } => {
+                    // The platform normalizes wheel values to logical pixels. The
+                    // latest pointer position selects the nearest viewport.
+                    if self.tree.scroll_at(self.last_pointer, delta) {
+                        self.frame_requested = true;
+                    }
                 }
+                InputEvent::Key(key) => {
+                    self.handle_key(key);
+                }
+                InputEvent::Text(text) => {
+                    self.insert_text(&text);
+                }
+                InputEvent::Ime(ime) => {
+                    self.handle_ime(ime);
+                }
+                InputEvent::WindowResized { .. } => {}
+                InputEvent::Pointer { .. } => unreachable!(),
             }
             return None;
         };
         self.last_pointer = position;
+        if self.tree.scrollbar_pointer(phase, position) {
+            self.frame_requested = true;
+            return None;
+        }
+        let text_target = self.tree.text_field_at(position);
         let target = self
             .tree
             .hit_test(position)
@@ -253,6 +314,11 @@ impl Runtime {
             .and_then(|element| self.tree.action_ancestor(element));
         match phase {
             PointerPhase::Move => {
+                if let Some(field) = self.captured_text_field {
+                    self.tree
+                        .text_field_set_caret(field, position, true, Instant::now());
+                    self.frame_requested = true;
+                }
                 self.set_hover(target.map(|(element, _)| element));
                 target.map(|(element, action)| EventTarget {
                     element,
@@ -260,6 +326,17 @@ impl Runtime {
                 })
             }
             PointerPhase::Down => {
+                self.set_focus(text_target);
+                self.captured_text_field = text_target;
+                if let Some(field) = text_target {
+                    self.tree
+                        .text_field_set_caret(field, position, false, Instant::now());
+                    self.frame_requested = true;
+                    return Some(EventTarget {
+                        element: field,
+                        action: None,
+                    });
+                }
                 self.set_hover(target.map(|(element, _)| element));
                 self.pressed_button = target.map(|(element, _)| element);
                 if let Some(element) = self.pressed_button {
@@ -272,6 +349,7 @@ impl Runtime {
                 })
             }
             PointerPhase::Up => {
+                self.captured_text_field = None;
                 let pressed = self.pressed_button.take();
                 let valid = pressed
                     .zip(target)
@@ -301,6 +379,7 @@ impl Runtime {
                 }
             }
             PointerPhase::Cancel => {
+                self.captured_text_field = None;
                 if let Some(element) = self.pressed_button.take() {
                     let _ = self.tree.set_button_state(element, ButtonState::Normal);
                     self.frame_requested = true;
@@ -308,6 +387,144 @@ impl Runtime {
                 None
             }
         }
+    }
+    fn set_focus(&mut self, next: Option<ElementId>) {
+        if self.focused == next {
+            return;
+        }
+        if let Some(previous) = self.focused {
+            let _ = self.tree.set_focused(previous, false, Instant::now());
+        }
+        self.focused = next;
+        if let Some(current) = next {
+            let _ = self.tree.set_focused(current, true, Instant::now());
+        }
+        self.frame_requested = true;
+    }
+    fn focus_next(&mut self, reverse: bool) {
+        let fields = self.tree.focusable_elements();
+        if fields.is_empty() {
+            return;
+        }
+        let index = self
+            .focused
+            .and_then(|focused| fields.iter().position(|id| *id == focused));
+        let next = match index {
+            Some(index) if reverse => fields[(index + fields.len() - 1) % fields.len()],
+            Some(index) => fields[(index + 1) % fields.len()],
+            None if reverse => *fields.last().expect("not empty"),
+            None => fields[0],
+        };
+        self.set_focus(Some(next));
+    }
+    fn handle_key(&mut self, event: KeyEvent) {
+        if event.pressed {
+            self.editing_diagnostics.key_down_received += 1;
+        } else {
+            self.editing_diagnostics.key_up_received += 1;
+        }
+        if !event.pressed {
+            return;
+        }
+        if event.code == KeyCode::Tab {
+            self.focus_next(event.modifiers.shift);
+            return;
+        }
+        let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
+            return;
+        };
+        let Some(controller) = self.tree.text_controller(field) else {
+            return;
+        };
+        let extend = event.modifiers.shift;
+        if event.modifiers.command {
+            match event.code {
+                KeyCode::KeyA => controller.select_all(),
+                KeyCode::KeyC => self.clipboard.set_text(controller.selected_text()),
+                KeyCode::KeyX => {
+                    self.clipboard.set_text(controller.selected_text());
+                    controller.replace_selection("");
+                }
+                KeyCode::KeyV => {
+                    if let Some(text) = self.clipboard.get_text() {
+                        controller.insert(&text);
+                    }
+                }
+                _ => return,
+            }
+        } else {
+            match event.code {
+                KeyCode::Backspace => {
+                    controller.backspace();
+                    self.editing_diagnostics.backspace_commands += 1;
+                }
+                KeyCode::Delete => {
+                    controller.delete();
+                    self.editing_diagnostics.delete_commands += 1;
+                }
+                KeyCode::ArrowLeft => controller.move_left(extend),
+                KeyCode::ArrowRight => controller.move_right(extend),
+                KeyCode::ArrowUp => {
+                    let _ = self.tree.text_field_move_vertical(field, false, extend);
+                }
+                KeyCode::ArrowDown => {
+                    let _ = self.tree.text_field_move_vertical(field, true, extend);
+                }
+                KeyCode::Home => {
+                    if !self.tree.text_field_move_line_edge(field, false, extend) {
+                        controller.move_home(extend);
+                    }
+                }
+                KeyCode::End => {
+                    if !self.tree.text_field_move_line_edge(field, true, extend) {
+                        controller.move_end(extend);
+                    }
+                }
+                KeyCode::Enter => {
+                    if self.tree.is_multiline_text_field(field) {
+                        controller.insert("\n");
+                    } else {
+                        self.tree.submit_text_field(field);
+                    }
+                }
+                _ => return,
+            }
+        }
+        controller.reset_caret(Instant::now());
+        self.frame_requested = true;
+    }
+    fn insert_text(&mut self, text: &str) {
+        let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
+            return;
+        };
+        if text.chars().any(char::is_control) {
+            return;
+        }
+        if let Some(controller) = self.tree.text_controller(field) {
+            controller.insert(text);
+            self.editing_diagnostics.text_commits += 1;
+            controller.reset_caret(Instant::now());
+            self.frame_requested = true;
+        }
+    }
+    fn handle_ime(&mut self, event: ImeEvent) {
+        self.editing_diagnostics.ime_events += 1;
+        let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
+            return;
+        };
+        let Some(controller) = self.tree.text_controller(field) else {
+            return;
+        };
+        match event {
+            ImeEvent::Preedit { text, selection } => controller.set_preedit(
+                text,
+                selection.map(|(start, end)| incular_widgets::TextRange::new(start, end)),
+            ),
+            ImeEvent::Commit(text) => controller.commit_preedit(&text),
+            ImeEvent::End => controller.clear_preedit(),
+        }
+        controller.reset_caret(Instant::now());
+        self.frame_requested = true;
     }
     pub fn run_frame(
         &mut self,
@@ -344,6 +561,17 @@ impl Runtime {
         }
         self.prune_handlers();
         self.tree.layout(constraints);
+        for (action, handler) in self.tree.take_pending_handlers() {
+            self.handlers.insert(action, handler);
+        }
+        // Lazy viewport expiry occurs during layout, after the ordinary dirty
+        // queue drain above. Release those builder subscriptions and callbacks
+        // in the same frame rather than retaining one stale cache generation.
+        for id in self.tree.take_unmounted() {
+            self.builders.remove(&id);
+            self.reactive.borrow_mut().forget(id);
+        }
+        self.prune_handlers();
         let (composited, animations_active) = self.tree.update_compositor(now);
         let display_list = self.tree.paint();
         self.frame_requested = !self.pending.is_empty()
@@ -388,10 +616,9 @@ impl Runtime {
     }
     fn prepare_widget(&mut self, widget: &mut Widget) {
         let handlers = &mut self.handlers;
-        let next = &mut self.next_action;
+        let tree = &mut self.tree;
         widget.bind_callbacks(&mut |callback| {
-            let id = ActionId(*next);
-            *next += 1;
+            let id = tree.allocate_action();
             handlers.insert(id, callback);
             id
         });
@@ -459,7 +686,7 @@ mod tests {
     use super::*;
     use incular_core::{Color, Offset, Size};
     use incular_painting::{DisplayList, PaintCommand};
-    use incular_widgets::Button;
+    use incular_widgets::{Button, VirtualList};
     use std::cell::Cell;
     use std::time::{Duration, Instant};
 
@@ -563,7 +790,7 @@ mod tests {
         let (_, frame) = runtime.run_frame(constraints).unwrap();
         assert_eq!(frame.rebuilt_elements, 0);
         assert_eq!(frame.laid_out_render_objects, 0);
-        assert_eq!(frame.repainted_render_objects, 0);
+        assert!(frame.repainted_render_objects <= 1); // overlay scrollbar only
         assert!(frame.composited > 0);
         assert_eq!(controller.offset(), 60.);
     }
@@ -609,7 +836,7 @@ mod tests {
         let _ = runtime.run_frame(constraints).unwrap();
         assert!(controller.jump_to(80.));
         let (_, frame) = runtime.run_frame(constraints).unwrap();
-        assert_eq!(frame.repainted_render_objects, 0);
+        assert!(frame.repainted_render_objects <= 1); // overlay scrollbar only
         assert_eq!(
             runtime
                 .handle_input(InputEvent::Pointer {
@@ -746,5 +973,289 @@ mod tests {
             position: Offset::new(10., 10.),
         });
         assert_eq!(hits.get(), 1);
+    }
+
+    #[test]
+    fn virtual_list_keeps_small_scrolls_compositor_only_and_direct_jumps_bounded() {
+        let controller = incular_widgets::ScrollController::new();
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+            1_000_000,
+            40.,
+            controller.clone(),
+            move |index| {
+                observed.set(observed.get() + 1);
+                Widget::text(format!("Item {index}"))
+            },
+        ))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(120., 100.));
+        let (_, initial) = runtime.run_frame(constraints).unwrap();
+        assert!(initial.laid_out_render_objects > 0 && initial.repainted_render_objects > 0);
+        let warm_calls = calls.get();
+        let warm_text = runtime.tree().text_diagnostics();
+        assert!(controller.jump_to(3.));
+        let (_, small) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(calls.get(), warm_calls);
+        assert_eq!(small.rebuilt_elements, 0);
+        assert_eq!(small.laid_out_render_objects, 0);
+        assert!(small.repainted_render_objects <= 1); // overlay scrollbar only
+        assert!(small.composited > 0);
+        assert_eq!(runtime.tree().text_diagnostics(), warm_text);
+
+        let boundary_before = runtime.diagnostics();
+        assert!(controller.jump_to(40.));
+        let (_, boundary) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(calls.get(), warm_calls + 1);
+        let boundary_after = runtime.diagnostics();
+        assert_eq!(boundary_after.items_built - boundary_before.items_built, 1);
+        assert_eq!(
+            boundary_after.items_mounted - boundary_before.items_mounted,
+            1
+        );
+        assert_eq!(
+            boundary_after.items_unmounted - boundary_before.items_unmounted,
+            0
+        );
+        assert!(boundary.laid_out_render_objects <= 2);
+        assert!(boundary.repainted_render_objects <= 2);
+
+        assert!(controller.jump_to(900_000. * 40.));
+        let (_, jumped) = runtime.run_frame(constraints).unwrap();
+        let diagnostics = runtime.tree().virtual_list_diagnostics().unwrap();
+        assert!(diagnostics.materialized_range.contains(&900_000));
+        assert!(diagnostics.materialized_item_count < 100);
+        assert!(calls.get() < 200);
+        assert!(jumped.laid_out_render_objects < 100);
+        assert!(diagnostics.picture_layer_count < 250);
+    }
+
+    #[test]
+    fn virtual_button_rows_hit_their_logical_index_and_drop_stale_handlers() {
+        let controller = incular_widgets::ScrollController::new();
+        let hit = Rc::new(Cell::new(None));
+        let observed = hit.clone();
+        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+            2_000,
+            40.,
+            controller.clone(),
+            move |index| {
+                let hit = observed.clone();
+                Button::new(format!("Item {index}")).on_press(move || hit.set(Some(index)))
+            },
+        ))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(120., 40.));
+        runtime.run_frame(constraints).unwrap();
+        assert!(controller.jump_to(500. * 40.));
+        runtime.run_frame(constraints).unwrap();
+        let down = runtime
+            .handle_input(InputEvent::Pointer {
+                phase: PointerPhase::Down,
+                position: Offset::new(10., 10.),
+            })
+            .unwrap();
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Up,
+            position: Offset::new(10., 10.),
+        });
+        assert_eq!(hit.get(), Some(500));
+        let stale_action = down.action.unwrap();
+        assert!(controller.jump_to(1_500. * 40.));
+        runtime.run_frame(constraints).unwrap();
+        assert!(!runtime.handlers.contains_key(&stale_action));
+    }
+
+    #[test]
+    fn long_virtual_scroll_keeps_retained_resources_bounded() {
+        let controller = incular_widgets::ScrollController::new();
+        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+            50_000,
+            40.,
+            controller.clone(),
+            move |index| Button::new(format!("Item {index}")),
+        ))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(120., 120.));
+        runtime.run_frame(constraints).unwrap();
+        for index in (97..10_000).step_by(97) {
+            assert!(controller.jump_to(index as f32 * 40.));
+            runtime.run_frame(constraints).unwrap();
+            let view = runtime.tree().virtual_list_diagnostics().unwrap();
+            assert!(view.materialized_item_count < 30);
+            assert!(view.element_count < 100);
+            assert!(view.render_object_count < 100);
+            assert!(view.picture_layer_count < 200);
+            assert!(runtime.handlers.len() < 30);
+        }
+    }
+
+    #[test]
+    fn focus_routes_text_shortcuts_and_ime_without_rebuilding_tree() {
+        use incular_core::{ImeEvent, KeyCode, KeyEvent, Modifiers};
+        use incular_widgets::{TextEditingController, TextField};
+        let first = TextEditingController::new();
+        let second = TextEditingController::new();
+        let mut runtime = Runtime::new(Widget::column(vec![
+            TextField::new(first.clone())
+                .size(Size::new(120., 40.))
+                .into(),
+            TextField::new(second.clone())
+                .size(Size::new(120., 40.))
+                .into(),
+        ]))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(160., 100.));
+        runtime.run_frame(constraints).unwrap();
+        let before = runtime.tree().diagnostics();
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        let _ = runtime.handle_input(InputEvent::Text("café".into()));
+        let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Preedit {
+            text: "世界".into(),
+            selection: None,
+        }));
+        assert_eq!(first.text(), "café");
+        let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("世界".into())));
+        assert_eq!(first.text(), "café世界");
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::Tab,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }));
+        assert_ne!(runtime.focused_element(), runtime.tree().root());
+        let _ = runtime.handle_input(InputEvent::Text("next".into()));
+        assert_eq!(second.text(), "next");
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::KeyA,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers {
+                command: true,
+                ..Modifiers::default()
+            },
+        }));
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::KeyX,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers {
+                command: true,
+                ..Modifiers::default()
+            },
+        }));
+        assert_eq!(second.text(), "");
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::KeyV,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers {
+                command: true,
+                ..Modifiers::default()
+            },
+        }));
+        assert_eq!(second.text(), "next");
+        let (_, stats) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(runtime.tree().diagnostics().rebuilds, before.rebuilds);
+        // The two fields plus their flex ancestor are repainted; unrelated
+        // widget descriptions were not rebuilt.
+        assert!(stats.repainted_render_objects <= 3);
+    }
+
+    #[test]
+    fn focused_native_style_backspace_repeat_and_delete_edit_the_buffer() {
+        use incular_core::{KeyCode, KeyEvent, Modifiers};
+        use incular_widgets::{TextEditingController, TextField};
+        let controller = TextEditingController::with_text("abc");
+        let mut runtime = Runtime::new(TextField::new(controller.clone()).into()).unwrap();
+        let constraints = Constraints::tight(Size::new(140., 50.));
+        runtime.run_frame(constraints).unwrap();
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(100., 5.),
+        });
+        for expected in ["ab", "a", "", ""] {
+            let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                pressed: true,
+                repeat: true,
+                modifiers: Modifiers::default(),
+            }));
+            assert_eq!(controller.text(), expected);
+        }
+        controller.set_text("é👩‍💻");
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::Backspace,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }));
+        assert_eq!(controller.text(), "é");
+        controller.set_selection(incular_widgets::TextSelection::collapsed(0));
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::Delete,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::default(),
+        }));
+        assert_eq!(controller.text(), "");
+        assert_eq!(runtime.editing_diagnostics().backspace_commands, 5);
+        assert_eq!(runtime.editing_diagnostics().delete_commands, 1);
+    }
+
+    #[test]
+    fn multiline_enter_replaces_selection_while_single_line_submits() {
+        use incular_core::{KeyCode, KeyEvent, Modifiers};
+        use incular_widgets::{TextArea, TextEditingController, TextField, TextSelection};
+        let single = TextEditingController::with_text("one");
+        let multi = TextEditingController::with_text("ab cdef");
+        let submitted = Rc::new(RefCell::new(0));
+        let observed = submitted.clone();
+        let mut runtime = Runtime::new(Widget::column(vec![
+            TextField::new(single.clone())
+                .on_submit(move |_| *observed.borrow_mut() += 1)
+                .into(),
+            TextArea::new(multi.clone()).height(100.).into(),
+        ]))
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(300., 200.)))
+            .unwrap();
+        let enter = || {
+            InputEvent::Key(KeyEvent {
+                code: KeyCode::Enter,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            })
+        };
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        let _ = runtime.handle_input(enter());
+        assert_eq!(single.text(), "one");
+        assert_eq!(*submitted.borrow(), 1);
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 50.),
+        });
+        multi.set_selection(TextSelection { base: 2, extent: 5 });
+        let _ = runtime.handle_input(enter());
+        assert_eq!(multi.text(), "ab\nef");
+        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
+            code: KeyCode::Enter,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        }));
+        assert_eq!(multi.text(), "ab\n\nef");
     }
 }

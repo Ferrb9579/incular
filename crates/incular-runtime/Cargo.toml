@@ -17,4 +17,5 @@ incular-assets = { workspace = true }
 incular-core = { workspace = true }
 incular-layout = { workspace = true }
 incular-painting = { workspace = true }
+incular-platform = { workspace = true }
 incular-widgets = { workspace = true }

@@ -16,3 +16,4 @@ incular-layout = { workspace = true }
 incular-painting = { workspace = true }
 incular-text = { workspace = true }
 incular-animation = { workspace = true }
+unicode-segmentation = { workspace = true }

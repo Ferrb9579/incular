@@ -81,6 +81,10 @@ pub struct TextLine {
     pub run: Arc<GlyphRun>,
     pub width: f32,
     pub baseline: f32,
+    /// Byte offsets in the source paragraph. Hard line breaks are excluded;
+    /// empty hard-broken lines consequently have equal start/end positions.
+    pub start: usize,
+    pub end: usize,
 }
 #[derive(Clone, Debug)]
 pub struct TextLayout {
@@ -233,54 +237,71 @@ impl TextEngine {
                 },
             };
         };
-        let mut buffer = UnicodeBuffer::new();
-        buffer.push_str(text);
-        let glyph_buffer = shape(&face, &[], buffer);
         let scale = style.size / face.units_per_em() as f32;
-        let opportunities: Vec<u32> = linebreaks(text).map(|(index, _)| index as u32).collect();
-        let mut opportunity = 0usize;
-        let mut next_break = opportunities.first().copied().unwrap_or(u32::MAX);
-        let mut lines: Vec<Vec<GlyphPosition>> = vec![Vec::new()];
-        let mut widths = vec![0_f32];
-        for (info, position) in glyph_buffer
-            .glyph_infos()
-            .iter()
-            .zip(glyph_buffer.glyph_positions())
-        {
-            while info.cluster >= next_break {
-                opportunity += 1;
-                next_break = opportunities.get(opportunity).copied().unwrap_or(u32::MAX);
-            }
-            let advance = position.x_advance as f32 * scale + style.letter_spacing;
-            let width = *widths.last().expect("line") + advance.max(0.);
-            if max_width.is_some_and(|limit| width > limit)
-                && !lines.last().expect("line").is_empty()
+        // Split hard newlines before shaping. Rustybuzz's clusters are byte
+        // offsets; adding `start` preserves their location in the original
+        // buffer while allowing empty hard-broken lines to retain geometry.
+        let mut wrapped: Vec<(Vec<GlyphPosition>, f32, usize, usize)> = Vec::new();
+        let mut start = 0usize;
+        for segment in text.split_inclusive('\n') {
+            let source = segment.strip_suffix('\n').unwrap_or(segment);
+            let end = start + source.len();
+            let mut buffer = UnicodeBuffer::new();
+            buffer.push_str(source);
+            let glyph_buffer = shape(&face, &[], buffer);
+            let opportunities: Vec<u32> =
+                linebreaks(source).map(|(index, _)| index as u32).collect();
+            let mut opportunity = 0usize;
+            let mut next_break = opportunities.first().copied().unwrap_or(u32::MAX);
+            let mut glyphs = Vec::new();
+            let mut width = 0_f32;
+            let mut line_start = start;
+            for (info, position) in glyph_buffer
+                .glyph_infos()
+                .iter()
+                .zip(glyph_buffer.glyph_positions())
             {
-                lines.push(Vec::new());
-                widths.push(0.);
+                while info.cluster >= next_break {
+                    opportunity += 1;
+                    next_break = opportunities.get(opportunity).copied().unwrap_or(u32::MAX);
+                }
+                let advance = position.x_advance as f32 * scale + style.letter_spacing;
+                if max_width.is_some_and(|limit| width + advance.max(0.) > limit)
+                    && !glyphs.is_empty()
+                {
+                    let line_end = start + info.cluster as usize;
+                    wrapped.push((glyphs, width, line_start, line_end));
+                    glyphs = Vec::new();
+                    width = 0.;
+                    line_start = line_end;
+                }
+                glyphs.push(GlyphPosition {
+                    id: info.glyph_id as u16,
+                    offset: Offset::new(
+                        width + position.x_offset as f32 * scale,
+                        position.y_offset as f32 * scale,
+                    ),
+                    advance,
+                    cluster: info.cluster + start as u32,
+                });
+                width += advance.max(0.);
             }
-            let current_width = *widths.last().expect("line");
-            lines.last_mut().expect("line").push(GlyphPosition {
-                id: info.glyph_id as u16,
-                offset: Offset::new(
-                    current_width + position.x_offset as f32 * scale,
-                    position.y_offset as f32 * scale,
-                ),
-                advance,
-                cluster: info.cluster,
-            });
-            *widths.last_mut().expect("line") += advance.max(0.);
+            wrapped.push((glyphs, width, line_start, end));
+            start += segment.len();
         }
-        if lines.len() == 1 && lines[0].is_empty() {
-            lines.clear();
-            widths.clear();
+        if text.is_empty() {
+            wrapped.push((Vec::new(), 0., 0, 0));
+        } else if text.ends_with('\n') {
+            wrapped.push((Vec::new(), 0., text.len(), text.len()));
         }
-        let max_line = widths.iter().copied().fold(0., f32::max);
-        let runs: Vec<_> = lines
+        let max_line = wrapped
+            .iter()
+            .map(|(_, width, _, _)| *width)
+            .fold(0., f32::max);
+        let runs: Vec<_> = wrapped
             .into_iter()
-            .zip(widths.iter().copied())
             .enumerate()
-            .map(|(line_index, (glyphs, width))| {
+            .map(|(line_index, (glyphs, width, start, end))| {
                 let x = match align {
                     TextAlign::Start => 0.,
                     TextAlign::Center => (max_width.unwrap_or(max_line) - width).max(0.) / 2.,
@@ -295,13 +316,16 @@ impl TextEngine {
                     }),
                     width,
                     baseline: line_index as f32 * line_height + baseline,
+                    start,
+                    end,
                 }
             })
             .collect();
+        let line_count = runs.len();
         TextLayout {
             lines: runs.into(),
             metrics: TextMetrics {
-                size: Size::new(max_line, line_height * widths.len() as f32),
+                size: Size::new(max_line, line_height * line_count as f32),
                 baseline,
                 line_height,
             },

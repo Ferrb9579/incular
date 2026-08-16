@@ -111,6 +111,89 @@ timer. Runtime supplies monotonic timestamps and requests another frame only
 while an animation remains active. Group opacity, affine clipping, fling
 physics, and virtualization remain future work.
 
+## Lazy viewports and fixed-extent virtualization
+
+`ScrollView` is intentionally eager: it accepts an arbitrary already-mounted
+child tree and uses a retained clip/content transform for inexpensive movement.
+`VirtualList` is the indexed lazy viewport protocol implemented for large,
+fixed-height vertical datasets. Its declarative configuration owns item count,
+fixed logical item extent, a persistent `ScrollController`, bounded cache
+extent, and an `Fn(index) -> Widget` item factory. Application code never sees
+Element, render, layer, or materialization IDs.
+
+The lazy viewport gets its logical scroll offset and constrained viewport
+extent during layout. Fixed extent gives O(1) content geometry:
+`content_extent = saturating(item_count * item_extent)` and item `i` is placed
+directly at `i * item_extent` (integer multiplication before conversion to the
+framework's f32 logical coordinate). Its materialized range is the exclusive
+range `floor((offset-cache)/extent)..ceil((offset+viewport+cache)/extent)`,
+clamped to the logical count. The 240 logical-pixel default cache prevents
+per-pixel mount churn and is bounded, so steady-state Elements, RenderObjects,
+PictureLayers, text layouts, handlers and traversal cost are O(visible +
+cache), not O(total item count). Extremely enormous f32 logical extents
+saturate rather than wrap; practical coordinate precision remains bounded by
+f32.
+
+The viewport maps retained children by logical index. An index that remains in
+the range retains its existing subtree and keyed reconciliation semantics; an
+exiting index is unmounted and a new index is mounted. No Element with
+application state is reused for a different logical item. The runtime drains
+lazy unmounts in the same frame, removing callback handlers and Signal
+subscriptions. The same stable item identity model leaves a future explicit,
+bounded keep-alive policy possible without making offscreen retention default.
+
+Changing scroll offset without changing this range is compositor-only: no
+builder, mount, layout or paint work occurs, and the inner content transform is
+updated. A boundary crossing dirties the viewport only long enough to add/drop
+the small changed row set; retained rows keep their geometry, local display
+lists, shaped text, and glyph-atlas entries. Fixed-extent list hit testing uses
+the existing inverse scroll coordinate path and therefore considers only
+materialized rows at their visible locations. Native semantics can later expose
+the list's logical child count plus materialized index/position metadata without
+forcing one million semantic nodes.
+
+Variable-height virtualization, estimated/remembered extents, lazy grids and
+sliver-style composition are deliberately future work; Phase 5 implements the
+production fixed-extent path only.
+
+## Editing correction and shared scrollbars
+
+Native editing commands are normalized as pressed `KeyEvent`s. The Linux/winit
+adapter recognizes physical Backspace/Delete/navigation keys and forwards only
+printable key text separately, preventing a Backspace control payload from
+being reinserted after the runtime command. Repeated pressed events are OS
+repeat and each invokes the grapheme-safe controller operation exactly once.
+IME preedit remains visual-only until commit.
+
+`TextField` is single-line and submits on Enter. `TextArea` is the explicit
+multiline control; it uses the normal text layout cache with a bounded width,
+hard newlines plus soft wrapping, line-based caret hit testing/navigation, and
+line-by-line selection rectangles. Its internal vertical offset is paint-local
+and changes without reshaping an unchanged paragraph.
+
+`ScrollController` owns offset, viewport extent, content extent and maximum
+extent for both `ScrollView` and `VirtualList`. Their framework-rendered
+vertical overlay scrollbar uses `raw_thumb = track * viewport/content`, clamped
+to the configured minimum size. With `M = max(content - viewport, 0)` and
+`travel = max(track - actual_thumb, 0)`, the authoritative inverse mappings
+are `thumb_top = track_top + (offset / M) * travel` (when `M > 0`) and
+`offset = clamp(thumb_top - track_top, 0, travel) / travel * M` (when
+`travel > 0`). This deliberately uses the actual, possibly minimum-clamped
+thumb extent. Painting, hit testing, and dragging share that geometry.
+
+A thumb press captures the pointer until up/cancel and records a fixed logical
+`grab_offset = pointer_y - thumb_top`; moves use `pointer_y - grab_offset` and
+clamp only the resulting thumb position. Thus a boundary never makes the drag
+sticky and reversing direction during the same gesture works immediately.
+Scrollbar geometry is in logical coordinates and is attached to the viewport,
+not its scrolling content transform. Track clicks remain a separate paging
+path. The common
+convention is positive normalized Y increasing offset (content upward): winit
+`LineDelta` maps to 40 logical px per line, while `PixelDelta` is DPI-converted
+without rounding or inversion. Retained list content remains compositor-only
+inside a stable materialization range; only the scrollbar overlay repaints as
+its thumb changes.
+
 ### Coordinate Spaces and Transform Composition
 
 Every `RenderObject` paints its cached `PictureLayer` in **local logical

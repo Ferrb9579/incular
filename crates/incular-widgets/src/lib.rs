@@ -17,6 +17,7 @@ use incular_layout::{Alignment, Axis, Constraints, EdgeInsets};
 use incular_painting::{DisplayList, LayerId, LayerTree, PaintCommand};
 use incular_text::{TextAlign, TextDiagnostics, TextEngine, TextLayout, TextStyle};
 use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId(ArenaId);
@@ -29,6 +30,7 @@ pub enum ButtonState {
     #[default]
     Normal,
     Hovered,
+    Focused,
     Pressed,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -68,6 +70,8 @@ impl PartialEq for ScrollController {
 struct ScrollState {
     offset: f32,
     max_offset: f32,
+    content_extent: f32,
+    viewport_extent: f32,
     revision: u64,
 }
 impl ScrollController {
@@ -82,6 +86,14 @@ impl ScrollController {
     #[must_use]
     pub fn max_offset(&self) -> f32 {
         self.state.borrow().max_offset
+    }
+    #[must_use]
+    pub fn content_extent(&self) -> f32 {
+        self.state.borrow().content_extent
+    }
+    #[must_use]
+    pub fn viewport_extent(&self) -> f32 {
+        self.state.borrow().viewport_extent
     }
     pub fn jump_to(&self, offset: f32) -> bool {
         let mut s = self.state.borrow_mut();
@@ -98,13 +110,424 @@ impl ScrollController {
     }
     fn set_extents(&self, content: f32, viewport: f32) {
         let mut s = self.state.borrow_mut();
-        s.max_offset = (content - viewport).max(0.);
+        s.content_extent = content.max(0.);
+        s.viewport_extent = viewport.max(0.);
+        s.max_offset = (s.content_extent - s.viewport_extent).max(0.);
         let next = s.offset.min(s.max_offset);
         if next != s.offset {
             s.offset = next;
             s.revision += 1;
         }
     }
+}
+
+/// Visual configuration for the framework-rendered vertical overlay bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollbarStyle {
+    pub width: f32,
+    pub min_thumb_extent: f32,
+    pub track_color: Color,
+    pub thumb_color: Color,
+}
+impl Default for ScrollbarStyle {
+    fn default() -> Self {
+        Self {
+            width: 10.,
+            min_thumb_extent: 24.,
+            track_color: Color::rgba(20, 22, 30, 120),
+            thumb_color: Color::rgba(170, 180, 205, 190),
+        }
+    }
+}
+/// Logical overlay-scrollbar geometry, exposed for deterministic diagnostics
+/// and tests without exposing a RenderObject.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollbarGeometry {
+    pub visible: bool,
+    pub track: Rect,
+    pub thumb: Rect,
+    pub max_scroll_extent: f32,
+    pub thumb_travel: f32,
+}
+impl ScrollbarGeometry {
+    /// Converts a controller offset into the top of the rendered thumb.
+    #[must_use]
+    pub fn thumb_top_for_offset(self, offset: f32) -> f32 {
+        let normalized = if self.max_scroll_extent > 0. && offset.is_finite() {
+            (offset / self.max_scroll_extent).clamp(0., 1.)
+        } else {
+            0.
+        };
+        self.track.origin.y + normalized * self.thumb_travel
+    }
+    /// Converts a global thumb top back into the corresponding controller offset.
+    #[must_use]
+    pub fn offset_for_thumb_top(self, thumb_top: f32) -> f32 {
+        if self.thumb_travel <= 0. || self.max_scroll_extent <= 0. || !thumb_top.is_finite() {
+            return 0.;
+        }
+        ((thumb_top - self.track.origin.y).clamp(0., self.thumb_travel) / self.thumb_travel)
+            * self.max_scroll_extent
+    }
+}
+fn scrollbar_geometry(
+    size: Size,
+    controller: &ScrollController,
+    style: ScrollbarStyle,
+) -> ScrollbarGeometry {
+    let viewport = controller.viewport_extent();
+    let content = controller.content_extent();
+    if !viewport.is_finite()
+        || !content.is_finite()
+        || content <= viewport
+        || viewport <= 0.
+        || !size.height.is_finite()
+        || size.height <= 0.
+    {
+        return ScrollbarGeometry::default();
+    }
+    let width = style.width.min(size.width).max(0.);
+    let track = Rect::from_origin_size(
+        Offset::new(size.width - width, 0.),
+        Size::new(width, size.height),
+    );
+    let extent = (size.height * (viewport / content))
+        .clamp(style.min_thumb_extent.min(size.height), size.height);
+    let mut geometry = ScrollbarGeometry {
+        visible: true,
+        track,
+        thumb: Rect::from_origin_size(Offset::new(track.origin.x, 0.), Size::new(width, extent)),
+        max_scroll_extent: controller.max_offset().max(0.),
+        thumb_travel: (size.height - extent).max(0.),
+    };
+    geometry.thumb.origin.y = geometry.thumb_top_for_offset(controller.offset());
+    geometry
+}
+
+/// A valid UTF-8 byte range. Text editing stores byte offsets because they map
+/// directly to Rust `String` slicing; all constructors clamp to boundaries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextRange {
+    pub start: usize,
+    pub end: usize,
+}
+impl TextRange {
+    #[must_use]
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+}
+/// Base/extent form preserves Shift-selection direction while `range()`
+/// produces the ordered replacement/deletion range.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextSelection {
+    pub base: usize,
+    pub extent: usize,
+}
+impl TextSelection {
+    #[must_use]
+    pub const fn collapsed(offset: usize) -> Self {
+        Self {
+            base: offset,
+            extent: offset,
+        }
+    }
+    #[must_use]
+    pub fn range(self) -> TextRange {
+        TextRange::new(self.base.min(self.extent), self.base.max(self.extent))
+    }
+    #[must_use]
+    pub fn is_collapsed(self) -> bool {
+        self.base == self.extent
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextEditingValue {
+    pub text: String,
+    pub selection: TextSelection,
+    /// Visual-only active IME preedit, not committed buffer content.
+    pub preedit: Option<String>,
+    pub preedit_selection: Option<TextRange>,
+}
+#[derive(Clone)]
+pub struct TextEditingController {
+    state: Rc<RefCell<TextEditingState>>,
+}
+#[derive(Clone, Debug, Default)]
+struct TextEditingState {
+    value: TextEditingValue,
+    content_revision: u64,
+    visual_revision: u64,
+    caret_reset: Option<Instant>,
+    preferred_caret_x: Option<f32>,
+}
+impl Default for TextEditingController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl PartialEq for TextEditingController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+}
+impl std::fmt::Debug for TextEditingController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextEditingController")
+            .field("value", &self.value())
+            .finish()
+    }
+}
+impl TextEditingController {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(TextEditingState::default())),
+        }
+    }
+    #[must_use]
+    pub fn with_text(text: impl Into<String>) -> Self {
+        let controller = Self::new();
+        controller.set_text(text);
+        controller
+    }
+    #[must_use]
+    pub fn value(&self) -> TextEditingValue {
+        self.state.borrow().value.clone()
+    }
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.state.borrow().value.text.clone()
+    }
+    pub fn set_text(&self, text: impl Into<String>) {
+        let text = text.into();
+        self.replace_all(TextEditingValue {
+            selection: TextSelection::collapsed(text.len()),
+            text,
+            ..TextEditingValue::default()
+        });
+    }
+    pub fn set_selection(&self, selection: TextSelection) {
+        let mut state = self.state.borrow_mut();
+        let selection = valid_selection(&state.value.text, selection);
+        if state.value.selection != selection {
+            state.value.selection = selection;
+            state.visual_revision += 1;
+            state.preferred_caret_x = None;
+        }
+    }
+    pub fn insert(&self, text: &str) {
+        self.replace_selection(text);
+    }
+    pub fn replace_selection(&self, replacement: &str) {
+        let mut state = self.state.borrow_mut();
+        if state.value.selection.is_collapsed() && replacement.is_empty() {
+            return;
+        }
+        replace_selected(&mut state.value, replacement);
+        state.content_revision += 1;
+        state.visual_revision += 1;
+        state.preferred_caret_x = None;
+    }
+    pub fn backspace(&self) {
+        let mut state = self.state.borrow_mut();
+        if !state.value.selection.is_collapsed() {
+            replace_selected(&mut state.value, "");
+        } else {
+            let end = state.value.selection.extent;
+            let start = previous_grapheme_boundary(&state.value.text, end);
+            if start == end {
+                return;
+            }
+            state.value.selection = TextSelection::new(start, end);
+            replace_selected(&mut state.value, "");
+        }
+        state.content_revision += 1;
+        state.visual_revision += 1;
+        state.preferred_caret_x = None;
+    }
+    pub fn delete(&self) {
+        let mut state = self.state.borrow_mut();
+        if !state.value.selection.is_collapsed() {
+            replace_selected(&mut state.value, "");
+        } else {
+            let start = state.value.selection.extent;
+            let end = next_grapheme_boundary(&state.value.text, start);
+            if start == end {
+                return;
+            }
+            state.value.selection = TextSelection::new(start, end);
+            replace_selected(&mut state.value, "");
+        }
+        state.content_revision += 1;
+        state.visual_revision += 1;
+        state.preferred_caret_x = None;
+    }
+    pub fn move_left(&self, extend: bool) {
+        self.move_to(false, extend);
+    }
+    pub fn move_right(&self, extend: bool) {
+        self.move_to(true, extend);
+    }
+    pub fn move_home(&self, extend: bool) {
+        self.move_cursor(0, extend);
+    }
+    pub fn move_end(&self, extend: bool) {
+        self.move_cursor(self.text().len(), extend);
+    }
+    pub fn select_all(&self) {
+        self.set_selection(TextSelection {
+            base: 0,
+            extent: self.text().len(),
+        });
+    }
+    #[must_use]
+    pub fn selected_text(&self) -> String {
+        let state = self.state.borrow();
+        let range = state.value.selection.range();
+        state.value.text[range.start..range.end].to_owned()
+    }
+    pub fn set_preedit(&self, text: impl Into<String>, selection: Option<TextRange>) {
+        let mut state = self.state.borrow_mut();
+        let text = text.into();
+        state.value.preedit_selection = selection.map(|range| valid_range(&text, range));
+        state.value.preedit = (!text.is_empty()).then_some(text);
+        state.content_revision += 1;
+        state.visual_revision += 1;
+    }
+    pub fn commit_preedit(&self, text: &str) {
+        self.replace_selection(text);
+        self.clear_preedit();
+    }
+    pub fn clear_preedit(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.value.preedit.take().is_some() {
+            state.value.preedit_selection = None;
+            state.content_revision += 1;
+            state.visual_revision += 1;
+        }
+    }
+    fn revisions(&self) -> (u64, u64) {
+        let state = self.state.borrow();
+        (state.content_revision, state.visual_revision)
+    }
+    /// Restarts the focused caret blink after an editing interaction.
+    pub fn reset_caret(&self, now: Instant) {
+        let mut state = self.state.borrow_mut();
+        state.caret_reset = Some(now);
+        state.visual_revision += 1;
+    }
+    fn caret_visible(&self, now: Instant) -> bool {
+        self.state.borrow().caret_reset.is_some_and(|start| {
+            (now.checked_duration_since(start)
+                .unwrap_or_default()
+                .as_millis()
+                / 500)
+                .is_multiple_of(2)
+        })
+    }
+    fn move_to(&self, right: bool, extend: bool) {
+        let state = self.state.borrow();
+        let pos = state.value.selection.extent;
+        let target = if right {
+            next_grapheme_boundary(&state.value.text, pos)
+        } else {
+            previous_grapheme_boundary(&state.value.text, pos)
+        };
+        drop(state);
+        self.move_cursor(target, extend);
+    }
+    fn move_cursor(&self, target: usize, extend: bool) {
+        let mut state = self.state.borrow_mut();
+        let target = valid_boundary(&state.value.text, target);
+        state.value.selection = if extend {
+            TextSelection {
+                base: state.value.selection.base,
+                extent: target,
+            }
+        } else {
+            TextSelection::collapsed(target)
+        };
+        state.visual_revision += 1;
+        state.preferred_caret_x = None;
+    }
+    fn move_cursor_with_x(&self, target: usize, extend: bool, x: f32) {
+        let mut state = self.state.borrow_mut();
+        let target = valid_boundary(&state.value.text, target);
+        state.value.selection = if extend {
+            TextSelection {
+                base: state.value.selection.base,
+                extent: target,
+            }
+        } else {
+            TextSelection::collapsed(target)
+        };
+        state.preferred_caret_x = Some(x);
+        state.visual_revision += 1;
+    }
+    fn preferred_caret_x(&self) -> Option<f32> {
+        self.state.borrow().preferred_caret_x
+    }
+    fn replace_all(&self, mut value: TextEditingValue) {
+        value.selection = valid_selection(&value.text, value.selection);
+        let mut state = self.state.borrow_mut();
+        state.value = value;
+        state.content_revision += 1;
+        state.visual_revision += 1;
+    }
+}
+impl TextSelection {
+    const fn new(base: usize, extent: usize) -> Self {
+        Self { base, extent }
+    }
+}
+fn valid_boundary(text: &str, offset: usize) -> usize {
+    let offset = offset.min(text.len());
+    text.char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(text.len()))
+        .take_while(|index| *index <= offset)
+        .last()
+        .unwrap_or(0)
+}
+fn valid_range(text: &str, range: TextRange) -> TextRange {
+    TextRange::new(
+        valid_boundary(text, range.start),
+        valid_boundary(text, range.end),
+    )
+}
+fn valid_selection(text: &str, selection: TextSelection) -> TextSelection {
+    TextSelection::new(
+        valid_boundary(text, selection.base),
+        valid_boundary(text, selection.extent),
+    )
+}
+fn previous_grapheme_boundary(text: &str, offset: usize) -> usize {
+    UnicodeSegmentation::grapheme_indices(text, true)
+        .map(|(index, _)| index)
+        .take_while(|index| *index < offset)
+        .last()
+        .unwrap_or(0)
+}
+fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
+    UnicodeSegmentation::grapheme_indices(text, true)
+        .map(|(index, grapheme)| index + grapheme.len())
+        .find(|end| *end > offset)
+        .unwrap_or(text.len())
+}
+fn replace_selected(value: &mut TextEditingValue, replacement: &str) {
+    let range = value.selection.range();
+    value
+        .text
+        .replace_range(range.start..range.end, replacement);
+    let caret = range.start + replacement.len();
+    value.selection = TextSelection::collapsed(caret);
+    value.preedit = None;
+    value.preedit_selection = None;
 }
 
 #[derive(Clone)]
@@ -204,6 +627,14 @@ enum WidgetKind {
         style: TextStyle,
         align: TextAlign,
     },
+    TextField {
+        controller: TextEditingController,
+        size: Size,
+        style: TextStyle,
+        placeholder: String,
+        on_submit: Option<Rc<dyn Fn(String)>>,
+        multiline: bool,
+    },
     Padding {
         padding: EdgeInsets,
         child: Box<Widget>,
@@ -220,10 +651,71 @@ enum WidgetKind {
         controller: ScrollController,
         child: Box<Widget>,
     },
+    VirtualList {
+        config: Rc<VirtualListConfig>,
+    },
     Translate {
         controller: TranslationController,
         child: Box<Widget>,
     },
+}
+
+/// Fixed-extent lazy viewport configuration. The item builder is invoked only
+/// as an index enters the bounded materialized range.
+#[derive(Clone)]
+struct VirtualListConfig {
+    item_count: usize,
+    item_extent: f32,
+    cache_extent: f32,
+    controller: ScrollController,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+impl std::fmt::Debug for VirtualListConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VirtualListConfig")
+            .field("item_count", &self.item_count)
+            .field("item_extent", &self.item_extent)
+            .field("cache_extent", &self.cache_extent)
+            .finish()
+    }
+}
+impl PartialEq for VirtualListConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.item_count == other.item_count
+            && self.item_extent == other.item_extent
+            && self.cache_extent == other.cache_extent
+            && self.controller == other.controller
+            && Rc::ptr_eq(&self.builder, &other.builder)
+    }
+}
+
+/// Computes an exclusive materialized item range. A row touching the cache
+/// boundary is not included; intersecting rows are included.
+#[must_use]
+pub fn fixed_extent_materialized_range(
+    item_count: usize,
+    item_extent: f32,
+    scroll_offset: f32,
+    viewport_extent: f32,
+    cache_extent: f32,
+) -> std::ops::Range<usize> {
+    if item_count == 0 || !item_extent.is_finite() || item_extent <= 0. {
+        return 0..0;
+    }
+    let start = ((scroll_offset.max(0.) - cache_extent.max(0.)) / item_extent)
+        .floor()
+        .max(0.) as usize;
+    let end = ((scroll_offset.max(0.) + viewport_extent.max(0.) + cache_extent.max(0.))
+        / item_extent)
+        .ceil()
+        .max(0.) as usize;
+    start.min(item_count)..end.min(item_count).max(start.min(item_count))
+}
+
+fn fixed_extent_content_extent(item_count: usize, item_extent: f32) -> f32 {
+    // Geometry is f32 today. Saturating keeps malformed or enormous logical
+    // data from wrapping while preserving normal list arithmetic exactly.
+    ((item_count as f64) * f64::from(item_extent)).min(f64::from(f32::MAX)) as f32
 }
 impl std::fmt::Debug for Widget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -263,6 +755,10 @@ impl std::fmt::Debug for WidgetKind {
                 .field("style", style)
                 .field("align", align)
                 .finish(),
+            Self::TextField { placeholder, .. } => f
+                .debug_struct("TextField")
+                .field("placeholder", placeholder)
+                .finish(),
             Self::Padding { padding, child } => f
                 .debug_struct("Padding")
                 .field("padding", padding)
@@ -279,6 +775,12 @@ impl std::fmt::Debug for WidgetKind {
                 .field("children", children)
                 .finish(),
             Self::Scroll { .. } => f.debug_struct("ScrollView").finish(),
+            Self::VirtualList { config } => f
+                .debug_struct("VirtualList")
+                .field("item_count", &config.item_count)
+                .field("item_extent", &config.item_extent)
+                .field("cache_extent", &config.cache_extent)
+                .finish(),
             Self::Translate { .. } => f.debug_struct("Translate").finish(),
         }
     }
@@ -326,6 +828,35 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == d && b == e && c == f,
             (
+                Self::TextField {
+                    controller: a,
+                    size: b,
+                    style: c,
+                    placeholder: d,
+                    on_submit: e,
+                    multiline: k,
+                },
+                Self::TextField {
+                    controller: f,
+                    size: g,
+                    style: h,
+                    placeholder: i,
+                    on_submit: j,
+                    multiline: l,
+                },
+            ) => {
+                a == f
+                    && b == g
+                    && c == h
+                    && d == i
+                    && k == l
+                    && match (e, j) {
+                        (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (
                 Self::Padding {
                     padding: a,
                     child: b,
@@ -345,6 +876,13 @@ impl PartialEq for WidgetKind {
                     child: d,
                 },
             ) => Rc::ptr_eq(&a.state, &c.state) && b == d,
+            (Self::VirtualList { config: a }, Self::VirtualList { config: b }) => {
+                a.item_count == b.item_count
+                    && a.item_extent == b.item_extent
+                    && a.cache_extent == b.cache_extent
+                    && a.controller == b.controller
+                    && Rc::ptr_eq(&a.builder, &b.builder)
+            }
             (
                 Self::Translate {
                     controller: a,
@@ -384,10 +922,12 @@ enum WidgetType {
     Box,
     Button,
     Text,
+    TextField,
     Padding,
     Align,
     Flex,
     Scroll,
+    VirtualList,
     Translate,
 }
 impl Widget {
@@ -434,12 +974,13 @@ impl Widget {
             | WidgetKind::Align { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::Translate { child, .. } => child.bind_callbacks(allocate),
+            WidgetKind::VirtualList { .. } => {}
             WidgetKind::Flex { children, .. } => {
                 for child in children {
                     child.bind_callbacks(allocate);
                 }
             }
-            WidgetKind::Box { .. } | WidgetKind::Text { .. } => {}
+            WidgetKind::Box { .. } | WidgetKind::Text { .. } | WidgetKind::TextField { .. } => {}
         }
     }
     #[must_use]
@@ -461,6 +1002,27 @@ impl Widget {
                 text: text.into(),
                 style,
                 align,
+            },
+        }
+    }
+    #[must_use]
+    fn text_field(
+        controller: TextEditingController,
+        size: Size,
+        style: TextStyle,
+        placeholder: String,
+        on_submit: Option<Rc<dyn Fn(String)>>,
+        multiline: bool,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::TextField {
+                controller,
+                size,
+                style,
+                placeholder,
+                on_submit,
+                multiline,
             },
         }
     }
@@ -515,6 +1077,15 @@ impl Widget {
         }
     }
     #[must_use]
+    fn virtual_list(config: VirtualListConfig) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::VirtualList {
+                config: Rc::new(config),
+            },
+        }
+    }
+    #[must_use]
     pub fn translate(controller: TranslationController, child: Self) -> Self {
         Self {
             key: None,
@@ -538,16 +1109,20 @@ impl Widget {
             WidgetKind::Box { .. } => WidgetType::Box,
             WidgetKind::Button { .. } => WidgetType::Button,
             WidgetKind::Text { .. } => WidgetType::Text,
+            WidgetKind::TextField { .. } => WidgetType::TextField,
             WidgetKind::Padding { .. } => WidgetType::Padding,
             WidgetKind::Align { .. } => WidgetType::Align,
             WidgetKind::Flex { .. } => WidgetType::Flex,
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
+            WidgetKind::VirtualList { .. } => WidgetType::VirtualList,
             WidgetKind::Translate { .. } => WidgetType::Translate,
         }
     }
     fn children(&self) -> Vec<Widget> {
         match &self.kind {
-            WidgetKind::Box { .. } | WidgetKind::Text { .. } => Vec::new(),
+            WidgetKind::Box { .. } | WidgetKind::Text { .. } | WidgetKind::TextField { .. } => {
+                Vec::new()
+            }
             WidgetKind::Button { child, .. } => {
                 child.iter().map(|child| child.as_ref().clone()).collect()
             }
@@ -558,6 +1133,7 @@ impl Widget {
                 vec![child.as_ref().clone()]
             }
             WidgetKind::Flex { children, .. } => children.clone(),
+            WidgetKind::VirtualList { .. } => Vec::new(),
         }
     }
 }
@@ -600,6 +1176,112 @@ impl From<Text> for Widget {
     }
 }
 
+/// Single-line editable text. Keep the controller outside a rebuilt widget
+/// description so the text, selection, and active composition survive rebuilds.
+pub struct TextField {
+    controller: TextEditingController,
+    size: Size,
+    style: TextStyle,
+    placeholder: String,
+    on_submit: Option<Rc<dyn Fn(String)>>,
+}
+impl TextField {
+    #[must_use]
+    pub fn new(controller: TextEditingController) -> Self {
+        Self {
+            controller,
+            size: Size::new(260., 40.),
+            style: TextStyle::default(),
+            placeholder: String::new(),
+            on_submit: None,
+        }
+    }
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    #[must_use]
+    pub fn style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+    #[must_use]
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+    #[must_use]
+    pub fn on_submit(mut self, callback: impl Fn(String) + 'static) -> Self {
+        self.on_submit = Some(Rc::new(callback));
+        self
+    }
+}
+impl From<TextField> for Widget {
+    fn from(value: TextField) -> Self {
+        Widget::text_field(
+            value.controller,
+            value.size,
+            value.style,
+            value.placeholder,
+            value.on_submit,
+            false,
+        )
+    }
+}
+
+/// A bounded, soft-wrapping multiline editor. Enter and Shift+Enter insert a
+/// hard newline; unlike [`TextField`], it has no implicit submit action.
+pub struct TextArea {
+    controller: TextEditingController,
+    size: Size,
+    style: TextStyle,
+    placeholder: String,
+}
+impl TextArea {
+    #[must_use]
+    pub fn new(controller: TextEditingController) -> Self {
+        Self {
+            controller,
+            size: Size::new(260., 180.),
+            style: TextStyle::default(),
+            placeholder: String::new(),
+        }
+    }
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.size = Size::new(self.size.width, height);
+        self
+    }
+    #[must_use]
+    pub fn style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+    #[must_use]
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+}
+impl From<TextArea> for Widget {
+    fn from(value: TextArea) -> Self {
+        Widget::text_field(
+            value.controller,
+            value.size,
+            value.style,
+            value.placeholder,
+            None,
+            true,
+        )
+    }
+}
+
 /// Vertical retained viewport. Keep a [`ScrollController`] outside a rebuild
 /// when application code needs the position to survive a recreated description.
 pub struct ScrollView;
@@ -607,6 +1289,84 @@ impl ScrollView {
     #[must_use]
     pub fn vertical(controller: ScrollController, child: impl Into<Widget>) -> Widget {
         Widget::scroll_view(controller, child.into())
+    }
+}
+
+/// A vertically scrolling fixed-extent lazy viewport. It is intentionally
+/// distinct from [`ScrollView`]: items are created only while they intersect
+/// the viewport plus a bounded logical-pixel cache (240px by default).
+pub struct VirtualList;
+impl VirtualList {
+    pub const DEFAULT_ITEM_EXTENT: f32 = 48.;
+    pub const DEFAULT_CACHE_EXTENT: f32 = 240.;
+
+    #[must_use]
+    pub fn builder<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::fixed_extent(item_count, Self::DEFAULT_ITEM_EXTENT, builder)
+    }
+    #[must_use]
+    pub fn fixed_extent<W>(
+        item_count: usize,
+        item_extent: f32,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::fixed_extent_with_controller(
+            item_count,
+            item_extent,
+            ScrollController::new(),
+            builder,
+        )
+    }
+    #[must_use]
+    pub fn fixed_extent_with_controller<W>(
+        item_count: usize,
+        item_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::fixed_extent_with_controller_and_cache(
+            item_count,
+            item_extent,
+            Self::DEFAULT_CACHE_EXTENT,
+            controller,
+            builder,
+        )
+    }
+    #[must_use]
+    pub fn fixed_extent_with_controller_and_cache<W>(
+        item_count: usize,
+        item_extent: f32,
+        cache_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        assert!(
+            item_extent.is_finite() && item_extent > 0.,
+            "item extent must be positive and finite"
+        );
+        assert!(
+            cache_extent.is_finite() && cache_extent >= 0.,
+            "cache extent must be finite and non-negative"
+        );
+        Widget::virtual_list(VirtualListConfig {
+            item_count,
+            item_extent,
+            cache_extent,
+            controller,
+            builder: Rc::new(move |index| builder(index).into()),
+        })
     }
 }
 
@@ -674,6 +1434,11 @@ pub struct Diagnostics {
     pub scroll_events: u64,
     pub scroll_offset_updates: u64,
     pub animation_ticks: u64,
+    pub lazy_layouts: u64,
+    pub items_built: u64,
+    pub items_mounted: u64,
+    pub items_unmounted: u64,
+    pub items_reused: u64,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum TreeError {
@@ -687,6 +1452,9 @@ struct Element {
     widget: Widget,
     render: RenderObjectId,
     dirty: DirtyFlags,
+    /// Parallel to `children` only for a virtual-list element. Item indices
+    /// are identity, never reusable visible-slot numbers.
+    virtual_indices: Vec<usize>,
 }
 #[derive(Clone, Debug, PartialEq)]
 enum RenderKind {
@@ -712,12 +1480,38 @@ enum RenderKind {
         style: TextStyle,
         align: TextAlign,
     },
+    TextField {
+        controller: TextEditingController,
+        desired: Size,
+        style: TextStyle,
+        placeholder: String,
+        multiline: bool,
+    },
     Scroll {
         controller: ScrollController,
+    },
+    VirtualList {
+        config: Rc<VirtualListConfig>,
     },
     Translate {
         controller: TranslationController,
     },
+}
+
+/// Snapshot of one lazy viewport. Semantic integration can expose
+/// `logical_item_count` plus these materialized item indices without creating
+/// one semantic node per logical item.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VirtualListDiagnostics {
+    pub logical_item_count: usize,
+    pub materialized_range: std::ops::Range<usize>,
+    pub materialized_item_count: usize,
+    pub scroll_offset: f32,
+    pub viewport_extent: f32,
+    pub cache_extent: f32,
+    pub element_count: usize,
+    pub render_object_count: usize,
+    pub picture_layer_count: usize,
 }
 struct RenderObject {
     parent: Option<RenderObjectId>,
@@ -729,6 +1523,13 @@ struct RenderObject {
     dirty: DirtyFlags,
     cache: DisplayList,
     text_layout: Option<Arc<TextLayout>>,
+    text_revision: u64,
+    text_visual_revision: u64,
+    text_scroll_x: f32,
+    text_scroll_y: f32,
+    scrollbar_hovered: bool,
+    scrollbar_dragging: bool,
+    focused: bool,
     baseline: Option<f32>,
     button_state: ButtonState,
     /// Static parent-relative layout placement. This is never used to store a
@@ -737,6 +1538,26 @@ struct RenderObject {
     picture: Option<LayerId>,
     clip_layer: Option<LayerId>,
     content_layer: Option<LayerId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScrollbarDrag {
+    render: RenderObjectId,
+    /// Pointer position relative to the rendered thumb's top, fixed for this
+    /// captured gesture. Keeping this anchor avoids snapping on a thumb press.
+    grab_offset: f32,
+}
+
+/// Snapshot of the active thumb drag for deterministic diagnostics.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollbarDragDiagnostics {
+    pub active: bool,
+    pub grab_offset: f32,
+    pub track_extent: f32,
+    pub thumb_extent: f32,
+    pub thumb_travel: f32,
+    pub thumb_top: f32,
+    pub scroll_offset: f32,
 }
 
 /// Persistent UI state. IDs become invalid immediately after unmount.
@@ -749,6 +1570,9 @@ pub struct WidgetTree {
     text_engine: TextEngine,
     compositor: LayerTree,
     compositor_initialized: bool,
+    next_action: u64,
+    pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
+    scrollbar_drag: Option<ScrollbarDrag>,
 }
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -767,6 +1591,9 @@ impl WidgetTree {
             text_engine: TextEngine::new(),
             compositor: LayerTree::new(),
             compositor_initialized: false,
+            next_action: 1,
+            pending_handlers: Vec::new(),
+            scrollbar_drag: None,
         }
     }
     pub fn mount(&mut self, widget: Widget) -> Result<ElementId, TreeError> {
@@ -780,6 +1607,36 @@ impl WidgetTree {
     #[must_use]
     pub fn root(&self) -> Option<ElementId> {
         self.root
+    }
+    #[must_use]
+    pub fn element_count(&self) -> usize {
+        self.elements.len()
+    }
+    #[must_use]
+    pub fn render_object_count(&self) -> usize {
+        self.renders.len()
+    }
+    #[must_use]
+    pub fn virtual_list_diagnostics(&self) -> Option<VirtualListDiagnostics> {
+        self.elements.iter().find_map(|(_raw, element)| {
+            let WidgetKind::VirtualList { config } = &element.widget.kind else {
+                return None;
+            };
+            let render = self.renders.get(element.render.0)?;
+            let range = element.virtual_indices.first().copied().unwrap_or(0)
+                ..element.virtual_indices.last().map_or(0, |index| index + 1);
+            Some(VirtualListDiagnostics {
+                logical_item_count: config.item_count,
+                materialized_item_count: element.virtual_indices.len(),
+                materialized_range: range,
+                scroll_offset: config.controller.offset(),
+                viewport_extent: render.size.height,
+                cache_extent: config.cache_extent,
+                element_count: self.elements.len(),
+                render_object_count: self.renders.len(),
+                picture_layer_count: self.compositor.diagnostics().layers as usize,
+            })
+        })
     }
     #[must_use]
     pub fn diagnostics(&self) -> Diagnostics {
@@ -844,6 +1701,17 @@ impl WidgetTree {
             })
             .collect()
     }
+    /// Allocates an opaque callback action. The runtime owns dispatch, while
+    /// the tree uses this shared sequence for lazy children mounted during
+    /// layout so IDs can never collide with eagerly prepared buttons.
+    pub fn allocate_action(&mut self) -> ActionId {
+        let action = ActionId(self.next_action);
+        self.next_action += 1;
+        action
+    }
+    pub fn take_pending_handlers(&mut self) -> Vec<(ActionId, Rc<dyn Fn()>)> {
+        std::mem::take(&mut self.pending_handlers)
+    }
     #[must_use]
     pub fn action_ancestor(&self, mut id: ElementId) -> Option<(ElementId, ActionId)> {
         loop {
@@ -899,7 +1767,7 @@ impl WidgetTree {
             .collect::<Vec<_>>();
         let mut changed = false;
         let mut active = false;
-        for (_, kind, content_layer) in nodes {
+        for (_render, kind, content_layer) in nodes {
             match kind {
                 RenderKind::Scroll { controller } => {
                     if let Some(content) = content_layer
@@ -910,6 +1778,29 @@ impl WidgetTree {
                     {
                         changed = true;
                         self.diagnostics.scroll_offset_updates += 1;
+                        // Only this viewport's overlay picture changes; the
+                        // retained content subtree remains compositor-only.
+                        self.renders
+                            .get_mut(_render.0)
+                            .expect("live")
+                            .dirty
+                            .insert(DirtyFlags::PAINT);
+                    }
+                }
+                RenderKind::VirtualList { config } => {
+                    if let Some(content) = content_layer
+                        && self.compositor.update_transform(
+                            content,
+                            Transform::translation(Offset::new(0., -config.controller.offset())),
+                        )
+                    {
+                        changed = true;
+                        self.diagnostics.scroll_offset_updates += 1;
+                        self.renders
+                            .get_mut(_render.0)
+                            .expect("live")
+                            .dirty
+                            .insert(DirtyFlags::PAINT);
                     }
                 }
                 RenderKind::Translate { controller } => {
@@ -946,20 +1837,135 @@ impl WidgetTree {
         let Some(scroll) = self.scroll_target(root, point, Offset::ZERO) else {
             return false;
         };
-        let RenderKind::Scroll { controller } = self
+        let controller = match self
             .renders
             .get(scroll.0)
             .expect("live scroll")
             .kind
             .clone()
-        else {
-            return false;
+        {
+            RenderKind::Scroll { controller } => controller,
+            RenderKind::VirtualList { config } => config.controller.clone(),
+            _ => return false,
         };
         if controller.scroll_by(delta.y) {
             self.diagnostics.scroll_events += 1;
             true
         } else {
             false
+        }
+    }
+    /// Handles overlay scrollbar hit testing and capture. A thumb drag maps
+    /// directly to the same controller used by wheel input; a track click
+    /// pages one viewport toward the pointer.
+    pub fn scrollbar_pointer(&mut self, phase: incular_core::PointerPhase, point: Offset) -> bool {
+        match phase {
+            incular_core::PointerPhase::Down => {
+                let Some(render) = self.scrollbar_at(point) else {
+                    return false;
+                };
+                let (controller, geometry) = self
+                    .scrollbar_controller_and_geometry(render)
+                    .expect("scrollbar render");
+                if geometry.thumb.contains(point) {
+                    let grab = point.y - geometry.thumb.origin.y;
+                    self.scrollbar_drag = Some(ScrollbarDrag {
+                        render,
+                        grab_offset: grab.clamp(0., geometry.thumb.size.height),
+                    });
+                    self.renders
+                        .get_mut(render.0)
+                        .expect("live")
+                        .scrollbar_dragging = true;
+                } else {
+                    let delta = if point.y < geometry.thumb.origin.y {
+                        -controller.viewport_extent()
+                    } else {
+                        controller.viewport_extent()
+                    };
+                    let _ = controller.scroll_by(delta);
+                }
+                self.renders
+                    .get_mut(render.0)
+                    .expect("live")
+                    .dirty
+                    .insert(DirtyFlags::PAINT);
+                true
+            }
+            incular_core::PointerPhase::Move => {
+                if let Some(drag) = self.scrollbar_drag {
+                    let (controller, geometry) = self
+                        .scrollbar_controller_and_geometry(drag.render)
+                        .expect("live drag");
+                    let thumb_top = point.y - drag.grab_offset;
+                    let offset = geometry.offset_for_thumb_top(thumb_top);
+                    let changed = controller.jump_to(offset);
+                    if changed {
+                        self.diagnostics.scroll_events += 1;
+                    }
+                    self.renders
+                        .get_mut(drag.render.0)
+                        .expect("live")
+                        .dirty
+                        .insert(DirtyFlags::PAINT);
+                    return true;
+                }
+                let hovered = self.scrollbar_at(point);
+                let mut changed = false;
+                let ids = self
+                    .renders
+                    .iter()
+                    .map(|(raw, _)| RenderObjectId(raw))
+                    .collect::<Vec<_>>();
+                for render in ids {
+                    let node = self.renders.get_mut(render.0).expect("live");
+                    let is_hovered = hovered == Some(render);
+                    if node.scrollbar_hovered != is_hovered {
+                        node.scrollbar_hovered = is_hovered;
+                        node.dirty.insert(DirtyFlags::PAINT);
+                        changed = true;
+                    }
+                }
+                changed || hovered.is_some()
+            }
+            incular_core::PointerPhase::Up | incular_core::PointerPhase::Cancel => {
+                let Some(drag) = self.scrollbar_drag.take() else {
+                    return false;
+                };
+                let node = self.renders.get_mut(drag.render.0).expect("live");
+                node.scrollbar_dragging = false;
+                node.dirty.insert(DirtyFlags::PAINT);
+                true
+            }
+        }
+    }
+    #[must_use]
+    pub fn scrollbar_diagnostics(&self) -> Vec<ScrollbarGeometry> {
+        self.renders
+            .iter()
+            .filter_map(|(raw, _)| {
+                self.scrollbar_controller_and_geometry(RenderObjectId(raw))
+                    .map(|(_, geometry)| geometry)
+            })
+            .collect()
+    }
+    #[must_use]
+    pub fn scrollbar_drag_diagnostics(&self) -> ScrollbarDragDiagnostics {
+        let Some(drag) = self.scrollbar_drag else {
+            return ScrollbarDragDiagnostics::default();
+        };
+        let Some((controller, geometry)) = self.scrollbar_controller_and_geometry(drag.render)
+        else {
+            return ScrollbarDragDiagnostics::default();
+        };
+        ScrollbarDragDiagnostics {
+            active: true,
+            grab_offset: drag.grab_offset,
+            track_extent: geometry.track.size.height,
+            thumb_extent: geometry.thumb.size.height,
+            thumb_travel: geometry.thumb_travel,
+            thumb_top: geometry.thumb.origin.y,
+            scroll_offset: controller.offset(),
         }
     }
     pub fn update(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
@@ -974,6 +1980,8 @@ impl WidgetTree {
         Ok(())
     }
     pub fn layout(&mut self, constraints: Constraints) {
+        self.refresh_text_fields();
+        self.refresh_virtual_ranges();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints);
         }
@@ -992,6 +2000,228 @@ impl WidgetTree {
             .and_then(|id| self.render_id(id))
             .and_then(|id| self.hit_test_render(id, point, Offset::ZERO))
     }
+    #[must_use]
+    pub fn focusable_elements(&self) -> Vec<ElementId> {
+        let mut result = Vec::new();
+        if let Some(root) = self.root {
+            self.collect_focusable(root, &mut result);
+        }
+        result
+    }
+    #[must_use]
+    pub fn text_field_at(&self, point: Offset) -> Option<ElementId> {
+        let hit = self
+            .hit_test(point)
+            .and_then(|render| self.element_for_render(render))?;
+        self.text_field_ancestor(hit)
+    }
+    pub fn set_focused(
+        &mut self,
+        id: ElementId,
+        focused: bool,
+        now: Instant,
+    ) -> Result<(), TreeError> {
+        let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
+        let node = self.renders.get_mut(render.0).expect("live");
+        if matches!(node.kind, RenderKind::Button { .. }) {
+            node.button_state = if focused {
+                ButtonState::Focused
+            } else {
+                ButtonState::Normal
+            };
+            node.dirty.insert(DirtyFlags::PAINT);
+        }
+        if matches!(node.kind, RenderKind::TextField { .. }) && node.focused != focused {
+            node.focused = focused;
+            node.dirty.insert(DirtyFlags::PAINT);
+            if focused {
+                if let RenderKind::TextField { controller, .. } = &node.kind {
+                    controller.reset_caret(now);
+                }
+            }
+        }
+        Ok(())
+    }
+    #[must_use]
+    pub fn is_text_field(&self, id: ElementId) -> bool {
+        self.elements
+            .get(id.0)
+            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::TextField { .. }))
+    }
+    #[must_use]
+    pub fn is_multiline_text_field(&self, id: ElementId) -> bool {
+        self.elements.get(id.0).is_some_and(|element| {
+            matches!(
+                element.widget.kind,
+                WidgetKind::TextField {
+                    multiline: true,
+                    ..
+                }
+            )
+        })
+    }
+    pub fn text_field_move_vertical(&mut self, id: ElementId, down: bool, extend: bool) -> bool {
+        let Some(render) = self.render_id(id) else {
+            return false;
+        };
+        let Some(node) = self.renders.get(render.0) else {
+            return false;
+        };
+        let (
+            RenderKind::TextField {
+                controller,
+                multiline,
+                ..
+            },
+            Some(layout),
+        ) = (&node.kind, node.text_layout.clone())
+        else {
+            return false;
+        };
+        if !multiline {
+            return false;
+        }
+        let current = controller.value().selection.extent;
+        let line = line_for_byte(&layout, current);
+        let target_line = if down {
+            line.saturating_add(1)
+        } else {
+            line.saturating_sub(1)
+        };
+        let Some(target) = layout.lines.get(target_line) else {
+            return false;
+        };
+        let x = controller
+            .preferred_caret_x()
+            .unwrap_or_else(|| line_caret_x(&layout.lines[line], current));
+        controller.move_cursor_with_x(caret_for_line_x(target, x), extend, x);
+        self.renders
+            .get_mut(render.0)
+            .expect("live")
+            .dirty
+            .insert(DirtyFlags::PAINT);
+        true
+    }
+    pub fn text_field_move_line_edge(&mut self, id: ElementId, end: bool, extend: bool) -> bool {
+        let Some(render) = self.render_id(id) else {
+            return false;
+        };
+        let Some(node) = self.renders.get(render.0) else {
+            return false;
+        };
+        let (
+            RenderKind::TextField {
+                controller,
+                multiline,
+                ..
+            },
+            Some(layout),
+        ) = (&node.kind, node.text_layout.clone())
+        else {
+            return false;
+        };
+        if !multiline {
+            return false;
+        }
+        let line = line_for_byte(&layout, controller.value().selection.extent);
+        let target = if end {
+            layout.lines[line].end
+        } else {
+            layout.lines[line].start
+        };
+        controller.move_cursor(target, extend);
+        self.renders
+            .get_mut(render.0)
+            .expect("live")
+            .dirty
+            .insert(DirtyFlags::PAINT);
+        true
+    }
+    pub fn text_field_set_caret(
+        &mut self,
+        id: ElementId,
+        point: Offset,
+        extend: bool,
+        now: Instant,
+    ) -> bool {
+        let Some(render) = self.render_id(id) else {
+            return false;
+        };
+        let (layout, scroll_x, scroll_y, multiline, controller) =
+            match self.renders.get(render.0).map(|node| {
+                (
+                    &node.kind,
+                    node.text_layout.clone(),
+                    node.text_scroll_x,
+                    node.text_scroll_y,
+                )
+            }) {
+                Some((
+                    RenderKind::TextField {
+                        controller,
+                        multiline,
+                        ..
+                    },
+                    layout,
+                    scroll_x,
+                    scroll_y,
+                )) => (layout, scroll_x, scroll_y, *multiline, controller.clone()),
+                _ => return false,
+            };
+        let origin = self.render_origin(render);
+        let x = point.x - origin.x - 8. + scroll_x;
+        let y = point.y - origin.y - if multiline { 8. } else { 0. } + scroll_y;
+        let text_len = controller.text().len();
+        let index = layout.as_ref().map_or(0, |layout| {
+            let line = layout
+                .lines
+                .get((y / layout.metrics.line_height).floor().max(0.) as usize)
+                .or_else(|| layout.lines.last());
+            line.map_or(0, |line| caret_for_line_x(line, x))
+                .min(text_len)
+        });
+        let previous = controller.value().selection;
+        controller.set_selection(if extend {
+            TextSelection {
+                base: previous.base,
+                extent: index,
+            }
+        } else {
+            TextSelection::collapsed(index)
+        });
+        controller.reset_caret(now);
+        self.renders
+            .get_mut(render.0)
+            .expect("live")
+            .dirty
+            .insert(DirtyFlags::PAINT);
+        true
+    }
+    #[must_use]
+    pub fn text_controller(&self, id: ElementId) -> Option<TextEditingController> {
+        let render = self.render_id(id)?;
+        match &self.renders.get(render.0)?.kind {
+            RenderKind::TextField { controller, .. } => Some(controller.clone()),
+            _ => None,
+        }
+    }
+    pub fn submit_text_field(&self, id: ElementId) -> bool {
+        let Some(element) = self.elements.get(id.0) else {
+            return false;
+        };
+        let WidgetKind::TextField {
+            controller,
+            on_submit,
+            ..
+        } = &element.widget.kind
+        else {
+            return false;
+        };
+        if let Some(callback) = on_submit {
+            callback(controller.text());
+        }
+        true
+    }
 
     fn mount_element(
         &mut self,
@@ -1004,7 +2234,12 @@ impl WidgetTree {
             .create_transform(Transform::translation(Offset::ZERO));
         let picture = matches!(
             widget.kind,
-            WidgetKind::Box { .. } | WidgetKind::Button { .. } | WidgetKind::Text { .. }
+            WidgetKind::Box { .. }
+                | WidgetKind::Button { .. }
+                | WidgetKind::Text { .. }
+                | WidgetKind::TextField { .. }
+                | WidgetKind::Scroll { .. }
+                | WidgetKind::VirtualList { .. }
         )
         .then(|| {
             self.compositor.create_picture(
@@ -1013,14 +2248,15 @@ impl WidgetTree {
             )
         });
         let (clip_layer, content_layer) = match &widget.kind {
-            WidgetKind::Scroll { .. } => {
+            WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. } => {
                 let clip = self
                     .compositor
                     .create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 let content = self
                     .compositor
                     .create_transform(Transform::translation(Offset::ZERO));
-                self.compositor.set_children(layer, vec![clip]);
+                self.compositor
+                    .set_children(layer, std::iter::once(clip).chain(picture).collect());
                 self.compositor.set_children(clip, vec![content]);
                 (Some(clip), Some(content))
             }
@@ -1051,6 +2287,13 @@ impl WidgetTree {
             dirty: DirtyFlags::LAYOUT | DirtyFlags::PAINT,
             cache: DisplayList::new(),
             text_layout: None,
+            text_revision: 0,
+            text_visual_revision: 0,
+            text_scroll_x: 0.,
+            text_scroll_y: 0.,
+            scrollbar_hovered: false,
+            scrollbar_dragging: false,
+            focused: false,
             baseline: None,
             button_state: ButtonState::Normal,
             layer,
@@ -1064,6 +2307,7 @@ impl WidgetTree {
             widget: widget.clone(),
             render: RenderObjectId(render),
             dirty: DirtyFlags::NONE,
+            virtual_indices: Vec::new(),
         }));
         let mut children = Vec::with_capacity(widget.children().len());
         for child in widget.children() {
@@ -1111,6 +2355,13 @@ impl WidgetTree {
             .dirty
             .remove(DirtyFlags::BUILD);
         self.diagnostics.rebuilds += 1;
+        // Lazy children are owned by the viewport's indexed materialization
+        // map, not by `Widget::children()`. Recreating a VirtualList
+        // description must preserve every still-valid mounted row; the next
+        // layout pass will add/drop only indices required by the new config.
+        if matches!(widget.kind, WidgetKind::VirtualList { .. }) {
+            return Ok(());
+        }
         let previous = self.elements.get(id.0).expect("present").children.clone();
         let desired = widget.children();
         let reconciled = self.reconcile_children(id, previous, desired)?;
@@ -1202,6 +2453,200 @@ impl WidgetTree {
         }
         next.extend(suffix);
         Ok(next)
+    }
+    /// Reconciles only the requested indexed window. Items outside it are
+    /// unmounted instead of being recycled into unrelated logical indices.
+    fn materialize_virtual_children(
+        &mut self,
+        id: RenderObjectId,
+        config: &VirtualListConfig,
+        viewport: Size,
+        _constraints: Constraints,
+    ) {
+        let element_id = self.element_for_render(id).expect("virtual list element");
+        let wanted = fixed_extent_materialized_range(
+            config.item_count,
+            config.item_extent,
+            config.controller.offset(),
+            viewport.height,
+            config.cache_extent,
+        );
+        let (old_indices, old_children) = {
+            let element = self
+                .elements
+                .get(element_id.0)
+                .expect("virtual list element");
+            (element.virtual_indices.clone(), element.children.clone())
+        };
+        if old_indices.as_slice() == (wanted.clone().collect::<Vec<_>>()).as_slice() {
+            return;
+        }
+        let existing = old_indices
+            .into_iter()
+            .zip(old_children.iter().copied())
+            .collect::<HashMap<_, _>>();
+        let mut next_indices = Vec::with_capacity(wanted.len());
+        let mut next_children = Vec::with_capacity(wanted.len());
+        for index in wanted.clone() {
+            if let Some(child) = existing.get(&index).copied() {
+                next_indices.push(index);
+                next_children.push(child);
+                self.diagnostics.items_reused += 1;
+                continue;
+            }
+            let mut widget = (config.builder)(index);
+            let handlers = &mut self.pending_handlers;
+            let next = &mut self.next_action;
+            widget.bind_callbacks(&mut |callback| {
+                let action = ActionId(*next);
+                *next += 1;
+                handlers.push((action, callback));
+                action
+            });
+            self.diagnostics.items_built += 1;
+            match self.mount_element(Some(element_id), widget) {
+                Ok(child) => {
+                    next_indices.push(index);
+                    next_children.push(child);
+                    self.diagnostics.items_mounted += 1;
+                }
+                // An item builder is application code; keep the viewport
+                // structurally valid if it produces duplicate sibling keys.
+                Err(error) => panic!("virtual list item {index} could not mount: {error:?}"),
+            }
+        }
+        let retained = next_children.iter().copied().collect::<HashSet<_>>();
+        for child in old_children {
+            if !retained.contains(&child) {
+                self.unmount_element(child);
+                self.diagnostics.items_unmounted += 1;
+            }
+        }
+        let element = self
+            .elements
+            .get_mut(element_id.0)
+            .expect("virtual list element");
+        element.children = next_children;
+        element.virtual_indices = next_indices;
+        self.sync_render_children(element_id);
+    }
+    /// A controller can change independently of widget BUILD. Only mark the
+    /// lazy viewport dirty when its cache window actually changes; otherwise
+    /// scrolling remains a retained-transform-only operation.
+    fn refresh_virtual_ranges(&mut self) {
+        let pending = self
+            .renders
+            .iter()
+            .filter_map(|(raw, render)| {
+                let RenderKind::VirtualList { config } = &render.kind else {
+                    return None;
+                };
+                let element = self.element_for_render(RenderObjectId(raw))?;
+                let indices = &self.elements.get(element.0)?.virtual_indices;
+                let desired = fixed_extent_materialized_range(
+                    config.item_count,
+                    config.item_extent,
+                    config.controller.offset(),
+                    render.size.height,
+                    config.cache_extent,
+                );
+                (indices.as_slice() != desired.clone().collect::<Vec<_>>().as_slice())
+                    .then_some(RenderObjectId(raw))
+            })
+            .collect::<Vec<_>>();
+        for render in pending {
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT, true);
+        }
+    }
+    fn refresh_text_fields(&mut self) {
+        let pending = self
+            .renders
+            .iter()
+            .filter_map(|(raw, render)| {
+                let RenderKind::TextField { controller, .. } = &render.kind else {
+                    return None;
+                };
+                let (content, visual) = controller.revisions();
+                ((content != render.text_revision) || (visual != render.text_visual_revision))
+                    .then_some(RenderObjectId(raw))
+            })
+            .collect::<Vec<_>>();
+        for render in pending {
+            // Text width can change the size seen by an unconstrained parent.
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+        }
+    }
+    fn collect_focusable(&self, id: ElementId, out: &mut Vec<ElementId>) {
+        let Some(element) = self.elements.get(id.0) else {
+            return;
+        };
+        if matches!(
+            element.widget.kind,
+            WidgetKind::Button { .. } | WidgetKind::TextField { .. }
+        ) {
+            out.push(id);
+        }
+        for child in &element.children {
+            self.collect_focusable(*child, out);
+        }
+    }
+    fn text_field_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
+        loop {
+            if self.is_text_field(id) {
+                return Some(id);
+            }
+            id = self.parent(id)?;
+        }
+    }
+    fn render_origin(&self, mut id: RenderObjectId) -> Offset {
+        let mut origin = Offset::ZERO;
+        loop {
+            let node = self.renders.get(id.0).expect("live render");
+            origin = origin + node.offset;
+            match &node.kind {
+                RenderKind::Scroll { controller } => {
+                    origin = origin - Offset::new(0., controller.offset())
+                }
+                RenderKind::VirtualList { config } => {
+                    origin = origin - Offset::new(0., config.controller.offset())
+                }
+                RenderKind::Translate { controller } => origin = origin + controller.offset(),
+                _ => {}
+            }
+            let Some(parent) = node.parent else {
+                return origin;
+            };
+            id = parent;
+        }
+    }
+    /// World origin of a render object's viewport/picture. Unlike
+    /// `render_origin`, this deliberately does not apply the object's own
+    /// scrolling transform: a scrollbar is attached to that viewport, not to
+    /// its scrolling content. Ancestor transforms still apply.
+    fn render_viewport_origin(&self, mut id: RenderObjectId) -> Offset {
+        let mut origin = Offset::ZERO;
+        let mut is_self = true;
+        loop {
+            let node = self.renders.get(id.0).expect("live render");
+            origin = origin + node.offset;
+            if !is_self {
+                match &node.kind {
+                    RenderKind::Scroll { controller } => {
+                        origin = origin - Offset::new(0., controller.offset())
+                    }
+                    RenderKind::VirtualList { config } => {
+                        origin = origin - Offset::new(0., config.controller.offset())
+                    }
+                    RenderKind::Translate { controller } => origin = origin + controller.offset(),
+                    _ => {}
+                }
+            }
+            let Some(parent) = node.parent else {
+                return origin;
+            };
+            id = parent;
+            is_self = false;
+        }
     }
     fn unmount(&mut self, id: ElementId) -> Result<(), TreeError> {
         if !self.elements.contains(id.0) {
@@ -1401,6 +2846,30 @@ impl WidgetTree {
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
+            RenderKind::TextField {
+                controller,
+                desired,
+                style,
+                placeholder,
+                multiline,
+            } => {
+                let value = controller.value();
+                let display = text_field_display(&value, &placeholder);
+                let size = constraints.constrain(desired);
+                let layout = self.text_engine.layout(
+                    &display,
+                    &style,
+                    multiline.then_some((size.width - 16.).max(0.)),
+                    TextAlign::Start,
+                );
+                let (revision, visual_revision) = controller.revisions();
+                let node = self.renders.get_mut(id.0).expect("live");
+                node.text_layout = Some(layout.clone());
+                node.text_revision = revision;
+                node.text_visual_revision = visual_revision;
+                node.baseline = Some(layout.metrics.baseline);
+                (size, Vec::new())
+            }
             RenderKind::Scroll { controller } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(
@@ -1425,6 +2894,51 @@ impl WidgetTree {
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
+            }
+            RenderKind::VirtualList { config } => {
+                let size = constraints.constrain(Size::new(
+                    if constraints.is_width_bounded() {
+                        constraints.max_width
+                    } else {
+                        0.
+                    },
+                    if constraints.is_height_bounded() {
+                        constraints.max_height
+                    } else {
+                        0.
+                    },
+                ));
+                config.controller.set_extents(
+                    fixed_extent_content_extent(config.item_count, config.item_extent),
+                    size.height,
+                );
+                self.materialize_virtual_children(id, &config, size, constraints);
+                let materialized = self.renders.get(id.0).expect("live").children.clone();
+                let item_indices = self
+                    .elements
+                    .get(self.element_for_render(id).expect("virtual element").0)
+                    .expect("virtual element")
+                    .virtual_indices
+                    .clone();
+                for (child, item) in materialized.into_iter().zip(item_indices) {
+                    self.layout_render(
+                        child,
+                        Constraints::new(
+                            0.,
+                            constraints.max_width,
+                            config.item_extent,
+                            config.item_extent,
+                        ),
+                    );
+                    let child = self.renders.get_mut(child.0).expect("live");
+                    let offset =
+                        Offset::new(0., (item as f64 * f64::from(config.item_extent)) as f32);
+                    child.offset = offset;
+                    self.compositor
+                        .update_transform(child.layer, Transform::translation(offset));
+                }
+                self.diagnostics.lazy_layouts += 1;
+                (size, Vec::new())
             }
             RenderKind::Translate { .. } => {
                 if let Some(&child) = children.first() {
@@ -1483,6 +2997,7 @@ impl WidgetTree {
                     let adjust = match state {
                         ButtonState::Normal => 0,
                         ButtonState::Hovered => 18,
+                        ButtonState::Focused => 28,
                         ButtonState::Pressed => -24,
                     };
                     let shift = |value: u8| (value as i16 + adjust).clamp(0, 255) as u8;
@@ -1506,6 +3021,132 @@ impl WidgetTree {
                             });
                         }
                     }
+                }
+                RenderKind::TextField {
+                    controller,
+                    style,
+                    placeholder,
+                    multiline,
+                    ..
+                } => {
+                    let (layout, focused, scroll_x, scroll_y) = {
+                        let node = self.renders.get(id.0).expect("live");
+                        (
+                            node.text_layout.clone(),
+                            node.focused,
+                            node.text_scroll_x,
+                            node.text_scroll_y,
+                        )
+                    };
+                    cache.push(PaintCommand::Rect {
+                        rect: Rect::from_origin_size(Offset::ZERO, size),
+                        color: Color::rgba(48, 50, 63, 255),
+                    });
+                    let value = controller.value();
+                    let display = text_field_display(&value, &placeholder);
+                    let mut active_scroll_x = scroll_x;
+                    let mut active_scroll_y = scroll_y;
+                    if let Some(layout) = layout {
+                        let (caret, caret_y, caret_height) =
+                            caret_geometry(&layout, value.selection.extent);
+                        let available = (size.width - 16.).max(0.);
+                        if !multiline && caret - active_scroll_x > available {
+                            active_scroll_x = caret - available;
+                        } else if !multiline && caret < active_scroll_x {
+                            active_scroll_x = caret;
+                        }
+                        active_scroll_x = active_scroll_x.max(0.);
+                        let top = if multiline {
+                            8.
+                        } else {
+                            ((size.height - layout.metrics.line_height) / 2.).max(0.)
+                        };
+                        if multiline {
+                            let viewport = (size.height - 16.).max(0.);
+                            if caret_y - active_scroll_y < 0. {
+                                active_scroll_y = caret_y;
+                            } else if caret_y + caret_height - active_scroll_y > viewport {
+                                active_scroll_y = caret_y + caret_height - viewport;
+                            }
+                            active_scroll_y = active_scroll_y
+                                .clamp(0., (layout.metrics.size.height - viewport).max(0.));
+                        }
+                        let selection = value.selection.range();
+                        if focused && !selection.is_empty() {
+                            for rect in selection_rects(
+                                &layout,
+                                selection,
+                                active_scroll_x,
+                                active_scroll_y,
+                                top,
+                            ) {
+                                cache.push(PaintCommand::Rect {
+                                    rect,
+                                    color: Color::rgba(72, 120, 220, 150),
+                                });
+                            }
+                        }
+                        cache.push(PaintCommand::PushClip {
+                            rect: Rect::from_origin_size(
+                                Offset::new(8., 2.),
+                                Size::new((size.width - 16.).max(0.), (size.height - 4.).max(0.)),
+                            ),
+                        });
+                        cache.push(PaintCommand::PushTransform {
+                            transform: Transform::translation(Offset::new(
+                                8. - active_scroll_x,
+                                top - active_scroll_y,
+                            )),
+                        });
+                        let color = if display == placeholder && value.text.is_empty() {
+                            Color::rgba(150, 154, 170, 255)
+                        } else {
+                            style.color
+                        };
+                        for line in layout.lines.iter() {
+                            cache.push(PaintCommand::GlyphRun {
+                                run: line.run.clone(),
+                                color,
+                            });
+                        }
+                        cache.push(PaintCommand::PopTransform);
+                        cache.push(PaintCommand::PopClip);
+                        if focused && controller.caret_visible(Instant::now()) {
+                            cache.push(PaintCommand::Rect {
+                                rect: Rect::from_origin_size(
+                                    Offset::new(
+                                        caret - active_scroll_x + 8.,
+                                        top + caret_y - active_scroll_y,
+                                    ),
+                                    Size::new(1., caret_height),
+                                ),
+                                color: Color::WHITE,
+                            });
+                        }
+                    }
+                    if focused {
+                        let border = Color::rgba(120, 170, 245, 255);
+                        cache.push(PaintCommand::Rect {
+                            rect: Rect::from_origin_size(Offset::ZERO, Size::new(size.width, 1.)),
+                            color: border,
+                        });
+                        cache.push(PaintCommand::Rect {
+                            rect: Rect::from_origin_size(
+                                Offset::new(0., (size.height - 1.).max(0.)),
+                                Size::new(size.width, 1.),
+                            ),
+                            color: border,
+                        });
+                    }
+                    let node = self.renders.get_mut(id.0).expect("live");
+                    node.text_scroll_x = active_scroll_x;
+                    node.text_scroll_y = active_scroll_y;
+                }
+                RenderKind::Scroll { controller } => {
+                    self.paint_scrollbar(id, size, &controller, &mut cache);
+                }
+                RenderKind::VirtualList { config } => {
+                    self.paint_scrollbar(id, size, &config.controller, &mut cache);
                 }
                 _ => {}
             }
@@ -1534,6 +3175,33 @@ impl WidgetTree {
         }
         output.push(PaintCommand::PopTransform);
     }
+    fn paint_scrollbar(
+        &self,
+        id: RenderObjectId,
+        size: Size,
+        controller: &ScrollController,
+        cache: &mut DisplayList,
+    ) {
+        let geometry = scrollbar_geometry(size, controller, ScrollbarStyle::default());
+        if !geometry.visible {
+            return;
+        }
+        let node = self.renders.get(id.0).expect("live");
+        let mut thumb = ScrollbarStyle::default().thumb_color;
+        if node.scrollbar_dragging {
+            thumb = Color::rgba(205, 215, 240, 235);
+        } else if node.scrollbar_hovered {
+            thumb = Color::rgba(190, 202, 230, 220);
+        }
+        cache.push(PaintCommand::Rect {
+            rect: geometry.track,
+            color: ScrollbarStyle::default().track_color,
+        });
+        cache.push(PaintCommand::Rect {
+            rect: geometry.thumb,
+            color: thumb,
+        });
+    }
     fn hit_test_render(
         &self,
         id: RenderObjectId,
@@ -1550,6 +3218,9 @@ impl WidgetTree {
         }
         let child_origin = match &node.kind {
             RenderKind::Scroll { controller } => current - Offset::new(0., controller.offset()),
+            RenderKind::VirtualList { config } => {
+                current - Offset::new(0., config.controller.offset())
+            }
             RenderKind::Translate { .. } => current,
             _ => current,
         };
@@ -1576,6 +3247,9 @@ impl WidgetTree {
         }
         let child_origin = match &node.kind {
             RenderKind::Scroll { controller } => current - Offset::new(0., controller.offset()),
+            RenderKind::VirtualList { config } => {
+                current - Offset::new(0., config.controller.offset())
+            }
             RenderKind::Translate { .. } => current,
             _ => current,
         };
@@ -1584,7 +3258,38 @@ impl WidgetTree {
                 return Some(found);
             }
         }
-        matches!(node.kind, RenderKind::Scroll { .. }).then_some(id)
+        matches!(
+            node.kind,
+            RenderKind::Scroll { .. } | RenderKind::VirtualList { .. }
+        )
+        .then_some(id)
+    }
+    fn scrollbar_controller_and_geometry(
+        &self,
+        render: RenderObjectId,
+    ) -> Option<(ScrollController, ScrollbarGeometry)> {
+        let node = self.renders.get(render.0)?;
+        let controller = match &node.kind {
+            RenderKind::Scroll { controller } => controller.clone(),
+            RenderKind::VirtualList { config } => config.controller.clone(),
+            _ => return None,
+        };
+        let mut geometry = scrollbar_geometry(node.size, &controller, ScrollbarStyle::default());
+        let origin = self.render_viewport_origin(render);
+        geometry.track.origin = geometry.track.origin + origin;
+        geometry.thumb.origin = geometry.thumb.origin + origin;
+        Some((controller, geometry))
+    }
+    fn scrollbar_at(&self, point: Offset) -> Option<RenderObjectId> {
+        self.renders.iter().fold(None, |found, (raw, _)| {
+            let render = RenderObjectId(raw);
+            found.or_else(|| {
+                self.scrollbar_controller_and_geometry(render)
+                    .and_then(|(_, geometry)| {
+                        (geometry.visible && geometry.track.contains(point)).then_some(render)
+                    })
+            })
+        })
     }
 }
 fn render_kind(widget: &Widget) -> RenderKind {
@@ -1602,6 +3307,20 @@ fn render_kind(widget: &Widget) -> RenderKind {
             style: style.clone(),
             align: *align,
         },
+        WidgetKind::TextField {
+            controller,
+            size,
+            style,
+            placeholder,
+            multiline,
+            ..
+        } => RenderKind::TextField {
+            controller: controller.clone(),
+            desired: *size,
+            style: style.clone(),
+            placeholder: placeholder.clone(),
+            multiline: *multiline,
+        },
         WidgetKind::Padding { padding, .. } => RenderKind::Padding { padding: *padding },
         WidgetKind::Align { alignment, .. } => RenderKind::Align {
             alignment: *alignment,
@@ -1609,6 +3328,9 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Flex { axis, .. } => RenderKind::Flex { axis: *axis },
         WidgetKind::Scroll { controller, .. } => RenderKind::Scroll {
             controller: controller.clone(),
+        },
+        WidgetKind::VirtualList { config } => RenderKind::VirtualList {
+            config: config.clone(),
         },
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
             controller: controller.clone(),
@@ -1639,6 +3361,95 @@ fn text_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
         && old_style.style == new_style.style
         && old_style.line_height == new_style.line_height
         && old_style.letter_spacing == new_style.letter_spacing
+}
+
+fn text_field_display(value: &TextEditingValue, placeholder: &str) -> String {
+    if let Some(preedit) = &value.preedit {
+        let range = value.selection.range();
+        let mut text = value.text.clone();
+        text.replace_range(range.start..range.end, preedit);
+        text
+    } else if value.text.is_empty() {
+        placeholder.to_owned()
+    } else {
+        value.text.clone()
+    }
+}
+fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
+    if byte >= line.end {
+        return line.width;
+    }
+    let mut x = 0.;
+    for glyph in line.run.glyphs.iter() {
+        if glyph.cluster as usize >= byte {
+            break;
+        }
+        x = (glyph.offset.x + glyph.advance).max(x);
+    }
+    x
+}
+fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
+    if x >= line.width {
+        return line.end;
+    }
+    let mut best = 0usize;
+    for glyph in line.run.glyphs.iter() {
+        let midpoint = glyph.offset.x + glyph.advance / 2.;
+        if x < midpoint {
+            return glyph.cluster as usize;
+        }
+        best = (glyph.cluster as usize).max(best);
+    }
+    best.max(line.start)
+}
+fn line_for_byte(layout: &TextLayout, byte: usize) -> usize {
+    layout
+        .lines
+        .iter()
+        .position(|line| byte <= line.end)
+        .unwrap_or_else(|| layout.lines.len().saturating_sub(1))
+}
+fn caret_geometry(layout: &TextLayout, byte: usize) -> (f32, f32, f32) {
+    let index = line_for_byte(layout, byte);
+    let line = layout.lines.get(index);
+    (
+        line.map_or(0., |line| line_caret_x(line, byte)),
+        index as f32 * layout.metrics.line_height,
+        layout.metrics.line_height,
+    )
+}
+fn selection_rects(
+    layout: &TextLayout,
+    selection: TextRange,
+    scroll_x: f32,
+    scroll_y: f32,
+    top: f32,
+) -> Vec<Rect> {
+    layout
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let start = selection.start.max(line.start);
+            let end = selection.end.min(line.end);
+            (start < end
+                || (line.start == line.end
+                    && selection.start <= line.start
+                    && selection.end >= line.end))
+                .then(|| {
+                    Rect::from_origin_size(
+                        Offset::new(
+                            line_caret_x(line, start) - scroll_x + 8.,
+                            index as f32 * layout.metrics.line_height - scroll_y + top,
+                        ),
+                        Size::new(
+                            (line_caret_x(line, end) - line_caret_x(line, start)).max(1.),
+                            layout.metrics.line_height,
+                        ),
+                    )
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1779,7 +3590,10 @@ mod tests {
         .unwrap();
         tree.layout(Constraints::tight(Size::new(200., 200.)));
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![
                 Offset::new(20., 10.),
                 Offset::new(20., 30.),
@@ -1863,13 +3677,19 @@ mod tests {
         tree.layout(constraints);
         let _ = tree.update_compositor(Instant::now());
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![Offset::new(15., 10.), Offset::new(15., 30.)]
         );
         assert!(scroll.jump_to(10.));
         let _ = tree.update_compositor(Instant::now());
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![Offset::new(15., 0.), Offset::new(15., 20.)]
         );
     }
@@ -1909,7 +3729,10 @@ mod tests {
         let _ = tree.update_compositor(Instant::now());
         assert_eq!(controller.max_offset(), 100.);
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![
                 Offset::new(0., 0.),
                 Offset::new(0., 40.),
@@ -1919,7 +3742,10 @@ mod tests {
         assert!(controller.jump_to(50.));
         let _ = tree.update_compositor(Instant::now());
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![
                 Offset::new(0., -10.),
                 Offset::new(0., 30.),
@@ -1930,7 +3756,10 @@ mod tests {
         assert_eq!(controller.offset(), 100.);
         let _ = tree.update_compositor(Instant::now());
         assert_eq!(
-            rect_origins(&tree.paint()),
+            rect_origins(&tree.paint())
+                .into_iter()
+                .filter(|origin| origin.x < 80.)
+                .collect::<Vec<_>>(),
             vec![
                 Offset::new(0., -20.),
                 Offset::new(0., 20.),
@@ -1939,5 +3768,342 @@ mod tests {
         );
         assert!(controller.jump_to(-1.));
         assert_eq!(controller.offset(), 0.);
+    }
+
+    #[test]
+    fn fixed_extent_range_handles_edges_and_large_indices() {
+        assert_eq!(fixed_extent_materialized_range(0, 40., 0., 100., 80.), 0..0);
+        assert_eq!(fixed_extent_materialized_range(10, 40., 0., 100., 0.), 0..3);
+        assert_eq!(
+            fixed_extent_materialized_range(10, 40., 40., 100., 0.),
+            1..4
+        );
+        assert_eq!(
+            fixed_extent_materialized_range(10, 40., 123.25, 100., 0.),
+            3..6
+        );
+        assert_eq!(
+            fixed_extent_materialized_range(1_000_000, 40., 35_999_960., 600., 240.),
+            899_993..900_020
+        );
+    }
+
+    #[test]
+    fn million_item_list_materializes_only_viewport_and_cache() {
+        let controller = ScrollController::new();
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::fixed_extent_with_controller(
+            1_000_000,
+            40.,
+            controller.clone(),
+            move |index| {
+                observed.set(observed.get() + 1);
+                Widget::box_(Size::new(80., 40.), Color::rgba(index as u8, 0, 0, 255))
+            },
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let initial = tree.virtual_list_diagnostics().unwrap();
+        assert!(initial.materialized_item_count < 100);
+        assert_eq!(calls.get(), initial.materialized_item_count);
+        assert!(controller.jump_to(900_000. * 40.));
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let jumped = tree.virtual_list_diagnostics().unwrap();
+        assert!(jumped.materialized_range.contains(&900_000));
+        assert!(jumped.materialized_item_count < 100);
+        // Direct arithmetic builds only the destination cache range, never
+        // every preceding logical item.
+        assert!(calls.get() < 200);
+        assert!(jumped.element_count < 100);
+        assert!(jumped.render_object_count < 100);
+    }
+
+    #[test]
+    fn virtual_children_retain_identity_inside_the_cache_and_release_outside() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(VirtualList::fixed_extent_with_controller(
+                10_000,
+                40.,
+                controller.clone(),
+                |i| Widget::box_(Size::new(80., 40.), Color::rgba(i as u8, 0, 0, 255)),
+            ))
+            .unwrap();
+        let constraints = Constraints::tight(Size::new(100., 100.));
+        tree.layout(constraints);
+        let before = tree.children(root).unwrap().to_vec();
+        assert!(controller.jump_to(3.));
+        tree.layout(constraints);
+        assert_eq!(tree.children(root).unwrap(), before.as_slice());
+        assert!(controller.jump_to(400.));
+        tree.layout(constraints);
+        assert!(before.iter().any(|id| !tree.element_exists(*id)));
+        assert!(before.iter().any(|id| tree.element_exists(*id)));
+        let after = tree.virtual_list_diagnostics().unwrap();
+        assert!(after.element_count < 30);
+        assert!(tree.diagnostics().items_unmounted > 0);
+    }
+
+    #[test]
+    fn virtual_count_changes_retain_valid_rows_and_release_invalid_ones() {
+        let controller = ScrollController::new();
+        let constraints = Constraints::tight(Size::new(100., 100.));
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(VirtualList::fixed_extent_with_controller(
+                100,
+                40.,
+                controller.clone(),
+                |_| Widget::box_(Size::new(80., 40.), Color::WHITE),
+            ))
+            .unwrap();
+        tree.layout(constraints);
+        let retained = tree.children(root).unwrap()[0];
+        tree.update(
+            root,
+            VirtualList::fixed_extent_with_controller(80, 40., controller.clone(), |_| {
+                Widget::box_(Size::new(80., 40.), Color::WHITE)
+            }),
+        )
+        .unwrap();
+        tree.layout(constraints);
+        assert!(tree.element_exists(retained));
+        assert!(controller.jump_to(1_000.));
+        tree.layout(constraints);
+        tree.update(
+            root,
+            VirtualList::fixed_extent_with_controller(0, 40., controller.clone(), |_| {
+                Widget::box_(Size::new(80., 40.), Color::WHITE)
+            }),
+        )
+        .unwrap();
+        tree.layout(constraints);
+        assert_eq!(controller.offset(), 0.);
+        assert!(tree.children(root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn editing_uses_graphemes_and_keeps_utf8_boundaries() {
+        let controller = TextEditingController::with_text("a👩‍💻é");
+        controller.move_end(false);
+        controller.backspace();
+        assert_eq!(controller.text(), "a👩‍💻");
+        controller.backspace();
+        assert_eq!(controller.text(), "a");
+        controller.set_selection(TextSelection { base: 1, extent: 1 });
+        controller.insert("नमस्ते");
+        assert_eq!(controller.text(), "aनमस्ते");
+        let value = controller.value();
+        assert!(controller.text().is_char_boundary(value.selection.extent));
+    }
+
+    #[test]
+    fn ime_preedit_does_not_mutate_committed_text() {
+        let controller = TextEditingController::with_text("hello");
+        controller.set_preedit("世界", Some(TextRange::new(0, 3)));
+        assert_eq!(controller.text(), "hello");
+        assert_eq!(controller.value().preedit.as_deref(), Some("世界"));
+        controller.commit_preedit("世界");
+        assert_eq!(controller.text(), "hello世界");
+        assert!(controller.value().preedit.is_none());
+    }
+
+    #[test]
+    fn editing_newlines_and_boundaries_are_grapheme_safe() {
+        let controller = TextEditingController::with_text("hello\nworld");
+        controller.set_selection(TextSelection::collapsed(6));
+        controller.backspace();
+        assert_eq!(controller.text(), "helloworld");
+        controller.set_selection(TextSelection { base: 2, extent: 5 });
+        controller.insert("\n");
+        assert_eq!(controller.text(), "he\nworld");
+        controller.set_selection(TextSelection::collapsed(2));
+        controller.delete();
+        assert_eq!(controller.text(), "heworld");
+    }
+
+    #[test]
+    fn scrollbar_geometry_and_drag_share_the_controller() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::scroll_view(
+            controller.clone(),
+            Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let geometry = tree.scrollbar_diagnostics().pop().unwrap();
+        assert!(geometry.visible);
+        assert_eq!(geometry.thumb.size.height, 24.);
+        assert_eq!(geometry.thumb.origin.y, 0.);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 10.)));
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 60.)));
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Up, Offset::new(95., 60.)));
+        assert!(controller.offset() > 0.);
+        assert!(controller.offset() <= controller.max_offset());
+        assert!(controller.scroll_by(0.25));
+        assert!(controller.offset().fract() > 0.);
+    }
+
+    #[test]
+    fn scrollbar_geometry_round_trips_offsets_and_thumb_tops() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::scroll_view(
+            controller.clone(),
+            Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let geometry = tree.scrollbar_diagnostics().pop().unwrap();
+        assert_eq!(geometry.thumb.size.height, 90.);
+        assert_eq!(geometry.thumb_travel, 510.);
+        for fraction in [0., 0.1, 0.25, 0.5, 0.75, 0.9, 1.] {
+            let offset = fraction * geometry.max_scroll_extent;
+            let thumb_top = geometry.thumb_top_for_offset(offset);
+            assert!((geometry.offset_for_thumb_top(thumb_top) - offset).abs() < 0.01);
+            assert!(
+                (geometry.thumb_top_for_offset(geometry.offset_for_thumb_top(thumb_top))
+                    - thumb_top)
+                    .abs()
+                    < 0.01
+            );
+        }
+    }
+
+    #[test]
+    fn virtual_list_small_thumb_drag_is_continuous_and_reversible() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::fixed_extent_with_controller(
+            100,
+            40.,
+            controller.clone(),
+            |_| Widget::fixed_box(Size::new(100., 40.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let geometry = tree.scrollbar_diagnostics().pop().unwrap();
+        assert_eq!(controller.max_offset(), 3_400.);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 5.)));
+        for y in [10., 15., 25.] {
+            assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., y)));
+        }
+        let down = controller.offset();
+        assert!(down > 0. && down < controller.max_offset() * 0.1);
+        assert!((down - geometry.offset_for_thumb_top(20.)).abs() < 0.01);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 10.)));
+        assert!(controller.offset() < down);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Up, Offset::new(95., 10.)));
+        assert!(!tree.scrollbar_drag_diagnostics().active);
+    }
+
+    #[test]
+    fn virtual_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::fixed_extent_with_controller(
+            1_000_000,
+            40.,
+            controller.clone(),
+            |_| Widget::fixed_box(Size::new(100., 40.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let geometry = tree.scrollbar_diagnostics().pop().unwrap();
+        assert_eq!(geometry.thumb.size.height, 24.);
+        assert_eq!(geometry.thumb_travel, 576.);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 12.)));
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 13.)));
+        let one_pixel = controller.offset();
+        assert!((one_pixel - geometry.max_scroll_extent / geometry.thumb_travel).abs() < 0.1);
+        assert!(one_pixel < controller.max_offset());
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 300.)));
+        let middle = controller.offset();
+        assert!(middle > controller.max_offset() * 0.45 && middle < controller.max_offset() * 0.55);
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let middle_rows = tree.virtual_list_diagnostics().unwrap();
+        assert!(middle_rows.materialized_range.contains(&(500_000usize)));
+        assert!(middle_rows.materialized_item_count < 100);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 588.)));
+        assert_eq!(controller.offset(), controller.max_offset());
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 300.)));
+        assert!(controller.offset() < controller.max_offset());
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Up, Offset::new(95., 300.)));
+    }
+
+    #[test]
+    fn scrollbar_does_not_scroll_when_thumb_has_no_travel() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::scroll_view(
+            controller.clone(),
+            Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 20.)));
+        let geometry = tree.scrollbar_diagnostics().pop().unwrap();
+        assert_eq!(geometry.thumb_travel, 0.);
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 10.)));
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 100.)));
+        assert_eq!(controller.offset(), 0.);
+    }
+
+    #[test]
+    fn scrollbar_stays_synchronized_after_wheel_and_programmatic_offset_changes() {
+        let controller = ScrollController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::scroll_view(
+            controller.clone(),
+            Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        assert!(tree.scroll_at(Offset::new(50., 50.), Offset::new(0., 600.)));
+        let after_wheel = tree.scrollbar_diagnostics().pop().unwrap();
+        assert!(after_wheel.thumb.origin.y > after_wheel.track.origin.y);
+        assert!(controller.jump_to(controller.max_offset() * 0.5));
+        let middle = tree.scrollbar_diagnostics().pop().unwrap();
+        let grab_y = middle.thumb.origin.y + middle.thumb.size.height * 0.5;
+        assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., grab_y)));
+        assert!(tree.scrollbar_pointer(
+            incular_core::PointerPhase::Move,
+            Offset::new(95., grab_y - 10.)
+        ));
+        assert!(controller.offset() < controller.max_offset() * 0.5);
+        let events = tree.diagnostics().scroll_events;
+        assert!(tree.scrollbar_pointer(
+            incular_core::PointerPhase::Move,
+            Offset::new(95., grab_y - 10.)
+        ));
+        assert_eq!(tree.diagnostics().scroll_events, events);
+    }
+
+    #[test]
+    fn textarea_uses_shaped_lines_for_pointer_and_vertical_navigation() {
+        let controller = TextEditingController::with_text("abcdef\nxy\n123456");
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                TextArea::new(controller.clone())
+                    .size(Size::new(120., 100.))
+                    .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(120., 100.)));
+        tree.text_field_set_caret(root, Offset::new(30., 10.), false, Instant::now());
+        let initial = controller.value().selection.extent;
+        assert!(initial > 0 && initial <= 6);
+        assert!(tree.text_field_move_vertical(root, true, true));
+        let selection = controller.value().selection;
+        assert_eq!(selection.base, initial);
+        assert!(selection.extent > 6 && selection.extent <= 9);
+        assert!(tree.text_field_move_line_edge(root, true, false));
+        assert_eq!(controller.value().selection.extent, 9);
+        tree.text_field_set_caret(root, Offset::new(5., 55.), false, Instant::now());
+        assert!(controller.value().selection.extent >= 10);
     }
 }

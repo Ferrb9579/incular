@@ -16,12 +16,18 @@ pub use incular_widgets as widgets;
 
 /// Common application-facing types for the initial native UI slice.
 pub mod prelude {
-    pub use incular_core::{Color, Offset, Size};
+    pub use incular_core::{
+        Color, ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset, Size,
+    };
     pub use incular_layout::{Alignment, Constraints, EdgeInsets};
-    pub use incular_runtime::{Application, BuildContext, Runtime, Signal};
+    pub use incular_runtime::{
+        Application, BuildContext, EditingDiagnostics, FocusDiagnostics, Runtime, Signal,
+    };
     pub use incular_text::{FontFamily, FontStyle, FontWeight, TextAlign, TextStyle};
     pub use incular_widgets::{
-        ActionId, Button, Key, ScrollController, ScrollView, Text, TranslationController, Widget,
+        ActionId, Button, Key, ScrollController, ScrollView, ScrollbarDragDiagnostics,
+        ScrollbarGeometry, ScrollbarStyle, Text, TextArea, TextEditingController, TextEditingValue,
+        TextField, TextRange, TextSelection, TranslationController, VirtualList, Widget,
     };
 }
 

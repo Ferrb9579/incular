@@ -19,3 +19,4 @@ incular-layout = { workspace = true }
 incular-widgets = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
+arboard = { workspace = true }

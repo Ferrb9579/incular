@@ -2,7 +2,8 @@
 use incular_core::PointerPhase;
 use incular_layout::Constraints;
 use incular_platform::{
-    PhysicalSize, PlatformEvent, WindowMetrics, pointer_event, raw_window_handles, wheel_event,
+    Clipboard, PhysicalSize, PlatformEvent, WindowMetrics, ime_event, key_event, pointer_event,
+    raw_window_handles, text_event, wheel_event,
 };
 use incular_runtime::{Application, Runtime};
 use incular_wgpu::{RendererError, WgpuRenderer};
@@ -30,9 +31,10 @@ impl std::error::Error for RunError {}
 /// Runs a native Linux window until close. The native window stays alive for the
 /// complete lifetime of the renderer's unsafe raw-handle surface.
 pub fn run_window(
-    runtime: Runtime,
+    mut runtime: Runtime,
     on_action: impl FnMut(ActionId) + 'static,
 ) -> Result<(), RunError> {
+    runtime.set_clipboard(Box::new(LinuxClipboard::new()));
     let event_loop = EventLoop::new().map_err(RunError::EventLoop)?;
     let mut app = App {
         window: None,
@@ -40,9 +42,38 @@ pub fn run_window(
         renderer: None,
         metrics: None,
         cursor: PhysicalPosition::new(0., 0.),
+        modifiers: winit::keyboard::ModifiersState::default(),
         on_action,
     };
     event_loop.run_app(&mut app).map_err(RunError::EventLoop)
+}
+/// Native desktop clipboard with a local fallback for headless sessions or a
+/// temporarily unavailable X11/Wayland clipboard service.
+struct LinuxClipboard {
+    native: Option<arboard::Clipboard>,
+    fallback: String,
+}
+impl LinuxClipboard {
+    fn new() -> Self {
+        Self {
+            native: arboard::Clipboard::new().ok(),
+            fallback: String::new(),
+        }
+    }
+}
+impl Clipboard for LinuxClipboard {
+    fn get_text(&mut self) -> Option<String> {
+        self.native
+            .as_mut()
+            .and_then(|clipboard| clipboard.get_text().ok())
+            .or_else(|| (!self.fallback.is_empty()).then(|| self.fallback.clone()))
+    }
+    fn set_text(&mut self, text: String) {
+        self.fallback = text.clone();
+        if let Some(clipboard) = self.native.as_mut() {
+            let _ = clipboard.set_text(text);
+        }
+    }
 }
 /// Runs an application built with Incular's declarative root API. Button
 /// callbacks are dispatched by `Runtime`; the legacy action callback is empty.
@@ -55,6 +86,7 @@ struct App<F: FnMut(ActionId)> {
     renderer: Option<WgpuRenderer>,
     metrics: Option<WindowMetrics>,
     cursor: PhysicalPosition<f64>,
+    modifiers: winit::keyboard::ModifiersState,
     on_action: F,
 }
 impl<F: FnMut(ActionId)> ApplicationHandler for App<F> {
@@ -168,6 +200,25 @@ impl<F: FnMut(ActionId)> ApplicationHandler for App<F> {
                         unreachable!()
                     };
                     let _ = runtime.handle_input(event);
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(runtime) = self.runtime.as_mut() {
+                    let PlatformEvent::Input(input) = key_event(&event, self.modifiers) else {
+                        unreachable!()
+                    };
+                    let _ = runtime.handle_input(input);
+                    if let Some(PlatformEvent::Input(input)) = text_event(&event) {
+                        let _ = runtime.handle_input(input);
+                    }
+                }
+            }
+            WindowEvent::Ime(event) => {
+                if let (Some(runtime), Some(PlatformEvent::Input(input))) =
+                    (self.runtime.as_mut(), ime_event(event))
+                {
+                    let _ = runtime.handle_input(input);
                 }
             }
             WindowEvent::RedrawRequested => self.redraw(),
