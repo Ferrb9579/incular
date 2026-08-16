@@ -148,17 +148,20 @@ pub fn touch_event(touch: winit::event::Touch, metrics: WindowMetrics) -> Platfo
     };
     identified_pointer_event(touch.id, phase, touch.location, metrics)
 }
-/// Incular's scroll convention is positive Y increasing a vertical
-/// [`incular_widgets::ScrollController`] offset (content moves upward). Winit
-/// already reports both wheel forms in the platform's intended direction, so
-/// neither path is inverted here. A line is a documented 40 logical-pixel
+/// Converts wheel motion into Incular's content-offset convention. Winit's
+/// positive wheel Y denotes upward wheel motion, whereas a positive vertical
+/// [`incular_scroll::ScrollController`] offset moves content upward. Inverting
+/// the raw motion makes content follow the gesture (natural scrolling) for
+/// wheel and trackpad input. A line is a documented 40 logical-pixel
 /// convenience step; pixel deltas deliberately retain their fractional value.
 #[must_use]
 pub fn wheel_event(delta: winit::event::MouseScrollDelta, metrics: WindowMetrics) -> PlatformEvent {
     let delta = match delta {
-        winit::event::MouseScrollDelta::LineDelta(x, y) => Offset::new(x * 40.0, y * 40.0),
+        winit::event::MouseScrollDelta::LineDelta(x, y) => Offset::new(-x * 40.0, -y * 40.0),
         winit::event::MouseScrollDelta::PixelDelta(position) => {
-            metrics.physical_to_logical(Offset::new(position.x as f32, position.y as f32))
+            let logical =
+                metrics.physical_to_logical(Offset::new(position.x as f32, position.y as f32));
+            Offset::new(-logical.x, -logical.y)
         }
     };
     PlatformEvent::Input(InputEvent::Scroll { delta })
@@ -290,7 +293,7 @@ mod tests {
         assert_eq!(position, Offset::new(25., 15.));
     }
     #[test]
-    fn scroll_forms_preserve_direction_and_fractional_pixels() {
+    fn scroll_forms_use_natural_content_direction_and_fractional_pixels() {
         let metrics = WindowMetrics::new(PhysicalSize::new(200, 100), 2.0);
         let PlatformEvent::Input(InputEvent::Scroll { delta: line }) =
             wheel_event(winit::event::MouseScrollDelta::LineDelta(0., 1.), metrics)
@@ -304,13 +307,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(line.y, pixel.y);
+        assert_eq!(line.y, -40.);
         let PlatformEvent::Input(InputEvent::Scroll { delta }) = wheel_event(
             winit::event::MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0., 2.5)),
             metrics,
         ) else {
             unreachable!()
         };
-        assert_eq!(delta.y, 1.25);
+        assert_eq!(delta.y, -1.25);
     }
     #[test]
     fn command_control_text_is_not_a_text_commit() {
