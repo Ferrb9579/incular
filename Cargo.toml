@@ -2,6 +2,20 @@
 members = ["crates/*"]
 resolver = "3"
 
+[package]
+name = "incular-workspace-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+autoexamples = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+incular = { path = "crates/incular", default-features = false }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
@@ -11,15 +25,22 @@ rust-version = "1.87"
 incular = { path = "crates/incular", version = "0.1.0" }
 incular-android = { path = "crates/incular-android", version = "0.1.0" }
 incular-accessibility = { path = "crates/incular-accessibility", version = "0.1.0" }
+incular-semantics = { path = "crates/incular-semantics", version = "0.1.0" }
 incular-animation = { path = "crates/incular-animation", version = "0.1.0" }
 incular-assets = { path = "crates/incular-assets", version = "0.1.0" }
+incular-image = { path = "crates/incular-image", version = "0.1.0" }
 incular-core = { path = "crates/incular-core", version = "0.1.0" }
+incular-config = { path = "crates/incular-config", version = "0.1.0" }
+incular-gestures = { path = "crates/incular-gestures", version = "0.1.0" }
 incular-layout = { path = "crates/incular-layout", version = "0.1.0" }
+incular-navigation = { path = "crates/incular-navigation", version = "0.1.0" }
+incular-scroll = { path = "crates/incular-scroll", version = "0.1.0" }
 incular-macros = { path = "crates/incular-macros", version = "0.1.0" }
 incular-ios = { path = "crates/incular-ios", version = "0.1.0" }
 incular-linux = { path = "crates/incular-linux", version = "0.1.0" }
 incular-macos = { path = "crates/incular-macos", version = "0.1.0" }
 incular-painting = { path = "crates/incular-painting", version = "0.1.0" }
+incular-rendering = { path = "crates/incular-rendering", version = "0.1.0" }
 incular-platform = { path = "crates/incular-platform", version = "0.1.0" }
 incular-runtime = { path = "crates/incular-runtime", version = "0.1.0" }
 incular-text = { path = "crates/incular-text", version = "0.1.0" }

@@ -10,18 +10,83 @@ publish = true
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "animation"
+path = "../../examples/animation.rs"
+[[example]]
+name = "color_effects"
+path = "../../examples/color_effects.rs"
+[[example]]
+name = "canvas_layers"
+path = "../../examples/canvas_layers.rs"
+[[example]]
+name = "counter"
+path = "../../examples/counter.rs"
+[[example]]
+name = "effects"
+path = "../../examples/effects.rs"
+[[example]]
+name = "gesture_gallery"
+path = "../../examples/gesture_gallery.rs"
+[[example]]
+name = "images"
+path = "../../examples/images.rs"
+[[example]]
+name = "layout_gallery"
+path = "../../examples/layout_gallery.rs"
+[[example]]
+name = "opacity"
+path = "../../examples/opacity.rs"
+[[example]]
+name = "navigation_showcase"
+path = "../../examples/navigation_showcase.rs"
+[[example]]
+name = "painting"
+path = "../../examples/painting.rs"
+[[example]]
+name = "scroll"
+path = "../../examples/scroll.rs"
+[[example]]
+name = "responsive_layout"
+path = "../../examples/responsive_layout.rs"
+[[example]]
+name = "semantics_gallery"
+path = "../../examples/semantics_gallery.rs"
+[[example]]
+name = "slivers"
+path = "../../examples/slivers.rs"
+[[example]]
+name = "text"
+path = "../../examples/text.rs"
+[[example]]
+name = "text_field"
+path = "../../examples/text_field.rs"
+[[example]]
+name = "text_quality"
+path = "../../examples/text_quality.rs"
+[[example]]
+name = "virtual_list"
+path = "../../examples/virtual_list.rs"
+
 [features]
 default = ["desktop"]
 desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux", "dep:incular-windows", "dep:incular-macos"]
 
 [dependencies]
 incular-accessibility = { workspace = true }
+incular-semantics = { workspace = true }
 incular-animation = { workspace = true }
 incular-assets = { workspace = true }
+incular-image = { workspace = true }
 incular-core = { workspace = true }
+incular-config = { workspace = true }
+incular-gestures = { workspace = true }
 incular-layout = { workspace = true }
+incular-navigation = { workspace = true }
+incular-scroll = { workspace = true }
 incular-macros = { workspace = true }
 incular-painting = { workspace = true }
+incular-rendering = { workspace = true }
 incular-platform = { workspace = true, optional = true }
 incular-runtime = { workspace = true }
 incular-text = { workspace = true }

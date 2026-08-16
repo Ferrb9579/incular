@@ -756,14 +756,21 @@ dependencies = [
  "incular-accessibility",
  "incular-animation",
  "incular-assets",
+ "incular-config",
  "incular-core",
+ "incular-gestures",
+ "incular-image",
  "incular-layout",
  "incular-linux",
  "incular-macos",
  "incular-macros",
+ "incular-navigation",
  "incular-painting",
  "incular-platform",
+ "incular-rendering",
  "incular-runtime",
+ "incular-scroll",
+ "incular-semantics",
  "incular-text",
  "incular-wgpu",
  "incular-widgets",
@@ -775,6 +782,7 @@ name = "incular-accessibility"
 version = "0.1.0"
 dependencies = [
  "incular-core",
+ "incular-semantics",
 ]
 
 [[package]]
@@ -795,14 +803,31 @@ dependencies = [
 [[package]]
 name = "incular-assets"
 version = "0.1.0"
+
+[[package]]
+name = "incular-config"
+version = "0.1.0"
 dependencies = [
- "image",
  "incular-core",
 ]
 
 [[package]]
 name = "incular-core"
 version = "0.1.0"
+
+[[package]]
+name = "incular-gestures"
+version = "0.1.0"
+dependencies = [
+ "incular-core",
+]
+
+[[package]]
+name = "incular-image"
+version = "0.1.0"
+dependencies = [
+ "image",
+]
 
 [[package]]
 name = "incular-ios"
@@ -816,6 +841,7 @@ dependencies = [
 name = "incular-layout"
 version = "0.1.0"
 dependencies = [
+ "incular-config",
  "incular-core",
 ]
 
@@ -824,6 +850,7 @@ name = "incular-linux"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "incular-config",
  "incular-core",
  "incular-layout",
  "incular-platform",
@@ -839,6 +866,7 @@ name = "incular-macos"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "incular-config",
  "incular-core",
  "incular-layout",
  "incular-platform",
@@ -854,11 +882,18 @@ name = "incular-macros"
 version = "0.1.0"
 
 [[package]]
+name = "incular-navigation"
+version = "0.1.0"
+dependencies = [
+ "incular-core",
+ "incular-widgets",
+]
+
+[[package]]
 name = "incular-painting"
 version = "0.1.0"
 dependencies = [
- "incular-assets",
- "incular-core",
+ "incular-rendering",
 ]
 
 [[package]]
@@ -871,17 +906,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "incular-rendering"
+version = "0.1.0"
+dependencies = [
+ "incular-assets",
+ "incular-core",
+ "incular-image",
+]
+
+[[package]]
 name = "incular-runtime"
 version = "0.1.0"
 dependencies = [
- "incular-accessibility",
  "incular-animation",
  "incular-assets",
+ "incular-config",
  "incular-core",
  "incular-layout",
- "incular-painting",
  "incular-platform",
+ "incular-rendering",
+ "incular-semantics",
  "incular-widgets",
+]
+
+[[package]]
+name = "incular-scroll"
+version = "0.1.0"
+dependencies = [
+ "incular-core",
+]
+
+[[package]]
+name = "incular-semantics"
+version = "0.1.0"
+dependencies = [
+ "incular-core",
 ]
 
 [[package]]
@@ -891,7 +950,7 @@ dependencies = [
  "fontdb",
  "incular-assets",
  "incular-core",
- "incular-painting",
+ "incular-rendering",
  "rustybuzz",
  "ttf-parser",
  "unicode-bidi",
@@ -908,8 +967,9 @@ dependencies = [
  "fontdue",
  "incular-assets",
  "incular-core",
- "incular-painting",
+ "incular-image",
  "incular-platform",
+ "incular-rendering",
  "incular-text",
  "lyon_tessellation",
  "raw-window-handle",
@@ -920,12 +980,16 @@ dependencies = [
 name = "incular-widgets"
 version = "0.1.0"
 dependencies = [
- "incular-accessibility",
  "incular-animation",
  "incular-assets",
+ "incular-config",
  "incular-core",
+ "incular-gestures",
+ "incular-image",
  "incular-layout",
- "incular-painting",
+ "incular-rendering",
+ "incular-scroll",
+ "incular-semantics",
  "incular-text",
  "unicode-segmentation",
 ]
@@ -935,6 +999,7 @@ name = "incular-windows"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "incular-config",
  "incular-core",
  "incular-layout",
  "incular-platform",
@@ -943,6 +1008,13 @@ dependencies = [
  "incular-widgets",
  "pollster",
  "winit",
+]
+
+[[package]]
+name = "incular-workspace-tests"
+version = "0.1.0"
+dependencies = [
+ "incular",
 ]
 
 [[package]]

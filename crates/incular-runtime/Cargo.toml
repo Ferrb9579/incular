@@ -11,11 +11,12 @@ publish = true
 path = "src/lib.rs"
 
 [dependencies]
-incular-accessibility = { workspace = true }
+incular-semantics = { workspace = true }
 incular-animation = { workspace = true }
 incular-assets = { workspace = true }
 incular-core = { workspace = true }
+incular-config = { workspace = true }
 incular-layout = { workspace = true }
-incular-painting = { workspace = true }
+incular-rendering = { workspace = true }
 incular-platform = { workspace = true }
 incular-widgets = { workspace = true }

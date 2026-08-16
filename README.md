@@ -6,14 +6,21 @@ around `wgpu`.
 The repository is organized as a layered Cargo workspace:
 
 - `incular-core` contains platform-independent foundation types.
+- `incular-gestures` contains platform-neutral pointer recognizers and input interaction state.
 - `incular-layout` contains renderer-independent layout primitives and algorithms.
+- `incular-navigation` contains stack navigation, routes, transitions, and overlays.
+- `incular-scroll` contains widget-independent scroll state and physics.
 - `incular-text` contains text layout and typography foundations.
-- `incular-assets` contains asset identity, loading, and resource lifecycle foundations.
+- `incular-assets` contains font handles and non-raster resource foundations.
+- `incular-image` contains renderer-neutral raster decode, identity, and caching.
 - `incular-animation` contains renderer-independent animation primitives.
 - `incular-accessibility` contains accessibility semantics and tree foundations.
 - `incular-macros` will contain procedural macros for Incular APIs.
 - `incular-runtime` contains application lifecycle and scheduling foundations.
-- `incular-painting` defines renderer-neutral painting concepts.
+- `incular-rendering` owns renderer-neutral paths, paint, ordered display
+  lists, canvas recording, and retained compositor layers.
+- `incular-painting` is a source-compatible compatibility import for
+  `incular-rendering`.
 - `incular-widgets` will provide the widget, layout, and built-in component model.
 - `incular-platform` provides shared platform abstractions.
 - `incular-android` provides Android integration.

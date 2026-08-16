@@ -1,5 +1,9 @@
 # incular-painting
 
+> Compatibility crate. New renderer-neutral integrations should use
+> [`incular-rendering`](../incular-rendering/README.md), which owns the canvas,
+> display-list, and retained compositor implementation.
+
 Owns compact ordered `DisplayList` and `PaintCommand` values. It depends on
 renderer-neutral core/assets types and contains no GPU state. `GlyphRun` holds
 the selected font and shaped glyph positions rather than characters, so a

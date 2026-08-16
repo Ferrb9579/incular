@@ -1,11 +1,11 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
-use incular_accessibility::{SemanticAction, SemanticNodeId};
+use incular_config::Constraints;
 use incular_core::{ImeEvent, InputEvent, KeyCode, KeyEvent, Offset, PointerPhase};
-use incular_layout::Constraints;
-use incular_painting::DisplayList;
 use incular_platform::{Clipboard, MemoryClipboard};
+use incular_rendering::DisplayList;
+use incular_semantics::{SemanticAction, SemanticNodeId};
 use incular_widgets::{
-    ActionId, ButtonState, Diagnostics, ElementId, TreeError, Widget, WidgetTree,
+    ActionId, ButtonState, Diagnostics, ElementId, PointerEvent, TreeError, Widget, WidgetTree,
 };
 use std::{
     cell::RefCell,
@@ -188,6 +188,9 @@ pub struct Runtime {
     handlers: HashMap<ActionId, Rc<dyn Fn()>>,
     hovered_button: Option<ElementId>,
     pressed_button: Option<ElementId>,
+    /// The contact currently allowed to drive single-contact controls. Other
+    /// contacts still reach retained gesture regions for scale/pan input.
+    legacy_pointer: Option<u64>,
     last_pointer: Offset,
     focused: Option<ElementId>,
     captured_text_field: Option<ElementId>,
@@ -212,6 +215,7 @@ impl Runtime {
             handlers: HashMap::new(),
             hovered_button: None,
             pressed_button: None,
+            legacy_pointer: None,
             last_pointer: Offset::ZERO,
             focused: None,
             captured_text_field: None,
@@ -334,32 +338,70 @@ impl Runtime {
     }
     #[must_use]
     pub fn handle_input(&mut self, event: InputEvent) -> Option<EventTarget> {
-        let InputEvent::Pointer { phase, position } = event else {
-            match event {
-                InputEvent::Scroll { delta } => {
-                    // The platform normalizes wheel values to logical pixels. The
-                    // latest pointer position selects the nearest viewport.
-                    if self.tree.scroll_at(self.last_pointer, delta) {
-                        self.frame_requested = true;
+        let (pointer, phase, position) = match event {
+            InputEvent::Pointer { phase, position } => (0, phase, position),
+            InputEvent::PointerWithId {
+                pointer,
+                phase,
+                position,
+            } => (pointer, phase, position),
+            event => {
+                match event {
+                    InputEvent::Scroll { delta } => {
+                        // The platform normalizes wheel values to logical pixels. The
+                        // latest pointer position selects the nearest viewport.
+                        if self.tree.scroll_at(self.last_pointer, delta) {
+                            self.frame_requested = true;
+                        }
                     }
+                    InputEvent::Key(key) => {
+                        self.handle_key(key);
+                    }
+                    InputEvent::Text(text) => {
+                        self.insert_text(&text);
+                    }
+                    InputEvent::Ime(ime) => {
+                        self.handle_ime(ime);
+                    }
+                    InputEvent::WindowResized { .. } => {}
+                    InputEvent::Pointer { .. } => unreachable!(),
+                    InputEvent::PointerWithId { .. } => unreachable!(),
                 }
-                InputEvent::Key(key) => {
-                    self.handle_key(key);
-                }
-                InputEvent::Text(text) => {
-                    self.insert_text(&text);
-                }
-                InputEvent::Ime(ime) => {
-                    self.handle_ime(ime);
-                }
-                InputEvent::WindowResized { .. } => {}
-                InputEvent::Pointer { .. } => unreachable!(),
+                return None;
             }
-            return None;
         };
-        self.last_pointer = position;
+        let legacy_pointer = match phase {
+            PointerPhase::Down if self.legacy_pointer.is_none() => {
+                self.legacy_pointer = Some(pointer);
+                true
+            }
+            PointerPhase::Move if pointer == 0 && self.legacy_pointer.is_none() => true,
+            _ => self.legacy_pointer == Some(pointer),
+        };
+        if legacy_pointer {
+            self.last_pointer = position;
+        }
+        if let Some(element) = self.tree.dispatch_gesture(PointerEvent {
+            pointer,
+            position,
+            phase,
+            time: Instant::now(),
+        }) {
+            self.frame_requested = true;
+            self.release_legacy_pointer(pointer, phase);
+            return Some(EventTarget {
+                element,
+                action: None,
+            });
+        }
+        // Legacy controls and scrollbars admit just the primary contact.
+        // Additional contacts remain available to retained gesture regions.
+        if !legacy_pointer {
+            return None;
+        }
         if self.tree.scrollbar_pointer(phase, position) {
             self.frame_requested = true;
+            self.release_legacy_pointer(pointer, phase);
             return None;
         }
         let text_target = self.tree.text_field_at(position);
@@ -368,7 +410,7 @@ impl Runtime {
             .hit_test(position)
             .and_then(|render| self.tree.element_for_render(render))
             .and_then(|element| self.tree.action_ancestor(element));
-        match phase {
+        let result = match phase {
             PointerPhase::Move => {
                 if let Some(field) = self.captured_text_field {
                     self.tree
@@ -442,6 +484,15 @@ impl Runtime {
                 }
                 None
             }
+        };
+        self.release_legacy_pointer(pointer, phase);
+        result
+    }
+    fn release_legacy_pointer(&mut self, pointer: u64, phase: PointerPhase) {
+        if matches!(phase, PointerPhase::Up | PointerPhase::Cancel)
+            && self.legacy_pointer == Some(pointer)
+        {
+            self.legacy_pointer = None;
         }
     }
     fn set_focus(&mut self, next: Option<ElementId>) {
@@ -741,17 +792,14 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use incular_accessibility::{Role as SemanticRole, SemanticAction};
     use incular_core::{Color, Offset, Size};
-    use incular_painting::{DisplayList, PaintCommand};
-    use incular_widgets::{Button, VirtualList};
+    use incular_rendering::{DisplayList, PaintCommand};
+    use incular_semantics::{Role as SemanticRole, SemanticAction};
+    use incular_widgets::{Button, GestureCallbacks, GestureRegion, VirtualList};
     use std::cell::Cell;
     use std::time::{Duration, Instant};
 
-    fn semantic_node(
-        runtime: &Runtime,
-        role: SemanticRole,
-    ) -> incular_accessibility::SemanticNodeId {
+    fn semantic_node(runtime: &Runtime, role: SemanticRole) -> incular_semantics::SemanticNodeId {
         runtime
             .tree()
             .semantics()
@@ -962,6 +1010,34 @@ mod tests {
         );
     }
     #[test]
+    fn identified_primary_contact_can_activate_a_button() {
+        let mut runtime = Runtime::new(Widget::button(
+            Size::new(10., 10.),
+            Color::WHITE,
+            ActionId(2),
+        ))
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(20., 20.)))
+            .unwrap();
+        let _ = runtime.handle_input(InputEvent::PointerWithId {
+            pointer: 72,
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        assert_eq!(
+            runtime
+                .handle_input(InputEvent::PointerWithId {
+                    pointer: 72,
+                    phase: PointerPhase::Up,
+                    position: Offset::new(5., 5.),
+                })
+                .unwrap()
+                .action,
+            Some(ActionId(2))
+        );
+    }
+    #[test]
     fn wheel_updates_only_retained_scroll_transform() {
         let controller = incular_widgets::ScrollController::new();
         let child = Widget::column(
@@ -1081,7 +1157,7 @@ mod tests {
     fn retained_card_text_and_background_move_together_without_repaint() {
         let controller = incular_widgets::TranslationController::new();
         let mut runtime = Runtime::new(Widget::padding(
-            incular_layout::EdgeInsets {
+            incular_config::EdgeInsets {
                 left: 20.,
                 top: 10.,
                 right: 0.,
@@ -1454,5 +1530,77 @@ mod tests {
             },
         }));
         assert_eq!(multi.text(), "ab\n\nef");
+    }
+
+    #[test]
+    fn runtime_routes_pointer_sequences_to_retained_gesture_regions() {
+        let taps = Rc::new(Cell::new(0));
+        let observed = taps.clone();
+        let mut runtime = Runtime::new(
+            GestureRegion::new(
+                GestureCallbacks {
+                    on_tap: Some(Rc::new(move || observed.set(observed.get() + 1))),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(80., 40.), Color::WHITE),
+            )
+            .into(),
+        )
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(100., 100.)))
+            .unwrap();
+        let down = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(10., 10.),
+        });
+        assert!(down.is_some_and(|target| target.action.is_none()));
+        let up = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Up,
+            position: Offset::new(90., 90.),
+        });
+        assert!(up.is_some_and(|target| target.action.is_none()));
+        assert_eq!(taps.get(), 1);
+    }
+
+    #[test]
+    fn runtime_routes_identified_contacts_to_retained_scale_regions() {
+        let scale = Rc::new(Cell::new(0.));
+        let observed = scale.clone();
+        let mut runtime = Runtime::new(
+            GestureRegion::new(
+                GestureCallbacks {
+                    on_scale_update: Some(Rc::new(move |details| observed.set(details.scale))),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            )
+            .into(),
+        )
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(100., 100.)))
+            .unwrap();
+        for (pointer, position) in [(1, Offset::new(10., 10.)), (2, Offset::new(20., 10.))] {
+            assert!(
+                runtime
+                    .handle_input(InputEvent::PointerWithId {
+                        pointer,
+                        phase: PointerPhase::Down,
+                        position,
+                    })
+                    .is_some()
+            );
+        }
+        assert!(
+            runtime
+                .handle_input(InputEvent::PointerWithId {
+                    pointer: 2,
+                    phase: PointerPhase::Move,
+                    position: Offset::new(30., 10.),
+                })
+                .is_some()
+        );
+        assert_eq!(scale.get(), 2.);
     }
 }

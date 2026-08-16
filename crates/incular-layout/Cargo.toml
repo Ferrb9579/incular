@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 incular-core = { workspace = true }
+incular-config = { workspace = true }

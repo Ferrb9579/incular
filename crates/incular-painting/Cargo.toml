@@ -3,7 +3,7 @@ name = "incular-painting"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Renderer-neutral painting abstractions for Incular"
+description = "Compatibility imports for Incular renderer-neutral presentation APIs"
 readme = "README.md"
 publish = true
 
@@ -11,5 +11,4 @@ publish = true
 path = "src/lib.rs"
 
 [dependencies]
-incular-core = { workspace = true }
-incular-assets = { workspace = true }
+incular-rendering = { workspace = true }

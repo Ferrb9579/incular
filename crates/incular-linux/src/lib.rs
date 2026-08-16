@@ -1,9 +1,9 @@
 //! Linux desktop event-loop bridge for Incular.
+use incular_config::Constraints;
 use incular_core::PointerPhase;
-use incular_layout::Constraints;
 use incular_platform::{
     Clipboard, PhysicalSize, PlatformEvent, WindowMetrics, ime_event, key_event, pointer_event,
-    raw_window_handles, text_event, wheel_event,
+    raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{Application, Runtime};
 use incular_wgpu::{RendererError, WgpuRenderer};
@@ -180,6 +180,23 @@ impl<F: FnMut(ActionId)> ApplicationHandler for App<F> {
                 };
                 if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
                     let event = match pointer_event(phase, self.cursor, metrics) {
+                        PlatformEvent::Input(event) => event,
+                        PlatformEvent::CloseRequested => unreachable!(),
+                    };
+                    if let Some(action) =
+                        runtime.handle_input(event).and_then(|target| target.action)
+                    {
+                        (self.on_action)(action);
+                        self.window
+                            .as_ref()
+                            .expect("window exists")
+                            .request_redraw();
+                    }
+                }
+            }
+            WindowEvent::Touch(touch) => {
+                if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
+                    let event = match touch_event(touch, metrics) {
                         PlatformEvent::Input(event) => event,
                         PlatformEvent::CloseRequested => unreachable!(),
                     };

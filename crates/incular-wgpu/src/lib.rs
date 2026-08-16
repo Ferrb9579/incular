@@ -5,15 +5,17 @@
 //! draws atlas-backed instanced quads in display-list order.
 use bytemuck::{Pod, Zeroable};
 use fontdue::{Font, FontSettings};
-use incular_assets::{FontId, ImageHandle, ImageId};
+use incular_assets::FontId;
 use incular_core::{Color, Offset, Rect, Size};
-use incular_painting::{
+use incular_image::{ImageHandle, ImageId};
+use incular_platform::{PhysicalSize, RawWindowHandles};
+use incular_rendering as incular_painting;
+use incular_rendering::{
     BlendMode, Brush, ColorFilter, DisplayList, DropShadowEffect, FillRule, GaussianBlur, GlyphRun,
     GradientId, ImageSampling, LineCap, LineJoin, PaintCommand, Path, PathId, RRect, Stroke,
     blur_bounds, drop_shadow_bounds, gaussian_kernel_weights, normalize_opacity, normalize_sigma,
     sample_gradient_stops,
 };
-use incular_platform::{PhysicalSize, RawWindowHandles};
 use lyon_tessellation::{
     FillOptions, FillRule as LyonFillRule, FillTessellator, StrokeOptions, StrokeTessellator,
     VertexBuffers, geometry_builder::simple_builder, math::point, path::Path as LyonPath,

@@ -11,5 +11,3 @@ publish = true
 path = "src/lib.rs"
 
 [dependencies]
-incular-core = { workspace = true }
-image = { workspace = true }

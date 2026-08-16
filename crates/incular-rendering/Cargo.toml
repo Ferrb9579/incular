@@ -1,0 +1,16 @@
+[package]
+name = "incular-rendering"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Renderer-neutral scene, canvas, display-list, and compositor APIs for Incular"
+readme = "README.md"
+publish = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+incular-core = { workspace = true }
+incular-assets = { workspace = true }
+incular-image = { workspace = true }

@@ -3,7 +3,7 @@ name = "incular-accessibility"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Accessibility tree and semantics foundations for Incular"
+description = "Native accessibility adapter contracts for Incular"
 readme = "README.md"
 publish = true
 
@@ -11,4 +11,7 @@ publish = true
 path = "src/lib.rs"
 
 [dependencies]
+incular-semantics = { workspace = true }
+
+[dev-dependencies]
 incular-core = { workspace = true }

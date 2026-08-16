@@ -16,8 +16,10 @@ prefix/suffix are reused, and a keyed lookup is created only for a changed
 middle range that contains keys. Layout runs constraints down and sizes up;
 paint caches are regenerated only for paint-dirty render objects.
 
-This crate depends on core, layout, and painting; it owns neither scheduling,
-native input loops, nor GPU resources.
+This crate depends on core, layout, painting, and the platform-neutral
+`incular-gestures` recognizers; it owns neither scheduling, native input loops,
+nor GPU resources. `GestureRegion` is the retained-tree adapter, while pointer
+event values and recognition state are owned by `incular-gestures`.
 
 ## Vector painting
 

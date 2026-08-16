@@ -120,6 +120,34 @@ pub fn pointer_event(
         position: normalize_cursor(position, metrics),
     })
 }
+/// Converts an identified platform contact into logical coordinates. Native
+/// touch/pen adapters should call this rather than collapsing contacts into
+/// the mouse-compatible pointer `0` path above.
+#[must_use]
+pub fn identified_pointer_event(
+    pointer: u64,
+    phase: PointerPhase,
+    position: winit::dpi::PhysicalPosition<f64>,
+    metrics: WindowMetrics,
+) -> PlatformEvent {
+    PlatformEvent::Input(InputEvent::PointerWithId {
+        pointer,
+        phase,
+        position: normalize_cursor(position, metrics),
+    })
+}
+/// Converts a Winit touch contact to the identified pointer pipeline. This
+/// keeps native contact IDs intact for retained multi-pointer gestures.
+#[must_use]
+pub fn touch_event(touch: winit::event::Touch, metrics: WindowMetrics) -> PlatformEvent {
+    let phase = match touch.phase {
+        winit::event::TouchPhase::Started => PointerPhase::Down,
+        winit::event::TouchPhase::Moved => PointerPhase::Move,
+        winit::event::TouchPhase::Ended => PointerPhase::Up,
+        winit::event::TouchPhase::Cancelled => PointerPhase::Cancel,
+    };
+    identified_pointer_event(touch.id, phase, touch.location, metrics)
+}
 /// Incular's scroll convention is positive Y increasing a vertical
 /// [`incular_widgets::ScrollController`] offset (content moves upward). Winit
 /// already reports both wheel forms in the platform's intended direction, so
@@ -240,6 +268,26 @@ mod tests {
             m.logical_to_physical(Offset::new(50., 20.)),
             Offset::new(75., 30.)
         );
+    }
+    #[test]
+    fn identified_pointer_conversion_preserves_contact_identity() {
+        let metrics = WindowMetrics::new(PhysicalSize::new(200, 100), 2.0);
+        let PlatformEvent::Input(InputEvent::PointerWithId {
+            pointer,
+            phase,
+            position,
+        }) = identified_pointer_event(
+            42,
+            PointerPhase::Down,
+            winit::dpi::PhysicalPosition::new(50., 30.),
+            metrics,
+        )
+        else {
+            unreachable!()
+        };
+        assert_eq!(pointer, 42);
+        assert_eq!(phase, PointerPhase::Down);
+        assert_eq!(position, Offset::new(25., 15.));
     }
     #[test]
     fn scroll_forms_preserve_direction_and_fractional_pixels() {

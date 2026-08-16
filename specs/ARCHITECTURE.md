@@ -37,10 +37,10 @@ instance, surface, adapter/device/queue, static unit-rectangle mesh, retained
 pipeline, and geometrically-grown instance buffer. Layout uses logical pixels;
 the renderer applies scale while converting instances to physical/NDC space.
 
-Current dependency DAG: `core -> {layout, painting, animation, assets,
-platform}; {core, layout, painting} -> widgets; widgets -> accessibility;
-{widgets, layout, painting, core, accessibility, animation, assets} -> runtime;
-{painting, core, platform, assets} -> wgpu; {platform, runtime, wgpu} -> linux; all
+Current dependency DAG: `core -> {layout, rendering, animation, assets,
+platform}; {core, layout, rendering} -> widgets; widgets -> accessibility;
+{widgets, layout, rendering, core, accessibility, animation, assets} -> runtime;
+{rendering, core, platform, assets} -> wgpu; {platform, runtime, wgpu} -> linux; all
 public-facing crates -> incular`.
 
 ## Declarative application model
@@ -136,7 +136,7 @@ submitted frames.
 
 ## Retained compositor, scrolling, and animation
 
-`incular-painting::LayerTree` is a renderer-independent generational arena of
+`incular-rendering::LayerTree` is a renderer-independent generational arena of
 `Picture`, `Transform`, axis-aligned `ClipRect`, and `Opacity` layers. A picture
 owns an `Arc<DisplayList>` and conservative local bounds. Render objects create
 stable transform, picture, and (when requested) opacity layers at mount;
@@ -241,7 +241,7 @@ forcing one million semantic nodes.
 
 ## Accessibility semantics
 
-Accessibility is a retained, renderer-independent tree owned beside the
+`incular-semantics` owns the retained, renderer-independent tree beside the
 Element/RenderObject arenas. `SemanticNodeId` is generational and is mapped to
 the persistent Element that contributes it; compatible reconciliation preserves
 the mapping, while unmount removes both node and action target. Semantics are
@@ -264,7 +264,8 @@ the existing controller, materialize it, and then focus its new semantic node.
 Semantic actions are owned requests (`Focus`, `Activate`, `SetText`,
 `SetSelection`, and scroll actions) resolved through IDs by Runtime. They use
 the same focus owner, editing controller, callbacks, and ScrollController as
-keyboard/pointer input. Text selection uses the editor's UTF-8 byte offsets;
+keyboard/pointer input. `incular-accessibility` owns the immutable snapshot and
+action-request adapter contract for native bridges. Text selection uses the editor's UTF-8 byte offsets;
 IME preedit is not reported as committed semantic text. Caret blink changes no
 semantic state. The visual overlay scrollbar is intentionally not an additional
 semantic control: its ScrollView/List exposes the scrolling actions.
@@ -339,7 +340,7 @@ bounds, world bounds, and active clips for CPU-side coordinate diagnostics.
 
 ## Vector paint and gradients
 
-`incular-painting` owns one renderer-neutral `Brush` model: `Solid`,
+`incular-rendering` owns one renderer-neutral `Brush` model: `Solid`,
 `LinearGradient`, and `RadialGradient`. `GradientStops` clamps finite offsets to
 `0..=1`, stable-sorts them, makes empty input transparent, and duplicates a
 single stop. The immutable normalized stop set has a stable `GradientId`.
