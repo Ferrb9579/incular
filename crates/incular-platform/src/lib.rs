@@ -7,6 +7,290 @@ use incular_core::{
     ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset, PointerPhase, Size,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+use std::fmt;
+
+/// Stable identity for an Incular window.
+///
+/// A [`WindowId`] is deliberately unrelated to a native window handle. Window
+/// registries allocate an index and advance its generation whenever that slot
+/// is reused, so a command retained for a closed window cannot affect the next
+/// window occupying the same slot.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowId {
+    index: u32,
+    generation: u32,
+}
+
+impl WindowId {
+    /// Creates an ID from a registry slot and its current generation.
+    ///
+    /// This is public for platform/runtime registries, not for representing a
+    /// native ID. Application code normally obtains IDs from `WindowHandle`.
+    #[must_use]
+    pub const fn from_parts(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    /// Returns the stable slot index selected by the owning window registry.
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.index
+    }
+
+    /// Returns the slot generation used to reject stale handles and commands.
+    #[must_use]
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
+}
+
+impl fmt::Debug for WindowId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "WindowId({}, {})", self.index, self.generation)
+    }
+}
+
+impl fmt::Display for WindowId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Window#{}@{}", self.index + 1, self.generation)
+    }
+}
+
+/// The portable subset of fullscreen behaviour supported by Incular.
+///
+/// Borderless fullscreen intentionally avoids exposing platform monitor/video
+/// mode handles. Native adapters may use the monitor containing the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fullscreen {
+    Borderless,
+}
+
+/// Configuration used when creating an Incular desktop window.
+///
+/// All sizes are logical pixels. `transparent` is a request: native adapters
+/// may fall back when transparent windows are unavailable on the host.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowOptions {
+    pub title: String,
+    pub initial_logical_size: Size,
+    pub minimum_logical_size: Option<Size>,
+    pub maximum_logical_size: Option<Size>,
+    pub resizable: bool,
+    pub visible: bool,
+    pub decorations: bool,
+    pub transparent: bool,
+    pub maximized: bool,
+    pub fullscreen: Option<Fullscreen>,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self {
+            title: "Incular".to_owned(),
+            initial_logical_size: Size::new(800.0, 600.0),
+            minimum_logical_size: None,
+            maximum_logical_size: None,
+            resizable: true,
+            visible: true,
+            decorations: true,
+            transparent: false,
+            maximized: false,
+            fullscreen: None,
+        }
+    }
+}
+
+impl WindowOptions {
+    /// Creates options with the documented desktop defaults and a chosen title.
+    #[must_use]
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Checks size constraints before a native adapter attempts window creation.
+    pub fn validate(&self) -> Result<(), WindowOptionsError> {
+        if !is_positive_size(self.initial_logical_size) {
+            return Err(WindowOptionsError::InvalidInitialSize);
+        }
+        if self
+            .minimum_logical_size
+            .is_some_and(|size| !is_positive_size(size))
+        {
+            return Err(WindowOptionsError::InvalidMinimumSize);
+        }
+        if self
+            .maximum_logical_size
+            .is_some_and(|size| !is_positive_size(size))
+        {
+            return Err(WindowOptionsError::InvalidMaximumSize);
+        }
+        if let (Some(minimum), Some(maximum)) =
+            (self.minimum_logical_size, self.maximum_logical_size)
+        {
+            if minimum.width > maximum.width || minimum.height > maximum.height {
+                return Err(WindowOptionsError::MinimumExceedsMaximum);
+            }
+        }
+        if self
+            .minimum_logical_size
+            .is_some_and(|minimum| !size_is_at_least(self.initial_logical_size, minimum))
+        {
+            return Err(WindowOptionsError::InitialSizeBelowMinimum);
+        }
+        if self
+            .maximum_logical_size
+            .is_some_and(|maximum| !size_is_at_least(maximum, self.initial_logical_size))
+        {
+            return Err(WindowOptionsError::InitialSizeAboveMaximum);
+        }
+        Ok(())
+    }
+}
+
+fn is_positive_size(size: Size) -> bool {
+    size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0
+}
+
+fn size_is_at_least(left: Size, right: Size) -> bool {
+    left.width >= right.width && left.height >= right.height
+}
+
+/// A contradiction in portable window-creation constraints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowOptionsError {
+    InvalidInitialSize,
+    InvalidMinimumSize,
+    InvalidMaximumSize,
+    MinimumExceedsMaximum,
+    InitialSizeBelowMinimum,
+    InitialSizeAboveMaximum,
+}
+
+impl fmt::Display for WindowOptionsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let description = match self {
+            Self::InvalidInitialSize => "initial logical size must be finite and positive",
+            Self::InvalidMinimumSize => "minimum logical size must be finite and positive",
+            Self::InvalidMaximumSize => "maximum logical size must be finite and positive",
+            Self::MinimumExceedsMaximum => {
+                "minimum logical size cannot exceed maximum logical size"
+            }
+            Self::InitialSizeBelowMinimum => {
+                "initial logical size cannot be smaller than the minimum logical size"
+            }
+            Self::InitialSizeAboveMaximum => {
+                "initial logical size cannot be larger than the maximum logical size"
+            }
+        };
+        formatter.write_str(description)
+    }
+}
+
+impl std::error::Error for WindowOptionsError {}
+
+/// A UI-thread operation requested for one Incular window.
+///
+/// Commands are data only: Tokio workers can enqueue them through the runtime
+/// UI dispatcher, while native adapters apply them from their event-loop turn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowCommand {
+    pub window_id: WindowId,
+    pub operation: WindowOperation,
+}
+
+impl WindowCommand {
+    #[must_use]
+    pub const fn new(window_id: WindowId, operation: WindowOperation) -> Self {
+        Self {
+            window_id,
+            operation,
+        }
+    }
+}
+
+/// Operations available through an Incular `WindowHandle`.
+///
+/// `Close` is an accepted application close operation. A native close gesture
+/// is reported first as [`PlatformEvent::CloseRequested`] in a [`WindowEvent`]
+/// so applications can accept or cancel it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WindowOperation {
+    SetTitle(String),
+    SetVisible(bool),
+    SetLogicalSize(Size),
+    RequestFocus,
+    RequestRedraw,
+    Close,
+}
+
+/// Native lifecycle state for one window, independent of application lifecycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowLifecycle {
+    Creating,
+    Visible,
+    Hidden,
+    Focused,
+    Unfocused,
+    Closing,
+    Closed,
+}
+
+/// A native event routed to one normalized Incular window.
+///
+/// Existing [`PlatformEvent`] values remain unchanged and are carried by the
+/// `Platform` variant. This lets a single-window runtime keep using
+/// `PlatformEvent` while a multi-window runtime associates every input,
+/// metrics update, and close request with a [`WindowId`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowEvent {
+    pub window_id: WindowId,
+    pub kind: WindowEventKind,
+}
+
+impl WindowEvent {
+    #[must_use]
+    pub const fn new(window_id: WindowId, kind: WindowEventKind) -> Self {
+        Self { window_id, kind }
+    }
+
+    #[must_use]
+    pub fn platform(window_id: WindowId, event: PlatformEvent) -> Self {
+        Self::new(window_id, WindowEventKind::Platform(event))
+    }
+
+    #[must_use]
+    pub const fn lifecycle(window_id: WindowId, lifecycle: WindowLifecycle) -> Self {
+        Self::new(window_id, WindowEventKind::Lifecycle(lifecycle))
+    }
+
+    #[must_use]
+    pub const fn redraw_requested(window_id: WindowId) -> Self {
+        Self::new(window_id, WindowEventKind::RedrawRequested)
+    }
+
+    /// Returns the wrapped legacy event when this is a platform event.
+    #[must_use]
+    pub fn platform_event(&self) -> Option<&PlatformEvent> {
+        match &self.kind {
+            WindowEventKind::Platform(event) => Some(event),
+            WindowEventKind::Lifecycle(_) | WindowEventKind::RedrawRequested => None,
+        }
+    }
+}
+
+/// Window event data that is not part of the legacy [`PlatformEvent`] stream.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WindowEventKind {
+    /// Existing input, metrics, application lifecycle, or close-request data.
+    Platform(PlatformEvent),
+    /// A state transition of the native window itself.
+    Lifecycle(WindowLifecycle),
+    /// The native surface is ready for the target window to present a frame.
+    RedrawRequested,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PhysicalSize {
@@ -65,7 +349,19 @@ impl WindowMetrics {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlatformEvent {
     Input(InputEvent),
+    Metrics(WindowMetrics),
+    Lifecycle(PlatformLifecycle),
     CloseRequested,
+}
+
+/// Lifecycle states native adapters can report without depending on the
+/// runtime crate. Adapters may emit only the states their OS exposes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlatformLifecycle {
+    Active,
+    Inactive,
+    Suspended,
+    Stopping,
 }
 /// Platform clipboard boundary. Backends replace this in-memory implementation
 /// with their native clipboard bridge without leaking native types into widgets.
@@ -259,6 +555,90 @@ pub fn ime_event(event: winit::event::Ime) -> Option<PlatformEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_id_generation_distinguishes_reused_slots() {
+        let closed = WindowId::from_parts(7, 2);
+        let replacement = WindowId::from_parts(7, 3);
+
+        assert_ne!(closed, replacement);
+        assert_eq!(replacement.index(), 7);
+        assert_eq!(replacement.generation(), 3);
+        assert_eq!(replacement.to_string(), "Window#8@3");
+    }
+
+    #[test]
+    fn window_options_validate_portable_size_constraints() {
+        let mut options = WindowOptions::new("Inspector");
+        options.initial_logical_size = Size::new(800.0, 600.0);
+        options.minimum_logical_size = Some(Size::new(400.0, 300.0));
+        options.maximum_logical_size = Some(Size::new(1_600.0, 1_200.0));
+        assert_eq!(options.validate(), Ok(()));
+
+        options.minimum_logical_size = Some(Size::new(1_800.0, 300.0));
+        assert_eq!(
+            options.validate(),
+            Err(WindowOptionsError::MinimumExceedsMaximum)
+        );
+
+        options.minimum_logical_size = Some(Size::new(400.0, 300.0));
+        options.initial_logical_size = Size::ZERO;
+        assert_eq!(
+            options.validate(),
+            Err(WindowOptionsError::InvalidInitialSize)
+        );
+    }
+
+    #[test]
+    fn initial_size_must_respect_declared_bounds() {
+        let options = WindowOptions {
+            initial_logical_size: Size::new(300.0, 300.0),
+            minimum_logical_size: Some(Size::new(400.0, 200.0)),
+            ..WindowOptions::default()
+        };
+        assert_eq!(
+            options.validate(),
+            Err(WindowOptionsError::InitialSizeBelowMinimum)
+        );
+
+        let options = WindowOptions {
+            initial_logical_size: Size::new(300.0, 300.0),
+            maximum_logical_size: Some(Size::new(200.0, 400.0)),
+            ..WindowOptions::default()
+        };
+        assert_eq!(
+            options.validate(),
+            Err(WindowOptionsError::InitialSizeAboveMaximum)
+        );
+    }
+
+    #[test]
+    fn command_preserves_target_and_operation_without_native_data() {
+        let window_id = WindowId::from_parts(3, 1);
+        let command = WindowCommand::new(
+            window_id,
+            WindowOperation::SetLogicalSize(Size::new(640.0, 480.0)),
+        );
+
+        assert_eq!(command.window_id, window_id);
+        assert_eq!(
+            command.operation,
+            WindowOperation::SetLogicalSize(Size::new(640.0, 480.0))
+        );
+    }
+
+    #[test]
+    fn window_events_preserve_legacy_platform_events_with_window_identity() {
+        let id = WindowId::from_parts(1, 0);
+        let event = WindowEvent::platform(id, PlatformEvent::CloseRequested);
+        assert_eq!(event.window_id, id);
+        assert_eq!(event.platform_event(), Some(&PlatformEvent::CloseRequested));
+        assert_eq!(
+            WindowEvent::lifecycle(id, WindowLifecycle::Focused).kind,
+            WindowEventKind::Lifecycle(WindowLifecycle::Focused)
+        );
+    }
+
     #[test]
     fn dpi_round_trip_supports_fractional_scales() {
         let m = WindowMetrics::new(PhysicalSize::new(225, 150), 1.5);

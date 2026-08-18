@@ -23,3 +23,4 @@ incular-animation = { workspace = true }
 incular-assets = { workspace = true }
 incular-image = { workspace = true }
 unicode-segmentation = { workspace = true }
+serde_json = { workspace = true }

@@ -6,6 +6,7 @@
 
 mod alignment;
 mod constraints;
+mod environment;
 mod insets;
 
 pub use alignment::{
@@ -14,4 +15,5 @@ pub use alignment::{
     WrapCrossAlignment,
 };
 pub use constraints::{ConstraintError, Constraints};
+pub use environment::{Brightness, InputCapabilities, RuntimeEnvironment};
 pub use insets::EdgeInsets;

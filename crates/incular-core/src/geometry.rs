@@ -130,6 +130,181 @@ impl Color {
             self.alpha as f32 / 255.0,
         ]
     }
+
+    /// Converts this sRGB color to the HSL representation used by style and
+    /// theme code. Hue is expressed in degrees and alpha in `0.0..=1.0`.
+    #[must_use]
+    pub fn to_hsl(self) -> HslColor {
+        HslColor::from_color(self)
+    }
+
+    /// Converts this sRGB color to HSV. Hue is expressed in degrees and alpha
+    /// in `0.0..=1.0`.
+    #[must_use]
+    pub fn to_hsv(self) -> HsvColor {
+        HsvColor::from_color(self)
+    }
+}
+
+/// Hue, saturation, lightness, and opacity in an sRGB color space.
+///
+/// Hue is normalized to `0.0..360.0`; saturation, lightness, and alpha are
+/// normalized to `0.0..=1.0`. Constructors accept non-finite values but
+/// sanitize them, keeping configuration values safe to use in rendering.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HslColor {
+    pub hue: f32,
+    pub saturation: f32,
+    pub lightness: f32,
+    pub alpha: f32,
+}
+
+impl HslColor {
+    #[must_use]
+    pub fn new(hue: f32, saturation: f32, lightness: f32, alpha: f32) -> Self {
+        Self {
+            hue: normalize_hue(hue),
+            saturation: unit(saturation),
+            lightness: unit(lightness),
+            alpha: unit(alpha),
+        }
+    }
+
+    #[must_use]
+    pub fn from_color(color: Color) -> Self {
+        let r = color.red as f32 / 255.0;
+        let g = color.green as f32 / 255.0;
+        let b = color.blue as f32 / 255.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let delta = max - min;
+        let lightness = (max + min) * 0.5;
+        let saturation = if delta <= f32::EPSILON {
+            0.0
+        } else {
+            delta / (1.0 - (2.0 * lightness - 1.0).abs())
+        };
+        Self::new(
+            hue_from_rgb(r, g, b, max, delta),
+            saturation,
+            lightness,
+            color.alpha as f32 / 255.0,
+        )
+    }
+
+    #[must_use]
+    pub fn to_color(self) -> Color {
+        let h = normalize_hue(self.hue) / 360.0;
+        let saturation = unit(self.saturation);
+        let lightness = unit(self.lightness);
+        let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+        let (r, g, b) = rgb_from_hue_chroma(h, chroma, lightness - chroma * 0.5);
+        color_from_unit(r, g, b, self.alpha)
+    }
+}
+
+/// Hue, saturation, value, and opacity in an sRGB color space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HsvColor {
+    pub hue: f32,
+    pub saturation: f32,
+    pub value: f32,
+    pub alpha: f32,
+}
+
+impl HsvColor {
+    #[must_use]
+    pub fn new(hue: f32, saturation: f32, value: f32, alpha: f32) -> Self {
+        Self {
+            hue: normalize_hue(hue),
+            saturation: unit(saturation),
+            value: unit(value),
+            alpha: unit(alpha),
+        }
+    }
+
+    #[must_use]
+    pub fn from_color(color: Color) -> Self {
+        let r = color.red as f32 / 255.0;
+        let g = color.green as f32 / 255.0;
+        let b = color.blue as f32 / 255.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let delta = max - min;
+        Self::new(
+            hue_from_rgb(r, g, b, max, delta),
+            if max <= f32::EPSILON {
+                0.0
+            } else {
+                delta / max
+            },
+            max,
+            color.alpha as f32 / 255.0,
+        )
+    }
+
+    #[must_use]
+    pub fn to_color(self) -> Color {
+        let value = unit(self.value);
+        let chroma = value * unit(self.saturation);
+        let (r, g, b) =
+            rgb_from_hue_chroma(normalize_hue(self.hue) / 360.0, chroma, value - chroma);
+        color_from_unit(r, g, b, self.alpha)
+    }
+}
+
+fn unit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn normalize_hue(hue: f32) -> f32 {
+    if hue.is_finite() {
+        hue.rem_euclid(360.0)
+    } else {
+        0.0
+    }
+}
+
+fn hue_from_rgb(r: f32, g: f32, b: f32, max: f32, delta: f32) -> f32 {
+    if delta <= f32::EPSILON {
+        return 0.0;
+    }
+    let hue = if (max - r).abs() <= f32::EPSILON {
+        ((g - b) / delta).rem_euclid(6.0)
+    } else if (max - g).abs() <= f32::EPSILON {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    };
+    normalize_hue(hue * 60.0)
+}
+
+fn rgb_from_hue_chroma(hue: f32, chroma: f32, offset: f32) -> (f32, f32, f32) {
+    let segment = hue * 6.0;
+    let x = chroma * (1.0 - (segment.rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = if segment < 1.0 {
+        (chroma, x, 0.0)
+    } else if segment < 2.0 {
+        (x, chroma, 0.0)
+    } else if segment < 3.0 {
+        (0.0, chroma, x)
+    } else if segment < 4.0 {
+        (0.0, x, chroma)
+    } else if segment < 5.0 {
+        (x, 0.0, chroma)
+    } else {
+        (chroma, 0.0, x)
+    };
+    (r + offset, g + offset, b + offset)
+}
+
+fn color_from_unit(red: f32, green: f32, blue: f32, alpha: f32) -> Color {
+    let byte = |value: f32| (unit(value) * 255.0).round() as u8;
+    Color::rgba(byte(red), byte(green), byte(blue), byte(alpha))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -191,5 +366,46 @@ impl BitOr for DirtyFlags {
 
     fn bitor(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hsl_primary_colors_and_opacity_convert_to_srgb() {
+        assert_eq!(
+            HslColor::new(0.0, 1.0, 0.5, 1.0).to_color(),
+            Color::rgba(255, 0, 0, 255)
+        );
+        assert_eq!(
+            HslColor::new(120.0, 1.0, 0.5, 0.5).to_color(),
+            Color::rgba(0, 255, 0, 128)
+        );
+        assert_eq!(
+            HslColor::new(240.0, 1.0, 0.5, 1.0).to_color(),
+            Color::rgba(0, 0, 255, 255)
+        );
+    }
+
+    #[test]
+    fn hsv_round_trip_preserves_srgb_bytes() {
+        for color in [
+            Color::rgba(12, 190, 73, 64),
+            Color::rgba(255, 128, 0, 255),
+            Color::rgba(33, 33, 33, 0),
+        ] {
+            assert_eq!(color.to_hsv().to_color(), color);
+        }
+    }
+
+    #[test]
+    fn hue_and_channels_are_sanitized() {
+        let hsl = HslColor::new(-30.0, 4.0, -1.0, f32::NAN);
+        assert_eq!(hsl.hue, 330.0);
+        assert_eq!(hsl.saturation, 1.0);
+        assert_eq!(hsl.lightness, 0.0);
+        assert_eq!(hsl.alpha, 0.0);
     }
 }

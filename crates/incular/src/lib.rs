@@ -24,20 +24,30 @@ pub use incular_widgets as widgets;
 /// Common application-facing types for the initial native UI slice.
 pub mod prelude {
     pub use incular_config::{
-        Alignment, AlignmentDirectional, Axis, AxisDirection, Constraints, CrossAxisAlignment,
-        EdgeInsets, FlexFit, MainAxisAlignment, MainAxisSize, TextDirection, VerticalDirection,
-        WrapAlignment, WrapCrossAlignment,
+        Alignment, AlignmentDirectional, Axis, AxisDirection, Brightness, Constraints,
+        CrossAxisAlignment, EdgeInsets, FlexFit, InputCapabilities, MainAxisAlignment,
+        MainAxisSize, RuntimeEnvironment, TextDirection, VerticalDirection, WrapAlignment,
+        WrapCrossAlignment,
     };
     pub use incular_core::{
-        Color, ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset, PointerPhase, Size,
+        Color, HslColor, HsvColor, ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset,
+        PointerPhase, RestorationKey, RestorationKeyError, RestorationScope, Size,
     };
     pub use incular_image::{
         DecodedImage, ImageCache, ImageCacheDiagnostics, ImageError, ImageHandle, ImageId,
         ImageSource,
     };
     pub use incular_navigation::{
-        BottomSheet, Dialog, ModalBarrier, Navigator, Overlay, OverlayEntry, Page, Route,
-        RouteRegistry, RouteTransition,
+        BottomSheet, Dialog, ModalBarrier, NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
+        NavigationRestoreReport, Navigator, NavigatorSnapshot, Overlay, OverlayEntry, Page,
+        RestorableNavigationError, RestorableRoute, RestorableRouteBuildError, RestorableRouteId,
+        RestorableRouteIdError, RestorableRouteRegistrationError, Route, RouteRegistry,
+        RouteScopeKey, RouteScopeKeyError, RouteTransition,
+    };
+    #[cfg(feature = "desktop")]
+    pub use incular_platform::{
+        Fullscreen, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
+        WindowOperation, WindowOptions, WindowOptionsError,
     };
     pub use incular_rendering::{
         BlendMode, Border, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii, Decoration,
@@ -46,7 +56,14 @@ pub mod prelude {
         PathBuilder, PathId, RRect, RadialGradient, Stroke, blend_premultiplied,
     };
     pub use incular_runtime::{
-        Application, BuildContext, EditingDiagnostics, FocusDiagnostics, Runtime, Signal,
+        AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
+        AsyncValue, BuildContext, EditingDiagnostics, FileRestorationStore, FocusDiagnostics,
+        InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, Restorable,
+        RestorableWindowFactory, RestorationConfig, RestorationDiagnostics, RestorationHandle,
+        RestorationMigration, RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics,
+        RuntimeErrorReport, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
+        UiDispatcher, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
+        WindowRestorationId,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,
@@ -57,15 +74,17 @@ pub mod prelude {
         TextStyle, WidgetSpan,
     };
     pub use incular_widgets::{
-        ActionId, Align, AspectRatio, Baseline, Blend, Blur, BlurController, Button, Center,
-        ColorFilterController, ColorFiltered, ColorMatrixController, Column, ConstrainedBox,
-        CustomPaint, CustomScrollView, DecoratedBox, DragCallbacks, DragEndDetails,
-        DragGestureDetector, DragUpdateDetails, DropShadow, DropShadowController, Effects,
-        FadeTransition, Flex, FocusNode, FractionallySizedBox, GestureCallbacks, GestureDetector,
-        GestureRegion, GridView, Icon, Image, ImageFit, ImageRepeat, Key, ListView, Offstage,
-        Opacity, OpacityController, Padding, PageController, PageView, PathView, PointerEvent,
-        RepaintBoundary, Row, ScaleGestureDetector, ScaleUpdateDetails, ScrollController,
-        ScrollView, ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, Shortcuts,
+        ActionId, Actions, Align, AspectRatio, Autocomplete, AutovalidateMode, Baseline, Blend,
+        Blur, BlurController, Button, Center, ColorFilterController, ColorFiltered,
+        ColorMatrixController, ColoredBox, Column, Command, ConstrainedBox, CustomPaint,
+        CustomScrollView, DecoratedBox, DragCallbacks, DragEndDetails, DragGestureDetector,
+        DragUpdateDetails, DropShadow, DropShadowController, Effects, FadeTransition, Flex,
+        FocusManager, FocusNode, Form, FormField, FormFieldId, FractionallySizedBox,
+        GestureCallbacks, GestureDetector, GestureRegion, GridView, Icon, Image, ImageFit,
+        ImageRepeat, Key, ListView, MouseRegion, Offstage, Opacity, OpacityController, Padding,
+        PageController, PageView, PathView, PointerEvent, RepaintBoundary, Row, SafeArea,
+        ScaleGestureDetector, ScaleUpdateDetails, ScrollController, ScrollView,
+        ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, Semantics, Shortcuts,
         SizedBox, SlideTransition, Sliver, SliverAppBar, SliverBox, SliverGrid, SliverList,
         SliverPadding, SliverPersistentHeader, Stack, Table, Text, TextArea, TextEditingController,
         TextEditingValue, TextField, TextRange, TextSelection, Transition, TranslationController,

@@ -14,6 +14,9 @@ path = "src/lib.rs"
 name = "animation"
 path = "../../examples/animation.rs"
 [[example]]
+name = "async_runtime"
+path = "../../examples/async_runtime.rs"
+[[example]]
 name = "color_effects"
 path = "../../examples/color_effects.rs"
 [[example]]
@@ -26,6 +29,9 @@ path = "../../examples/counter.rs"
 name = "effects"
 path = "../../examples/effects.rs"
 [[example]]
+name = "environment"
+path = "../../examples/environment.rs"
+[[example]]
 name = "gesture_gallery"
 path = "../../examples/gesture_gallery.rs"
 [[example]]
@@ -34,6 +40,9 @@ path = "../../examples/images.rs"
 [[example]]
 name = "layout_gallery"
 path = "../../examples/layout_gallery.rs"
+[[example]]
+name = "multi_window"
+path = "../../examples/multi_window.rs"
 [[example]]
 name = "opacity"
 path = "../../examples/opacity.rs"
@@ -49,6 +58,9 @@ path = "../../examples/scroll.rs"
 [[example]]
 name = "responsive_layout"
 path = "../../examples/responsive_layout.rs"
+[[example]]
+name = "restoration"
+path = "../../examples/restoration.rs"
 [[example]]
 name = "semantics_gallery"
 path = "../../examples/semantics_gallery.rs"
@@ -95,3 +107,7 @@ incular-widgets = { workspace = true }
 incular-linux = { workspace = true, optional = true }
 incular-windows = { workspace = true, optional = true }
 incular-macos = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }

@@ -64,3 +64,12 @@ arboard = "3.6"
 fontdue = "0.9"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 lyon_tessellation = "1.0"
+tokio = { version = "1.53", features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.27"
+# Keep the platform-native adapter at the desktop boundary.  The `tokio`
+# feature selects AccessKit's Unix Tokio integration instead of its default
+# async-io executor, matching Incular's runtime without creating another one.
+accesskit = "0.24.1"
+accesskit_winit = { version = "0.33.2", default-features = false, features = ["rwh_06", "tokio"] }

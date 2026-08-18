@@ -1,8 +1,28 @@
 # incular-wgpu
 
-Owns Incular's native `wgpu` surface, retained rectangle/text/image pipelines, static
-unit quad, and geometrically grown instance buffers. It consumes ordered
-renderer-neutral display lists without leaking `wgpu` types upstream.
+`SharedGpuContext` owns an application's one `wgpu` instance, adapter, device,
+queue, immutable target-format pipeline bundles, shared image/gradient
+textures, and glyph atlas storage. Each `WgpuRenderer` owns one `WindowGpuState`: its native
+surface/configuration, physical presentation state, stencil attachment,
+dynamic instance buffers, and retained compositor/effect caches. This lets
+multiple desktop windows share one GPU device without leaking Winit types
+through Incular's public API.
+
+`WgpuRenderer::new` remains the single-window convenience constructor.
+Multi-window platform code creates one `SharedGpuContext` from the first
+window's normalized `RawWindowHandles`, then calls
+`SharedGpuContext::create_renderer` (or `WgpuRenderer::new_with_shared`) for
+each later window. A zero-sized surface is deliberately not configured or
+presented. Surface loss and resize are window-local; device loss is a future
+shared-context generation boundary.
+
+`SharedGpuDiagnostics` and `WindowGpuPresentation` expose native-free
+ownership diagnostics for headless tests. In particular, image and matching
+DPI-specific glyph resource identities are context-wide, while presentation
+generation and compositor caches remain per window.
+Pipelines and gradient bind groups are cached by target format, so windows
+with an unusual surface format receive a compatible variant without rebuilding
+the common-format path every frame.
 
 Text shaping remains in `incular-text`. Layout positions, advances, line
 metrics, and font sizes are logical pixels. This crate turns each logical font

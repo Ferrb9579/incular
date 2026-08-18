@@ -7,7 +7,7 @@
 use std::{
     cell::Cell,
     collections::HashMap,
-    rc::Rc,
+    rc::{Rc, Weak},
     time::{Duration, Instant},
 };
 
@@ -148,10 +148,44 @@ impl MouseRegion {
     }
 }
 
-/// Shared focus state usable by controls that are rebuilt often.
-#[derive(Clone, Default)]
+#[derive(Default)]
+struct FocusState {
+    focused: Cell<bool>,
+    can_request_focus: Cell<bool>,
+}
+
+/// Shared focus handle usable by controls that are rebuilt often.
+///
+/// For exclusive traversal use a [`FocusManager`]; calling
+/// [`Self::request_focus`] directly is retained for standalone controls.
+#[derive(Clone)]
 pub struct FocusNode {
-    focused: Rc<Cell<bool>>,
+    state: Rc<FocusState>,
+}
+impl PartialEq for FocusNode {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+}
+impl Eq for FocusNode {}
+impl std::fmt::Debug for FocusNode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FocusNode")
+            .field("has_focus", &self.has_focus())
+            .field("can_request_focus", &self.can_request_focus())
+            .finish()
+    }
+}
+impl Default for FocusNode {
+    fn default() -> Self {
+        Self {
+            state: Rc::new(FocusState {
+                focused: Cell::new(false),
+                can_request_focus: Cell::new(true),
+            }),
+        }
+    }
 }
 impl FocusNode {
     #[must_use]
@@ -159,14 +193,119 @@ impl FocusNode {
         Self::default()
     }
     pub fn request_focus(&self) {
-        self.focused.set(true);
+        if self.can_request_focus() {
+            self.state.focused.set(true);
+        }
     }
     pub fn unfocus(&self) {
-        self.focused.set(false);
+        self.state.focused.set(false);
     }
     #[must_use]
     pub fn has_focus(&self) -> bool {
-        self.focused.get()
+        self.state.focused.get()
+    }
+    /// Excludes or includes this node in manager-driven traversal.
+    pub fn set_can_request_focus(&self, can_request_focus: bool) {
+        self.state.can_request_focus.set(can_request_focus);
+        if !can_request_focus {
+            self.unfocus();
+        }
+    }
+    #[must_use]
+    pub fn can_request_focus(&self) -> bool {
+        self.state.can_request_focus.get()
+    }
+}
+
+/// Owns a single focus scope.  Register nodes in visual traversal order, then
+/// use [`Self::focus_next`] for Tab or Shift+Tab semantics.  The manager is
+/// weakly registered, so unmounted/rebuilt controls cannot leak focus entries.
+#[derive(Default)]
+pub struct FocusManager {
+    nodes: Vec<Weak<FocusState>>,
+}
+impl FocusManager {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn register(&mut self, node: &FocusNode) {
+        self.prune();
+        if !self.nodes.iter().any(|known| {
+            known
+                .upgrade()
+                .is_some_and(|known| Rc::ptr_eq(&known, &node.state))
+        }) {
+            self.nodes.push(Rc::downgrade(&node.state));
+        }
+    }
+    pub fn unregister(&mut self, node: &FocusNode) {
+        self.nodes.retain(|known| {
+            known
+                .upgrade()
+                .is_some_and(|known| !Rc::ptr_eq(&known, &node.state))
+        });
+        node.unfocus();
+    }
+    /// Gives this node exclusive focus within the scope.
+    #[must_use]
+    pub fn request_focus(&mut self, node: &FocusNode) -> bool {
+        self.register(node);
+        if !node.can_request_focus() {
+            return false;
+        }
+        for known in self.nodes.iter().filter_map(Weak::upgrade) {
+            known.focused.set(false);
+        }
+        node.state.focused.set(true);
+        true
+    }
+    pub fn clear_focus(&mut self) {
+        for node in self.nodes.iter().filter_map(Weak::upgrade) {
+            node.focused.set(false);
+        }
+        self.prune();
+    }
+    #[must_use]
+    pub fn focused(&mut self) -> Option<FocusNode> {
+        self.prune();
+        self.nodes
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find_map(|state| state.focused.get().then_some(FocusNode { state }))
+    }
+    /// Traverses to the next focusable node.  `reverse` provides Shift+Tab
+    /// behavior and traversal wraps inside this scope.
+    #[must_use]
+    pub fn focus_next(&mut self, reverse: bool) -> Option<FocusNode> {
+        self.prune();
+        let nodes: Vec<_> = self
+            .nodes
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|node| node.can_request_focus.get())
+            .collect();
+        let first = nodes.first()?.clone();
+        let current = nodes.iter().position(|node| node.focused.get());
+        let next = match current {
+            Some(index) if reverse => nodes[(index + nodes.len() - 1) % nodes.len()].clone(),
+            Some(index) => nodes[(index + 1) % nodes.len()].clone(),
+            None if reverse => nodes.last()?.clone(),
+            None => first,
+        };
+        for node in &nodes {
+            node.focused.set(false);
+        }
+        next.focused.set(true);
+        Some(FocusNode { state: next })
+    }
+    #[must_use]
+    pub fn registered_count(&mut self) -> usize {
+        self.prune();
+        self.nodes.len()
+    }
+    fn prune(&mut self) {
+        self.nodes.retain(|node| node.strong_count() > 0);
     }
 }
 
@@ -175,6 +314,50 @@ impl FocusNode {
 pub struct ShortcutKey {
     pub code: KeyCode,
     pub modifiers: Modifiers,
+}
+
+/// A typed command name that can be bound independently from the shortcut
+/// that invokes it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Command(String);
+impl Command {
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+impl From<&str> for Command {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+/// Command-to-callback registry.  It intentionally replaces a deep
+/// Intent/Action inheritance tree with typed command values.
+#[derive(Default)]
+pub struct Actions {
+    actions: HashMap<Command, Rc<dyn Fn()>>,
+}
+impl Actions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn register(&mut self, command: impl Into<Command>, action: impl Fn() + 'static) {
+        self.actions.insert(command.into(), Rc::new(action));
+    }
+    #[must_use]
+    pub fn invoke(&self, command: &Command) -> bool {
+        let Some(action) = self.actions.get(command) else {
+            return false;
+        };
+        action();
+        true
+    }
 }
 impl ShortcutKey {
     #[must_use]
@@ -187,6 +370,7 @@ impl ShortcutKey {
 #[derive(Default)]
 pub struct Shortcuts {
     actions: HashMap<ShortcutKey, Rc<dyn Fn()>>,
+    commands: HashMap<ShortcutKey, Command>,
 }
 impl Shortcuts {
     #[must_use]
@@ -195,6 +379,10 @@ impl Shortcuts {
     }
     pub fn register(&mut self, key: ShortcutKey, action: impl Fn() + 'static) {
         self.actions.insert(key, Rc::new(action));
+    }
+    /// Binds a shortcut to a command registered in [`Actions`].
+    pub fn bind(&mut self, key: ShortcutKey, command: impl Into<Command>) {
+        self.commands.insert(key, command.into());
     }
     pub fn handle(&self, event: KeyEvent) -> bool {
         if !event.pressed {
@@ -208,6 +396,17 @@ impl Shortcuts {
         };
         action();
         true
+    }
+    /// Dispatches a command binding. Direct callback registrations continue to
+    /// use [`Self::handle`] for source compatibility.
+    #[must_use]
+    pub fn handle_actions(&self, event: KeyEvent, actions: &Actions) -> bool {
+        if !event.pressed {
+            return false;
+        }
+        self.commands
+            .get(&ShortcutKey::new(event.code, event.modifiers))
+            .is_some_and(|command| actions.invoke(command))
     }
 }
 
@@ -407,6 +606,49 @@ mod tests {
             repeat: false,
             modifiers: Modifiers::default(),
         }));
+        assert_eq!(count.get(), 1);
+    }
+    #[test]
+    fn focus_manager_keeps_one_owner_and_skips_excluded_nodes() {
+        let first = FocusNode::new();
+        let skipped = FocusNode::new();
+        let last = FocusNode::new();
+        skipped.set_can_request_focus(false);
+        let mut scope = FocusManager::new();
+        for node in [&first, &skipped, &last] {
+            scope.register(node);
+        }
+        assert!(scope.request_focus(&first));
+        assert!(first.has_focus());
+        assert_eq!(scope.focus_next(false), Some(last.clone()));
+        assert!(!first.has_focus());
+        assert!(last.has_focus());
+        assert_eq!(scope.focus_next(true), Some(first.clone()));
+        drop(last);
+        assert_eq!(scope.registered_count(), 2);
+    }
+    #[test]
+    fn shortcuts_can_dispatch_typed_commands() {
+        let count = Rc::new(Cell::new(0));
+        let mut actions = Actions::new();
+        actions.register("save", {
+            let count = count.clone();
+            move || count.set(count.get() + 1)
+        });
+        let mut shortcuts = Shortcuts::new();
+        shortcuts.bind(
+            ShortcutKey::new(KeyCode::KeyA, Modifiers::default()),
+            "save",
+        );
+        assert!(shortcuts.handle_actions(
+            KeyEvent {
+                code: KeyCode::KeyA,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::default(),
+            },
+            &actions,
+        ));
         assert_eq!(count.get(), 1);
     }
     #[test]

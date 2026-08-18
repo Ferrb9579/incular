@@ -13,7 +13,10 @@ use std::{
 
 use incular_animation::AnimationController;
 use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
-use incular_core::{Arena, ArenaId, Color, DirtyFlags, Offset, Rect, Size, Transform};
+use incular_core::{
+    Arena, ArenaId, Color, DirtyFlags, Offset, Rect, RestorationKey, RestorationScope, Size,
+    Transform,
+};
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
 use incular_rendering::{
@@ -115,13 +118,19 @@ pub struct TextEditingValue {
 pub struct TextEditingController {
     state: Rc<RefCell<TextEditingState>>,
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct TextEditingState {
     value: TextEditingValue,
     content_revision: u64,
     visual_revision: u64,
     caret_reset: Option<Instant>,
     preferred_caret_x: Option<f32>,
+    restoration: Option<TextRestoration>,
+}
+#[derive(Clone)]
+struct TextRestoration {
+    scope: RestorationScope,
+    key: RestorationKey,
 }
 impl Default for TextEditingController {
     fn default() -> Self {
@@ -146,6 +155,41 @@ impl TextEditingController {
         Self {
             state: Rc::new(RefCell::new(TextEditingState::default())),
         }
+    }
+    /// Creates an empty editor and restores its committed state, if present.
+    ///
+    /// Restoration is deliberately opt-in. For a non-empty default value,
+    /// construct with [`Self::with_text`] and then call
+    /// [`Self::bind_restoration`]; the restored value replaces that default
+    /// only when a valid snapshot exists.
+    #[must_use]
+    pub fn restored(scope: RestorationScope, key: RestorationKey) -> Self {
+        let controller = Self::new();
+        controller.bind_restoration(scope, key);
+        controller
+    }
+    /// Binds this editor's committed text and selection to a stable value in a
+    /// runtime restoration scope.
+    ///
+    /// The active IME preedit is intentionally neither restored nor persisted:
+    /// it is transient composition state, not declarative application state.
+    /// Binding a second scope replaces the previous binding.
+    pub fn bind_restoration(&self, scope: RestorationScope, key: RestorationKey) {
+        let restored = scope.get_json(&key).and_then(text_editing_value_from_json);
+        let mut state = self.state.borrow_mut();
+        state.restoration = Some(TextRestoration { scope, key });
+        if let Some(value) = restored {
+            state.value = value;
+            state.content_revision += 1;
+            state.visual_revision += 1;
+            state.caret_reset = None;
+            state.preferred_caret_x = None;
+        }
+    }
+    /// Stops persisting subsequent editor mutations without removing the
+    /// already-stored restoration value.
+    pub fn unbind_restoration(&self) {
+        self.state.borrow_mut().restoration = None;
     }
     #[must_use]
     pub fn with_text(text: impl Into<String>) -> Self {
@@ -176,6 +220,8 @@ impl TextEditingController {
             state.value.selection = selection;
             state.visual_revision += 1;
             state.preferred_caret_x = None;
+            drop(state);
+            self.persist_restoration();
         }
     }
     pub fn insert(&self, text: &str) {
@@ -190,6 +236,8 @@ impl TextEditingController {
         state.content_revision += 1;
         state.visual_revision += 1;
         state.preferred_caret_x = None;
+        drop(state);
+        self.persist_restoration();
     }
     pub fn backspace(&self) {
         let mut state = self.state.borrow_mut();
@@ -207,6 +255,8 @@ impl TextEditingController {
         state.content_revision += 1;
         state.visual_revision += 1;
         state.preferred_caret_x = None;
+        drop(state);
+        self.persist_restoration();
     }
     pub fn delete(&self) {
         let mut state = self.state.borrow_mut();
@@ -224,6 +274,8 @@ impl TextEditingController {
         state.content_revision += 1;
         state.visual_revision += 1;
         state.preferred_caret_x = None;
+        drop(state);
+        self.persist_restoration();
     }
     pub fn move_left(&self, extend: bool) {
         self.move_to(false, extend);
@@ -312,6 +364,8 @@ impl TextEditingController {
         };
         state.visual_revision += 1;
         state.preferred_caret_x = None;
+        drop(state);
+        self.persist_restoration();
     }
     fn move_cursor_with_x(&self, target: usize, extend: bool, x: f32) {
         let mut state = self.state.borrow_mut();
@@ -326,6 +380,8 @@ impl TextEditingController {
         };
         state.preferred_caret_x = Some(x);
         state.visual_revision += 1;
+        drop(state);
+        self.persist_restoration();
     }
     fn preferred_caret_x(&self) -> Option<f32> {
         self.state.borrow().preferred_caret_x
@@ -336,7 +392,48 @@ impl TextEditingController {
         state.value = value;
         state.content_revision += 1;
         state.visual_revision += 1;
+        drop(state);
+        self.persist_restoration();
     }
+    fn persist_restoration(&self) {
+        let (restoration, value) = {
+            let state = self.state.borrow();
+            (
+                state.restoration.clone(),
+                text_editing_value_to_json(&state.value),
+            )
+        };
+        if let Some(restoration) = restoration {
+            restoration.scope.set_json(&restoration.key, value);
+        }
+    }
+}
+fn text_editing_value_to_json(value: &TextEditingValue) -> serde_json::Value {
+    serde_json::json!({
+        "text": value.text,
+        "selection": {
+            "base": value.selection.base,
+            "extent": value.selection.extent,
+        },
+    })
+}
+fn text_editing_value_from_json(value: serde_json::Value) -> Option<TextEditingValue> {
+    let object = value.as_object()?;
+    let text = object.get("text")?.as_str()?.to_owned();
+    let selection = object
+        .get("selection")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|selection| {
+            let base = usize::try_from(selection.get("base")?.as_u64()?).ok()?;
+            let extent = usize::try_from(selection.get("extent")?.as_u64()?).ok()?;
+            Some(TextSelection::new(base, extent))
+        })
+        .unwrap_or_else(|| TextSelection::collapsed(text.len()));
+    Some(TextEditingValue {
+        selection: valid_selection(&text, selection),
+        text,
+        ..TextEditingValue::default()
+    })
 }
 impl TextSelection {
     const fn new(base: usize, extent: usize) -> Self {
@@ -814,11 +911,72 @@ pub struct Widget {
     kind: WidgetKind,
     semantics: SemanticProperties,
 }
+
+/// Application-authored semantic metadata for a visual widget that does not
+/// have a more specific built-in semantic role. Incular keeps this data in its
+/// retained `SemanticsTree`; native adapters only project that tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Semantics {
+    pub role: SemanticRole,
+    pub label: Option<String>,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub state: SemanticState,
+    pub actions: Vec<SemanticActionKind>,
+}
+
+impl Semantics {
+    #[must_use]
+    pub fn new(role: SemanticRole) -> Self {
+        Self {
+            role,
+            label: None,
+            value: None,
+            description: None,
+            state: SemanticState::default(),
+            actions: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    #[must_use]
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    #[must_use]
+    pub fn state(mut self, state: SemanticState) -> Self {
+        self.state = state;
+        self
+    }
+
+    #[must_use]
+    pub fn actions(mut self, actions: impl IntoIterator<Item = SemanticActionKind>) -> Self {
+        self.actions = actions.into_iter().collect();
+        self
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SemanticProperties {
     label: Option<String>,
     description: Option<String>,
     hidden: bool,
+    explicit: Option<Semantics>,
+    merge_descendants: bool,
+    block_previous_siblings: bool,
 }
 #[derive(Clone)]
 enum WidgetKind {
@@ -848,6 +1006,7 @@ enum WidgetKind {
         color: Color,
         action: ActionId,
         callback: Option<Rc<dyn Fn()>>,
+        has_callback: bool,
         child: Option<Box<Widget>>,
     },
     Text {
@@ -1396,20 +1555,23 @@ impl PartialEq for WidgetKind {
                     color: b,
                     action: c,
                     callback: d,
-                    child: i,
+                    has_callback: i,
+                    child: j,
                 },
                 Self::Button {
                     size: e,
                     color: f,
                     action: g,
                     callback: h,
-                    child: j,
+                    has_callback: k,
+                    child: l,
                 },
             ) => {
                 a == e
                     && b == f
                     && c == g
-                    && i == j
+                    && i == k
+                    && j == l
                     && match (d, h) {
                         (Some(x), Some(y)) => Rc::ptr_eq(x, y),
                         (None, None) => true,
@@ -1808,6 +1970,7 @@ impl Widget {
                 color,
                 action,
                 callback: None,
+                has_callback: false,
                 child: None,
             },
             semantics: SemanticProperties::default(),
@@ -1818,11 +1981,13 @@ impl Widget {
             WidgetKind::Button {
                 action,
                 callback,
+                has_callback,
                 child,
                 ..
             } => {
                 if let Some(callback) = callback.take() {
                     *action = allocate(callback);
+                    *has_callback = true;
                 }
                 if let Some(child) = child {
                     child.bind_callbacks(allocate);
@@ -2354,10 +2519,35 @@ impl Widget {
         self.semantics.description = Some(description.into());
         self
     }
+    /// Supplies explicit Incular semantic metadata for this visual widget.
+    /// This is useful for icon-only controls, meaningful images, headings,
+    /// dialogs, and custom-painted controls; it never exposes native adapter
+    /// types to application code.
+    #[must_use]
+    pub fn semantics(mut self, semantics: Semantics) -> Self {
+        self.semantics.explicit = Some(semantics);
+        self
+    }
     /// Excludes this widget and its implementation-detail subtree from semantics.
     #[must_use]
     pub fn exclude_semantics(mut self) -> Self {
         self.semantics.hidden = true;
+        self
+    }
+    /// Merges meaningful descendants into one logical accessible node. The
+    /// widget itself must have explicit semantics or a meaningful built-in
+    /// role; descendants are not exposed separately.
+    #[must_use]
+    pub fn merge_semantics(mut self) -> Self {
+        self.semantics.merge_descendants = true;
+        self
+    }
+    /// Suppresses preceding semantic siblings at this stacking level. Use it
+    /// for a modal/dialog region so screen-reader traversal cannot fall through
+    /// to visual content behind the active modal.
+    #[must_use]
+    pub fn block_semantics(mut self) -> Self {
+        self.semantics.block_previous_siblings = true;
         self
     }
     #[must_use]
@@ -3495,6 +3685,7 @@ impl From<Button> for Widget {
                 color: value.color,
                 action: ActionId(0),
                 callback: value.callback,
+                has_callback: false,
                 child: Some(Box::new(label)),
             },
             semantics: SemanticProperties::default(),
@@ -4501,88 +4692,118 @@ impl WidgetTree {
             Some(render) => render,
             None => return,
         };
-        let (role, default_label, value, state, actions) = match &entry.widget.kind {
-            WidgetKind::Button { .. } => (
-                Some(SemanticRole::Button),
-                widget_text(&entry.widget),
-                None,
-                SemanticState {
-                    enabled: true,
-                    focused: render.button_state == ButtonState::Focused,
-                    focusable: true,
-                    ..SemanticState::default()
-                },
-                vec![SemanticActionKind::Focus, SemanticActionKind::Activate],
-            ),
-            WidgetKind::Text { text, .. } => (
-                Some(SemanticRole::Text),
-                Some(text.clone()),
-                None,
-                SemanticState::default(),
-                vec![],
-            ),
-            WidgetKind::TextField {
-                controller,
-                multiline,
-                ..
-            } => {
-                let value = controller.value();
-                (
-                    Some(if *multiline {
-                        SemanticRole::TextArea
-                    } else {
-                        SemanticRole::TextField
-                    }),
+        let (mut role, mut default_label, mut value, mut state, mut actions) =
+            match &entry.widget.kind {
+                WidgetKind::Button { has_callback, .. } => (
+                    Some(SemanticRole::Button),
+                    widget_text(&entry.widget),
                     None,
-                    Some(value.text),
                     SemanticState {
                         enabled: true,
-                        focused: render.focused,
+                        focused: render.button_state == ButtonState::Focused,
                         focusable: true,
-                        editable: true,
-                        multiline: *multiline,
-                        selection: Some(SemanticTextSelection {
-                            base: value.selection.base,
-                            extent: value.selection.extent,
+                        ..SemanticState::default()
+                    },
+                    if *has_callback {
+                        vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+                    } else {
+                        vec![SemanticActionKind::Focus]
+                    },
+                ),
+                WidgetKind::Text { text, .. } => (
+                    Some(SemanticRole::Text),
+                    Some(text.clone()),
+                    None,
+                    SemanticState::default(),
+                    vec![],
+                ),
+                WidgetKind::Image { .. } if entry.widget.semantics.label.is_some() => (
+                    Some(SemanticRole::Image),
+                    None,
+                    None,
+                    SemanticState::default(),
+                    vec![],
+                ),
+                WidgetKind::TextField {
+                    controller,
+                    multiline,
+                    ..
+                } => {
+                    let value = controller.value();
+                    (
+                        Some(if *multiline {
+                            SemanticRole::TextArea
+                        } else {
+                            SemanticRole::TextField
                         }),
+                        None,
+                        Some(value.text),
+                        SemanticState {
+                            enabled: true,
+                            focused: render.focused,
+                            focusable: true,
+                            editable: true,
+                            multiline: *multiline,
+                            selection: Some(SemanticTextSelection {
+                                base: value.selection.base,
+                                extent: value.selection.extent,
+                            }),
+                            ..SemanticState::default()
+                        },
+                        vec![
+                            SemanticActionKind::Focus,
+                            SemanticActionKind::SetText,
+                            SemanticActionKind::SetSelection,
+                        ],
+                    )
+                }
+                WidgetKind::Scroll { controller, .. } => (
+                    Some(SemanticRole::ScrollView),
+                    None,
+                    Some(format!(
+                        "{:.0}/{:.0}",
+                        controller.offset(),
+                        controller.max_offset()
+                    )),
+                    SemanticState::default(),
+                    vec![
+                        SemanticActionKind::ScrollForward,
+                        SemanticActionKind::ScrollBackward,
+                    ],
+                ),
+                WidgetKind::VirtualList { config } => (
+                    Some(SemanticRole::List),
+                    None,
+                    None,
+                    SemanticState {
+                        set_size: Some(config.item_count),
                         ..SemanticState::default()
                     },
                     vec![
-                        SemanticActionKind::Focus,
-                        SemanticActionKind::SetText,
-                        SemanticActionKind::SetSelection,
+                        SemanticActionKind::ScrollForward,
+                        SemanticActionKind::ScrollBackward,
                     ],
-                )
-            }
-            WidgetKind::Scroll { controller, .. } => (
-                Some(SemanticRole::ScrollView),
-                None,
-                Some(format!(
-                    "{:.0}/{:.0}",
-                    controller.offset(),
-                    controller.max_offset()
-                )),
-                SemanticState::default(),
-                vec![
-                    SemanticActionKind::ScrollForward,
-                    SemanticActionKind::ScrollBackward,
-                ],
-            ),
-            WidgetKind::VirtualList { config } => (
-                Some(SemanticRole::List),
-                None,
-                None,
-                SemanticState {
-                    set_size: Some(config.item_count),
-                    ..SemanticState::default()
-                },
-                vec![
-                    SemanticActionKind::ScrollForward,
-                    SemanticActionKind::ScrollBackward,
-                ],
-            ),
-            _ => (None, None, None, SemanticState::default(), vec![]),
-        };
+                ),
+                _ => (None, None, None, SemanticState::default(), vec![]),
+            };
+        let explicit_description = entry
+            .widget
+            .semantics
+            .explicit
+            .as_ref()
+            .and_then(|semantics| semantics.description.clone());
+        if let Some(explicit) = &entry.widget.semantics.explicit {
+            role = Some(explicit.role);
+            default_label = explicit.label.clone().or(default_label);
+            value = explicit.value.clone().or(value);
+            state = explicit.state.clone();
+            actions = explicit.actions.clone();
+        }
+        // A native adapter must never advertise an action that the retained
+        // runtime cannot route to an existing controller/handler. Explicit
+        // semantic metadata configures roles/state, but does not manufacture a
+        // callback pathway for an arbitrary painted box.
+        actions.retain(|action| semantic_action_is_executable(&entry.widget.kind, *action));
         let this_parent = if let Some(role) = role {
             let mut state = state;
             if let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0)) {
@@ -4599,7 +4820,12 @@ impl WidgetTree {
                 role,
                 label: entry.widget.semantics.label.clone().or(default_label),
                 value,
-                description: entry.widget.semantics.description.clone(),
+                description: entry
+                    .widget
+                    .semantics
+                    .description
+                    .clone()
+                    .or(explicit_description),
                 bounds: Rect::from_origin_size(self.render_origin(entry.render), render.size),
                 state,
                 actions,
@@ -4610,8 +4836,19 @@ impl WidgetTree {
         };
         // A Button deliberately merges its visual label/icon subtree into the
         // one control node. Other containers preserve logical child order.
-        if !matches!(entry.widget.kind, WidgetKind::Button { .. }) {
-            for child in &entry.children {
+        if !matches!(entry.widget.kind, WidgetKind::Button { .. })
+            && !entry.widget.semantics.merge_descendants
+        {
+            let first_visible_child = entry
+                .children
+                .iter()
+                .rposition(|child| {
+                    self.elements
+                        .get(child.0)
+                        .is_some_and(|child| child.widget.semantics.block_previous_siblings)
+                })
+                .unwrap_or(0);
+            for child in &entry.children[first_visible_child..] {
                 self.collect_semantics(*child, this_parent, out);
             }
         }
@@ -6509,6 +6746,33 @@ impl WidgetTree {
     }
 }
 
+fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) -> bool {
+    match action {
+        SemanticActionKind::Focus => true,
+        SemanticActionKind::Activate => {
+            matches!(
+                kind,
+                WidgetKind::Button {
+                    has_callback: true,
+                    ..
+                }
+            )
+        }
+        SemanticActionKind::SetText | SemanticActionKind::SetSelection => {
+            matches!(kind, WidgetKind::TextField { .. })
+        }
+        SemanticActionKind::ScrollForward | SemanticActionKind::ScrollBackward => {
+            matches!(
+                kind,
+                WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. }
+            )
+        }
+        // Incular currently has no retained slider/spin controller action
+        // route, so these must stay out of the native action set.
+        SemanticActionKind::Increment | SemanticActionKind::Decrement => false,
+    }
+}
+
 fn widget_text(widget: &Widget) -> Option<String> {
     match &widget.kind {
         WidgetKind::Text { text, .. } => Some(text.clone()),
@@ -7004,7 +7268,38 @@ fn selection_rects(
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
+    use serde_json::{Value, json};
+
     use super::*;
+
+    #[derive(Default)]
+    struct MemoryRestorationBackend(RefCell<BTreeMap<Vec<RestorationKey>, Value>>);
+
+    impl incular_core::RestorationBackend for MemoryRestorationBackend {
+        fn read_value(&self, path: &[RestorationKey]) -> Option<Value> {
+            self.0.borrow().get(path).cloned()
+        }
+
+        fn write_value(&self, path: &[RestorationKey], value: Value) {
+            self.0.borrow_mut().insert(path.to_vec(), value);
+        }
+
+        fn remove_value(&self, path: &[RestorationKey]) {
+            self.0.borrow_mut().remove(path);
+        }
+    }
+
+    fn restoration_key(value: &str) -> RestorationKey {
+        RestorationKey::new(value).unwrap()
+    }
+
+    fn restoration_scope() -> RestorationScope {
+        RestorationScope::root(Rc::new(MemoryRestorationBackend::default()))
+            .child_unchecked(restoration_key("window"))
+            .child_unchecked(restoration_key("main"))
+    }
 
     fn rect_origins(list: &DisplayList) -> Vec<Offset> {
         let mut transforms = vec![Offset::ZERO];
@@ -7765,6 +8060,44 @@ mod tests {
     }
 
     #[test]
+    fn restored_virtual_list_offset_stays_viewport_bounded() {
+        let scope = restoration_scope();
+        let key = restoration_key("million-items");
+        scope.set_json(&key, json!({ "offset": 900_000. * 40. }));
+        let controller = ScrollController::restored(scope, key);
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::fixed_extent_with_controller(
+            1_000_000,
+            40.,
+            controller.clone(),
+            move |index| {
+                observed.set(observed.get() + 1);
+                Widget::box_(Size::new(80., 40.), Color::rgba(index as u8, 0, 0, 255))
+            },
+        ))
+        .unwrap();
+
+        tree.layout(Constraints::tight(Size::new(100., 600.)));
+        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        assert!(diagnostics.materialized_range.contains(&900_000));
+        assert!(diagnostics.materialized_item_count < 100);
+        assert!(calls.get() < 100);
+    }
+
+    #[test]
+    fn page_controller_alias_restores_its_logical_position() {
+        let scope = restoration_scope();
+        let key = restoration_key("pager");
+        scope.set_json(&key, json!({ "offset": 200. }));
+
+        let controller = crate::PageController::restored(scope, key);
+        controller.update_extents(500., 100.);
+        assert_eq!(controller.offset(), 200.);
+    }
+
+    #[test]
     fn virtual_children_retain_identity_inside_the_cache_and_release_outside() {
         let controller = ScrollController::new();
         let mut tree = WidgetTree::new();
@@ -7853,6 +8186,52 @@ mod tests {
         controller.commit_preedit("世界");
         assert_eq!(controller.text(), "hello世界");
         assert!(controller.value().preedit.is_none());
+    }
+
+    #[test]
+    fn text_editing_restoration_round_trips_committed_text_and_selection_only() {
+        let scope = restoration_scope();
+        let key = restoration_key("document");
+        let controller = TextEditingController::with_text("seed");
+        controller.bind_restoration(scope.clone(), key.clone());
+        controller.set_selection(TextSelection::collapsed(1));
+        controller.insert("β");
+        controller.set_preedit("transient", Some(TextRange::new(0, 3)));
+
+        assert_eq!(
+            scope.get_json(&key),
+            Some(json!({
+                "text": "sβeed",
+                "selection": { "base": 3, "extent": 3 },
+            }))
+        );
+
+        let restored = TextEditingController::restored(scope, key);
+        assert_eq!(restored.text(), "sβeed");
+        assert_eq!(restored.value().selection, TextSelection::collapsed(3));
+        assert!(restored.value().preedit.is_none());
+    }
+
+    #[test]
+    fn text_editing_restoration_normalizes_stale_utf8_selection_offsets() {
+        let scope = restoration_scope();
+        let key = restoration_key("document");
+        scope.set_json(
+            &key,
+            json!({
+                "text": "é",
+                "selection": { "base": 99, "extent": 1 },
+            }),
+        );
+
+        let restored = TextEditingController::restored(scope, key);
+        assert_eq!(restored.text(), "é");
+        // `base` clamps to the text end and `extent` to its preceding UTF-8
+        // boundary; no invalid byte index reaches the editor.
+        assert_eq!(
+            restored.value().selection,
+            TextSelection { base: 2, extent: 0 }
+        );
     }
 
     #[test]
@@ -8160,5 +8539,53 @@ mod tests {
             }),
             Some(root)
         );
+    }
+
+    #[test]
+    fn explicit_merge_exclude_and_block_semantics_transform_the_retained_tree() {
+        let dialog = Widget::box_(Size::new(80., 40.), Color::WHITE)
+            .semantics(
+                Semantics::new(SemanticRole::Dialog)
+                    .label("Delete document")
+                    .actions([SemanticActionKind::Focus]),
+            )
+            .merge_semantics()
+            .block_semantics();
+        let background = Button::new("Save").into();
+        let decorative: Widget = Text::new("sparkle").into();
+        let decorative = decorative.exclude_semantics();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::stack(
+            Alignment::CENTER,
+            vec![background, decorative, dialog],
+        ))
+        .expect("mount modal semantics");
+        tree.layout(Constraints::tight(Size::new(160., 100.)));
+        tree.update_semantics();
+        let nodes: Vec<_> = tree.semantics().iter().collect();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].1.role, SemanticRole::Dialog);
+        assert_eq!(nodes[0].1.label.as_deref(), Some("Delete document"));
+        assert_eq!(nodes[0].1.children.len(), 0);
+    }
+
+    #[test]
+    fn meaningful_images_are_semantic_but_unlabelled_images_are_decorative() {
+        let image = ImageHandle::from_rgba8(1, 1, vec![255, 255, 255, 255]).unwrap();
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::row(vec![
+            Image::new(image.clone()).into(),
+            Widget::from(Image::new(image)).accessibility_label("Incular logo"),
+        ]))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(80., 40.)));
+        tree.update_semantics();
+        let images: Vec<_> = tree
+            .semantics()
+            .iter()
+            .filter(|(_, node)| node.role == SemanticRole::Image)
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].1.label.as_deref(), Some("Incular logo"));
     }
 }

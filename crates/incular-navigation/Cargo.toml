@@ -13,3 +13,5 @@ path = "src/lib.rs"
 [dependencies]
 incular-core = { workspace = true }
 incular-widgets = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

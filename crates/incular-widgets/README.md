@@ -49,6 +49,17 @@ a hard newline, ArrowUp/Down and Home/End use shaped-line geometry, and the
 caret keeps itself vertically visible. Selection painting is line-by-line.
 Neither control implements bidi visual cursor movement yet.
 
+## Opt-in editor and form restoration
+
+`TextEditingController::restored(scope, key)` creates an empty restored editor;
+alternatively, create a controller with an application default and call
+`bind_restoration(scope, key)`. A valid saved committed buffer and base/extent
+selection replaces the default. IME preedit is transient composition state and
+is never serialized. `Form::register_with_restoration` and
+`FormField::bind_restoration` apply the same binding to a field's editor while
+leaving validation errors derived and non-persistent. Stable scopes and keys
+come from the runtime restoration API; ordinary controllers remain ephemeral.
+
 `ScrollView::vertical` retains a viewport clip and content translation using a
 persistent `ScrollController`; wheel changes do not rebuild, relayout, or
 repaint unchanged content. `TranslationController` similarly drives a

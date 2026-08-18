@@ -22,6 +22,8 @@ use lyon_tessellation::{
 };
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Write as _;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
 
@@ -834,6 +836,444 @@ impl std::fmt::Display for RendererError {
 }
 impl std::error::Error for RendererError {}
 
+/// Stable, process-local identity for an immutable GPU resource shared by all
+/// windows attached to one [`SharedGpuContext`]. It intentionally exposes no
+/// native or `wgpu` handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SharedGpuResourceId(u64);
+impl SharedGpuResourceId {
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// A headless record of shared-resource identity. The live GPU context uses
+/// this same registry when it creates image, glyph, and pipeline resources;
+/// keeping it independent of an adapter makes ownership tests display-server
+/// free.
+#[derive(Debug, Default)]
+pub struct SharedGpuResourceRegistry {
+    next_identity: u64,
+    images: HashMap<ImageId, SharedGpuResourceId>,
+    glyphs: HashMap<GlyphCacheKey, SharedGpuResourceId>,
+}
+impl SharedGpuResourceRegistry {
+    fn allocate(&mut self) -> SharedGpuResourceId {
+        self.next_identity = self.next_identity.saturating_add(1).max(1);
+        SharedGpuResourceId(self.next_identity)
+    }
+    /// Returns the one context-local identity allocated for `image`.
+    pub fn image_identity(&mut self, image: ImageId) -> SharedGpuResourceId {
+        if let Some(identity) = self.images.get(&image) {
+            return *identity;
+        }
+        let identity = self.allocate();
+        self.images.insert(image, identity);
+        identity
+    }
+    /// Returns the one context-local identity allocated for this DPI-specific
+    /// glyph raster key.
+    pub fn glyph_identity(&mut self, glyph: GlyphCacheKey) -> SharedGpuResourceId {
+        if let Some(identity) = self.glyphs.get(&glyph) {
+            return *identity;
+        }
+        let identity = self.allocate();
+        self.glyphs.insert(glyph, identity);
+        identity
+    }
+    #[must_use]
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+    #[must_use]
+    pub fn glyph_count(&self) -> usize {
+        self.glyphs.len()
+    }
+}
+
+/// Read-only shared GPU ownership diagnostics. Counts describe one
+/// application/device, rather than any individual presentation surface.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SharedGpuDiagnostics {
+    pub device_generation: u64,
+    pub pipeline_variants: usize,
+    pub pipeline_count: usize,
+    pub shared_image_resources: usize,
+    pub shared_glyph_resources: usize,
+    pub shared_gradient_resources: usize,
+    pub glyph_atlas_pages: usize,
+}
+
+/// Per-window presentation state that is independent of the shared GPU
+/// device. It deliberately remains useful in headless tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowGpuPresentation {
+    pub physical_size: PhysicalSize,
+    pub surface_generation: u64,
+    pub configured: bool,
+    pub presented_frames: u64,
+    pub skipped_frames: u64,
+}
+impl WindowGpuPresentation {
+    #[must_use]
+    pub const fn new(physical_size: PhysicalSize) -> Self {
+        let configured = !physical_size.is_zero();
+        Self {
+            physical_size,
+            surface_generation: if configured { 1 } else { 0 },
+            configured,
+            presented_frames: 0,
+            skipped_frames: 0,
+        }
+    }
+    /// Updates only this window's physical presentation state. A zero-sized
+    /// surface is intentionally left unconfigured until it becomes valid.
+    pub fn resize(&mut self, physical_size: PhysicalSize) -> bool {
+        self.physical_size = physical_size;
+        self.configured = !physical_size.is_zero();
+        if self.configured {
+            self.surface_generation = self.surface_generation.saturating_add(1);
+        }
+        self.configured
+    }
+    /// Records a recoverable surface loss. Device loss belongs to the shared
+    /// context; this method cannot affect another window's surface state.
+    pub fn surface_lost(&mut self) {
+        if self.configured {
+            self.surface_generation = self.surface_generation.saturating_add(1);
+        }
+    }
+    pub fn record_present(&mut self) {
+        self.presented_frames = self.presented_frames.saturating_add(1);
+    }
+    pub fn record_skipped(&mut self) {
+        self.skipped_frames = self.skipped_frames.saturating_add(1);
+    }
+}
+
+/// Surface and compositor ownership for exactly one native window. The raw
+/// handles and `wgpu` surface remain private: native Winit objects never
+/// escape through this API.
+pub struct WindowGpuState {
+    handles: RawWindowHandles,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    stencil_texture: wgpu::Texture,
+    stencil_view: wgpu::TextureView,
+    presentation: WindowGpuPresentation,
+}
+impl WindowGpuState {
+    #[must_use]
+    pub const fn presentation(&self) -> WindowGpuPresentation {
+        self.presentation
+    }
+}
+
+/// Device-wide GPU ownership. Cloning this value never creates another
+/// `Instance`, `Adapter`, `Device`, or `Queue`; it merely gives another window
+/// access to the same application-owned GPU context.
+#[derive(Clone)]
+pub struct SharedGpuContext {
+    inner: Arc<SharedGpuContextInner>,
+}
+struct SharedGpuContextInner {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    device_generation: u64,
+    pipelines: Mutex<HashMap<wgpu::TextureFormat, Arc<SharedPipelineResources>>>,
+    resources: Mutex<SharedGpuResources>,
+}
+struct SharedGpuResources {
+    registry: SharedGpuResourceRegistry,
+    images: HashMap<ImageId, Arc<SharedGpuImage>>,
+    gradients: HashMap<GradientResourceKey, Arc<SharedGpuGradient>>,
+    glyph_atlas: GlyphAtlas,
+    glyph_pages: Vec<SharedGpuAtlasPage>,
+}
+struct SharedGpuImage {
+    identity: SharedGpuResourceId,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+}
+struct SharedGpuGradient {
+    resource: GpuGradient,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct GradientResourceKey {
+    gradient: GradientId,
+    /// A bind group is pipeline-layout compatible only within this explicit
+    /// target-format pipeline variant.
+    format: wgpu::TextureFormat,
+}
+struct SharedGpuAtlasPage {
+    texture: wgpu::Texture,
+}
+impl SharedGpuContext {
+    /// Creates the one device context to be shared by every desktop window in
+    /// an application. `handles` is used only to choose a compatible adapter;
+    /// the temporary surface is dropped before this method returns.
+    pub async fn new(handles: RawWindowHandles) -> Result<Self, RendererError> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: handles.display,
+                raw_window_handle: handles.window,
+            })
+        }
+        .map_err(RendererError::Surface)?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .map_err(RendererError::Adapter)?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor::default())
+            .await
+            .map_err(RendererError::Device)?;
+        drop(surface);
+        Ok(Self {
+            inner: Arc::new(SharedGpuContextInner {
+                instance,
+                adapter,
+                device,
+                queue,
+                device_generation: 1,
+                pipelines: Mutex::new(HashMap::new()),
+                resources: Mutex::new(SharedGpuResources {
+                    registry: SharedGpuResourceRegistry::default(),
+                    images: HashMap::new(),
+                    gradients: HashMap::new(),
+                    glyph_atlas: GlyphAtlas::new(),
+                    glyph_pages: Vec::new(),
+                }),
+            }),
+        })
+    }
+    /// Creates a renderer for one additional native surface without creating a
+    /// second device context.
+    pub async fn create_renderer(
+        &self,
+        handles: RawWindowHandles,
+        size: PhysicalSize,
+    ) -> Result<WgpuRenderer, RendererError> {
+        WgpuRenderer::new_with_shared(self.clone(), handles, size).await
+    }
+    #[must_use]
+    pub fn diagnostics(&self) -> SharedGpuDiagnostics {
+        let pipelines = self.inner.pipelines.lock().expect("shared pipeline lock");
+        let resources = self.inner.resources.lock().expect("shared resource lock");
+        SharedGpuDiagnostics {
+            device_generation: self.inner.device_generation,
+            pipeline_variants: pipelines.len(),
+            pipeline_count: pipelines.len().saturating_mul(25),
+            shared_image_resources: resources.registry.image_count(),
+            shared_glyph_resources: resources.registry.glyph_count(),
+            shared_gradient_resources: resources.gradients.len(),
+            glyph_atlas_pages: resources.glyph_atlas.pages.len(),
+        }
+    }
+    #[must_use]
+    pub fn image_resource_identity(&self, image: ImageId) -> Option<SharedGpuResourceId> {
+        self.inner
+            .resources
+            .lock()
+            .expect("shared resource lock")
+            .registry
+            .images
+            .get(&image)
+            .copied()
+    }
+    #[must_use]
+    pub fn glyph_resource_identity(&self, glyph: GlyphCacheKey) -> Option<SharedGpuResourceId> {
+        self.inner
+            .resources
+            .lock()
+            .expect("shared resource lock")
+            .registry
+            .glyphs
+            .get(&glyph)
+            .copied()
+    }
+    fn create_surface(
+        &self,
+        handles: RawWindowHandles,
+    ) -> Result<wgpu::Surface<'static>, RendererError> {
+        unsafe {
+            self.inner
+                .instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: handles.display,
+                    raw_window_handle: handles.window,
+                })
+        }
+        .map_err(RendererError::Surface)
+    }
+    fn pipeline_resources(
+        &self,
+        format: wgpu::TextureFormat,
+    ) -> Option<Arc<SharedPipelineResources>> {
+        self.inner
+            .pipelines
+            .lock()
+            .expect("shared pipeline lock")
+            .get(&format)
+            .cloned()
+    }
+    fn register_pipeline_resources(
+        &self,
+        format: wgpu::TextureFormat,
+        resources: SharedPipelineResources,
+    ) {
+        self.inner
+            .pipelines
+            .lock()
+            .expect("shared pipeline lock")
+            .entry(format)
+            .or_insert_with(|| Arc::new(resources));
+    }
+    fn image_resource(
+        &self,
+        image: &ImageHandle,
+    ) -> Result<(Arc<SharedGpuImage>, bool), RendererError> {
+        let id = image.id();
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        if let Some(resource) = resources.images.get(&id) {
+            return Ok((Arc::clone(resource), false));
+        }
+        let decoded = image.decoded();
+        let limit = self.inner.device.limits().max_texture_dimension_2d;
+        if decoded.width() > limit || decoded.height() > limit {
+            return Err(RendererError::ImageTooLarge {
+                width: decoded.width(),
+                height: decoded.height(),
+                limit,
+            });
+        }
+        let texture = self.inner.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("incular shared image texture"),
+            size: wgpu::Extent3d {
+                width: decoded.width(),
+                height: decoded.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.inner.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            decoded.pixels().as_ref(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(decoded.width() * 4),
+                rows_per_image: Some(decoded.height()),
+            },
+            wgpu::Extent3d {
+                width: decoded.width(),
+                height: decoded.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let resource = Arc::new(SharedGpuImage {
+            identity: resources.registry.image_identity(id),
+            _texture: texture,
+            view,
+            width: decoded.width(),
+            height: decoded.height(),
+        });
+        resources.images.insert(id, Arc::clone(&resource));
+        Ok((resource, true))
+    }
+    fn rasterize_glyph(&self, run: &GlyphRun, glyph: u16, scale: f64) -> Option<RasterizedGlyph> {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        let request = GlyphRasterRequest::new(run.font_size, scale);
+        let key = GlyphCacheKey {
+            font: run.font.id(),
+            glyph,
+            physical_size: request.physical_size,
+        };
+        let raster = resources
+            .glyph_atlas
+            .lookup_or_rasterize(run, glyph, scale)?;
+        resources.registry.glyph_identity(key);
+        Some(raster)
+    }
+    fn glyph_counters(&self) -> GpuCounters {
+        self.inner
+            .resources
+            .lock()
+            .expect("shared resource lock")
+            .glyph_atlas
+            .counters()
+    }
+    fn gradient_resource(
+        &self,
+        id: GradientId,
+        format: wgpu::TextureFormat,
+        pixels: &[[u8; 4]],
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> (Arc<SharedGpuGradient>, bool) {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        let key = GradientResourceKey {
+            gradient: id,
+            format,
+        };
+        if let Some(resource) = resources.gradients.get(&key) {
+            return (Arc::clone(resource), false);
+        }
+        let resource = Arc::new(SharedGpuGradient {
+            resource: create_gradient_resource(
+                &self.inner.device,
+                &self.inner.queue,
+                layout,
+                sampler,
+                pixels,
+            ),
+        });
+        resources.gradients.insert(key, Arc::clone(&resource));
+        (resource, true)
+    }
+    fn shared_glyph_texture(&self, page: u16) -> wgpu::Texture {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        while resources.glyph_pages.len() <= usize::from(page) {
+            resources.glyph_pages.push(SharedGpuAtlasPage {
+                texture: self.inner.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("incular shared glyph atlas page"),
+                    size: wgpu::Extent3d {
+                        width: u32::from(ATLAS_PAGE_SIZE),
+                        height: u32::from(ATLAS_PAGE_SIZE),
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::R8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                }),
+            });
+        }
+        resources.glyph_pages[usize::from(page)].texture.clone()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GpuInstance {
@@ -943,6 +1383,7 @@ struct GpuPathMesh {
     index_count: u32,
     last_used_frame: u64,
 }
+#[derive(Clone)]
 struct GpuGradient {
     _texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
@@ -1216,12 +1657,46 @@ struct GpuAtlasPage {
     bind_group: wgpu::BindGroup,
 }
 struct GpuImage {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
+    resource: Arc<SharedGpuImage>,
     bind_groups: HashMap<ImageSampling, wgpu::BindGroup>,
-    width: u32,
-    height: u32,
     last_used_frame: u64,
+}
+/// Resources that are immutable for a target format and can therefore be
+/// cloned by every surface using that format. A clone is another handle to the
+/// same `wgpu` object, not a duplicate GPU allocation.
+#[derive(Clone)]
+struct SharedPipelineResources {
+    rectangle_pipeline: wgpu::RenderPipeline,
+    text_pipeline: wgpu::RenderPipeline,
+    image_pipeline: wgpu::RenderPipeline,
+    rounded_rect_pipeline: wgpu::RenderPipeline,
+    path_pipeline: wgpu::RenderPipeline,
+    composite_pipeline: wgpu::RenderPipeline,
+    fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
+    blur_pipeline: wgpu::RenderPipeline,
+    resample_pipeline: wgpu::RenderPipeline,
+    color_matrix_pipeline: wgpu::RenderPipeline,
+    blend_pipeline: wgpu::RenderPipeline,
+    stencil_rrect_increment_pipeline: wgpu::RenderPipeline,
+    stencil_rrect_decrement_pipeline: wgpu::RenderPipeline,
+    stencil_path_increment_pipeline: wgpu::RenderPipeline,
+    stencil_path_decrement_pipeline: wgpu::RenderPipeline,
+    mesh: wgpu::Buffer,
+    gradient_bind_group_layout: wgpu::BindGroupLayout,
+    gradient_sampler: wgpu::Sampler,
+    solid_gradient: GpuGradient,
+    atlas_bind_group_layout: wgpu::BindGroupLayout,
+    atlas_sampler: wgpu::Sampler,
+    image_bind_group_layout: wgpu::BindGroupLayout,
+    image_samplers: HashMap<ImageSampling, wgpu::Sampler>,
+    composite_bind_group_layout: wgpu::BindGroupLayout,
+    composite_sampler: wgpu::Sampler,
+    blur_bind_group_layout: wgpu::BindGroupLayout,
+    blur_sampler: wgpu::Sampler,
+    color_matrix_bind_group_layout: wgpu::BindGroupLayout,
+    color_matrix_sampler: wgpu::Sampler,
+    blend_bind_group_layout: wgpu::BindGroupLayout,
+    blend_sampler: wgpu::Sampler,
 }
 #[derive(Clone)]
 struct OffscreenTarget {
@@ -1419,15 +1894,15 @@ struct PathPlacement {
     scale: f32,
 }
 
-/// Owns surface, pipelines, buffers and atlas textures. Colors and coverage
-/// are straight alpha and use ordinary source-alpha blending.
+/// Owns one window's surface, transient buffers, and retained compositor
+/// caches. Device-level resources are borrowed from [`SharedGpuContext`].
+/// Colors and coverage are straight alpha and use ordinary source-alpha
+/// blending.
 pub struct WgpuRenderer {
-    _instance: wgpu::Instance,
-    handles: RawWindowHandles,
-    surface: wgpu::Surface<'static>,
+    shared: SharedGpuContext,
+    window_gpu: WindowGpuState,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     rectangle_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     image_pipeline: wgpu::RenderPipeline,
@@ -1443,8 +1918,6 @@ pub struct WgpuRenderer {
     stencil_rrect_decrement_pipeline: wgpu::RenderPipeline,
     stencil_path_increment_pipeline: wgpu::RenderPipeline,
     stencil_path_decrement_pipeline: wgpu::RenderPipeline,
-    stencil_texture: wgpu::Texture,
-    stencil_view: wgpu::TextureView,
     mesh: wgpu::Buffer,
     instances: wgpu::Buffer,
     instance_capacity: usize,
@@ -1492,31 +1965,37 @@ pub struct WgpuRenderer {
     offscreen_nesting_depth: u64,
     atlas_pages: Vec<GpuAtlasPage>,
     counters: GpuCounters,
-    glyph_atlas: GlyphAtlas,
+}
+impl Deref for WgpuRenderer {
+    type Target = WindowGpuState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.window_gpu
+    }
+}
+impl DerefMut for WgpuRenderer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.window_gpu
+    }
 }
 impl WgpuRenderer {
     /// # Safety boundary
     /// `handles` must describe a window that outlives this renderer.
     pub async fn new(handles: RawWindowHandles, size: PhysicalSize) -> Result<Self, RendererError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: handles.display,
-                raw_window_handle: handles.window,
-            })
-        }
-        .map_err(RendererError::Surface)?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })
-            .await
-            .map_err(RendererError::Adapter)?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await
-            .map_err(RendererError::Device)?;
+        let shared = SharedGpuContext::new(handles).await?;
+        Self::new_with_shared(shared, handles, size).await
+    }
+    /// Creates a renderer for one native window using an existing shared GPU
+    /// device context. No `wgpu::Instance`, adapter, device, or queue is
+    /// recreated by this method.
+    pub async fn new_with_shared(
+        shared: SharedGpuContext,
+        handles: RawWindowHandles,
+        size: PhysicalSize,
+    ) -> Result<Self, RendererError> {
+        let surface = shared.create_surface(handles)?;
+        let device = shared.inner.device.clone();
+        let queue = shared.inner.queue.clone();
         let texture_limit = device.limits().max_texture_dimension_2d;
         if texture_limit < u32::from(ATLAS_PAGE_SIZE) {
             return Err(RendererError::GlyphAtlasPageTooLarge {
@@ -1525,9 +2004,16 @@ impl WgpuRenderer {
             });
         }
         let config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .get_default_config(&shared.inner.adapter, size.width.max(1), size.height.max(1))
             .expect("surface config");
-        surface.configure(&device, &config);
+        if !size.is_zero() {
+            surface.configure(&device, &config);
+        }
+        if let Some(pipelines) = shared.pipeline_resources(config.format) {
+            return Ok(Self::from_shared_pipeline_resources(
+                shared, handles, surface, config, size, device, queue, pipelines,
+            ));
+        }
         let mesh = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("incular unit quad mesh"),
             contents: bytemuck::cast_slice(&[
@@ -1816,7 +2302,7 @@ impl WgpuRenderer {
             create_path_pipeline(&device, config.format, &gradient_bind_group_layout);
         let composite_pipeline =
             create_composite_pipeline(&device, config.format, &composite_bind_group_layout);
-        let fixed_blend_pipelines = [
+        let fixed_blend_pipelines: Vec<_> = [
             BlendMode::SrcOver,
             BlendMode::Src,
             BlendMode::DstOver,
@@ -1903,13 +2389,54 @@ impl WgpuRenderer {
         });
         let target_width = config.width;
         let target_height = config.height;
+        let device_generation = shared.inner.device_generation;
+        let format = config.format;
+        let shared_pipelines = SharedPipelineResources {
+            rectangle_pipeline: rectangle_pipeline.clone(),
+            text_pipeline: text_pipeline.clone(),
+            image_pipeline: image_pipeline.clone(),
+            rounded_rect_pipeline: rounded_rect_pipeline.clone(),
+            path_pipeline: path_pipeline.clone(),
+            composite_pipeline: composite_pipeline.clone(),
+            fixed_blend_pipelines: fixed_blend_pipelines.clone(),
+            blur_pipeline: blur_pipeline.clone(),
+            resample_pipeline: resample_pipeline.clone(),
+            color_matrix_pipeline: color_matrix_pipeline.clone(),
+            blend_pipeline: blend_pipeline.clone(),
+            stencil_rrect_increment_pipeline: stencil_rrect_increment_pipeline.clone(),
+            stencil_rrect_decrement_pipeline: stencil_rrect_decrement_pipeline.clone(),
+            stencil_path_increment_pipeline: stencil_path_increment_pipeline.clone(),
+            stencil_path_decrement_pipeline: stencil_path_decrement_pipeline.clone(),
+            mesh: mesh.clone(),
+            gradient_bind_group_layout: gradient_bind_group_layout.clone(),
+            gradient_sampler: gradient_sampler.clone(),
+            solid_gradient: solid_gradient.clone(),
+            atlas_bind_group_layout: atlas_bind_group_layout.clone(),
+            atlas_sampler: atlas_sampler.clone(),
+            image_bind_group_layout: image_bind_group_layout.clone(),
+            image_samplers: image_samplers.clone(),
+            composite_bind_group_layout: composite_bind_group_layout.clone(),
+            composite_sampler: composite_sampler.clone(),
+            blur_bind_group_layout: blur_bind_group_layout.clone(),
+            blur_sampler: blur_sampler.clone(),
+            color_matrix_bind_group_layout: color_matrix_bind_group_layout.clone(),
+            color_matrix_sampler: color_matrix_sampler.clone(),
+            blend_bind_group_layout: blend_bind_group_layout.clone(),
+            blend_sampler: blend_sampler.clone(),
+        };
+        shared.register_pipeline_resources(format, shared_pipelines);
         Ok(Self {
-            _instance: instance,
-            handles,
-            surface,
+            shared,
+            window_gpu: WindowGpuState {
+                handles,
+                surface,
+                config,
+                stencil_texture,
+                stencil_view,
+                presentation: WindowGpuPresentation::new(size),
+            },
             device,
             queue,
-            config,
             rectangle_pipeline,
             text_pipeline,
             image_pipeline,
@@ -1925,8 +2452,6 @@ impl WgpuRenderer {
             stencil_rrect_decrement_pipeline,
             stencil_path_increment_pipeline,
             stencil_path_decrement_pipeline,
-            stencil_texture,
-            stencil_view,
             mesh,
             instances,
             instance_capacity: 1,
@@ -1967,7 +2492,7 @@ impl WgpuRenderer {
             effect_cache: HashMap::new(),
             offscreen_target_pool: OffscreenTargetPool::default(),
             offscreen_cache_budget: 64 * 1024 * 1024,
-            device_generation: 1,
+            device_generation,
             target_width,
             target_height,
             target_origin: Offset::ZERO,
@@ -1985,13 +2510,126 @@ impl WgpuRenderer {
                 stencil_pipeline_creations: 4,
                 ..GpuCounters::default()
             },
-            glyph_atlas: GlyphAtlas::new(),
         })
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn from_shared_pipeline_resources(
+        shared: SharedGpuContext,
+        handles: RawWindowHandles,
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+        size: PhysicalSize,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        pipelines: Arc<SharedPipelineResources>,
+    ) -> Self {
+        let (stencil_texture, stencil_view) =
+            create_stencil_attachment(&device, config.width, config.height);
+        let instances = create_instance_buffer(&device, 1);
+        let glyph_instances = create_glyph_buffer(&device, 1);
+        let image_instances = create_image_buffer(&device, 1);
+        let rounded_rect_instances = create_rrect_buffer(&device, 1);
+        let path_instances = create_path_instance_buffer(&device, 1);
+        let composite_instances = create_composite_buffer(&device, 1);
+        let blur_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("incular gaussian parameters"),
+            size: std::mem::size_of::<GpuBlurParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let color_matrix_params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("incular color matrix parameters"),
+            size: std::mem::size_of::<GpuColorMatrixParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let target_width = config.width;
+        let target_height = config.height;
+        let device_generation = shared.inner.device_generation;
+        Self {
+            shared,
+            window_gpu: WindowGpuState {
+                handles,
+                surface,
+                config,
+                stencil_texture,
+                stencil_view,
+                presentation: WindowGpuPresentation::new(size),
+            },
+            device,
+            queue,
+            rectangle_pipeline: pipelines.rectangle_pipeline.clone(),
+            text_pipeline: pipelines.text_pipeline.clone(),
+            image_pipeline: pipelines.image_pipeline.clone(),
+            rounded_rect_pipeline: pipelines.rounded_rect_pipeline.clone(),
+            path_pipeline: pipelines.path_pipeline.clone(),
+            composite_pipeline: pipelines.composite_pipeline.clone(),
+            fixed_blend_pipelines: pipelines.fixed_blend_pipelines.clone(),
+            blur_pipeline: pipelines.blur_pipeline.clone(),
+            resample_pipeline: pipelines.resample_pipeline.clone(),
+            color_matrix_pipeline: pipelines.color_matrix_pipeline.clone(),
+            blend_pipeline: pipelines.blend_pipeline.clone(),
+            stencil_rrect_increment_pipeline: pipelines.stencil_rrect_increment_pipeline.clone(),
+            stencil_rrect_decrement_pipeline: pipelines.stencil_rrect_decrement_pipeline.clone(),
+            stencil_path_increment_pipeline: pipelines.stencil_path_increment_pipeline.clone(),
+            stencil_path_decrement_pipeline: pipelines.stencil_path_decrement_pipeline.clone(),
+            mesh: pipelines.mesh.clone(),
+            instances,
+            instance_capacity: 1,
+            glyph_instances,
+            glyph_instance_capacity: 1,
+            image_instances,
+            image_instance_capacity: 1,
+            rounded_rect_instances,
+            rounded_rect_instance_capacity: 1,
+            path_instances,
+            path_instance_capacity: 1,
+            composite_instances,
+            composite_instance_capacity: 1,
+            cpu_path_cache: HashMap::new(),
+            gpu_path_cache: HashMap::new(),
+            gradient_bind_group_layout: pipelines.gradient_bind_group_layout.clone(),
+            gradient_sampler: pipelines.gradient_sampler.clone(),
+            gradient_cache: HashMap::new(),
+            solid_gradient: pipelines.solid_gradient.clone(),
+            atlas_bind_group_layout: pipelines.atlas_bind_group_layout.clone(),
+            atlas_sampler: pipelines.atlas_sampler.clone(),
+            image_bind_group_layout: pipelines.image_bind_group_layout.clone(),
+            image_samplers: pipelines.image_samplers.clone(),
+            image_cache: HashMap::new(),
+            composite_bind_group_layout: pipelines.composite_bind_group_layout.clone(),
+            composite_sampler: pipelines.composite_sampler.clone(),
+            blur_bind_group_layout: pipelines.blur_bind_group_layout.clone(),
+            blur_sampler: pipelines.blur_sampler.clone(),
+            blur_params,
+            blur_kernel_cache: HashMap::new(),
+            color_matrix_bind_group_layout: pipelines.color_matrix_bind_group_layout.clone(),
+            color_matrix_sampler: pipelines.color_matrix_sampler.clone(),
+            color_matrix_params,
+            blend_bind_group_layout: pipelines.blend_bind_group_layout.clone(),
+            blend_sampler: pipelines.blend_sampler.clone(),
+            destination_targets: None,
+            offscreen_cache: HashMap::new(),
+            effect_cache: HashMap::new(),
+            offscreen_target_pool: OffscreenTargetPool::default(),
+            offscreen_cache_budget: 64 * 1024 * 1024,
+            device_generation,
+            target_width,
+            target_height,
+            target_origin: Offset::ZERO,
+            offscreen_nesting_depth: 0,
+            atlas_pages: Vec::new(),
+            counters: GpuCounters {
+                stencil_texture_creations: 1,
+                stencil_pipeline_creations: 0,
+                ..GpuCounters::default()
+            },
+        }
     }
     #[must_use]
     pub fn counters(&self) -> GpuCounters {
         let mut counters = self.counters;
-        let atlas = self.glyph_atlas.counters();
+        let atlas = self.shared.glyph_counters();
         counters.glyph_cache_hits = atlas.glyph_cache_hits;
         counters.glyph_cache_misses = atlas.glyph_cache_misses;
         counters.glyphs_rasterized = atlas.glyphs_rasterized;
@@ -2011,6 +2649,16 @@ impl WgpuRenderer {
         counters.oversize_cache_hits = atlas.oversize_cache_hits;
         counters.oversize_cache_misses = atlas.oversize_cache_misses;
         counters
+    }
+    /// The shared application-owned GPU context used by this window.
+    #[must_use]
+    pub fn shared_context(&self) -> SharedGpuContext {
+        self.shared.clone()
+    }
+    /// Presentation state owned by this renderer's window only.
+    #[must_use]
+    pub const fn window_gpu_state(&self) -> &WindowGpuState {
+        &self.window_gpu
     }
     /// Returns effect cache state for the latest lowered command stream.
     /// This is intentionally textual and exposes no GPU handles; it is useful
@@ -2131,19 +2779,20 @@ impl WgpuRenderer {
     }
     #[must_use]
     pub fn physical_size(&self) -> PhysicalSize {
-        PhysicalSize::new(self.config.width, self.config.height)
+        self.window_gpu.presentation.physical_size
     }
     pub fn resize(&mut self, size: PhysicalSize) {
-        if !size.is_zero() {
-            self.config.width = size.width;
-            self.config.height = size.height;
-            self.surface.configure(&self.device, &self.config);
-            (self.stencil_texture, self.stencil_view) =
-                create_stencil_attachment(&self.device, size.width, size.height);
-            self.counters.stencil_texture_recreations += 1;
-            self.destination_targets = None;
-            self.counters.blend_intermediate_cached_bytes = 0;
+        if !self.window_gpu.presentation.resize(size) {
+            return;
         }
+        self.config.width = size.width;
+        self.config.height = size.height;
+        self.surface.configure(&self.device, &self.config);
+        (self.stencil_texture, self.stencil_view) =
+            create_stencil_attachment(&self.device, size.width, size.height);
+        self.counters.stencil_texture_recreations += 1;
+        self.destination_targets = None;
+        self.counters.blend_intermediate_cached_bytes = 0;
     }
 
     fn ensure_destination_targets(&mut self, width: u32, height: u32) {
@@ -2497,7 +3146,13 @@ impl WgpuRenderer {
         list: &DisplayList,
         scale_factor: f64,
     ) -> Result<RenderStats, RendererError> {
-        self.render_composited(list, scale_factor)
+        let stats = self.render_composited(list, scale_factor)?;
+        if stats.presented {
+            self.window_gpu.presentation.record_present();
+        } else {
+            self.window_gpu.presentation.record_skipped();
+        }
+        Ok(stats)
     }
     #[allow(dead_code)]
     fn render_legacy(
@@ -2505,7 +3160,7 @@ impl WgpuRenderer {
         list: &DisplayList,
         scale_factor: f64,
     ) -> Result<RenderStats, RendererError> {
-        if self.config.width == 0 || self.config.height == 0 {
+        if !self.window_gpu.presentation.configured {
             return Ok(RenderStats::default());
         }
         let scale = normalized_scale(scale_factor);
@@ -2596,15 +3251,9 @@ impl WgpuRenderer {
                 return Ok(RenderStats::default());
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = unsafe {
-                    self._instance
-                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                            raw_display_handle: self.handles.display,
-                            raw_window_handle: self.handles.window,
-                        })
-                }
-                .map_err(RendererError::Surface)?;
+                self.surface = self.shared.create_surface(self.handles)?;
                 self.surface.configure(&self.device, &self.config);
+                self.window_gpu.presentation.surface_lost();
                 return Ok(RenderStats::default());
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -2852,7 +3501,7 @@ impl WgpuRenderer {
         list: &DisplayList,
         scale_factor: f64,
     ) -> Result<RenderStats, RendererError> {
-        if self.config.width == 0 || self.config.height == 0 {
+        if !self.window_gpu.presentation.configured {
             return Ok(RenderStats::default());
         }
         let scale = normalized_scale(scale_factor);
@@ -2959,15 +3608,9 @@ impl WgpuRenderer {
                 return Ok(RenderStats::default());
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = unsafe {
-                    self._instance
-                        .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                            raw_display_handle: self.handles.display,
-                            raw_window_handle: self.handles.window,
-                        })
-                }
-                .map_err(RendererError::Surface)?;
+                self.surface = self.shared.create_surface(self.handles)?;
                 self.surface.configure(&self.device, &self.config);
+                self.window_gpu.presentation.surface_lost();
                 return Ok(RenderStats::default());
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -3704,14 +4347,18 @@ impl WgpuRenderer {
                     }
                     for glyph in run.glyphs.iter() {
                         let Some(raster) =
-                            self.glyph_atlas
-                                .lookup_or_rasterize(run, glyph.id, f64::from(scale))
+                            self.shared.rasterize_glyph(run, glyph.id, f64::from(scale))
                         else {
-                            self.glyph_atlas.counters.glyphs_skipped += 1;
+                            self.counters.glyphs_skipped += 1;
                             continue;
                         };
                         if let Some(bitmap) = raster.bitmap.as_deref() {
                             self.upload_glyph(raster.entry, bitmap);
+                        } else if raster.entry.width > 0 && raster.entry.height > 0 {
+                            // The texture is device-shared, while this window
+                            // still needs its own pipeline-compatible bind
+                            // group for that atlas page.
+                            self.ensure_atlas_page(raster.entry.page);
                         }
                         if raster.entry.width > 0 && raster.entry.height > 0 {
                             append_glyph(
@@ -4177,7 +4824,7 @@ impl WgpuRenderer {
             && entry.width == width
             && entry.height == height
             && entry.scale_factor_bits == scale.to_bits()
-            && entry.target.format == self.config.format
+            && entry.target.format == self.window_gpu.config.format
             && entry.device_generation == self.device_generation
         {
             entry.last_used_frame = frame;
@@ -4526,7 +5173,7 @@ impl WgpuRenderer {
             && entry.width == width
             && entry.height == height
             && entry.scale_factor_bits == scale.to_bits()
-            && entry.target.format == self.config.format
+            && entry.target.format == self.window_gpu.config.format
             && entry.device_generation == self.device_generation
         {
             entry.last_used_frame = frame;
@@ -4963,7 +5610,7 @@ impl WgpuRenderer {
             && entry.matrix_bits == matrix_bits
             && entry.sigma_x_bits == 0
             && entry.sigma_y_bits == 0
-            && entry.target.format == self.config.format
+            && entry.target.format == self.window_gpu.config.format
             && entry.device_generation == self.device_generation
         {
             entry.last_used_frame = frame;
@@ -5166,7 +5813,7 @@ impl WgpuRenderer {
             && entry.sigma_x_bits == sigma_x_physical.to_bits()
             && entry.sigma_y_bits == sigma_y_physical.to_bits()
             && entry.downsample_factor == downsample_factor
-            && entry.target.format == self.config.format
+            && entry.target.format == self.window_gpu.config.format
             && entry.device_generation == self.device_generation
         {
             entry.last_used_frame = frame;
@@ -5667,17 +6314,20 @@ impl WgpuRenderer {
         // before the renderer's straight-alpha source-over blend, avoiding
         // dark fringes across transparent stops.
         let pixels = gradient_lut_pixels(stops);
-        let resource = create_gradient_resource(
-            &self.device,
-            &self.queue,
+        let (shared_resource, uploaded) = self.shared.gradient_resource(
+            id,
+            self.window_gpu.config.format,
+            &pixels,
             &self.gradient_bind_group_layout,
             &self.gradient_sampler,
-            &pixels,
         );
-        self.gradient_cache.insert(id, resource);
+        self.gradient_cache
+            .insert(id, shared_resource.resource.clone());
         self.counters.gradient_cache_misses += 1;
-        self.counters.gradient_resource_creations += 1;
-        self.counters.gradient_resource_uploads += 1;
+        if uploaded {
+            self.counters.gradient_resource_creations += 1;
+            self.counters.gradient_resource_uploads += 1;
+        }
         Some(id)
     }
     fn gradient_bind_group(&self, id: Option<GradientId>) -> &wgpu::BindGroup {
@@ -5691,69 +6341,31 @@ impl WgpuRenderer {
     fn ensure_gpu_image(&mut self, image: &ImageHandle) -> Result<(), RendererError> {
         let id = image.id();
         if let Some(resource) = self.image_cache.get_mut(&id) {
-            debug_assert_eq!(resource.width, image.decoded().width());
-            debug_assert_eq!(resource.height, image.decoded().height());
+            debug_assert_eq!(resource.resource.width, image.decoded().width());
+            debug_assert_eq!(resource.resource.height, image.decoded().height());
             resource.last_used_frame = self.counters.frames;
             self.counters.image_cache_hits += 1;
             return Ok(());
         }
-        let decoded = image.decoded();
-        let limit = self.device.limits().max_texture_dimension_2d;
-        if decoded.width() > limit || decoded.height() > limit {
-            return Err(RendererError::ImageTooLarge {
-                width: decoded.width(),
-                height: decoded.height(),
-                limit,
-            });
-        }
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("incular retained image texture"),
-            size: wgpu::Extent3d {
-                width: decoded.width(),
-                height: decoded.height(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            decoded.pixels().as_ref(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(decoded.width() * 4),
-                rows_per_image: Some(decoded.height()),
-            },
-            wgpu::Extent3d {
-                width: decoded.width(),
-                height: decoded.height(),
-                depth_or_array_layers: 1,
-            },
+        let (resource, uploaded) = self.shared.image_resource(image)?;
+        debug_assert_eq!(
+            self.shared.image_resource_identity(id),
+            Some(resource.identity),
+            "window image cache must reference the context-wide texture identity"
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.image_cache.insert(
             id,
             GpuImage {
-                _texture: texture,
-                view,
+                resource,
                 bind_groups: HashMap::new(),
-                width: decoded.width(),
-                height: decoded.height(),
                 last_used_frame: self.counters.frames,
             },
         );
         self.counters.image_cache_misses += 1;
-        self.counters.image_texture_creations += 1;
-        self.counters.image_texture_uploads += 1;
+        if uploaded {
+            self.counters.image_texture_creations += 1;
+            self.counters.image_texture_uploads += 1;
+        }
         Ok(())
     }
     fn evict_unused_images(&mut self) {
@@ -5864,7 +6476,11 @@ impl WgpuRenderer {
                 if already_bound {
                     continue;
                 }
-                let Some(view) = self.image_cache.get(image).map(|resource| &resource.view) else {
+                let Some(view) = self
+                    .image_cache
+                    .get(image)
+                    .map(|resource| &resource.resource.view)
+                else {
                     continue;
                 };
                 let Some(sampler) = self.image_samplers.get(sampling) else {
@@ -5939,20 +6555,9 @@ impl WgpuRenderer {
     }
     fn ensure_atlas_page(&mut self, page: u16) {
         while self.atlas_pages.len() <= usize::from(page) {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("incular glyph atlas page"),
-                size: wgpu::Extent3d {
-                    width: u32::from(ATLAS_PAGE_SIZE),
-                    height: u32::from(ATLAS_PAGE_SIZE),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+            let texture = self
+                .shared
+                .shared_glyph_texture(self.atlas_pages.len() as u16);
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("incular glyph atlas bind group"),
@@ -8340,5 +8945,56 @@ mod tests {
         assert!(BlendMode::Multiply.requires_destination_read());
         assert!(BlendMode::Overlay.requires_destination_read());
         assert!(BlendMode::Exclusion.requires_destination_read());
+    }
+
+    #[test]
+    fn shared_resource_registry_reuses_image_and_matching_glyph_identity() {
+        let mut resources = SharedGpuResourceRegistry::default();
+        let image = ImageId(17);
+        let image_a = resources.image_identity(image);
+        let image_b = resources.image_identity(image);
+        assert_eq!(image_a, image_b);
+
+        let one_x = GlyphCacheKey {
+            font: FontId(4),
+            glyph: 73,
+            physical_size: 16,
+        };
+        let same_one_x = resources.glyph_identity(one_x);
+        assert_eq!(resources.glyph_identity(one_x), same_one_x);
+        // DPI belongs to glyph identity, so 2x legitimately creates a second
+        // mask while remaining in the same context-wide atlas resource set.
+        assert_ne!(
+            resources.glyph_identity(GlyphCacheKey {
+                physical_size: 32,
+                ..one_x
+            }),
+            same_one_x
+        );
+        assert_eq!(resources.image_count(), 1);
+        assert_eq!(resources.glyph_count(), 2);
+    }
+
+    #[test]
+    fn per_window_presentation_resize_loss_and_zero_size_are_isolated() {
+        let mut window_a = WindowGpuPresentation::new(PhysicalSize::new(640, 480));
+        let mut window_b = WindowGpuPresentation::new(PhysicalSize::new(1920, 1080));
+        let b_before = window_b;
+
+        assert!(window_a.resize(PhysicalSize::new(800, 600)));
+        let after_resize = window_a.surface_generation;
+        window_a.surface_lost();
+        assert!(window_a.surface_generation > after_resize);
+        assert_eq!(window_b, b_before);
+
+        assert!(!window_a.resize(PhysicalSize::new(0, 600)));
+        assert!(!window_a.configured);
+        assert_eq!(window_a.physical_size, PhysicalSize::new(0, 600));
+        // A zero-sized/minimized A must not configure, resize, or otherwise
+        // invalidate B's independent presentation state.
+        assert_eq!(window_b, b_before);
+        window_b.record_present();
+        assert_eq!(window_b.presented_frames, 1);
+        assert_eq!(window_a.presented_frames, 0);
     }
 }

@@ -116,6 +116,10 @@ pub struct SemanticsDiagnostics {
     pub geometry_updates: u64,
     pub native_updates: u64,
     pub actions_received: u64,
+    /// Monotonically increases only when the retained semantic graph changes.
+    /// Native adapters use this to avoid rebuilding or even walking an
+    /// unchanged tree on paint/compositor-only frames.
+    pub revisions: u64,
 }
 
 /// Retained semantic arena. IDs are generational, so stale platform actions
@@ -137,7 +141,10 @@ impl SemanticsTree {
         self.root
     }
     pub fn set_root(&mut self, root: Option<SemanticNodeId>) {
-        self.root = root;
+        if self.root != root {
+            self.root = root;
+            self.diagnostics.revisions = self.diagnostics.revisions.wrapping_add(1);
+        }
     }
     #[must_use]
     pub fn node(&self, id: SemanticNodeId) -> Option<&SemanticNode> {
@@ -156,11 +163,22 @@ impl SemanticsTree {
         self.diagnostics
     }
 
+    /// Revision of the retained semantic graph.
+    ///
+    /// This is deliberately independent from paint and compositor state.  A
+    /// platform bridge can use it as a cheap dirty signal before performing
+    /// any projection work.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.diagnostics.revisions
+    }
+
     pub fn insert(&mut self, mut node: SemanticNode) -> SemanticNodeId {
         let id = SemanticNodeId(self.nodes.insert(node.clone()));
         node.id = id;
         *self.nodes.get_mut(id.0).expect("new semantic node") = node;
         self.diagnostics.nodes_created += 1;
+        self.diagnostics.revisions = self.diagnostics.revisions.wrapping_add(1);
         id
     }
 
@@ -179,6 +197,7 @@ impl SemanticsTree {
         if properties_changed || geometry_changed {
             *old = node;
             self.diagnostics.nodes_updated += 1;
+            self.diagnostics.revisions = self.diagnostics.revisions.wrapping_add(1);
         }
         if properties_changed {
             self.diagnostics.property_updates += 1;
@@ -192,6 +211,7 @@ impl SemanticsTree {
     pub fn remove(&mut self, id: SemanticNodeId) -> Option<SemanticNode> {
         let node = self.nodes.remove(id.0)?;
         self.diagnostics.nodes_removed += 1;
+        self.diagnostics.revisions = self.diagnostics.revisions.wrapping_add(1);
         if self.root == Some(id) {
             self.root = None;
         }
