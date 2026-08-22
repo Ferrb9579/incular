@@ -19,8 +19,8 @@ incular-layout = { workspace = true }
 incular-scroll = { workspace = true }
 incular-rendering = { workspace = true }
 incular-text = { workspace = true }
+icu_segmenter = { workspace = true }
 incular-animation = { workspace = true }
 incular-assets = { workspace = true }
 incular-image = { workspace = true }
-unicode-segmentation = { workspace = true }
 serde_json = { workspace = true }

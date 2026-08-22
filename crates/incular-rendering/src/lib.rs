@@ -2,6 +2,7 @@
 use incular_assets::FontHandle;
 use incular_core::{Arena, ArenaId, Color, DirtyFlags, Offset, Rect, Size, Transform};
 use incular_image::ImageHandle;
+use kurbo::{BezPath, Point, Shape};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -268,10 +269,17 @@ pub struct RadialGradient {
     pub stops: GradientStops,
 }
 #[derive(Clone, Debug, PartialEq)]
+pub struct SweepGradient {
+    pub center: Offset,
+    pub start_angle: f32,
+    pub stops: GradientStops,
+}
+#[derive(Clone, Debug, PartialEq)]
 pub enum Brush {
     Solid(Color),
     LinearGradient(LinearGradient),
     RadialGradient(RadialGradient),
+    SweepGradient(SweepGradient),
 }
 impl From<Color> for Brush {
     fn from(color: Color) -> Self {
@@ -287,6 +295,16 @@ impl From<RadialGradient> for Brush {
     fn from(gradient: RadialGradient) -> Self {
         Self::RadialGradient(gradient)
     }
+}
+impl From<SweepGradient> for Brush {
+    fn from(gradient: SweepGradient) -> Self {
+        Self::SweepGradient(gradient)
+    }
+}
+#[must_use]
+pub fn sweep_gradient_t(center: Offset, start_angle: f32, point: Offset) -> f32 {
+    ((point.y - center.y).atan2(point.x - center.x) - start_angle).rem_euclid(std::f32::consts::TAU)
+        / std::f32::consts::TAU
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Border {
@@ -342,14 +360,6 @@ impl Default for Stroke {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq)]
-pub enum PathVerb {
-    MoveTo(Offset),
-    LineTo(Offset),
-    QuadraticTo(Offset, Offset),
-    CubicTo(Offset, Offset, Offset),
-    Close,
-}
 /// Stable identity for immutable path geometry. It deliberately does not
 /// encode paint, placement, or transforms.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -357,7 +367,7 @@ pub struct PathId(u64);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Path {
     id: PathId,
-    verbs: Arc<[PathVerb]>,
+    path: Arc<BezPath>,
     bounds: Option<Rect>,
 }
 impl Path {
@@ -366,8 +376,8 @@ impl Path {
         PathBuilder::default()
     }
     #[must_use]
-    pub fn verbs(&self) -> &[PathVerb] {
-        &self.verbs
+    pub fn bez_path(&self) -> &BezPath {
+        &self.path
     }
     #[must_use]
     pub fn bounds(&self) -> Option<Rect> {
@@ -377,91 +387,14 @@ impl Path {
     pub const fn id(&self) -> PathId {
         self.id
     }
-    /// Renderer-neutral filled-path containment. Curves are flattened into
-    /// sixteen deterministic line segments, which is sufficient for pointer
-    /// targeting and deliberately independent from GPU tessellation.
+    /// Renderer-neutral filled-path containment delegated to Kurbo's exact
+    /// segment winding implementation. It is intentionally independent from
+    /// GPU tessellation so pointer targeting follows the retained geometry.
     #[must_use]
     pub fn contains(&self, point: Offset, rule: FillRule) -> bool {
-        let mut contours: Vec<Vec<Offset>> = Vec::new();
-        let mut contour = Vec::new();
-        let mut current = Offset::ZERO;
-        let mut start = Offset::ZERO;
-        for verb in self.verbs() {
-            match *verb {
-                PathVerb::MoveTo(p) => {
-                    if contour.len() > 2 {
-                        contours.push(std::mem::take(&mut contour));
-                    }
-                    current = p;
-                    start = p;
-                    contour.push(p);
-                }
-                PathVerb::LineTo(p) => {
-                    contour.push(p);
-                    current = p;
-                }
-                PathVerb::QuadraticTo(control, end) => {
-                    for step in 1..=16 {
-                        let t = step as f32 / 16.;
-                        let u = 1. - t;
-                        contour.push(Offset::new(
-                            u * u * current.x + 2. * u * t * control.x + t * t * end.x,
-                            u * u * current.y + 2. * u * t * control.y + t * t * end.y,
-                        ));
-                    }
-                    current = end;
-                }
-                PathVerb::CubicTo(a, b, end) => {
-                    for step in 1..=16 {
-                        let t = step as f32 / 16.;
-                        let u = 1. - t;
-                        contour.push(Offset::new(
-                            u * u * u * current.x
-                                + 3. * u * u * t * a.x
-                                + 3. * u * t * t * b.x
-                                + t * t * t * end.x,
-                            u * u * u * current.y
-                                + 3. * u * u * t * a.y
-                                + 3. * u * t * t * b.y
-                                + t * t * t * end.y,
-                        ));
-                    }
-                    current = end;
-                }
-                PathVerb::Close => {
-                    if contour.last().copied() != Some(start) {
-                        contour.push(start);
-                    }
-                    if contour.len() > 2 {
-                        contours.push(std::mem::take(&mut contour));
-                    }
-                }
-            }
-        }
-        if contour.len() > 2 {
-            contours.push(contour);
-        }
-        let winding: i32 = contours
-            .iter()
-            .map(|contour| {
-                contour
-                    .windows(2)
-                    .map(|edge| {
-                        let (a, b) = (edge[0], edge[1]);
-                        if (a.y <= point.y && b.y > point.y) || (a.y > point.y && b.y <= point.y) {
-                            let x = a.x + (point.y - a.y) * (b.x - a.x) / (b.y - a.y);
-                            if x >= point.x {
-                                if b.y > a.y { 1 } else { -1 }
-                            } else {
-                                0
-                            }
-                        } else {
-                            0
-                        }
-                    })
-                    .sum::<i32>()
-            })
-            .sum();
+        let winding = self
+            .path
+            .winding(Point::new(f64::from(point.x), f64::from(point.y)));
         match rule {
             FillRule::NonZero => winding != 0,
             FillRule::EvenOdd => winding.unsigned_abs() % 2 == 1,
@@ -475,55 +408,53 @@ impl Default for Path {
 }
 #[derive(Default)]
 pub struct PathBuilder {
-    verbs: Vec<PathVerb>,
-    points: Vec<Offset>,
+    path: BezPath,
 }
 impl PathBuilder {
     pub fn move_to(&mut self, p: Offset) -> &mut Self {
-        self.verbs.push(PathVerb::MoveTo(p));
-        self.points.push(p);
+        self.path.move_to(point(p));
         self
     }
     pub fn line_to(&mut self, p: Offset) -> &mut Self {
-        self.verbs.push(PathVerb::LineTo(p));
-        self.points.push(p);
+        self.path.line_to(point(p));
         self
     }
     pub fn quadratic_to(&mut self, c: Offset, p: Offset) -> &mut Self {
-        self.verbs.push(PathVerb::QuadraticTo(c, p));
-        self.points.extend([c, p]);
+        self.path.quad_to(point(c), point(p));
         self
     }
     pub fn cubic_to(&mut self, a: Offset, b: Offset, p: Offset) -> &mut Self {
-        self.verbs.push(PathVerb::CubicTo(a, b, p));
-        self.points.extend([a, b, p]);
+        self.path.curve_to(point(a), point(b), point(p));
         self
     }
     pub fn close(&mut self) -> &mut Self {
-        self.verbs.push(PathVerb::Close);
+        if !self.path.elements().is_empty() {
+            self.path.close_path();
+        }
         self
     }
     #[must_use]
     pub fn build(self) -> Path {
-        let bounds = self
-            .points
-            .iter()
-            .filter(|p| p.x.is_finite() && p.y.is_finite())
-            .fold(None, |a: Option<(f32, f32, f32, f32)>, p| {
-                Some(match a {
-                    Some((l, t, r, b)) => (l.min(p.x), t.min(p.y), r.max(p.x), b.max(p.y)),
-                    None => (p.x, p.y, p.x, p.y),
-                })
-            })
-            .map(|(l, t, r, b)| {
-                Rect::from_origin_size(Offset::new(l, t), incular_core::Size::new(r - l, b - t))
-            });
+        let bounds = (!self.path.is_empty() && self.path.is_finite()).then(|| {
+            let bounds = self.path.bounding_box();
+            Rect::from_origin_size(
+                Offset::new(bounds.x0 as f32, bounds.y0 as f32),
+                incular_core::Size::new(
+                    (bounds.x1 - bounds.x0) as f32,
+                    (bounds.y1 - bounds.y0) as f32,
+                ),
+            )
+        });
         Path {
             id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
-            verbs: self.verbs.into(),
+            path: Arc::new(self.path),
             bounds,
         }
     }
+}
+
+fn point(offset: Offset) -> Point {
+    Point::new(f64::from(offset.x), f64::from(offset.y))
 }
 
 /// A positioned glyph produced by a text shaper. It is intentionally not a
@@ -1330,6 +1261,9 @@ pub enum PaintCommand {
     PushClipRRect {
         rrect: RRect,
     },
+    PushClipOval {
+        rect: Rect,
+    },
     PushClipPath {
         path: Arc<Path>,
         fill_rule: FillRule,
@@ -1488,6 +1422,10 @@ impl Canvas {
     pub fn save_clip_rrect(&mut self, rrect: RRect) {
         self.saves.push(SaveKind::Clip);
         self.list.push(PaintCommand::PushClipRRect { rrect });
+    }
+    pub fn save_clip_oval(&mut self, rect: Rect) {
+        self.saves.push(SaveKind::Clip);
+        self.list.push(PaintCommand::PushClipOval { rect });
     }
     pub fn save_clip_path(&mut self, path: Arc<Path>, fill_rule: FillRule) {
         self.saves.push(SaveKind::Clip);
@@ -1851,7 +1789,7 @@ impl LayerTree {
         let mut out = DisplayList::new();
         self.flattened_pictures.clear();
         if let Some(root) = self.root {
-            self.flatten_layer(root, Offset::ZERO, None, &mut out);
+            self.flatten_layer(root, Transform::IDENTITY, None, &mut out);
         }
         for (_, layer) in self.layers.iter() {
             if matches!(layer.kind, LayerKind::Picture { .. })
@@ -1874,7 +1812,7 @@ impl LayerTree {
     fn flatten_layer(
         &mut self,
         id: LayerId,
-        translation: Offset,
+        world_transform: Transform,
         clip: Option<Rect>,
         out: &mut DisplayList,
     ) {
@@ -1886,7 +1824,7 @@ impl LayerTree {
                 display_list,
                 bounds,
             } => {
-                let world = Rect::from_origin_size(bounds.origin + translation, bounds.size);
+                let world = world_transform.transform_rect_bbox(bounds);
                 if clip.is_some_and(|active| !active.intersects(world)) {
                     self.diagnostics.layers_culled += 1;
                     return;
@@ -1898,19 +1836,19 @@ impl LayerTree {
                     active_clip: clip,
                 });
                 out.push(PaintCommand::PushTransform {
-                    transform: Transform::translation(translation),
+                    transform: world_transform,
                 });
                 out.extend_from(&display_list);
                 out.push(PaintCommand::PopTransform);
             }
-            LayerKind::Transform { transform } => {
-                let next = translation + transform.translation;
+            LayerKind::Transform { transform: local } => {
+                let next = world_transform.then(local);
                 for child in layer.children {
                     self.flatten_layer(child, next, clip, out);
                 }
             }
             LayerKind::ClipRect { rect } => {
-                let world = Rect::from_origin_size(rect.origin + translation, rect.size);
+                let world = world_transform.transform_rect_bbox(rect);
                 let next_clip = match clip {
                     Some(old) => old.intersection(world),
                     None => Some(world),
@@ -1921,13 +1859,13 @@ impl LayerTree {
                 }
                 out.push(PaintCommand::PushClip { rect: world });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, next_clip, out);
+                    self.flatten_layer(child, world_transform, next_clip, out);
                 }
                 out.push(PaintCommand::PopClip);
             }
             LayerKind::Opacity { alpha } => {
                 let bounds = self
-                    .subtree_bounds(id, translation)
+                    .subtree_bounds(id, world_transform)
                     .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 out.push(PaintCommand::PushOpacity {
                     layer: id,
@@ -1936,13 +1874,13 @@ impl LayerTree {
                     bounds,
                 });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, clip, out);
+                    self.flatten_layer(child, world_transform, clip, out);
                 }
                 out.push(PaintCommand::PopOpacity);
             }
             LayerKind::Blur { blur } => {
                 let bounds = self
-                    .subtree_bounds(id, translation)
+                    .subtree_bounds(id, world_transform)
                     .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 out.push(PaintCommand::PushBlur {
                     layer: id,
@@ -1951,13 +1889,13 @@ impl LayerTree {
                     bounds,
                 });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, clip, out);
+                    self.flatten_layer(child, world_transform, clip, out);
                 }
                 out.push(PaintCommand::PopEffect);
             }
             LayerKind::DropShadow { shadow } => {
                 let bounds = self
-                    .subtree_bounds(id, translation)
+                    .subtree_bounds(id, world_transform)
                     .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 out.push(PaintCommand::PushDropShadow {
                     layer: id,
@@ -1966,13 +1904,13 @@ impl LayerTree {
                     bounds,
                 });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, clip, out);
+                    self.flatten_layer(child, world_transform, clip, out);
                 }
                 out.push(PaintCommand::PopEffect);
             }
             LayerKind::ColorFilter { filter } => {
                 let bounds = self
-                    .subtree_bounds(id, translation)
+                    .subtree_bounds(id, world_transform)
                     .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 out.push(PaintCommand::PushColorFilter {
                     layer: id,
@@ -1981,13 +1919,13 @@ impl LayerTree {
                     bounds,
                 });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, clip, out);
+                    self.flatten_layer(child, world_transform, clip, out);
                 }
                 out.push(PaintCommand::PopEffect);
             }
             LayerKind::Blend { mode } => {
                 let bounds = self
-                    .subtree_bounds(id, translation)
+                    .subtree_bounds(id, world_transform)
                     .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 out.push(PaintCommand::PushBlend {
                     layer: id,
@@ -1996,7 +1934,7 @@ impl LayerTree {
                     bounds,
                 });
                 for child in layer.children {
-                    self.flatten_layer(child, translation, clip, out);
+                    self.flatten_layer(child, world_transform, clip, out);
                 }
                 out.push(PaintCommand::PopEffect);
             }
@@ -2054,43 +1992,38 @@ impl LayerTree {
         }
         value
     }
-    fn subtree_bounds(&self, id: LayerId, translation: Offset) -> Option<Rect> {
+    fn subtree_bounds(&self, id: LayerId, world_transform: Transform) -> Option<Rect> {
         let layer = self.layers.get(id.0)?;
         match &layer.kind {
-            LayerKind::Picture { bounds, .. } => Some(Rect::from_origin_size(
-                bounds.origin + translation,
-                bounds.size,
-            )),
-            LayerKind::Transform { transform } => layer
+            LayerKind::Picture { bounds, .. } => Some(world_transform.transform_rect_bbox(*bounds)),
+            LayerKind::Transform { transform: local } => layer
                 .children
                 .iter()
-                .filter_map(|child| {
-                    self.subtree_bounds(*child, translation + transform.translation)
-                })
+                .filter_map(|child| self.subtree_bounds(*child, world_transform.then(*local)))
                 .reduce(union_rect),
             LayerKind::ClipRect { rect } => {
-                let world = Rect::from_origin_size(rect.origin + translation, rect.size);
+                let world = world_transform.transform_rect_bbox(*rect);
                 layer
                     .children
                     .iter()
-                    .filter_map(|child| self.subtree_bounds(*child, translation))
+                    .filter_map(|child| self.subtree_bounds(*child, world_transform))
                     .reduce(union_rect)
                     .and_then(|bounds| bounds.intersection(world))
             }
             LayerKind::Opacity { .. } => layer
                 .children
                 .iter()
-                .filter_map(|child| self.subtree_bounds(*child, translation))
+                .filter_map(|child| self.subtree_bounds(*child, world_transform))
                 .reduce(union_rect),
             LayerKind::Blur { .. } | LayerKind::DropShadow { .. } => layer
                 .children
                 .iter()
-                .filter_map(|child| self.subtree_bounds(*child, translation))
+                .filter_map(|child| self.subtree_bounds(*child, world_transform))
                 .reduce(union_rect),
             LayerKind::ColorFilter { .. } | LayerKind::Blend { .. } => layer
                 .children
                 .iter()
-                .filter_map(|child| self.subtree_bounds(*child, translation))
+                .filter_map(|child| self.subtree_bounds(*child, world_transform))
                 .reduce(union_rect),
         }
     }
@@ -2103,14 +2036,14 @@ impl LayerTree {
         out
     }
     fn write_debug(&self, id: LayerId, depth: usize, out: &mut String) {
-        self.write_debug_at(id, None, depth, Offset::ZERO, None, out);
+        self.write_debug_at(id, None, depth, Transform::IDENTITY, None, out);
     }
     fn write_debug_at(
         &self,
         id: LayerId,
         parent: Option<LayerId>,
         depth: usize,
-        translation: Offset,
+        world_transform: Transform,
         clip: Option<Rect>,
         out: &mut String,
     ) {
@@ -2121,29 +2054,29 @@ impl LayerTree {
         let kind = match &layer.kind {
             LayerKind::Picture { bounds, .. } => format!(
                 "Picture(local_bounds={bounds:?}, world_bounds={:?}, clip={clip:?})",
-                Rect::from_origin_size(bounds.origin + translation, bounds.size)
+                world_transform.transform_rect_bbox(*bounds)
             ),
             LayerKind::Transform { transform } => {
                 format!(
                     "Transform(local={:?}, world={:?})",
-                    transform.translation,
-                    translation + transform.translation
+                    transform,
+                    world_transform.then(*transform)
                 )
             }
             LayerKind::ClipRect { rect } => format!(
                 "ClipRect(local={rect:?}, world={:?})",
-                Rect::from_origin_size(rect.origin + translation, rect.size)
+                world_transform.transform_rect_bbox(*rect)
             ),
             LayerKind::Opacity { alpha } => format!(
                 "Opacity(alpha={alpha:.3}, bounds={:?}, generation={})",
-                self.subtree_bounds(id, translation),
+                self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
             LayerKind::Blur { blur } => format!(
                 "Blur(sigma=({:.3},{:.3}), bounds={:?}, generation={})",
                 blur.sigma_x,
                 blur.sigma_y,
-                self.subtree_bounds(id, translation),
+                self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
             LayerKind::DropShadow { shadow } => format!(
@@ -2151,18 +2084,18 @@ impl LayerTree {
                 shadow.sigma_x,
                 shadow.sigma_y,
                 shadow.offset,
-                self.subtree_bounds(id, translation),
+                self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
             LayerKind::ColorFilter { filter } => format!(
                 "ColorFilter(matrix={:?}, bounds={:?}, generation={})",
                 filter.to_matrix(),
-                self.subtree_bounds(id, translation),
+                self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
             LayerKind::Blend { mode } => format!(
                 "Blend(mode={mode:?}, bounds={:?}, generation={})",
-                self.subtree_bounds(id, translation),
+                self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
         };
@@ -2171,18 +2104,18 @@ impl LayerTree {
             layer.dirty
         ));
         let (next_translation, next_clip) = match layer.kind {
-            LayerKind::Picture { .. } => (translation, clip),
-            LayerKind::Transform { transform } => (translation + transform.translation, clip),
+            LayerKind::Picture { .. } => (world_transform, clip),
+            LayerKind::Transform { transform: local } => (world_transform.then(local), clip),
             LayerKind::ClipRect { rect } => {
-                let world = Rect::from_origin_size(rect.origin + translation, rect.size);
+                let world = world_transform.transform_rect_bbox(rect);
                 (
-                    translation,
+                    world_transform,
                     Some(clip.map_or(world, |old| old.intersection(world).unwrap_or(world))),
                 )
             }
-            LayerKind::Opacity { .. } => (translation, clip),
-            LayerKind::Blur { .. } | LayerKind::DropShadow { .. } => (translation, clip),
-            LayerKind::ColorFilter { .. } | LayerKind::Blend { .. } => (translation, clip),
+            LayerKind::Opacity { .. } => (world_transform, clip),
+            LayerKind::Blur { .. } | LayerKind::DropShadow { .. } => (world_transform, clip),
+            LayerKind::ColorFilter { .. } | LayerKind::Blend { .. } => (world_transform, clip),
         };
         for child in &layer.children {
             self.write_debug_at(
@@ -2249,20 +2182,16 @@ mod tests {
         assert_eq!(stops.as_slice()[1].offset, 1.);
     }
     #[test]
-    fn path_bounds_conservatively_include_control_points() {
+    fn path_bounds_are_tight_bezier_geometry_not_control_boxes() {
         let mut path = Path::builder();
         path.move_to(Offset::new(2., 3.)).cubic_to(
             Offset::new(-4., 8.),
             Offset::new(10., -2.),
             Offset::new(5., 6.),
         );
-        assert_eq!(
-            path.build().bounds(),
-            Some(Rect::from_origin_size(
-                Offset::new(-4., -2.),
-                Size::new(14., 10.)
-            ))
-        );
+        let bounds = path.build().bounds().expect("curve has bounds");
+        assert!(bounds.origin.x > -4. && bounds.origin.y > -2.);
+        assert!(bounds.size.width < 14. && bounds.size.height < 10.);
     }
     #[test]
     fn path_identity_is_stable_for_clones_and_unique_for_new_geometry() {
@@ -2296,7 +2225,7 @@ mod tests {
         let before = tree.diagnostics().picture_layers_repainted;
         let list = tree.flatten();
         assert_eq!(tree.diagnostics().picture_layers_repainted, before);
-        assert!(list.commands().iter().any(|command| matches!(command, PaintCommand::PushTransform { transform } if transform.translation == Offset::new(15., 27.))));
+        assert!(list.commands().iter().any(|command| matches!(command, PaintCommand::PushTransform { transform } if transform.translation_offset() == Offset::new(15., 27.))));
         assert!(tree.update_transform(parent, Transform::translation(Offset::new(11., 20.))));
     }
     #[test]
@@ -2620,6 +2549,19 @@ mod tests {
     }
 
     #[test]
+    fn sweep_gradient_wraps_angles_and_canvas_records_oval_clips() {
+        assert!((sweep_gradient_t(Offset::ZERO, 0., Offset::new(1., 0.))).abs() < 1e-6);
+        assert!((sweep_gradient_t(Offset::ZERO, 0., Offset::new(0., 1.)) - 0.25).abs() < 1e-6);
+        let mut canvas = Canvas::default();
+        canvas.save_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::new(40., 20.)));
+        canvas.restore();
+        assert!(matches!(
+            canvas.finish().commands()[0],
+            PaintCommand::PushClipOval { .. }
+        ));
+    }
+
+    #[test]
     fn color_filter_helpers_cover_identity_alpha_and_common_adjustments() {
         let sample = [0.2, 0.4, 0.8, 0.5];
         assert_eq!(ColorFilter::identity().apply(sample), sample);
@@ -2812,5 +2754,38 @@ mod tests {
         let after = generations(&blur_then_color.flatten());
         assert_eq!(before[0].1, after[0].1);
         assert_eq!(before[1].1, after[1].1);
+    }
+
+    #[test]
+    fn kurbo_provides_tight_bezier_bounds_and_winding() {
+        let mut builder = Path::builder();
+        builder
+            .move_to(Offset::new(0., 0.))
+            .quadratic_to(Offset::new(10., 20.), Offset::new(20., 0.))
+            .line_to(Offset::new(0., 0.))
+            .close();
+        let path = builder.build();
+        let bounds = path.bounds().expect("non-empty path");
+        // The control point reaches y=20, while the actual quadratic maximum
+        // is y=10. This guards against restoring the old control-point box.
+        assert!((bounds.size.height - 10.).abs() < 0.0001, "{bounds:?}");
+        assert!(path.contains(Offset::new(10., 5.), FillRule::NonZero));
+        assert!(!path.contains(Offset::new(10., 12.), FillRule::NonZero));
+    }
+
+    #[test]
+    fn retained_layers_compose_affines_for_world_bounds() {
+        let mut tree = LayerTree::new();
+        let picture = tree.create_picture(
+            DisplayList::new(),
+            Rect::from_origin_size(Offset::ZERO, Size::new(10., 20.)),
+        );
+        let rotate = tree.create_transform(Transform::rotation(std::f32::consts::FRAC_PI_2));
+        tree.set_children(rotate, vec![picture]);
+        tree.set_root(rotate);
+        let _ = tree.flatten();
+        let bounds = tree.flattened_pictures()[0].world_bounds;
+        assert!((bounds.size.width - 20.).abs() < 0.0001);
+        assert!((bounds.size.height - 10.).abs() < 0.0001);
     }
 }

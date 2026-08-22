@@ -157,24 +157,18 @@ impl FileRestorationStore {
         Self { path: path.into() }
     }
 
-    /// Derives an application-specific user state path rather than using the
-    /// working directory. `application_id` is encoded into one safe directory
-    /// name and must be stable across launches.
+    /// Derives an application-specific user state path with the operating
+    /// system's standard project-directory conventions. `application_id` must
+    /// be stable across launches.
     pub fn for_application(application_id: &str) -> Result<Self, RestorationStoreError> {
-        let base = application_state_directory()?;
-        let namespace = application_id
-            .chars()
-            .map(|character| match character {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_' => character,
-                _ => '_',
-            })
-            .collect::<String>();
-        if namespace.is_empty() || namespace == "." || namespace == ".." {
-            return Err(RestorationStoreError::new(
-                "application restoration identifier is not usable as a storage namespace",
-            ));
-        }
-        Ok(Self::new(base.join(namespace).join("restoration.json")))
+        let base = incular_platform::application_data_local_directory(application_id).ok_or_else(
+            || {
+                RestorationStoreError::new(
+                    "standard application data directory is unavailable for restoration",
+                )
+            },
+        )?;
+        Ok(Self::new(base.join("restoration.json")))
     }
 
     #[must_use]
@@ -228,32 +222,6 @@ impl RestorationStore for FileRestorationStore {
 
     fn location(&self) -> Option<PathBuf> {
         Some(self.path.clone())
-    }
-}
-
-fn application_state_directory() -> Result<PathBuf, RestorationStoreError> {
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| RestorationStoreError::new("APPDATA is unavailable for restoration"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|home| home.join("Library").join("Application Support"))
-            .ok_or_else(|| RestorationStoreError::new("HOME is unavailable for restoration"))
-    }
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        if let Some(directory) = std::env::var_os("XDG_STATE_HOME") {
-            return Ok(PathBuf::from(directory));
-        }
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|home| home.join(".local").join("state"))
-            .ok_or_else(|| RestorationStoreError::new("HOME is unavailable for restoration"))
     }
 }
 
@@ -1025,6 +993,17 @@ mod tests {
         store.fail_next_save("interrupted replacement");
         assert!(store.save(b"B").is_err());
         assert_eq!(store.load().unwrap(), Some(b"A".to_vec()));
+    }
+
+    #[test]
+    fn default_file_store_uses_a_project_data_location_without_writing() {
+        let store = FileRestorationStore::for_application("org.incular.restore-test")
+            .expect("test environment has standard application directories");
+        assert_eq!(
+            store.path().file_name().and_then(|name| name.to_str()),
+            Some("restoration.json")
+        );
+        assert!(store.path().parent().is_some());
     }
 
     #[test]

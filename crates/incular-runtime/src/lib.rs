@@ -8,7 +8,8 @@ use incular_accessibility::{
 use incular_config::Constraints;
 use incular_config::RuntimeEnvironment;
 use incular_core::{
-    ImeEvent, InputEvent, KeyCode, KeyEvent, Offset, PointerPhase, RestorationKey, RestorationScope,
+    Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PointerPhase, RestorationKey,
+    RestorationScope,
 };
 use incular_platform::{
     Clipboard, MemoryClipboard, PlatformEvent, PlatformLifecycle, WindowCommand, WindowEvent,
@@ -566,6 +567,7 @@ pub struct Runtime {
     last_pointer: Offset,
     focused: Option<ElementId>,
     captured_text_field: Option<ElementId>,
+    captured_selectable_text: Option<ElementId>,
     clipboard: Box<dyn Clipboard>,
     editing_diagnostics: EditingDiagnostics,
     frame_requested: bool,
@@ -627,6 +629,7 @@ impl Runtime {
             last_pointer: Offset::ZERO,
             focused: None,
             captured_text_field: None,
+            captured_selectable_text: None,
             clipboard: Box::new(MemoryClipboard::default()),
             editing_diagnostics: EditingDiagnostics::default(),
             frame_requested: true,
@@ -919,6 +922,7 @@ impl Runtime {
         self.handlers.clear();
         self.focused = None;
         self.captured_text_field = None;
+        self.captured_selectable_text = None;
         self.hovered_button = None;
         self.pressed_button = None;
     }
@@ -1114,12 +1118,18 @@ impl Runtime {
         if legacy_pointer {
             self.last_pointer = position;
         }
-        if let Some(element) = self.tree.dispatch_gesture(PointerEvent {
-            pointer,
-            position,
-            phase,
-            time: Instant::now(),
-        }) {
+        let gesture_window = self.window_id.map_or(0, |window| {
+            (u64::from(window.index()) << 32) | u64::from(window.generation())
+        });
+        if let Some(element) = self.tree.dispatch_gesture_in_window(
+            gesture_window,
+            PointerEvent {
+                pointer,
+                position,
+                phase,
+                time: Instant::now(),
+            },
+        ) {
             self.frame_requested = true;
             self.release_legacy_pointer(pointer, phase);
             return Some(EventTarget {
@@ -1138,6 +1148,7 @@ impl Runtime {
             return None;
         }
         let text_target = self.tree.text_field_at(position);
+        let selectable_target = self.tree.selectable_text_at(position);
         let target = self
             .tree
             .hit_test(position)
@@ -1150,6 +1161,20 @@ impl Runtime {
                         .text_field_set_caret(field, position, true, Instant::now());
                     self.frame_requested = true;
                 }
+                if let Some(label) = self.captured_selectable_text {
+                    if let Some(target) = selectable_target {
+                        if self
+                            .tree
+                            .selectable_text_set_selection(target, position, true)
+                        {
+                            self.captured_selectable_text = Some(target);
+                            self.set_focus(Some(target));
+                            self.frame_requested = true;
+                        }
+                    } else if self.tree.is_selectable_text(label) {
+                        self.frame_requested = true;
+                    }
+                }
                 self.set_hover(target.map(|(element, _)| element));
                 target.map(|(element, action)| EventTarget {
                     element,
@@ -1157,6 +1182,20 @@ impl Runtime {
                 })
             }
             PointerPhase::Down => {
+                if let Some(label) = selectable_target {
+                    self.set_focus(Some(label));
+                    self.captured_selectable_text = Some(label);
+                    if self
+                        .tree
+                        .selectable_text_set_selection(label, position, false)
+                    {
+                        self.frame_requested = true;
+                        return Some(EventTarget {
+                            element: label,
+                            action: None,
+                        });
+                    }
+                }
                 self.set_focus(text_target);
                 self.captured_text_field = text_target;
                 if let Some(field) = text_target {
@@ -1181,6 +1220,7 @@ impl Runtime {
             }
             PointerPhase::Up => {
                 self.captured_text_field = None;
+                self.captured_selectable_text = None;
                 let pressed = self.pressed_button.take();
                 let valid = pressed
                     .zip(target)
@@ -1211,6 +1251,7 @@ impl Runtime {
             }
             PointerPhase::Cancel => {
                 self.captured_text_field = None;
+                self.captured_selectable_text = None;
                 if let Some(element) = self.pressed_button.take() {
                     let _ = self.tree.set_button_state(element, ButtonState::Normal);
                     self.frame_requested = true;
@@ -1257,17 +1298,46 @@ impl Runtime {
         };
         self.set_focus(Some(next));
     }
-    fn handle_key(&mut self, event: KeyEvent) {
-        if event.pressed {
+    fn handle_key(&mut self, event: KeyboardEvent) {
+        if event.state.is_down() {
             self.editing_diagnostics.key_down_received += 1;
         } else {
             self.editing_diagnostics.key_up_received += 1;
         }
-        if !event.pressed {
+        if !event.state.is_down() {
             return;
         }
-        if event.code == KeyCode::Tab {
-            self.focus_next(event.modifiers.shift);
+        if event.code == Code::Tab {
+            self.focus_next(event.modifiers.shift());
+            return;
+        }
+        if let Some(label) = self.focused.filter(|id| self.tree.is_selectable_text(*id)) {
+            let extend = event.modifiers.shift();
+            let handled = if command_modifier(event.modifiers) {
+                match event.code {
+                    Code::KeyA => self.tree.selectable_text_select_all(label),
+                    Code::KeyC => {
+                        if let Some(text) = self.tree.selectable_text_selected_text(label) {
+                            self.clipboard.set_text(text);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            } else {
+                match event.code {
+                    Code::ArrowLeft => self.tree.selectable_text_move(label, false, extend),
+                    Code::ArrowRight => self.tree.selectable_text_move(label, true, extend),
+                    Code::Home => self.tree.selectable_text_move_to_edge(label, false, extend),
+                    Code::End => self.tree.selectable_text_move_to_edge(label, true, extend),
+                    _ => false,
+                }
+            };
+            if handled {
+                self.frame_requested = true;
+            }
             return;
         }
         let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
@@ -1276,16 +1346,16 @@ impl Runtime {
         let Some(controller) = self.tree.text_controller(field) else {
             return;
         };
-        let extend = event.modifiers.shift;
-        if event.modifiers.command {
+        let extend = event.modifiers.shift();
+        if command_modifier(event.modifiers) {
             match event.code {
-                KeyCode::KeyA => controller.select_all(),
-                KeyCode::KeyC => self.clipboard.set_text(controller.selected_text()),
-                KeyCode::KeyX => {
+                Code::KeyA => controller.select_all(),
+                Code::KeyC => self.clipboard.set_text(controller.selected_text()),
+                Code::KeyX => {
                     self.clipboard.set_text(controller.selected_text());
                     controller.replace_selection("");
                 }
-                KeyCode::KeyV => {
+                Code::KeyV => {
                     if let Some(text) = self.clipboard.get_text() {
                         controller.insert(&text);
                     }
@@ -1294,33 +1364,33 @@ impl Runtime {
             }
         } else {
             match event.code {
-                KeyCode::Backspace => {
+                Code::Backspace => {
                     controller.backspace();
                     self.editing_diagnostics.backspace_commands += 1;
                 }
-                KeyCode::Delete => {
+                Code::Delete => {
                     controller.delete();
                     self.editing_diagnostics.delete_commands += 1;
                 }
-                KeyCode::ArrowLeft => controller.move_left(extend),
-                KeyCode::ArrowRight => controller.move_right(extend),
-                KeyCode::ArrowUp => {
+                Code::ArrowLeft => controller.move_left(extend),
+                Code::ArrowRight => controller.move_right(extend),
+                Code::ArrowUp => {
                     let _ = self.tree.text_field_move_vertical(field, false, extend);
                 }
-                KeyCode::ArrowDown => {
+                Code::ArrowDown => {
                     let _ = self.tree.text_field_move_vertical(field, true, extend);
                 }
-                KeyCode::Home => {
+                Code::Home => {
                     if !self.tree.text_field_move_line_edge(field, false, extend) {
                         controller.move_home(extend);
                     }
                 }
-                KeyCode::End => {
+                Code::End => {
                     if !self.tree.text_field_move_line_edge(field, true, extend) {
                         controller.move_end(extend);
                     }
                 }
-                KeyCode::Enter => {
+                Code::Enter => {
                     if self.tree.is_multiline_text_field(field) {
                         controller.insert("\n");
                     } else {
@@ -1491,6 +1561,14 @@ impl Runtime {
         }
         self.frame_requested = true;
     }
+}
+
+/// Conventional desktop shortcut modifier: Control on Linux/Windows and Meta
+/// (Command) on macOS.  `keyboard-types` retains the actual modifier bits;
+/// this policy belongs to the runtime command dispatcher rather than input
+/// normalization.
+fn command_modifier(modifiers: Modifiers) -> bool {
+    modifiers.ctrl() || modifiers.meta()
 }
 
 /// Framework-controlled build scope for declarative roots. It intentionally
@@ -1690,9 +1768,19 @@ impl BuildContext {
         self.environment.borrow().brightness
     }
     #[must_use]
-    pub fn locales(&self) -> Vec<String> {
+    pub fn locales(&self) -> Vec<incular_config::Locale> {
         self.record_environment(ENV_LOCALE);
         self.environment.borrow().locales.clone()
+    }
+    /// Resolves a supported application locale while recording a locale-only
+    /// dependency, so platform locale changes rebuild only consumers of it.
+    #[must_use]
+    pub fn resolve_locale(
+        &self,
+        supported: &[incular_config::Locale],
+    ) -> Option<incular_config::Locale> {
+        self.record_environment(ENV_LOCALE);
+        self.environment.borrow().resolve_locale(supported)
     }
     #[must_use]
     pub fn text_direction(&self) -> incular_config::TextDirection {
@@ -2991,7 +3079,7 @@ impl Application {
 mod tests {
     use super::*;
     use accesskit::{Action, ActionRequest, NodeId, TreeId};
-    use incular_core::{Color, Offset, Size};
+    use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
     use incular_widgets::{Button, GestureCallbacks, GestureRegion, Text, VirtualList};
@@ -3010,6 +3098,19 @@ mod tests {
         fn wake(&self) {
             self.0.fetch_add(1, Ordering::AcqRel);
         }
+    }
+
+    fn key_down(code: Code) -> KeyboardEvent {
+        KeyboardEvent::key_down(
+            KeyboardKey::Named(incular_core::NamedKey::Unidentified),
+            code,
+        )
+    }
+
+    fn shortcut_key_down(code: Code) -> KeyboardEvent {
+        let mut event = key_down(code);
+        event.modifiers = Modifiers::CONTROL;
+        event
     }
 
     fn wait_for_wake(wake: &TestWake) {
@@ -3150,7 +3251,7 @@ mod tests {
         for command in list.commands() {
             match command {
                 PaintCommand::PushTransform { transform } => {
-                    transforms.push(*transforms.last().unwrap() + transform.translation);
+                    transforms.push(*transforms.last().unwrap() + transform.translation_offset());
                 }
                 PaintCommand::PopTransform => {
                     transforms.pop();
@@ -3168,6 +3269,7 @@ mod tests {
                 | PaintCommand::StrokePath { .. }
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
+                | PaintCommand::PushClipOval { .. }
                 | PaintCommand::PushClipPath { .. }
                 | PaintCommand::PopClip
                 | PaintCommand::PushOpacity { .. }
@@ -3507,6 +3609,36 @@ mod tests {
         assert!(runtime.set_environment(environment.clone()));
         assert_eq!(builds.get(), baseline);
         environment.text_scale = 1.5;
+        assert!(runtime.set_environment(environment));
+        assert_eq!(builds.get(), baseline + 1);
+    }
+
+    #[test]
+    fn locale_resolution_rebuilds_only_locale_consumers() {
+        let builds = Rc::new(Cell::new(0));
+        let observed = builds.clone();
+        let supported = vec![
+            "en".parse().expect("valid ICU locale"),
+            "fr".parse().expect("valid ICU locale"),
+        ];
+        let application = Application::new(move |cx| {
+            observed.set(observed.get() + 1);
+            let locale = cx
+                .resolve_locale(&supported)
+                .map(|locale| locale.to_string())
+                .unwrap_or_else(|| "none".to_owned());
+            Text::new(locale).into()
+        })
+        .unwrap();
+        let mut runtime = application.into_runtime();
+        let baseline = builds.get();
+
+        let mut environment = runtime.environment();
+        environment.brightness = incular_config::Brightness::Dark;
+        assert!(runtime.set_environment(environment.clone()));
+        assert_eq!(builds.get(), baseline);
+
+        environment.locales = vec!["fr-CA".parse().expect("valid ICU locale")];
         assert!(runtime.set_environment(environment));
         assert_eq!(builds.get(), baseline + 1);
     }
@@ -3893,7 +4025,7 @@ mod tests {
 
     #[test]
     fn focus_routes_text_shortcuts_and_ime_without_rebuilding_tree() {
-        use incular_core::{ImeEvent, KeyCode, KeyEvent, Modifiers};
+        use incular_core::ImeEvent;
         use incular_widgets::{TextEditingController, TextField};
         let first = TextEditingController::new();
         let second = TextEditingController::new();
@@ -3921,43 +4053,14 @@ mod tests {
         assert_eq!(first.text(), "café");
         let _ = runtime.handle_input(InputEvent::Ime(ImeEvent::Commit("世界".into())));
         assert_eq!(first.text(), "café世界");
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::Tab,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        }));
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Tab)));
         assert_ne!(runtime.focused_element(), runtime.tree().root());
         let _ = runtime.handle_input(InputEvent::Text("next".into()));
         assert_eq!(second.text(), "next");
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::KeyA,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers {
-                command: true,
-                ..Modifiers::default()
-            },
-        }));
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::KeyX,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers {
-                command: true,
-                ..Modifiers::default()
-            },
-        }));
+        let _ = runtime.handle_input(InputEvent::Key(shortcut_key_down(Code::KeyA)));
+        let _ = runtime.handle_input(InputEvent::Key(shortcut_key_down(Code::KeyX)));
         assert_eq!(second.text(), "");
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::KeyV,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers {
-                command: true,
-                ..Modifiers::default()
-            },
-        }));
+        let _ = runtime.handle_input(InputEvent::Key(shortcut_key_down(Code::KeyV)));
         assert_eq!(second.text(), "next");
         let (_, stats) = runtime.run_frame(constraints).unwrap();
         assert_eq!(runtime.tree().diagnostics().rebuilds, before.rebuilds);
@@ -3968,7 +4071,6 @@ mod tests {
 
     #[test]
     fn focused_native_style_backspace_repeat_and_delete_edit_the_buffer() {
-        use incular_core::{KeyCode, KeyEvent, Modifiers};
         use incular_widgets::{TextEditingController, TextField};
         let controller = TextEditingController::with_text("abc");
         let mut runtime = Runtime::new(TextField::new(controller.clone()).into()).unwrap();
@@ -3979,37 +4081,97 @@ mod tests {
             position: Offset::new(100., 5.),
         });
         for expected in ["ab", "a", "", ""] {
-            let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-                code: KeyCode::Backspace,
-                pressed: true,
-                repeat: true,
-                modifiers: Modifiers::default(),
-            }));
+            let mut event = key_down(Code::Backspace);
+            event.repeat = true;
+            let _ = runtime.handle_input(InputEvent::Key(event));
             assert_eq!(controller.text(), expected);
         }
         controller.set_text("é👩‍💻");
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::Backspace,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        }));
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Backspace)));
         assert_eq!(controller.text(), "é");
         controller.set_selection(incular_widgets::TextSelection::collapsed(0));
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::Delete,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        }));
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Delete)));
         assert_eq!(controller.text(), "");
         assert_eq!(runtime.editing_diagnostics().backspace_commands, 5);
         assert_eq!(runtime.editing_diagnostics().delete_commands, 1);
     }
 
     #[test]
+    fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
+        use incular_widgets::{SelectableText, SelectionArea, SelectionAreaController};
+
+        #[derive(Clone)]
+        struct TestClipboard(Rc<RefCell<String>>);
+        impl Clipboard for TestClipboard {
+            fn get_text(&mut self) -> Option<String> {
+                (!self.0.borrow().is_empty()).then(|| self.0.borrow().clone())
+            }
+            fn set_text(&mut self, text: String) {
+                *self.0.borrow_mut() = text;
+            }
+        }
+
+        let controller = SelectionAreaController::new();
+        let mut runtime = Runtime::new(
+            SelectionArea::with_controller(
+                controller.clone(),
+                Widget::column(vec![
+                    SelectableText::new("first").into(),
+                    SelectableText::new("second").into(),
+                ]),
+            )
+            .into(),
+        )
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(180., 80.));
+        let _ = runtime.run_frame(constraints).unwrap();
+        let area = runtime.tree().root().unwrap();
+        let column = runtime.tree().children(area).unwrap()[0];
+        let labels = runtime.tree().children(column).unwrap();
+        let second = labels[1];
+        let first_bounds = runtime.tree().element_bounds(labels[0]).unwrap();
+        let second_bounds = runtime.tree().element_bounds(second).unwrap();
+        let first_point = first_bounds.origin + Offset::new(1., first_bounds.size.height * 0.5);
+        // Stay inside the hit-test box while asking Parley's layout for the
+        // final visual cluster.
+        let second_point = second_bounds.origin
+            + Offset::new(
+                (second_bounds.size.width - 0.1).max(0.),
+                second_bounds.size.height * 0.5,
+            );
+        assert_eq!(
+            runtime.tree().selectable_text_at(first_point),
+            Some(labels[0])
+        );
+        assert_eq!(
+            runtime.tree().selectable_text_at(second_point),
+            Some(second)
+        );
+        let copied = Rc::new(RefCell::new(String::new()));
+        runtime.set_clipboard(Box::new(TestClipboard(copied.clone())));
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: first_point,
+        });
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Move,
+            position: second_point,
+        });
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Up,
+            position: second_point,
+        });
+        let mut shift_right = key_down(Code::ArrowRight);
+        shift_right.modifiers = Modifiers::SHIFT;
+        let _ = runtime.handle_input(InputEvent::Key(shift_right));
+        assert_eq!(controller.selected_text(), "first\nsecond");
+        let _ = runtime.handle_input(InputEvent::Key(shortcut_key_down(Code::KeyC)));
+        assert_eq!(&*copied.borrow(), "first\nsecond");
+        assert_eq!(runtime.focused_element(), Some(second));
+    }
+
+    #[test]
     fn multiline_enter_replaces_selection_while_single_line_submits() {
-        use incular_core::{KeyCode, KeyEvent, Modifiers};
         use incular_widgets::{TextArea, TextEditingController, TextField, TextSelection};
         let single = TextEditingController::with_text("one");
         let multi = TextEditingController::with_text("ab cdef");
@@ -4025,14 +4187,7 @@ mod tests {
         runtime
             .run_frame(Constraints::tight(Size::new(300., 200.)))
             .unwrap();
-        let enter = || {
-            InputEvent::Key(KeyEvent {
-                code: KeyCode::Enter,
-                pressed: true,
-                repeat: false,
-                modifiers: Modifiers::default(),
-            })
-        };
+        let enter = || InputEvent::Key(key_down(Code::Enter));
         let _ = runtime.handle_input(InputEvent::Pointer {
             phase: PointerPhase::Down,
             position: Offset::new(5., 5.),
@@ -4047,15 +4202,9 @@ mod tests {
         multi.set_selection(TextSelection { base: 2, extent: 5 });
         let _ = runtime.handle_input(enter());
         assert_eq!(multi.text(), "ab\nef");
-        let _ = runtime.handle_input(InputEvent::Key(KeyEvent {
-            code: KeyCode::Enter,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers {
-                shift: true,
-                ..Modifiers::default()
-            },
-        }));
+        let mut shifted_enter = key_down(Code::Enter);
+        shifted_enter.modifiers = Modifiers::SHIFT;
+        let _ = runtime.handle_input(InputEvent::Key(shifted_enter));
         assert_eq!(multi.text(), "ab\n\nef");
     }
 

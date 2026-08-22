@@ -53,3 +53,16 @@ state.
 Route snapshots are small declarative session state, not secure storage. Do
 not put passwords, tokens, files, images, or other secrets in route arguments
 or route state.
+
+## Nested back dispatch and observers
+
+`Navigator::observe` registers a lifetime-scoped callback for push, pop,
+replace, and active-route changes. Keep the returned `NavigatorObserver` token
+for as long as the callback is needed; dropping it unregisters the observer.
+
+Independent nested stacks use `BackDispatcher`. Attach a child dispatcher to
+its parent and mark the focused child active. `dispatch_back()` then tries the
+deepest active navigator first and walks outward only when that child cannot
+pop, so one platform back event can never pop two stacks. `set_pop_guard`
+supports unsaved-work confirmation by returning `PopDecision::Deny` until an
+application is ready to permit the route mutation.

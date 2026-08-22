@@ -1,6 +1,8 @@
 //! Plain and rich text descriptions.
 
-use crate::{TextAlign, TextEngine, TextLayout, TextScaler, TextStyle};
+use crate::{
+    TextAlign, TextEngine, TextLayout, TextLayoutOptions, TextOverflow, TextScaler, TextStyle,
+};
 use incular_core::Size;
 use std::{fmt, ops::Range, sync::Arc};
 
@@ -253,6 +255,7 @@ pub struct RichText {
     pub text_scaler: TextScaler,
     pub max_lines: Option<usize>,
     pub soft_wrap: bool,
+    pub overflow: TextOverflow,
 }
 
 impl RichText {
@@ -264,6 +267,7 @@ impl RichText {
             text_scaler: TextScaler::default(),
             max_lines: None,
             soft_wrap: true,
+            overflow: TextOverflow::Clip,
         }
     }
 
@@ -297,6 +301,12 @@ impl RichText {
     }
 
     #[must_use]
+    pub fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+
+    #[must_use]
     pub fn plain_text(&self) -> String {
         self.text.plain_text()
     }
@@ -313,7 +323,14 @@ impl RichText {
             .flatten()
             .first()
             .map_or_else(TextStyle::default, |run| run.style.clone());
-        engine.layout(&self.plain_text(), &style, max_width, self.text_align)
+        engine.layout_with_options(
+            &self.plain_text(),
+            &style,
+            TextLayoutOptions::new(max_width, self.text_align)
+                .soft_wrap(self.soft_wrap)
+                .max_lines(self.max_lines)
+                .overflow(self.overflow),
+        )
     }
 }
 
@@ -327,6 +344,7 @@ pub struct Text {
     pub text_scaler: TextScaler,
     pub max_lines: Option<usize>,
     pub soft_wrap: bool,
+    pub overflow: TextOverflow,
 }
 
 impl Text {
@@ -339,6 +357,7 @@ impl Text {
             text_scaler: TextScaler::default(),
             max_lines: None,
             soft_wrap: true,
+            overflow: TextOverflow::Clip,
         }
     }
 
@@ -378,6 +397,12 @@ impl Text {
     }
 
     #[must_use]
+    pub fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+
+    #[must_use]
     pub fn span(&self) -> TextSpan {
         TextSpan::new(self.text.clone()).style(self.style.clone())
     }
@@ -389,15 +414,18 @@ impl Text {
             .text_scaler(self.text_scaler)
             .max_lines(self.max_lines)
             .soft_wrap(self.soft_wrap)
+            .overflow(self.overflow)
     }
 
     #[must_use]
     pub fn layout(&self, engine: &mut TextEngine, max_width: Option<f32>) -> Arc<TextLayout> {
-        engine.layout(
+        engine.layout_with_options(
             &self.text,
             &self.style.scaled(self.text_scaler),
-            max_width,
-            self.text_align,
+            TextLayoutOptions::new(max_width, self.text_align)
+                .soft_wrap(self.soft_wrap)
+                .max_lines(self.max_lines)
+                .overflow(self.overflow),
         )
     }
 }

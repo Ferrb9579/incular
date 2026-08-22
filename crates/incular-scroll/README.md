@@ -17,3 +17,32 @@ loaded content is too short, the larger saved offset remains pending until the
 content grows, avoiding a temporary layout overwriting the saved position.
 `PageController` in `incular-widgets` is an alias of `ScrollController` and
 uses the same API. Persistence is never enabled for an unbound controller.
+
+## Variable-extent indexes
+
+`MeasuredExtentIndex` is the shared measured-prefix structure used by
+`VirtualList` and `ListView` variable rows. It starts every row at a supplied
+estimate, records exact extents only after a row is laid out, and provides
+offset-to-index, index-to-offset, total-estimate, and viewport-range queries
+without walking preceding rows. The chunked Fenwick index keeps deep seeks
+bounded even for million-row data sets.
+
+Keep an index outside rebuilt widget descriptions when data can change, then
+use `set_measured_extent`, `invalidate_extent`, `insert`, `remove`, or
+`move_item`. Structural changes rematerialize only the visible cache window;
+post-layout measurements retain visible item identity and compensate the
+viewport anchor when preceding rows change size.
+
+## Policies and nested ownership
+
+`ScrollPhysics` composes `Scrollability`, `BoundaryPhysics`, and `SnapPhysics`
+instead of mirroring a class hierarchy. Start with `ScrollPhysics::clamping()`,
+then opt into `always_scrollable`, `never_scrollable`, `bouncing`, page snap,
+or fixed-extent snap. Bouncing is finite and resistant; applications advance
+its `spring_step` with monotonic frame elapsed time and apply the result to a
+controller, so policy code never sleeps or owns an executor.
+
+`NestedScrollCoordinator` accepts controllers innermost-first. It applies a
+wheel, drag, or momentum delta to one controller, then transfers only a
+clamped boundary remainder to the next controller. This prevents the same
+delta from moving both inner and outer viewports.

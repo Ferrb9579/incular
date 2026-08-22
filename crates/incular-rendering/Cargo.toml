@@ -14,3 +14,4 @@ path = "src/lib.rs"
 incular-core = { workspace = true }
 incular-assets = { workspace = true }
 incular-image = { workspace = true }
+kurbo = { workspace = true }

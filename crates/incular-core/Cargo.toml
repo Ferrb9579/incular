@@ -11,5 +11,8 @@ publish = true
 path = "src/lib.rs"
 
 [dependencies]
+kurbo = { workspace = true }
+keyboard-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+palette = { workspace = true }

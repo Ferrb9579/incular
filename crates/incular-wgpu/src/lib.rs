@@ -6,7 +6,7 @@
 use bytemuck::{Pod, Zeroable};
 use fontdue::{Font, FontSettings};
 use incular_assets::FontId;
-use incular_core::{Color, Offset, Rect, Size};
+use incular_core::{Color, Offset, Rect, Size, Transform};
 use incular_image::{ImageHandle, ImageId};
 use incular_platform::{PhysicalSize, RawWindowHandles};
 use incular_rendering as incular_painting;
@@ -16,6 +16,7 @@ use incular_rendering::{
     blur_bounds, drop_shadow_bounds, gaussian_kernel_weights, normalize_opacity, normalize_sigma,
     sample_gradient_stops,
 };
+use kurbo::PathEl;
 use lyon_tessellation::{
     FillOptions, FillRule as LyonFillRule, FillTessellator, StrokeOptions, StrokeTessellator,
     VertexBuffers, geometry_builder::simple_builder, math::point, path::Path as LyonPath,
@@ -64,25 +65,29 @@ pub struct PathMesh {
 fn lyon_path(path: &incular_painting::Path) -> LyonPath {
     let mut b = LyonPath::builder();
     let mut open = false;
-    for v in path.verbs() {
+    for v in path.bez_path().elements() {
         match *v {
-            incular_painting::PathVerb::MoveTo(p) => {
+            PathEl::MoveTo(p) => {
                 if open {
                     b.end(false);
                 }
-                b.begin(point(p.x, p.y));
+                b.begin(point(p.x as f32, p.y as f32));
                 open = true;
             }
-            incular_painting::PathVerb::LineTo(p) => {
-                b.line_to(point(p.x, p.y));
+            PathEl::LineTo(p) => {
+                b.line_to(point(p.x as f32, p.y as f32));
             }
-            incular_painting::PathVerb::QuadraticTo(c, p) => {
-                b.quadratic_bezier_to(point(c.x, c.y), point(p.x, p.y));
+            PathEl::QuadTo(c, p) => {
+                b.quadratic_bezier_to(point(c.x as f32, c.y as f32), point(p.x as f32, p.y as f32));
             }
-            incular_painting::PathVerb::CubicTo(a, c, p) => {
-                b.cubic_bezier_to(point(a.x, a.y), point(c.x, c.y), point(p.x, p.y));
+            PathEl::CurveTo(a, c, p) => {
+                b.cubic_bezier_to(
+                    point(a.x as f32, a.y as f32),
+                    point(c.x as f32, c.y as f32),
+                    point(p.x as f32, p.y as f32),
+                );
             }
-            incular_painting::PathVerb::Close => {
+            PathEl::ClosePath => {
                 b.close();
                 open = false;
             }
@@ -93,7 +98,7 @@ fn lyon_path(path: &incular_painting::Path) -> LyonPath {
     }
     b.build()
 }
-/// Translates all public Incular verbs into Lyon events without flattening.
+/// Translates Kurbo Bézier elements into Lyon events without flattening.
 pub fn tessellate_path(
     path: &incular_painting::Path,
     fill_rule: incular_painting::FillRule,
@@ -166,15 +171,24 @@ impl BatchPlan {
     pub fn lower(list: &DisplayList) -> Self {
         let mut batches = Vec::new();
         let mut current = RectangleBatch::default();
-        let mut transforms = vec![Offset::ZERO];
+        let mut transforms = vec![Transform::IDENTITY];
         for command in list.commands() {
             match command {
                 PaintCommand::Rect { rect, color } => current.instances.push(RectangleInstance {
-                    rect: translated_rect(*rect, *transforms.last().expect("transform stack")),
+                    rect: transforms
+                        .last()
+                        .expect("transform stack")
+                        .transform_rect_bbox(*rect),
                     color: *color,
                 }),
-                PaintCommand::PushTransform { transform } => transforms
-                    .push(*transforms.last().expect("transform stack") + transform.translation),
+                PaintCommand::PushTransform {
+                    transform: local_transform,
+                } => transforms.push(
+                    transforms
+                        .last()
+                        .expect("transform stack")
+                        .then(*local_transform),
+                ),
                 PaintCommand::PopTransform => {
                     if transforms.len() > 1 {
                         transforms.pop();
@@ -187,6 +201,7 @@ impl BatchPlan {
                 | PaintCommand::StrokePath { .. }
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
+                | PaintCommand::PushClipOval { .. }
                 | PaintCommand::PushClipPath { .. }
                 | PaintCommand::PopClip
                 | PaintCommand::GlyphRun { .. }
@@ -1284,6 +1299,9 @@ struct GpuInstance {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GpuGlyphInstance {
     rect: [f32; 4],
+    affine: [f32; 4],
+    translation: [f32; 4],
+    surface: [f32; 4],
     uv: [f32; 4],
     color: [f32; 4],
 }
@@ -1291,12 +1309,18 @@ struct GpuGlyphInstance {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GpuImageInstance {
     rect: [f32; 4],
+    affine: [f32; 4],
+    translation: [f32; 4],
+    surface: [f32; 4],
     uv: [f32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GpuRRectInstance {
     rect: [f32; 4],
+    affine: [f32; 4],
+    translation: [f32; 4],
+    surface: [f32; 4],
     /// Radii in physical pixels, TL/TR/BR/BL.
     radii: [f32; 4],
     color_a: [f32; 4],
@@ -1309,8 +1333,10 @@ struct GpuRRectInstance {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct GpuPathInstance {
-    /// Translation and scale: local mesh vertices remain logical coordinates.
-    placement: [f32; 4],
+    /// Physical-space affine linear matrix `[a, b, c, d]`.
+    affine: [f32; 4],
+    /// Physical-space affine translation `[e, f]`.
+    translation: [f32; 4],
     surface: [f32; 4],
     color: [f32; 4],
     gradient: [f32; 4],
@@ -1399,14 +1425,14 @@ const TEXT_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) color: vec4<f32> };
 @group(0) @binding(0) var atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>, @location(3) color: vec4<f32>) -> Out { var out: Out; out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.); out.uv = uv.xy + quad * (uv.zw - uv.xy); out.color = color; return out; }
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) uv: vec4<f32>, @location(6) color: vec4<f32>) -> Out { var out: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); out.position=vec4<f32>(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); out.uv=uv.xy+quad*(uv.zw-uv.xy); out.color=color; return out; }
 @fragment fn fs_main(input: Out) -> @location(0) vec4<f32> { let coverage = textureSample(atlas, atlas_sampler, input.uv).r; return vec4<f32>(input.color.rgb, input.color.a * coverage); }
 "#;
 const IMAGE_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var image_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) uv: vec4<f32>) -> Out { var out: Out; out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.); out.uv = uv.xy + quad * (uv.zw - uv.xy); return out; }
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) uv: vec4<f32>) -> Out { var out: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); out.position=vec4<f32>(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); out.uv=uv.xy+quad*(uv.zw-uv.xy); return out; }
 // The image texture decodes sRGB into linear sample values. Source pixels are
 // straight alpha, and ALPHA_BLENDING is straight source-over blending.
 @fragment fn fs_main(input: Out) -> @location(0) vec4<f32> { return textureSample(image, image_sampler, input.uv); }
@@ -1415,19 +1441,22 @@ const RRECT_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f32>, @location(1) radii: vec4<f32>, @location(2) a: vec4<f32>, @location(3) b: vec4<f32>, @location(4) gradient: vec4<f32>, @location(5) options: vec4<f32> };
 @group(0) @binding(0) var gradient_lut: texture_2d<f32>;
 @group(0) @binding(1) var gradient_sampler: sampler;
-@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) radii: vec4<f32>, @location(3) a: vec4<f32>, @location(4) b: vec4<f32>, @location(5) gradient: vec4<f32>, @location(6) options: vec4<f32>) -> Out { var o: Out; o.position=vec4(rect.xy+quad*rect.zw,0.,1.); o.local=quad*options.zw; o.radii=radii; o.a=a; o.b=b; o.gradient=gradient; o.options=options; return o; }
+@vertex fn vs_main(@location(0) quad: vec2<f32>, @location(1) rect: vec4<f32>, @location(2) affine: vec4<f32>, @location(3) translation: vec4<f32>, @location(4) surface: vec4<f32>, @location(5) radii: vec4<f32>, @location(6) a: vec4<f32>, @location(7) b: vec4<f32>, @location(8) gradient: vec4<f32>, @location(9) options: vec4<f32>) -> Out { var o: Out; let local=rect.xy+quad*rect.zw; let p=vec2<f32>(affine.x*local.x+affine.z*local.y+translation.x,affine.y*local.x+affine.w*local.y+translation.y); o.position=vec4(p.x/surface.x*2.-1.,1.-p.y/surface.y*2.,0.,1.); o.local=quad*options.zw; o.radii=radii; o.a=a; o.b=b; o.gradient=gradient; o.options=options; return o; }
 fn radius_at(p: vec2<f32>, size: vec2<f32>, r: vec4<f32>) -> f32 { if (p.y < size.y*.5) { if (p.x < size.x*.5) { return r.x; } return r.y; } if (p.x >= size.x*.5) { return r.z; } return r.w; }
 fn rounded_distance(p: vec2<f32>, size: vec2<f32>, r: vec4<f32>) -> f32 { let q=p-size*.5; let radius=radius_at(p,size,r); let d=abs(q)-(size*.5-vec2(radius)); return length(max(d,vec2(0.)))+min(max(d.x,d.y),0.)-radius; }
 fn lookup(t: f32) -> vec4<f32> { let p=textureSampleLevel(gradient_lut,gradient_sampler,vec2(clamp(t,0.,1.),.5),0.); return select(vec4(0.),vec4(p.rgb/max(p.a,.00001),p.a),p.a>0.); }
-@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { let size=i.options.zw; let outer=rounded_distance(i.local,size,i.radii); var edge=1.-smoothstep(-1.,1.,outer); if(i.options.y>0.) { let width=i.options.y; let inner=rounded_distance(i.local-vec2(width), max(size-vec2(2.*width),vec2(0.)), max(i.radii-vec4(width),vec4(0.))); edge*=smoothstep(-1.,1.,inner); } var t=0.; if(i.options.x==1.) { let v=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,v)/max(dot(v,v),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } let color=select(i.a,lookup(t),i.options.x>0.); return vec4(color.rgb,color.a*edge); }
+@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { let size=i.options.zw; let outer=rounded_distance(i.local,size,i.radii); var edge=1.-smoothstep(-1.,1.,outer); if(i.options.y>0.) { let width=i.options.y; let inner=rounded_distance(i.local-vec2(width), max(size-vec2(2.*width),vec2(0.)), max(i.radii-vec4(width),vec4(0.))); edge*=smoothstep(-1.,1.,inner); } var t=0.; if(i.options.x==1.) { let v=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,v)/max(dot(v,v),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } else if(i.options.x==3.) { t=fract((atan2(i.local.y-i.gradient.y,i.local.x-i.gradient.x)-i.gradient.z)/6.2831853); } let color=select(i.a,lookup(t),i.options.x>0.); return vec4(color.rgb,color.a*edge); }
 "#;
 const PATH_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f32>, @location(1) color: vec4<f32>, @location(2) gradient: vec4<f32>, @location(3) options: vec4<f32> };
 @group(0) @binding(0) var gradient_lut: texture_2d<f32>;
 @group(0) @binding(1) var gradient_sampler: sampler;
-@vertex fn vs_main(@location(0) local: vec2<f32>, @location(1) placement: vec4<f32>, @location(2) surface: vec4<f32>, @location(3) color: vec4<f32>, @location(4) gradient: vec4<f32>, @location(5) options: vec4<f32>) -> Out {
+@vertex fn vs_main(@location(0) local: vec2<f32>, @location(1) affine: vec4<f32>, @location(2) translation: vec4<f32>, @location(3) surface: vec4<f32>, @location(4) color: vec4<f32>, @location(5) gradient: vec4<f32>, @location(6) options: vec4<f32>) -> Out {
   var out: Out;
-  let physical = local * placement.z + placement.xy;
+  let physical = vec2<f32>(
+    affine.x * local.x + affine.z * local.y + translation.x,
+    affine.y * local.x + affine.w * local.y + translation.y,
+  );
   out.position = vec4<f32>(physical.x / surface.x * 2. - 1., 1. - physical.y / surface.y * 2., 0., 1.);
   out.color = color;
   out.local = local;
@@ -1436,7 +1465,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) local: vec2<f3
   return out;
 }
 fn lookup(t: f32) -> vec4<f32> { let p=textureSampleLevel(gradient_lut,gradient_sampler,vec2(clamp(t,0.,1.),.5),0.); return select(vec4(0.),vec4(p.rgb/max(p.a,.00001),p.a),p.a>0.); }
-@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { var t=0.; if(i.options.x==1.) { let d=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,d)/max(dot(d,d),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } return select(i.color,lookup(t),i.options.x>0.); }
+@fragment fn fs_main(i: Out) -> @location(0) vec4<f32> { var t=0.; if(i.options.x==1.) { let d=i.gradient.zw-i.gradient.xy; t=clamp(dot(i.local-i.gradient.xy,d)/max(dot(d,d),.0001),0.,1.); } else if(i.options.x==2.) { t=clamp(length(i.local-i.gradient.xy)/max(i.gradient.z,.0001),0.,1.); } else if(i.options.x==3.) { t=fract((atan2(i.local.y-i.gradient.y,i.local.x-i.gradient.x)-i.gradient.z)/6.2831853); } return select(i.color,lookup(t),i.options.x>0.); }
 "#;
 const COMPOSITE_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32, @location(2) color: vec4<f32>, @location(3) mode: f32 };
@@ -1883,14 +1912,14 @@ enum DrawBatch {
 }
 #[derive(Clone, Copy)]
 struct GlyphSurface {
-    translation: Offset,
+    transform: Transform,
     width: f32,
     height: f32,
     scale: f32,
 }
 #[derive(Clone, Copy)]
 struct PathPlacement {
-    translation: Offset,
+    transform: Transform,
     scale: f32,
 }
 
@@ -3517,7 +3546,7 @@ impl WgpuRenderer {
         let batches = self.lower_commands(
             list.commands(),
             scale,
-            Offset::new(-target_origin.x, -target_origin.y),
+            Transform::translation(Offset::new(-target_origin.x, -target_origin.y)),
             ClipState::Unbounded,
         )?;
         let rectangles = batches
@@ -4259,32 +4288,56 @@ impl WgpuRenderer {
         self.target_width = self.config.width;
         self.target_height = self.config.height;
         self.target_origin = Offset::ZERO;
-        self.lower_commands(list.commands(), scale, Offset::ZERO, ClipState::Unbounded)
+        self.lower_commands(
+            list.commands(),
+            scale,
+            Transform::IDENTITY,
+            ClipState::Unbounded,
+        )
     }
     fn lower_commands(
         &mut self,
         commands: &[PaintCommand],
         scale: f32,
-        initial_translation: Offset,
+        initial_transform: Transform,
         initial_clip: ClipState,
     ) -> Result<Vec<DrawBatch>, RendererError> {
         let mut batches = Vec::new();
-        let mut transforms = vec![initial_translation];
+        let mut transforms = vec![initial_transform];
         let mut clips = vec![initial_clip];
         let mut clip_masks: Vec<Option<ClipMask>> = vec![None];
         let mut command_index = 0_usize;
         while command_index < commands.len() {
             let command = &commands[command_index];
-            let translation = *transforms.last().expect("transform stack");
+            let transform = *transforms.last().expect("transform stack");
+            let translation = transform.translation_offset();
             match command {
-                PaintCommand::Rect { rect, color } => append_rectangle(
-                    &mut batches,
-                    *clips.last().expect("clip stack"),
-                    RectangleInstance {
-                        rect: translated_rect(*rect, translation),
-                        color: *color,
-                    },
-                ),
+                PaintCommand::Rect { rect, color } => {
+                    let clip = *clips.last().expect("clip stack");
+                    if transform.is_translation() {
+                        append_rectangle(
+                            &mut batches,
+                            clip,
+                            RectangleInstance {
+                                rect: translated_rect(*rect, translation),
+                                color: *color,
+                            },
+                        );
+                    } else {
+                        // The fast rectangle instance shader is axis-aligned.
+                        // Preserve arbitrary retained affine geometry by
+                        // routing it through the already-cached Lyon path
+                        // pipeline instead of expanding to a bounding box.
+                        self.append_path(
+                            &mut batches,
+                            clip,
+                            &Arc::new(rect_path(*rect)),
+                            PathMeshKind::Fill(FillRule::NonZero),
+                            &Brush::Solid(*color),
+                            PathPlacement { transform, scale },
+                        );
+                    }
+                }
                 // Common solid rounded primitives retain painter order even on
                 // renderers that do not yet select the analytic pipeline.
                 PaintCommand::RRect { rrect, brush } => append_rrect(
@@ -4294,7 +4347,7 @@ impl WgpuRenderer {
                     rrect_instance(
                         *rrect,
                         brush,
-                        translation,
+                        transform,
                         scale,
                         self.target_width as f32,
                         self.target_height as f32,
@@ -4309,7 +4362,7 @@ impl WgpuRenderer {
                         border_instance(
                             *rrect,
                             *border,
-                            translation,
+                            transform,
                             scale,
                             self.target_width as f32,
                             self.target_height as f32,
@@ -4326,7 +4379,7 @@ impl WgpuRenderer {
                     path,
                     PathMeshKind::Fill(*fill_rule),
                     brush,
-                    PathPlacement { translation, scale },
+                    PathPlacement { transform, scale },
                 ),
                 PaintCommand::StrokePath {
                     path,
@@ -4338,7 +4391,7 @@ impl WgpuRenderer {
                     path,
                     stroke_mesh_kind(*stroke),
                     brush,
-                    PathPlacement { translation, scale },
+                    PathPlacement { transform, scale },
                 ),
                 PaintCommand::GlyphRun { run, color } => {
                     if *clips.last().expect("clip stack") == ClipState::Empty {
@@ -4371,7 +4424,7 @@ impl WgpuRenderer {
                                     raster.entry,
                                     *color,
                                     GlyphSurface {
-                                        translation,
+                                        transform,
                                         width: self.target_width as f32,
                                         height: self.target_height as f32,
                                         scale,
@@ -4398,12 +4451,13 @@ impl WgpuRenderer {
                         image.id(),
                         *sampling,
                         image_instance(
-                            translated_rect(*destination, translation),
+                            *destination,
                             *source,
                             image,
                             self.target_width as f32,
                             self.target_height as f32,
                             scale,
+                            transform,
                         ),
                     );
                 }
@@ -4427,7 +4481,7 @@ impl WgpuRenderer {
                         let child = self.lower_commands(
                             &commands[start..end],
                             scale,
-                            translation,
+                            transform,
                             parent_clip,
                         )?;
                         batches.extend(child);
@@ -4465,7 +4519,7 @@ impl WgpuRenderer {
                         let child = self.lower_commands(
                             &commands[start..end],
                             scale,
-                            translation,
+                            transform,
                             parent_clip,
                         )?;
                         batches.extend(child);
@@ -4526,7 +4580,7 @@ impl WgpuRenderer {
                         let child = self.lower_commands(
                             &commands[start..end],
                             scale,
-                            translation,
+                            transform,
                             parent_clip,
                         )?;
                         batches.extend(child);
@@ -4594,7 +4648,7 @@ impl WgpuRenderer {
                         let child = self.lower_commands(
                             &commands[start..end],
                             scale,
-                            translation,
+                            transform,
                             parent_clip,
                         )?;
                         batches.extend(child);
@@ -4615,9 +4669,9 @@ impl WgpuRenderer {
                 PaintCommand::PopEffect => {
                     return Err(RendererError::UnbalancedClipStack);
                 }
-                PaintCommand::PushTransform { transform } => {
-                    transforms.push(translation + transform.translation)
-                }
+                PaintCommand::PushTransform {
+                    transform: local_transform,
+                } => transforms.push(transform.then(*local_transform)),
                 PaintCommand::PopTransform => {
                     if transforms.len() > 1 {
                         transforms.pop();
@@ -4625,7 +4679,7 @@ impl WgpuRenderer {
                 }
                 PaintCommand::PushClip { rect } => {
                     let next = ClipRect {
-                        rect: translated_rect(*rect, translation),
+                        rect: transform.transform_rect_bbox(*rect),
                     };
                     let combined = match *clips.last().expect("clip stack") {
                         ClipState::Unbounded => ClipState::Rect(next),
@@ -4663,7 +4717,7 @@ impl WgpuRenderer {
                     let instance = rrect_instance(
                         *rrect,
                         &Brush::Solid(Color::TRANSPARENT),
-                        translation,
+                        transform,
                         scale,
                         self.target_width as f32,
                         self.target_height as f32,
@@ -4683,6 +4737,34 @@ impl WgpuRenderer {
                             self.counters.stencil_depth_max.max(u64::from(depth + 1));
                     }
                     self.counters.clip_rrect_pushes += 1;
+                }
+                PaintCommand::PushClipOval { rect } => {
+                    let parent = *clips.last().expect("clip stack");
+                    let depth = stencil_depth(parent);
+                    let path = Arc::new(oval_path(*rect));
+                    let key = PathMeshKey {
+                        path: path.id(),
+                        kind: PathMeshKind::Fill(FillRule::NonZero),
+                    };
+                    if self.ensure_path_mesh(key, &path) {
+                        let instance = clip_path_instance(
+                            transform,
+                            scale,
+                            self.target_width as f32,
+                            self.target_height as f32,
+                        );
+                        batches.push(DrawBatch::StencilPath {
+                            clip: parent,
+                            key,
+                            instance,
+                            increment: true,
+                        });
+                        clips.push(with_stencil_depth(parent, depth + 1));
+                        clip_masks.push(Some(ClipMask::Path { key, instance }));
+                    } else {
+                        clips.push(ClipState::Empty);
+                        clip_masks.push(None);
+                    }
                 }
                 PaintCommand::PushClipPath { path, fill_rule } => {
                     let parent = *clips.last().expect("clip stack");
@@ -4712,7 +4794,7 @@ impl WgpuRenderer {
                         clip_masks.push(None);
                     } else {
                         let instance = clip_path_instance(
-                            translation,
+                            transform,
                             scale,
                             self.target_width as f32,
                             self.target_height as f32,
@@ -4862,8 +4944,12 @@ impl WgpuRenderer {
             .max_offscreen_nesting_depth
             .max(self.offscreen_nesting_depth);
         let child_translation = translation - (target_origin - active_origin);
-        let child_result =
-            self.lower_commands(commands, scale, child_translation, ClipState::Unbounded);
+        let child_result = self.lower_commands(
+            commands,
+            scale,
+            Transform::translation(child_translation),
+            ClipState::Unbounded,
+        );
         let child_batches = match child_result {
             Ok(batches) => batches,
             Err(error) => {
@@ -5206,17 +5292,21 @@ impl WgpuRenderer {
             .max_offscreen_nesting_depth
             .max(self.offscreen_nesting_depth);
         let child_translation = translation - (target_origin - active_origin);
-        let child_batches =
-            match self.lower_commands(commands, scale, child_translation, ClipState::Unbounded) {
-                Ok(batches) => batches,
-                Err(error) => {
-                    self.target_width = saved_target.0;
-                    self.target_height = saved_target.1;
-                    self.target_origin = saved_target.2;
-                    self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
-                    return Err(error);
-                }
-            };
+        let child_batches = match self.lower_commands(
+            commands,
+            scale,
+            Transform::translation(child_translation),
+            ClipState::Unbounded,
+        ) {
+            Ok(batches) => batches,
+            Err(error) => {
+                self.target_width = saved_target.0;
+                self.target_height = saved_target.1;
+                self.target_origin = saved_target.2;
+                self.offscreen_nesting_depth = self.offscreen_nesting_depth.saturating_sub(1);
+                return Err(error);
+            }
+        };
         if !batches_have_content(&child_batches) {
             self.target_width = saved_target.0;
             self.target_height = saved_target.1;
@@ -6186,7 +6276,7 @@ impl WgpuRenderer {
         brush: &Brush,
         placement: PathPlacement,
     ) {
-        if clip == ClipState::Empty || !path_visible(path, placement.translation, clip) {
+        if clip == ClipState::Empty || !path_visible(path, placement.transform, clip) {
             return;
         }
         let key = PathMeshKey {
@@ -6203,12 +6293,8 @@ impl WgpuRenderer {
             key,
             gradient: gradient_id,
             instance: GpuPathInstance {
-                placement: [
-                    placement.translation.x * placement.scale,
-                    placement.translation.y * placement.scale,
-                    placement.scale,
-                    0.,
-                ],
+                affine: physical_affine(placement.transform, placement.scale).0,
+                translation: physical_affine(placement.transform, placement.scale).1,
                 surface: [self.target_width as f32, self.target_height as f32, 0., 0.],
                 color: color.to_linear_rgba(),
                 gradient,
@@ -6298,6 +6384,7 @@ impl WgpuRenderer {
         match brush {
             Brush::LinearGradient(_) => self.counters.linear_gradient_instances += 1,
             Brush::RadialGradient(_) => self.counters.radial_gradient_instances += 1,
+            Brush::SweepGradient(_) => self.counters.radial_gradient_instances += 1,
             Brush::Solid(_) => {}
         }
         if let Some(resource) = self.gradient_cache.get_mut(&id) {
@@ -6308,6 +6395,7 @@ impl WgpuRenderer {
         let stops = match brush {
             Brush::LinearGradient(g) => &g.stops,
             Brush::RadialGradient(g) => &g.stops,
+            Brush::SweepGradient(g) => &g.stops,
             Brush::Solid(_) => unreachable!("solid has no gradient id"),
         };
         // LUT texels are premultiplied linear RGB. The shader unpremultiplies
@@ -7087,6 +7175,21 @@ fn glyph_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 32,
                 shader_location: 3,
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 48,
+                shader_location: 4,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 64,
+                shader_location: 5,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 80,
+                shader_location: 6,
+            },
         ],
     }
 }
@@ -7104,6 +7207,21 @@ fn image_layout() -> wgpu::VertexBufferLayout<'static> {
                 format: wgpu::VertexFormat::Float32x4,
                 offset: 16,
                 shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 32,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 48,
+                shader_location: 4,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 64,
+                shader_location: 5,
             },
         ],
     }
@@ -7142,6 +7260,21 @@ fn rrect_layout() -> wgpu::VertexBufferLayout<'static> {
                 format: wgpu::VertexFormat::Float32x4,
                 offset: 80,
                 shader_location: 6,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 96,
+                shader_location: 7,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 112,
+                shader_location: 8,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 128,
+                shader_location: 9,
             },
         ],
     }
@@ -7339,11 +7472,56 @@ fn stroke_mesh_kind(stroke: Stroke) -> PathMeshKind {
         miter_limit: stroke.miter_limit.max(1.01).to_bits(),
     }
 }
-fn path_visible(path: &Path, translation: Offset, clip: ClipState) -> bool {
+fn rect_path(rect: Rect) -> Path {
+    let mut builder = Path::builder();
+    builder
+        .move_to(rect.origin)
+        .line_to(Offset::new(rect.origin.x + rect.size.width, rect.origin.y))
+        .line_to(Offset::new(
+            rect.origin.x + rect.size.width,
+            rect.origin.y + rect.size.height,
+        ))
+        .line_to(Offset::new(rect.origin.x, rect.origin.y + rect.size.height))
+        .close();
+    builder.build()
+}
+fn oval_path(rect: Rect) -> Path {
+    const KAPPA: f32 = 0.552_284_8;
+    let rx = rect.size.width * 0.5;
+    let ry = rect.size.height * 0.5;
+    let cx = rect.origin.x + rx;
+    let cy = rect.origin.y + ry;
+    let mut builder = Path::builder();
+    builder
+        .move_to(Offset::new(cx + rx, cy))
+        .cubic_to(
+            Offset::new(cx + rx, cy + KAPPA * ry),
+            Offset::new(cx + KAPPA * rx, cy + ry),
+            Offset::new(cx, cy + ry),
+        )
+        .cubic_to(
+            Offset::new(cx - KAPPA * rx, cy + ry),
+            Offset::new(cx - rx, cy + KAPPA * ry),
+            Offset::new(cx - rx, cy),
+        )
+        .cubic_to(
+            Offset::new(cx - rx, cy - KAPPA * ry),
+            Offset::new(cx - KAPPA * rx, cy - ry),
+            Offset::new(cx, cy - ry),
+        )
+        .cubic_to(
+            Offset::new(cx + KAPPA * rx, cy - ry),
+            Offset::new(cx + rx, cy - KAPPA * ry),
+            Offset::new(cx + rx, cy),
+        )
+        .close();
+    builder.build()
+}
+fn path_visible(path: &Path, transform: Transform, clip: ClipState) -> bool {
     let Some(bounds) = path.bounds() else {
         return false;
     };
-    let world = translated_rect(bounds, translation);
+    let world = transform.transform_rect_bbox(bounds);
     match clip {
         ClipState::Unbounded => true,
         ClipState::Rect(clip) => intersect_rect(world, clip.rect).is_some(),
@@ -7603,6 +7781,7 @@ fn gradient_id(brush: &Brush) -> Option<GradientId> {
         Brush::Solid(_) => None,
         Brush::LinearGradient(g) => Some(g.stops.id()),
         Brush::RadialGradient(g) => Some(g.stops.id()),
+        Brush::SweepGradient(g) => Some(g.stops.id()),
     }
 }
 fn path_paint(brush: &Brush) -> (Color, [f32; 4], [f32; 4]) {
@@ -7618,26 +7797,50 @@ fn path_paint(brush: &Brush) -> (Color, [f32; 4], [f32; 4]) {
             [g.center.x, g.center.y, g.radius.max(0.), 0.],
             [2., 0., 0., 0.],
         ),
+        Brush::SweepGradient(g) => (
+            Color::TRANSPARENT,
+            [g.center.x, g.center.y, g.start_angle, 0.],
+            [3., 0., 0., 0.],
+        ),
     }
 }
-fn clip_path_instance(translation: Offset, scale: f32, width: f32, height: f32) -> GpuPathInstance {
+fn clip_path_instance(
+    transform: Transform,
+    scale: f32,
+    width: f32,
+    height: f32,
+) -> GpuPathInstance {
     GpuPathInstance {
-        placement: [translation.x * scale, translation.y * scale, scale, 0.],
+        affine: physical_affine(transform, scale).0,
+        translation: physical_affine(transform, scale).1,
         surface: [width, height, 0., 0.],
         color: Color::TRANSPARENT.to_linear_rgba(),
         gradient: [0.; 4],
         options: [0.; 4],
     }
 }
+
+fn physical_affine(transform: Transform, scale: f32) -> ([f32; 4], [f32; 4]) {
+    let [a, b, c, d, e, f] = transform.to_kurbo().as_coeffs();
+    (
+        [
+            a as f32 * scale,
+            b as f32 * scale,
+            c as f32 * scale,
+            d as f32 * scale,
+        ],
+        [e as f32 * scale, f as f32 * scale, 0., 0.],
+    )
+}
 fn rrect_instance(
     rrect: RRect,
     brush: &Brush,
-    translation: Offset,
+    transform: Transform,
     scale: f32,
     width: f32,
     height: f32,
 ) -> GpuRRectInstance {
-    let rect = translated_rect(rrect.rect, translation);
+    let rect = rrect.rect;
     let (kind, color_a, color_b, gradient) = match brush {
         Brush::Solid(color) => (0., *color, *color, [0.; 4]),
         Brush::LinearGradient(g) => {
@@ -7669,16 +7872,26 @@ fn rrect_instance(
                 ],
             )
         }
+        Brush::SweepGradient(g) => {
+            let stops = g.stops.as_slice();
+            (
+                3.,
+                stops[0].color,
+                stops.last().expect("normalized stops").color,
+                [g.center.x * scale, g.center.y * scale, g.start_angle, 0.],
+            )
+        }
     };
     GpuRRectInstance {
-        rect: ndc_rect(
-            rect.origin.x * scale,
-            rect.origin.y * scale,
-            rect.size.width * scale,
-            rect.size.height * scale,
-            width,
-            height,
-        ),
+        rect: [
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.width,
+            rect.size.height,
+        ],
+        affine: physical_affine(transform, scale).0,
+        translation: physical_affine(transform, scale).1,
+        surface: [width, height, 0., 0.],
         radii: [
             rrect.radii.top_left * scale,
             rrect.radii.top_right * scale,
@@ -7694,7 +7907,7 @@ fn rrect_instance(
 fn border_instance(
     rrect: RRect,
     border: incular_painting::Border,
-    translation: Offset,
+    transform: Transform,
     scale: f32,
     width: f32,
     height: f32,
@@ -7702,7 +7915,7 @@ fn border_instance(
     let mut result = rrect_instance(
         rrect,
         &Brush::Solid(border.color),
-        translation,
+        transform,
         scale,
         width,
         height,
@@ -7721,21 +7934,23 @@ fn glyph_instance(
     color: Color,
     surface: GlyphSurface,
 ) -> GpuGlyphInstance {
-    // fontdue ymin is the bitmap's bottom relative to baseline; rustybuzz's
-    // positive Y offset is upwards while Incular's logical canvas is Y-down.
-    let baseline_x = (surface.translation.x + run.origin.x + offset.x) * surface.scale;
-    let baseline_y = (surface.translation.y + run.origin.y - offset.y) * surface.scale;
-    let x = baseline_x + f32::from(entry.bearing_x);
-    let y = baseline_y - f32::from(entry.bearing_y) - f32::from(entry.height);
+    // Fontdue's ymin is the bitmap's bottom relative to the baseline; the
+    // Parley-to-Incular bridge preserves the renderer's Y-down glyph-offset
+    // convention.
+    let x = run.origin.x + offset.x + f32::from(entry.bearing_x) / surface.scale;
+    let y = run.origin.y
+        - offset.y
+        - (f32::from(entry.bearing_y) + f32::from(entry.height)) / surface.scale;
     GpuGlyphInstance {
-        rect: ndc_rect(
+        rect: [
             x,
             y,
-            f32::from(entry.width),
-            f32::from(entry.height),
-            surface.width,
-            surface.height,
-        ),
+            f32::from(entry.width) / surface.scale,
+            f32::from(entry.height) / surface.scale,
+        ],
+        affine: physical_affine(surface.transform, surface.scale).0,
+        translation: physical_affine(surface.transform, surface.scale).1,
+        surface: [surface.width, surface.height, 0., 0.],
         uv: entry.uv_rect(),
         color: color.to_linear_rgba(),
     }
@@ -7747,18 +7962,20 @@ fn image_instance(
     width: f32,
     height: f32,
     scale: f32,
+    transform: Transform,
 ) -> GpuImageInstance {
     let image_width = image.decoded().width() as f32;
     let image_height = image.decoded().height() as f32;
     GpuImageInstance {
-        rect: ndc_rect(
-            destination.origin.x * scale,
-            destination.origin.y * scale,
-            destination.size.width * scale,
-            destination.size.height * scale,
-            width,
-            height,
-        ),
+        rect: [
+            destination.origin.x,
+            destination.origin.y,
+            destination.size.width,
+            destination.size.height,
+        ],
+        affine: physical_affine(transform, scale).0,
+        translation: physical_affine(transform, scale).1,
+        surface: [width, height, 0., 0.],
         // Decoders and wgpu texture uploads both use top-to-bottom rows, while
         // the quad is Y-down in NDC, so UV Y is intentionally not flipped.
         uv: [
@@ -8061,7 +8278,7 @@ fn display_list_composition_bounds(commands: &[PaintCommand]) -> Option<Rect> {
                 drop_shadow_bounds(*rect, shadow.offset, shadow.sigma_x, shadow.sigma_y),
             ),
             PaintCommand::PushTransform { transform } => {
-                transforms.push(translation + transform.translation);
+                transforms.push(translation + transform.translation_offset());
             }
             PaintCommand::PopTransform => {
                 if transforms.len() > 1 {
@@ -8070,6 +8287,7 @@ fn display_list_composition_bounds(commands: &[PaintCommand]) -> Option<Rect> {
             }
             PaintCommand::PushClip { .. }
             | PaintCommand::PushClipRRect { .. }
+            | PaintCommand::PushClipOval { .. }
             | PaintCommand::PushClipPath { .. }
             | PaintCommand::PopClip
             | PaintCommand::PopOpacity
@@ -8312,6 +8530,29 @@ mod tests {
             Offset::new(2., 3.)
         );
     }
+
+    #[test]
+    fn affine_lowering_preserves_rotated_bounds_and_path_matrix() {
+        let mut list = DisplayList::new();
+        list.push(PaintCommand::PushTransform {
+            transform: Transform::rotation(std::f32::consts::FRAC_PI_2),
+        });
+        list.push(PaintCommand::Rect {
+            rect: Rect::from_origin_size(Offset::ZERO, Size::new(10., 20.)),
+            color: Color::WHITE,
+        });
+        let plan = BatchPlan::lower(&list);
+        let bounds = plan.batches()[0].instances()[0].rect;
+        assert!((bounds.size.width - 20.).abs() < 0.0001);
+        assert!((bounds.size.height - 10.).abs() < 0.0001);
+
+        let (linear, translation) = physical_affine(
+            Transform::translation(Offset::new(4., 5.)).then(Transform::scale_non_uniform(2., 3.)),
+            2.,
+        );
+        assert_eq!(linear, [4., 0., 0., 6.]);
+        assert_eq!(translation[..2], [8., 10.]);
+    }
     #[test]
     fn ndc_conversion_uses_scale_factor() {
         let i = logical_instance(
@@ -8345,6 +8586,7 @@ mod tests {
             100.,
             100.,
             1.,
+            Transform::IDENTITY,
         );
         assert_eq!(whole.uv, [0., 0., 1., 1.]);
         let left = image_instance(
@@ -8354,6 +8596,7 @@ mod tests {
             100.,
             100.,
             1.,
+            Transform::IDENTITY,
         );
         let right = image_instance(
             destination,
@@ -8362,6 +8605,7 @@ mod tests {
             100.,
             100.,
             1.,
+            Transform::IDENTITY,
         );
         let single = image_instance(
             destination,
@@ -8370,6 +8614,7 @@ mod tests {
             100.,
             100.,
             1.,
+            Transform::IDENTITY,
         );
         assert_eq!(left.uv, [0., 0., 0.5, 1.]);
         assert_eq!(right.uv, [0.5, 0., 1., 1.]);
@@ -8465,13 +8710,14 @@ mod tests {
             entry,
             Color::WHITE,
             GlyphSurface {
-                translation: Offset::ZERO,
+                transform: Transform::IDENTITY,
                 width: 100.,
                 height: 100.,
                 scale: 1.,
             },
         );
-        assert_eq!(instance.rect, ndc_rect(19., 21., 8., 10., 100., 100.));
+        assert_eq!(instance.rect, [19., 21., 8., 10.]);
+        assert_eq!(instance.affine, [1., 0., 0., 1.]);
     }
     #[test]
     fn clips_intersect_in_logical_coordinates() {
@@ -8507,13 +8753,14 @@ mod tests {
     }
     #[test]
     fn premultiplied_shadow_colorization_matches_source_over_inputs() {
-        let sample =
-            incular_painting::premultiplied_shadow_sample(Color::rgba(220, 40, 80, 128), 0.25);
-        let expected_alpha = (128. / 255.) * 0.25;
+        let color = Color::rgba(220, 40, 80, 128);
+        let sample = incular_painting::premultiplied_shadow_sample(color, 0.25);
+        let [red, green, blue, alpha] = color.to_linear_rgba();
+        let expected_alpha = alpha * 0.25;
         assert!((sample[3] - expected_alpha).abs() < 1e-6);
-        assert!((sample[0] - (220. / 255.) * expected_alpha).abs() < 1e-6);
-        assert!((sample[1] - (40. / 255.) * expected_alpha).abs() < 1e-6);
-        assert!((sample[2] - (80. / 255.) * expected_alpha).abs() < 1e-6);
+        assert!((sample[0] - red * expected_alpha).abs() < 1e-6);
+        assert!((sample[1] - green * expected_alpha).abs() < 1e-6);
+        assert!((sample[2] - blue * expected_alpha).abs() < 1e-6);
     }
     #[test]
     fn premultiplied_blur_edge_preserves_color_alpha_ratio() {

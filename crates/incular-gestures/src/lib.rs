@@ -11,7 +11,123 @@ use std::{
     time::{Duration, Instant},
 };
 
-use incular_core::{KeyCode, KeyEvent, Modifiers, Offset, PointerPhase};
+use incular_core::{Code, KeyboardEvent, Modifiers, Offset, PointerPhase};
+
+/// Identifies one pointer stream within a native window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GestureArenaKey {
+    pub window: u64,
+    pub pointer: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GestureDisposition {
+    Pending,
+    Accepted,
+    Rejected,
+    Cancelled,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GestureArenaMember(u64);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GestureArenaEntry {
+    pub member: GestureArenaMember,
+    pub disposition: GestureDisposition,
+}
+#[derive(Default)]
+pub struct GestureArena {
+    next: u64,
+    streams: HashMap<GestureArenaKey, Vec<(GestureArenaMember, bool, GestureDisposition)>>,
+}
+impl GestureArena {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn add(&mut self, key: GestureArenaKey, simultaneous: bool) -> GestureArenaMember {
+        self.next += 1;
+        let member = GestureArenaMember(self.next);
+        self.streams.entry(key).or_default().push((
+            member,
+            simultaneous,
+            GestureDisposition::Pending,
+        ));
+        member
+    }
+    pub fn accept(
+        &mut self,
+        key: GestureArenaKey,
+        member: GestureArenaMember,
+    ) -> Vec<GestureArenaEntry> {
+        let Some(entries) = self.streams.get_mut(&key) else {
+            return Vec::new();
+        };
+        let Some(index) = entries.iter().position(|entry| entry.0 == member) else {
+            return Vec::new();
+        };
+        if entries[index].2 != GestureDisposition::Pending {
+            return entries
+                .iter()
+                .map(|entry| GestureArenaEntry {
+                    member: entry.0,
+                    disposition: entry.2,
+                })
+                .collect();
+        }
+        let simultaneous = entries[index].1;
+        let blocked = entries
+            .iter()
+            .any(|entry| entry.2 == GestureDisposition::Accepted && !(simultaneous && entry.1));
+        if blocked {
+            entries[index].2 = GestureDisposition::Rejected;
+        } else {
+            entries[index].2 = GestureDisposition::Accepted;
+            for entry in entries.iter_mut() {
+                if entry.2 == GestureDisposition::Pending && !(simultaneous && entry.1) {
+                    entry.2 = GestureDisposition::Rejected;
+                }
+            }
+        }
+        entries
+            .iter()
+            .map(|e| GestureArenaEntry {
+                member: e.0,
+                disposition: e.2,
+            })
+            .collect()
+    }
+    pub fn reject(&mut self, key: GestureArenaKey, member: GestureArenaMember) {
+        if let Some(entries) = self.streams.get_mut(&key) {
+            if let Some(entry) = entries.iter_mut().find(|e| e.0 == member) {
+                entry.2 = GestureDisposition::Rejected;
+            }
+        }
+    }
+    pub fn cancel(&mut self, key: GestureArenaKey) -> Vec<GestureArenaEntry> {
+        self.streams
+            .remove(&key)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(member, _, _)| GestureArenaEntry {
+                member,
+                disposition: GestureDisposition::Cancelled,
+            })
+            .collect()
+    }
+    #[must_use]
+    pub fn entries(&self, key: GestureArenaKey) -> Vec<GestureArenaEntry> {
+        self.streams
+            .get(&key)
+            .map(|v| {
+                v.iter()
+                    .map(|e| GestureArenaEntry {
+                        member: e.0,
+                        disposition: e.2,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
 
 /// A platform-neutral pointer event.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,9 +145,54 @@ pub struct GestureCallbacks {
     pub on_double_tap: Option<Rc<dyn Fn()>>,
     pub on_long_press: Option<Rc<dyn Fn()>>,
     pub on_pan_update: Option<Rc<dyn Fn(Offset)>>,
+    /// Receives a pan whose first slop-exceeding movement was horizontal.
+    /// It competes with vertical drags in a retained [`GestureRegion`].
+    pub on_horizontal_drag_update: Option<Rc<dyn Fn(Offset)>>,
+    /// Receives a pan whose first slop-exceeding movement was vertical.
+    /// It competes with horizontal drags in a retained [`GestureRegion`].
+    pub on_vertical_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives the active focal point and relative distance for a retained
     /// multi-pointer region. Single-pointer recognizers ignore this callback.
     pub on_scale_update: Option<Rc<dyn Fn(ScaleUpdateDetails)>>,
+    /// Called once for a retained pointer sequence when this region loses its
+    /// arena claim or the platform cancels the sequence.
+    pub on_cancel: Option<Rc<dyn Fn()>>,
+}
+impl GestureCallbacks {
+    /// Whether this callback set contributes an exclusive single-pointer
+    /// recognizer to a gesture arena. Scale is intentionally separate so a
+    /// pending pinch can coexist until one recognizer claims the stream.
+    #[must_use]
+    pub fn has_pointer_recognizer(&self) -> bool {
+        self.on_tap.is_some()
+            || self.on_double_tap.is_some()
+            || self.on_long_press.is_some()
+            || self.on_pan_update.is_some()
+            || self.on_horizontal_drag_update.is_some()
+            || self.on_vertical_drag_update.is_some()
+    }
+}
+
+/// The callback action selected after a recognizer has claimed its arena.
+/// This is public so retained adapters can defer callbacks until arbitration
+/// has completed while [`GestureDetector::handle`] remains source-compatible.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GestureAction {
+    Tap,
+    DoubleTap,
+    LongPress,
+    Pan(Offset),
+    HorizontalDrag(Offset),
+    VerticalDrag(Offset),
+}
+
+/// A recognizer's claim for one pointer event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GestureDecision {
+    Pending,
+    Accept(GestureAction),
+    Reject,
+    Cancelled,
 }
 
 /// The current geometry of a two-pointer scale interaction.
@@ -57,40 +218,54 @@ impl ScaleGestureDetector {
         }
     }
     pub fn handle(&mut self, event: PointerEvent) -> bool {
+        let handled = match event.phase {
+            PointerPhase::Down => true,
+            PointerPhase::Move => self.pointers.contains_key(&event.pointer),
+            PointerPhase::Up | PointerPhase::Cancel => self.pointers.contains_key(&event.pointer),
+        };
+        if let Some(details) = self.observe(event) {
+            self.dispatch(details);
+        }
+        handled
+    }
+    /// Updates internal contact geometry without invoking the user callback.
+    /// Retained adapters use this to wait until the scale recognizer wins its
+    /// arena before exposing any scale updates.
+    pub fn observe(&mut self, event: PointerEvent) -> Option<ScaleUpdateDetails> {
         match event.phase {
             PointerPhase::Down => {
                 self.pointers.insert(event.pointer, event.position);
                 self.reset_initial_distance();
-                true
+                None
             }
             PointerPhase::Move => {
-                let Some(position) = self.pointers.get_mut(&event.pointer) else {
-                    return false;
-                };
+                let position = self.pointers.get_mut(&event.pointer)?;
                 *position = event.position;
-                let Some((first, second)) = self.first_two() else {
-                    return true;
-                };
+                let (first, second) = self.first_two()?;
                 let distance = distance(first, second);
                 let initial = self
                     .initial_distance
                     .get_or_insert(distance.max(f32::EPSILON));
-                if let Some(callback) = &self.on_update {
-                    callback(ScaleUpdateDetails {
-                        focal_point: Offset::new(
-                            (first.x + second.x) * 0.5,
-                            (first.y + second.y) * 0.5,
-                        ),
-                        scale: distance / *initial,
-                    });
-                }
-                true
+                Some(ScaleUpdateDetails {
+                    focal_point: Offset::new(
+                        (first.x + second.x) * 0.5,
+                        (first.y + second.y) * 0.5,
+                    ),
+                    scale: distance / *initial,
+                })
             }
             PointerPhase::Up | PointerPhase::Cancel => {
-                let handled = self.pointers.remove(&event.pointer).is_some();
+                self.pointers.remove(&event.pointer);
                 self.reset_initial_distance();
-                handled
+                None
             }
+        }
+    }
+    /// Delivers a previously observed update after the caller has resolved
+    /// arbitration for the relevant pointer stream.
+    pub fn dispatch(&self, details: ScaleUpdateDetails) {
+        if let Some(callback) = &self.on_update {
+            callback(details);
         }
     }
     fn first_two(&self) -> Option<(Offset, Offset)> {
@@ -312,7 +487,7 @@ impl FocusManager {
 /// A keyboard shortcut key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ShortcutKey {
-    pub code: KeyCode,
+    pub code: Code,
     pub modifiers: Modifiers,
 }
 
@@ -361,7 +536,7 @@ impl Actions {
 }
 impl ShortcutKey {
     #[must_use]
-    pub const fn new(code: KeyCode, modifiers: Modifiers) -> Self {
+    pub const fn new(code: Code, modifiers: Modifiers) -> Self {
         Self { code, modifiers }
     }
 }
@@ -384,8 +559,8 @@ impl Shortcuts {
     pub fn bind(&mut self, key: ShortcutKey, command: impl Into<Command>) {
         self.commands.insert(key, command.into());
     }
-    pub fn handle(&self, event: KeyEvent) -> bool {
-        if !event.pressed {
+    pub fn handle(&self, event: KeyboardEvent) -> bool {
+        if !event.state.is_down() {
             return false;
         }
         let Some(action) = self
@@ -400,8 +575,8 @@ impl Shortcuts {
     /// Dispatches a command binding. Direct callback registrations continue to
     /// use [`Self::handle`] for source compatibility.
     #[must_use]
-    pub fn handle_actions(&self, event: KeyEvent, actions: &Actions) -> bool {
-        if !event.pressed {
+    pub fn handle_actions(&self, event: KeyboardEvent, actions: &Actions) -> bool {
+        if !event.state.is_down() {
             return false;
         }
         self.commands
@@ -416,6 +591,14 @@ pub struct GestureDetector {
     down: Option<PointerEvent>,
     last_tap: Option<Instant>,
     pan_started: bool,
+    pan_action: Option<PanAction>,
+}
+
+#[derive(Clone, Copy)]
+enum PanAction {
+    Pan,
+    Horizontal,
+    Vertical,
 }
 impl GestureDetector {
     pub const DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(300);
@@ -428,61 +611,152 @@ impl GestureDetector {
             down: None,
             last_tap: None,
             pan_started: false,
+            pan_action: None,
         }
     }
-    pub fn handle(&mut self, event: PointerEvent) -> bool {
+    /// Observes an event without invoking user callbacks. This lets a
+    /// retained arena delay observable behavior until it has accepted this
+    /// recognizer. Direct users should normally keep using [`Self::handle`].
+    pub fn observe(&mut self, event: PointerEvent) -> GestureDecision {
         match event.phase {
             PointerPhase::Down => {
                 self.down = Some(event);
                 self.pan_started = false;
-                true
+                self.pan_action = None;
+                GestureDecision::Pending
             }
             PointerPhase::Move => {
                 let Some(down) = self.down else {
-                    return false;
+                    return GestureDecision::Reject;
                 };
                 let delta = event.position - down.position;
-                if delta.x.hypot(delta.y) >= Self::PAN_SLOP {
-                    self.pan_started = true;
-                }
-                if self.pan_started {
-                    if let Some(callback) = &self.callbacks.on_pan_update {
-                        callback(delta);
+                if !self.pan_started && delta.x.hypot(delta.y) >= Self::PAN_SLOP {
+                    self.pan_action = if delta.x.abs() >= delta.y.abs() {
+                        self.callbacks
+                            .on_horizontal_drag_update
+                            .as_ref()
+                            .map(|_| PanAction::Horizontal)
+                            .or_else(|| {
+                                self.callbacks
+                                    .on_pan_update
+                                    .as_ref()
+                                    .map(|_| PanAction::Pan)
+                            })
+                    } else {
+                        self.callbacks
+                            .on_vertical_drag_update
+                            .as_ref()
+                            .map(|_| PanAction::Vertical)
+                            .or_else(|| {
+                                self.callbacks
+                                    .on_pan_update
+                                    .as_ref()
+                                    .map(|_| PanAction::Pan)
+                            })
+                    };
+                    self.pan_started = self.pan_action.is_some();
+                    if self.pan_action.is_none() {
+                        return GestureDecision::Reject;
                     }
                 }
-                true
+                match self.pan_action {
+                    Some(PanAction::Pan) => GestureDecision::Accept(GestureAction::Pan(delta)),
+                    Some(PanAction::Horizontal) => {
+                        GestureDecision::Accept(GestureAction::HorizontalDrag(delta))
+                    }
+                    Some(PanAction::Vertical) => {
+                        GestureDecision::Accept(GestureAction::VerticalDrag(delta))
+                    }
+                    None => GestureDecision::Pending,
+                }
             }
             PointerPhase::Up => {
                 let Some(down) = self.down.take() else {
-                    return false;
+                    return GestureDecision::Reject;
                 };
                 if self.pan_started {
-                    return true;
+                    return GestureDecision::Pending;
                 }
                 let elapsed = event.time.saturating_duration_since(down.time);
                 if elapsed >= Self::LONG_PRESS_TIMEOUT {
-                    if let Some(callback) = &self.callbacks.on_long_press {
-                        callback();
-                    }
+                    self.callbacks
+                        .on_long_press
+                        .as_ref()
+                        .map_or(GestureDecision::Reject, |_| {
+                            GestureDecision::Accept(GestureAction::LongPress)
+                        })
                 } else if self.last_tap.is_some_and(|tap| {
                     event.time.saturating_duration_since(tap) <= Self::DOUBLE_TAP_TIMEOUT
-                }) {
+                }) && self.callbacks.on_double_tap.is_some()
+                {
                     self.last_tap = None;
-                    if let Some(callback) = &self.callbacks.on_double_tap {
-                        callback();
-                    }
-                } else {
+                    GestureDecision::Accept(GestureAction::DoubleTap)
+                } else if self.callbacks.on_tap.is_some() {
                     self.last_tap = Some(event.time);
-                    if let Some(callback) = &self.callbacks.on_tap {
-                        callback();
-                    }
+                    GestureDecision::Accept(GestureAction::Tap)
+                } else {
+                    GestureDecision::Reject
                 }
-                true
             }
             PointerPhase::Cancel => {
-                let handled = self.down.take().is_some();
-                self.pan_started = false;
-                handled
+                if self.down.take().is_some() {
+                    self.pan_started = false;
+                    self.pan_action = None;
+                    GestureDecision::Cancelled
+                } else {
+                    GestureDecision::Reject
+                }
+            }
+        }
+    }
+    /// Invokes a callback selected by [`Self::observe`] after the caller has
+    /// accepted this recognizer.
+    pub fn dispatch(&self, action: GestureAction) {
+        match action {
+            GestureAction::Tap => self.callbacks.on_tap.as_ref().map(|callback| callback()),
+            GestureAction::DoubleTap => self
+                .callbacks
+                .on_double_tap
+                .as_ref()
+                .map(|callback| callback()),
+            GestureAction::LongPress => self
+                .callbacks
+                .on_long_press
+                .as_ref()
+                .map(|callback| callback()),
+            GestureAction::Pan(delta) => self
+                .callbacks
+                .on_pan_update
+                .as_ref()
+                .map(|callback| callback(delta)),
+            GestureAction::HorizontalDrag(delta) => self
+                .callbacks
+                .on_horizontal_drag_update
+                .as_ref()
+                .map(|callback| callback(delta)),
+            GestureAction::VerticalDrag(delta) => self
+                .callbacks
+                .on_vertical_drag_update
+                .as_ref()
+                .map(|callback| callback(delta)),
+        };
+    }
+    pub fn cancel(&self) {
+        if let Some(callback) = &self.callbacks.on_cancel {
+            callback();
+        }
+    }
+    pub fn handle(&mut self, event: PointerEvent) -> bool {
+        match self.observe(event) {
+            GestureDecision::Accept(action) => {
+                self.dispatch(action);
+                true
+            }
+            GestureDecision::Pending => self.down.is_some(),
+            GestureDecision::Reject => false,
+            GestureDecision::Cancelled => {
+                self.cancel();
+                true
             }
         }
     }
@@ -597,15 +871,13 @@ mod tests {
         let mut shortcuts = Shortcuts::new();
         let expected = count.clone();
         shortcuts.register(
-            ShortcutKey::new(KeyCode::KeyA, Modifiers::default()),
+            ShortcutKey::new(Code::KeyA, Modifiers::default()),
             move || expected.set(expected.get() + 1),
         );
-        assert!(shortcuts.handle(KeyEvent {
-            code: KeyCode::KeyA,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        }));
+        assert!(shortcuts.handle(KeyboardEvent::key_down(
+            incular_core::KeyboardKey::Named(incular_core::NamedKey::Unidentified),
+            Code::KeyA,
+        )));
         assert_eq!(count.get(), 1);
     }
     #[test]
@@ -636,17 +908,12 @@ mod tests {
             move || count.set(count.get() + 1)
         });
         let mut shortcuts = Shortcuts::new();
-        shortcuts.bind(
-            ShortcutKey::new(KeyCode::KeyA, Modifiers::default()),
-            "save",
-        );
+        shortcuts.bind(ShortcutKey::new(Code::KeyA, Modifiers::default()), "save");
         assert!(shortcuts.handle_actions(
-            KeyEvent {
-                code: KeyCode::KeyA,
-                pressed: true,
-                repeat: false,
-                modifiers: Modifiers::default(),
-            },
+            KeyboardEvent::key_down(
+                incular_core::KeyboardKey::Named(incular_core::NamedKey::Unidentified),
+                Code::KeyA,
+            ),
             &actions,
         ));
         assert_eq!(count.get(), 1);
@@ -672,6 +939,37 @@ mod tests {
             time: now,
         }));
         assert_eq!(observed.get(), 2.);
+    }
+
+    #[test]
+    fn arena_rejects_competing_drag_but_keeps_compatible_scale_members() {
+        let key = GestureArenaKey {
+            window: 7,
+            pointer: 3,
+        };
+        let mut arena = GestureArena::new();
+        let tap = arena.add(key, false);
+        let drag = arena.add(key, false);
+        let entries = arena.accept(key, drag);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.member == drag
+                    && entry.disposition == GestureDisposition::Accepted)
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.member == tap
+                    && entry.disposition == GestureDisposition::Rejected)
+        );
+        let scale_a = arena.add(key, true);
+        let scale_b = arena.add(key, true);
+        let entries = arena.accept(key, scale_a);
+        assert!(entries.iter().any(
+            |entry| entry.member == scale_b && entry.disposition == GestureDisposition::Pending
+        ));
+        assert_eq!(arena.cancel(key).len(), 4);
     }
     #[test]
     fn drag_recognizer_reports_start_updates_and_end() {

@@ -11,11 +11,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use icu_segmenter::GraphemeClusterSegmenter;
 use incular_animation::AnimationController;
 use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
 use incular_core::{
     Arena, ArenaId, Color, DirtyFlags, Offset, Rect, RestorationKey, RestorationScope, Size,
-    Transform,
+    Transform as CoreTransform,
 };
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
@@ -24,16 +25,27 @@ use incular_rendering::{
     GaussianBlur, ImageSampling, LayerId, LayerTree, PaintCommand, Path, RRect, Stroke,
     normalize_opacity, normalize_sigma,
 };
-use incular_scroll::{ScrollController, ScrollbarGeometry, ScrollbarStyle, scrollbar_geometry};
+use incular_scroll::{
+    MeasuredExtentIndex, NestedScrollCoordinator, ScrollController, ScrollbarGeometry,
+    ScrollbarStyle, scrollbar_geometry,
+};
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
     SemanticsDiagnostics, SemanticsTree, TextSelection as SemanticTextSelection,
 };
-use incular_text::{TextAlign, TextDiagnostics, TextEngine, TextLayout, TextStyle};
+use incular_text::{
+    RichText, TextAlign, TextDiagnostics, TextEngine, TextLayout, TextLayoutOptions, TextOverflow,
+    TextStyle,
+};
 use std::sync::Arc;
-use unicode_segmentation::UnicodeSegmentation;
 
-use crate::gestures::{GestureCallbacks, GestureDetector, PointerEvent, ScaleGestureDetector};
+use crate::SelectionAreaController;
+use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
+use crate::gestures::{
+    GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
+    GestureCallbacks, GestureDecision, GestureDetector, GestureDisposition, PointerEvent,
+    ScaleGestureDetector,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId(ArenaId);
@@ -41,6 +53,26 @@ pub struct ElementId(ArenaId);
 pub struct RenderObjectId(ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(pub u64);
+/// A window-local retained pointer-capture token.
+///
+/// Capture keeps a mounted gesture sequence routed to its original retained
+/// target even when the contact leaves its bounds. Native adapters may mirror
+/// this to OS pointer capture where available; the token itself never crosses
+/// window boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PointerCapture {
+    key: GestureArenaKey,
+}
+impl PointerCapture {
+    #[must_use]
+    pub const fn window(self) -> u64 {
+        self.key.window
+    }
+    #[must_use]
+    pub const fn pointer(self) -> u64 {
+        self.key.pointer
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonState {
     #[default]
@@ -462,15 +494,15 @@ fn valid_selection(text: &str, selection: TextSelection) -> TextSelection {
     )
 }
 fn previous_grapheme_boundary(text: &str, offset: usize) -> usize {
-    UnicodeSegmentation::grapheme_indices(text, true)
-        .map(|(index, _)| index)
+    GraphemeClusterSegmenter::new()
+        .segment_str(text)
         .take_while(|index| *index < offset)
         .last()
         .unwrap_or(0)
 }
 fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
-    UnicodeSegmentation::grapheme_indices(text, true)
-        .map(|(index, grapheme)| index + grapheme.len())
+    GraphemeClusterSegmenter::new()
+        .segment_str(text)
         .find(|end| *end > offset)
         .unwrap_or(text.len())
 }
@@ -492,6 +524,143 @@ pub struct TranslationController {
     animation: Rc<RefCell<AnimationController>>,
     from: Rc<Cell<Offset>>,
     to: Rc<Cell<Offset>>,
+}
+
+/// Retained scalar scale state. Updates and animations change only an inner
+/// compositor affine layer; the child keeps its warm layout and picture.
+#[derive(Clone)]
+pub struct ScaleController {
+    scale: Rc<Cell<f32>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<f32>>,
+    to: Rc<Cell<f32>>,
+}
+impl std::fmt::Debug for ScaleController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScaleController")
+            .field("scale", &self.scale())
+            .finish()
+    }
+}
+impl PartialEq for ScaleController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.scale, &other.scale)
+    }
+}
+impl Default for ScaleController {
+    fn default() -> Self {
+        Self {
+            scale: Rc::new(Cell::new(1.)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(1.)),
+            to: Rc::new(Cell::new(1.)),
+        }
+    }
+}
+impl ScaleController {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn scale(&self) -> f32 {
+        self.scale.get()
+    }
+    pub fn set_scale(&self, scale: f32) -> bool {
+        let scale = if scale.is_finite() { scale } else { 1. };
+        if self.scale.get() == scale {
+            return false;
+        }
+        self.scale.set(scale);
+        true
+    }
+    pub fn animate_to(&self, target: f32, duration: Duration, now: Instant) {
+        self.from.set(self.scale());
+        self.to.set(if target.is_finite() { target } else { 1. });
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        self.set_scale(self.from.get() + (self.to.get() - self.from.get()) * animation.value())
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
+}
+
+/// Retained clockwise rotation state in logical radians.
+#[derive(Clone)]
+pub struct RotationController {
+    radians: Rc<Cell<f32>>,
+    animation: Rc<RefCell<AnimationController>>,
+    from: Rc<Cell<f32>>,
+    to: Rc<Cell<f32>>,
+}
+impl std::fmt::Debug for RotationController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RotationController")
+            .field("radians", &self.radians())
+            .finish()
+    }
+}
+impl PartialEq for RotationController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.radians, &other.radians)
+    }
+}
+impl Default for RotationController {
+    fn default() -> Self {
+        Self {
+            radians: Rc::new(Cell::new(0.)),
+            animation: Rc::new(RefCell::new(AnimationController::new(
+                Duration::from_millis(300),
+            ))),
+            from: Rc::new(Cell::new(0.)),
+            to: Rc::new(Cell::new(0.)),
+        }
+    }
+}
+impl RotationController {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn radians(&self) -> f32 {
+        self.radians.get()
+    }
+    pub fn set_radians(&self, radians: f32) -> bool {
+        let radians = if radians.is_finite() { radians } else { 0. };
+        if self.radians.get() == radians {
+            return false;
+        }
+        self.radians.set(radians);
+        true
+    }
+    pub fn animate_to(&self, target: f32, duration: Duration, now: Instant) {
+        self.from.set(self.radians());
+        self.to.set(if target.is_finite() { target } else { 0. });
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        *self.animation.borrow_mut() = animation;
+    }
+    fn tick(&self, now: Instant) -> bool {
+        let animation = self.animation.borrow();
+        if !animation.tick(now) {
+            return false;
+        }
+        self.set_radians(self.from.get() + (self.to.get() - self.from.get()) * animation.value())
+    }
+    fn is_active(&self) -> bool {
+        self.animation.borrow().is_active()
+    }
 }
 impl std::fmt::Debug for TranslationController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -904,6 +1073,10 @@ fn finite_offset(offset: Offset) -> Offset {
     )
 }
 
+fn finite_non_negative(value: f32) -> f32 {
+    if value.is_finite() { value.max(0.) } else { 0. }
+}
+
 /// The first built-in widgets. Their values contain no mutable runtime state.
 #[derive(Clone)]
 pub struct Widget {
@@ -1013,6 +1186,18 @@ enum WidgetKind {
         text: String,
         style: TextStyle,
         align: TextAlign,
+        soft_wrap: bool,
+        max_lines: Option<usize>,
+        overflow: TextOverflow,
+    },
+    SelectableText {
+        text: String,
+        style: TextStyle,
+        align: TextAlign,
+    },
+    SelectionArea {
+        controller: SelectionAreaController,
+        child: Box<Widget>,
     },
     Image {
         image: ImageHandle,
@@ -1039,6 +1224,18 @@ enum WidgetKind {
         constraints: Constraints,
         child: Box<Widget>,
     },
+    Limited {
+        max_width: f32,
+        max_height: f32,
+        child: Box<Widget>,
+    },
+    Overflow {
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+        child: Box<Widget>,
+    },
     Unconstrained {
         constrained_axis: Option<Axis>,
         child: Box<Widget>,
@@ -1059,6 +1256,22 @@ enum WidgetKind {
         callbacks: GestureCallbacks,
         child: Box<Widget>,
     },
+    Draggable {
+        source: Rc<dyn RetainedDragSource>,
+        child: Box<Widget>,
+    },
+    DragTarget {
+        target: Rc<dyn RetainedDragTarget>,
+        child: Box<Widget>,
+    },
+    IgnorePointer {
+        ignoring: bool,
+        child: Box<Widget>,
+    },
+    AbsorbPointer {
+        absorbing: bool,
+        child: Box<Widget>,
+    },
     Align {
         alignment: Alignment,
         child: Box<Widget>,
@@ -1066,6 +1279,11 @@ enum WidgetKind {
     Flex {
         axis: Axis,
         children: Vec<Widget>,
+    },
+    Flexible {
+        flex: u32,
+        fit: incular_config::FlexFit,
+        child: Box<Widget>,
     },
     Wrap {
         axis: Axis,
@@ -1082,6 +1300,23 @@ enum WidgetKind {
     Stack {
         alignment: Alignment,
         children: Vec<Widget>,
+    },
+    Positioned {
+        left: Option<f32>,
+        top: Option<f32>,
+        right: Option<f32>,
+        bottom: Option<f32>,
+        width: Option<f32>,
+        height: Option<f32>,
+        child: Box<Widget>,
+    },
+    IndexedStack {
+        alignment: Alignment,
+        index: usize,
+        children: Vec<Widget>,
+    },
+    LayoutBuilder {
+        builder: Rc<dyn Fn(Constraints) -> Widget>,
     },
     Visibility {
         visible: bool,
@@ -1106,6 +1341,26 @@ enum WidgetKind {
     },
     Translate {
         controller: TranslationController,
+        child: Box<Widget>,
+    },
+    Transform {
+        transform: CoreTransform,
+        origin: Option<Offset>,
+        child: Box<Widget>,
+    },
+    Scale {
+        controller: ScaleController,
+        origin: Option<Offset>,
+        child: Box<Widget>,
+    },
+    Rotation {
+        controller: RotationController,
+        origin: Option<Offset>,
+        child: Box<Widget>,
+    },
+    FittedBox {
+        fit: ImageFit,
+        alignment: Alignment,
         child: Box<Widget>,
     },
     Opacity {
@@ -1138,12 +1393,65 @@ enum WidgetKind {
     },
 }
 
-/// Fixed-extent lazy viewport configuration. The item builder is invoked only
-/// as an index enters the bounded materialized range.
+/// Lazy viewport configuration. The item builder is invoked only as an index
+/// enters the bounded materialized range.
+#[derive(Clone, Debug, PartialEq)]
+enum VirtualListExtent {
+    Fixed(f32),
+    Variable(MeasuredExtentIndex),
+}
+
+impl VirtualListExtent {
+    fn item_count(&self, configured_count: usize) -> usize {
+        match self {
+            Self::Fixed(_) => configured_count,
+            Self::Variable(index) => index.len(),
+        }
+    }
+
+    fn content_extent(&self, configured_count: usize) -> f32 {
+        match self {
+            Self::Fixed(extent) => fixed_extent_content_extent(configured_count, *extent),
+            Self::Variable(index) => index.total_extent(),
+        }
+    }
+
+    fn materialized_range(
+        &self,
+        configured_count: usize,
+        offset: f32,
+        viewport: f32,
+        cache: f32,
+    ) -> std::ops::Range<usize> {
+        match self {
+            Self::Fixed(extent) => {
+                fixed_extent_materialized_range(configured_count, *extent, offset, viewport, cache)
+            }
+            Self::Variable(index) => index.materialized_range(offset, viewport, cache),
+        }
+    }
+
+    fn offset_for_index(&self, index: usize) -> f32 {
+        match self {
+            Self::Fixed(extent) => {
+                (index as f64 * f64::from(*extent)).min(f64::from(f32::MAX)) as f32
+            }
+            Self::Variable(index_extents) => index_extents.offset_for_index(index),
+        }
+    }
+
+    fn structure_revision(&self) -> u64 {
+        match self {
+            Self::Fixed(_) => 0,
+            Self::Variable(index) => index.structure_revision(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct VirtualListConfig {
     item_count: usize,
-    item_extent: f32,
+    extent: VirtualListExtent,
     cache_extent: f32,
     controller: ScrollController,
     builder: Rc<dyn Fn(usize) -> Widget>,
@@ -1152,7 +1460,7 @@ impl std::fmt::Debug for VirtualListConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VirtualListConfig")
             .field("item_count", &self.item_count)
-            .field("item_extent", &self.item_extent)
+            .field("extent", &self.extent)
             .field("cache_extent", &self.cache_extent)
             .finish()
     }
@@ -1160,7 +1468,7 @@ impl std::fmt::Debug for VirtualListConfig {
 impl PartialEq for VirtualListConfig {
     fn eq(&self, other: &Self) -> bool {
         self.item_count == other.item_count
-            && self.item_extent == other.item_extent
+            && self.extent == other.extent
             && self.cache_extent == other.cache_extent
             && self.controller == other.controller
             && Rc::ptr_eq(&self.builder, &other.builder)
@@ -1307,11 +1615,21 @@ impl std::fmt::Debug for WidgetKind {
                 .field("color", color)
                 .field("action", action)
                 .finish(),
-            Self::Text { text, style, align } => f
+            Self::Text {
+                text,
+                style,
+                align,
+                soft_wrap,
+                max_lines,
+                overflow,
+            } => f
                 .debug_struct("Text")
                 .field("text", text)
                 .field("style", style)
                 .field("align", align)
+                .field("soft_wrap", soft_wrap)
+                .field("max_lines", max_lines)
+                .field("overflow", overflow)
                 .finish(),
             Self::Image {
                 image,
@@ -1342,6 +1660,30 @@ impl std::fmt::Debug for WidgetKind {
             Self::Constrained { constraints, child } => f
                 .debug_struct("ConstrainedBox")
                 .field("constraints", constraints)
+                .field("child", child)
+                .finish(),
+            Self::Limited {
+                max_width,
+                max_height,
+                child,
+            } => f
+                .debug_struct("LimitedBox")
+                .field("max_width", max_width)
+                .field("max_height", max_height)
+                .field("child", child)
+                .finish(),
+            Self::Overflow {
+                min_width,
+                max_width,
+                min_height,
+                max_height,
+                child,
+            } => f
+                .debug_struct("OverflowBox")
+                .field("min_width", min_width)
+                .field("max_width", max_width)
+                .field("min_height", min_height)
+                .field("max_height", max_height)
                 .field("child", child)
                 .finish(),
             Self::Unconstrained {
@@ -1375,6 +1717,22 @@ impl std::fmt::Debug for WidgetKind {
                 .debug_struct("GestureRegion")
                 .field("child", child)
                 .finish(),
+            Self::Draggable { child, .. } => {
+                f.debug_struct("Draggable").field("child", child).finish()
+            }
+            Self::DragTarget { child, .. } => {
+                f.debug_struct("DragTarget").field("child", child).finish()
+            }
+            Self::IgnorePointer { ignoring, child } => f
+                .debug_struct("IgnorePointer")
+                .field("ignoring", ignoring)
+                .field("child", child)
+                .finish(),
+            Self::AbsorbPointer { absorbing, child } => f
+                .debug_struct("AbsorbPointer")
+                .field("absorbing", absorbing)
+                .field("child", child)
+                .finish(),
             Self::Align { alignment, child } => f
                 .debug_struct("Align")
                 .field("alignment", alignment)
@@ -1384,6 +1742,12 @@ impl std::fmt::Debug for WidgetKind {
                 .debug_struct("Flex")
                 .field("axis", axis)
                 .field("children", children)
+                .finish(),
+            Self::Flexible { flex, fit, child } => f
+                .debug_struct("Flexible")
+                .field("flex", flex)
+                .field("fit", fit)
+                .field("child", child)
                 .finish(),
             Self::Wrap {
                 axis,
@@ -1417,6 +1781,35 @@ impl std::fmt::Debug for WidgetKind {
                 .field("alignment", alignment)
                 .field("children", children)
                 .finish(),
+            Self::Positioned {
+                left,
+                top,
+                right,
+                bottom,
+                width,
+                height,
+                child,
+            } => f
+                .debug_struct("Positioned")
+                .field("left", left)
+                .field("top", top)
+                .field("right", right)
+                .field("bottom", bottom)
+                .field("width", width)
+                .field("height", height)
+                .field("child", child)
+                .finish(),
+            Self::IndexedStack {
+                alignment,
+                index,
+                children,
+            } => f
+                .debug_struct("IndexedStack")
+                .field("alignment", alignment)
+                .field("index", index)
+                .field("children", children)
+                .finish(),
+            Self::LayoutBuilder { .. } => f.debug_struct("LayoutBuilder").finish(),
             Self::Visibility { visible, child } => f
                 .debug_struct("Visibility")
                 .field("visible", visible)
@@ -1431,11 +1824,37 @@ impl std::fmt::Debug for WidgetKind {
             Self::PersistentHeader { .. } => f.debug_struct("PersistentHeader").finish(),
             Self::VirtualList { config } => f
                 .debug_struct("VirtualList")
-                .field("item_count", &config.item_count)
-                .field("item_extent", &config.item_extent)
+                .field("item_count", &config.extent.item_count(config.item_count))
+                .field("extent", &config.extent)
                 .field("cache_extent", &config.cache_extent)
                 .finish(),
             Self::Translate { .. } => f.debug_struct("Translate").finish(),
+            Self::Transform {
+                transform, origin, ..
+            } => f
+                .debug_struct("Transform")
+                .field("transform", transform)
+                .field("origin", origin)
+                .finish(),
+            Self::Scale {
+                controller, origin, ..
+            } => f
+                .debug_struct("ScaleTransition")
+                .field("controller", controller)
+                .field("origin", origin)
+                .finish(),
+            Self::Rotation {
+                controller, origin, ..
+            } => f
+                .debug_struct("RotationTransition")
+                .field("controller", controller)
+                .field("origin", origin)
+                .finish(),
+            Self::FittedBox { fit, alignment, .. } => f
+                .debug_struct("FittedBox")
+                .field("fit", fit)
+                .field("alignment", alignment)
+                .finish(),
             Self::Opacity {
                 alpha, controller, ..
             } => f
@@ -1477,6 +1896,16 @@ impl std::fmt::Debug for WidgetKind {
                 .field("controller", controller)
                 .finish(),
             Self::Blend { mode, .. } => f.debug_struct("Blend").field("mode", mode).finish(),
+            Self::SelectableText { text, style, align } => f
+                .debug_struct("SelectableText")
+                .field("text", text)
+                .field("style", style)
+                .field("align", align)
+                .finish(),
+            Self::SelectionArea { controller, .. } => f
+                .debug_struct("SelectionArea")
+                .field("controller", controller)
+                .finish(),
         }
     }
 }
@@ -1508,6 +1937,56 @@ impl PartialEq for WidgetKind {
                     display_list: d,
                 },
             ) => a == c && b == d,
+            (
+                Self::Limited {
+                    max_width: a,
+                    max_height: b,
+                    child: c,
+                },
+                Self::Limited {
+                    max_width: d,
+                    max_height: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::SelectableText {
+                    text: a,
+                    style: b,
+                    align: c,
+                },
+                Self::SelectableText {
+                    text: d,
+                    style: e,
+                    align: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::SelectionArea {
+                    controller: a,
+                    child: b,
+                },
+                Self::SelectionArea {
+                    controller: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::Overflow {
+                    min_width: a,
+                    max_width: b,
+                    min_height: c,
+                    max_height: d,
+                    child: e,
+                },
+                Self::Overflow {
+                    min_width: f,
+                    max_width: g,
+                    min_height: h,
+                    max_height: i,
+                    child: j,
+                },
+            ) => a == f && b == g && c == h && d == i && e == j,
             (Self::RepaintBoundary { child: a }, Self::RepaintBoundary { child: b }) => a == b,
             (
                 Self::Gesture {
@@ -1519,6 +1998,46 @@ impl PartialEq for WidgetKind {
                     child: d,
                 },
             ) => gesture_callbacks_eq(a, c) && b == d,
+            (
+                Self::Draggable {
+                    source: a,
+                    child: b,
+                },
+                Self::Draggable {
+                    source: c,
+                    child: d,
+                },
+            ) => Rc::ptr_eq(a, c) && b == d,
+            (
+                Self::DragTarget {
+                    target: a,
+                    child: b,
+                },
+                Self::DragTarget {
+                    target: c,
+                    child: d,
+                },
+            ) => Rc::ptr_eq(a, c) && b == d,
+            (
+                Self::IgnorePointer {
+                    ignoring: a,
+                    child: b,
+                },
+                Self::IgnorePointer {
+                    ignoring: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::AbsorbPointer {
+                    absorbing: a,
+                    child: b,
+                },
+                Self::AbsorbPointer {
+                    absorbing: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::Table {
                     columns: a,
@@ -1583,13 +2102,19 @@ impl PartialEq for WidgetKind {
                     text: a,
                     style: b,
                     align: c,
+                    soft_wrap: d,
+                    max_lines: e,
+                    overflow: f,
                 },
                 Self::Text {
-                    text: d,
-                    style: e,
-                    align: f,
+                    text: g,
+                    style: h,
+                    align: i,
+                    soft_wrap: j,
+                    max_lines: k,
+                    overflow: l,
                 },
-            ) => a == d && b == e && c == f,
+            ) => a == g && b == h && c == i && d == j && e == k && f == l,
             (
                 Self::Baseline {
                     baseline: a,
@@ -1727,7 +2252,7 @@ impl PartialEq for WidgetKind {
             ) => a == c && b == d,
             (Self::VirtualList { config: a }, Self::VirtualList { config: b }) => {
                 a.item_count == b.item_count
-                    && a.item_extent == b.item_extent
+                    && a.extent == b.extent
                     && a.cache_extent == b.cache_extent
                     && a.controller == b.controller
                     && Rc::ptr_eq(&a.builder, &b.builder)
@@ -1742,6 +2267,54 @@ impl PartialEq for WidgetKind {
                     child: d,
                 },
             ) => Rc::ptr_eq(&a.offset, &c.offset) && b == d,
+            (
+                Self::Transform {
+                    transform: a,
+                    origin: b,
+                    child: c,
+                },
+                Self::Transform {
+                    transform: d,
+                    origin: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::Scale {
+                    controller: a,
+                    origin: b,
+                    child: c,
+                },
+                Self::Scale {
+                    controller: d,
+                    origin: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::Rotation {
+                    controller: a,
+                    origin: b,
+                    child: c,
+                },
+                Self::Rotation {
+                    controller: d,
+                    origin: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::FittedBox {
+                    fit: a,
+                    alignment: b,
+                    child: c,
+                },
+                Self::FittedBox {
+                    fit: d,
+                    alignment: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
             (
                 Self::Opacity {
                     alpha: a,
@@ -1822,6 +2395,18 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == c && b == d,
             (
+                Self::Flexible {
+                    flex: a,
+                    fit: b,
+                    child: c,
+                },
+                Self::Flexible {
+                    flex: d,
+                    fit: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
                 Self::Stack {
                     alignment: a,
                     children: b,
@@ -1831,6 +2416,41 @@ impl PartialEq for WidgetKind {
                     children: d,
                 },
             ) => a == c && b == d,
+            (
+                Self::Positioned {
+                    left: a,
+                    top: b,
+                    right: c,
+                    bottom: d,
+                    width: e,
+                    height: f,
+                    child: g,
+                },
+                Self::Positioned {
+                    left: h,
+                    top: i,
+                    right: j,
+                    bottom: k,
+                    width: l,
+                    height: m,
+                    child: n,
+                },
+            ) => a == h && b == i && c == j && d == k && e == l && f == m && g == n,
+            (
+                Self::IndexedStack {
+                    alignment: a,
+                    index: b,
+                    children: c,
+                },
+                Self::IndexedStack {
+                    alignment: d,
+                    index: e,
+                    children: f,
+                },
+            ) => a == d && b == e && c == f,
+            (Self::LayoutBuilder { builder: a }, Self::LayoutBuilder { builder: b }) => {
+                Rc::ptr_eq(a, b)
+            }
             (
                 Self::Visibility {
                     visible: a,
@@ -1863,7 +2483,16 @@ fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bo
         && same_callback(&left.on_double_tap, &right.on_double_tap)
         && same_callback(&left.on_long_press, &right.on_long_press)
         && same_callback(&left.on_pan_update, &right.on_pan_update)
+        && same_callback(
+            &left.on_horizontal_drag_update,
+            &right.on_horizontal_drag_update,
+        )
+        && same_callback(
+            &left.on_vertical_drag_update,
+            &right.on_vertical_drag_update,
+        )
         && same_callback(&left.on_scale_update, &right.on_scale_update)
+        && same_callback(&left.on_cancel, &right.on_cancel)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1875,25 +2504,41 @@ enum WidgetType {
     Image,
     Button,
     Text,
+    SelectableText,
+    SelectionArea,
     TextField,
     Padding,
     Constrained,
+    Limited,
+    Overflow,
     Unconstrained,
     Fractional,
     Baseline,
     RepaintBoundary,
     Gesture,
+    Draggable,
+    DragTarget,
+    IgnorePointer,
+    AbsorbPointer,
     Align,
     Flex,
+    Flexible,
     Wrap,
     Table,
     Stack,
+    Positioned,
+    IndexedStack,
+    LayoutBuilder,
     Visibility,
     AspectRatio,
     Scroll,
     PersistentHeader,
     VirtualList,
     Translate,
+    Transform,
+    Scale,
+    Rotation,
+    FittedBox,
     Opacity,
     Blur,
     DropShadow,
@@ -1995,27 +2640,41 @@ impl Widget {
             }
             WidgetKind::Padding { child, .. }
             | WidgetKind::Constrained { child, .. }
+            | WidgetKind::Limited { child, .. }
+            | WidgetKind::Overflow { child, .. }
             | WidgetKind::Unconstrained { child, .. }
             | WidgetKind::Fractional { child, .. }
             | WidgetKind::Baseline { child, .. }
             | WidgetKind::RepaintBoundary { child, .. }
             | WidgetKind::Gesture { child, .. }
+            | WidgetKind::Draggable { child, .. }
+            | WidgetKind::DragTarget { child, .. }
+            | WidgetKind::IgnorePointer { child, .. }
+            | WidgetKind::AbsorbPointer { child, .. }
             | WidgetKind::Align { child, .. }
+            | WidgetKind::Flexible { child, .. }
+            | WidgetKind::Positioned { child, .. }
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
             | WidgetKind::Translate { child, .. }
+            | WidgetKind::Transform { child, .. }
+            | WidgetKind::Scale { child, .. }
+            | WidgetKind::Rotation { child, .. }
+            | WidgetKind::FittedBox { child, .. }
             | WidgetKind::Opacity { child, .. }
             | WidgetKind::Blur { child, .. }
             | WidgetKind::DropShadow { child, .. }
             | WidgetKind::ColorFiltered { child, .. }
             | WidgetKind::Blend { child, .. } => child.bind_callbacks(allocate),
-            WidgetKind::VirtualList { .. } => {}
+            WidgetKind::SelectionArea { child, .. } => child.bind_callbacks(allocate),
+            WidgetKind::VirtualList { .. } | WidgetKind::LayoutBuilder { .. } => {}
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
-            | WidgetKind::Stack { children, .. } => {
+            | WidgetKind::Stack { children, .. }
+            | WidgetKind::IndexedStack { children, .. } => {
                 for child in children {
                     child.bind_callbacks(allocate);
                 }
@@ -2025,6 +2684,7 @@ impl Widget {
             | WidgetKind::CustomPaint { .. }
             | WidgetKind::Decorated { .. }
             | WidgetKind::Text { .. }
+            | WidgetKind::SelectableText { .. }
             | WidgetKind::TextField { .. }
             | WidgetKind::Image { .. } => {}
         }
@@ -2037,6 +2697,9 @@ impl Widget {
                 text: text.into(),
                 style: TextStyle::default(),
                 align: TextAlign::Start,
+                soft_wrap: true,
+                max_lines: None,
+                overflow: TextOverflow::Clip,
             },
             semantics: SemanticProperties::default(),
         }
@@ -2049,6 +2712,58 @@ impl Widget {
                 text: text.into(),
                 style,
                 align,
+                soft_wrap: true,
+                max_lines: None,
+                overflow: TextOverflow::Clip,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn text_configured(
+        text: impl Into<String>,
+        style: TextStyle,
+        align: TextAlign,
+        soft_wrap: bool,
+        max_lines: Option<usize>,
+        overflow: TextOverflow,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Text {
+                text: text.into(),
+                style,
+                align,
+                soft_wrap,
+                max_lines,
+                overflow,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn selectable_text_styled(
+        text: impl Into<String>,
+        style: TextStyle,
+        align: TextAlign,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SelectableText {
+                text: text.into(),
+                style,
+                align,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn selection_area(controller: SelectionAreaController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SelectionArea {
+                controller,
+                child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2117,6 +2832,38 @@ impl Widget {
             key: None,
             kind: WidgetKind::Constrained {
                 constraints,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn limited_box(max_width: f32, max_height: f32, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Limited {
+                max_width: finite_non_negative(max_width),
+                max_height: finite_non_negative(max_height),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn overflow_box(
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+        child: Self,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Overflow {
+                min_width: min_width.map(finite_non_negative),
+                max_width: max_width.map(finite_non_negative),
+                min_height: min_height.map(finite_non_negative),
+                max_height: max_height.map(finite_non_negative),
                 child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
@@ -2202,6 +2949,53 @@ impl Widget {
             semantics: SemanticProperties::default(),
         }
     }
+    pub(crate) fn draggable(source: Rc<dyn RetainedDragSource>, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Draggable {
+                source,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    pub(crate) fn drag_target(target: Rc<dyn RetainedDragTarget>, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::DragTarget {
+                target,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    /// Removes this subtree from pointer hit testing while leaving painting and
+    /// semantics intact. Siblings behind it remain eligible for the event.
+    #[must_use]
+    pub fn ignore_pointer(ignoring: bool, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::IgnorePointer {
+                ignoring,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    /// Intercepts pointer hit testing at this boundary. Descendants do not
+    /// receive ordinary retained interaction while painting and semantics are
+    /// preserved.
+    #[must_use]
+    pub fn absorb_pointer(absorbing: bool, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::AbsorbPointer {
+                absorbing,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
     #[must_use]
     pub fn align(alignment: Alignment, child: Self) -> Self {
         Self {
@@ -2231,6 +3025,18 @@ impl Widget {
             kind: WidgetKind::Flex {
                 axis: Axis::Vertical,
                 children: children.into(),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn flexible(flex: u32, fit: incular_config::FlexFit, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Flexible {
+                flex: flex.max(1),
+                fit,
+                child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2294,6 +3100,56 @@ impl Widget {
             kind: WidgetKind::Stack {
                 alignment,
                 children: children.into(),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn positioned(
+        left: Option<f32>,
+        top: Option<f32>,
+        right: Option<f32>,
+        bottom: Option<f32>,
+        width: Option<f32>,
+        height: Option<f32>,
+        child: Self,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Positioned {
+                left: left.map(finite_non_negative),
+                top: top.map(finite_non_negative),
+                right: right.map(finite_non_negative),
+                bottom: bottom.map(finite_non_negative),
+                width: width.map(finite_non_negative),
+                height: height.map(finite_non_negative),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn indexed_stack(
+        alignment: Alignment,
+        index: usize,
+        children: impl Into<Vec<Self>>,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::IndexedStack {
+                alignment,
+                index,
+                children: children.into(),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn layout_builder(builder: impl Fn(Constraints) -> Self + 'static) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::LayoutBuilder {
+                builder: Rc::new(builder),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2365,6 +3221,76 @@ impl Widget {
             key: None,
             kind: WidgetKind::Translate {
                 controller,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    /// Applies an arbitrary Kurbo-backed affine transform after layout.
+    /// The transform is compositor-only and defaults to the child's center.
+    #[must_use]
+    pub fn transform(transform: CoreTransform, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Transform {
+                transform,
+                origin: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn transform_around(transform: CoreTransform, origin: Offset, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Transform {
+                transform,
+                origin: Some(finite_offset(origin)),
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn scale(scale: f32, child: Self) -> Self {
+        Self::transform(CoreTransform::scale(scale), child)
+    }
+    #[must_use]
+    pub fn rotate(radians: f32, child: Self) -> Self {
+        Self::transform(CoreTransform::rotation(radians), child)
+    }
+    #[must_use]
+    pub fn fitted_box(fit: ImageFit, alignment: Alignment, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::FittedBox {
+                fit,
+                alignment,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn controlled_scale(controller: ScaleController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Scale {
+                controller,
+                origin: None,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn controlled_rotation(controller: RotationController, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::Rotation {
+                controller,
+                origin: None,
                 child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
@@ -2563,25 +3489,41 @@ impl Widget {
             WidgetKind::Image { .. } => WidgetType::Image,
             WidgetKind::Button { .. } => WidgetType::Button,
             WidgetKind::Text { .. } => WidgetType::Text,
+            WidgetKind::SelectableText { .. } => WidgetType::SelectableText,
+            WidgetKind::SelectionArea { .. } => WidgetType::SelectionArea,
             WidgetKind::TextField { .. } => WidgetType::TextField,
             WidgetKind::Padding { .. } => WidgetType::Padding,
             WidgetKind::Constrained { .. } => WidgetType::Constrained,
+            WidgetKind::Limited { .. } => WidgetType::Limited,
+            WidgetKind::Overflow { .. } => WidgetType::Overflow,
             WidgetKind::Unconstrained { .. } => WidgetType::Unconstrained,
             WidgetKind::Fractional { .. } => WidgetType::Fractional,
             WidgetKind::Baseline { .. } => WidgetType::Baseline,
             WidgetKind::RepaintBoundary { .. } => WidgetType::RepaintBoundary,
             WidgetKind::Gesture { .. } => WidgetType::Gesture,
+            WidgetKind::Draggable { .. } => WidgetType::Draggable,
+            WidgetKind::DragTarget { .. } => WidgetType::DragTarget,
+            WidgetKind::IgnorePointer { .. } => WidgetType::IgnorePointer,
+            WidgetKind::AbsorbPointer { .. } => WidgetType::AbsorbPointer,
             WidgetKind::Align { .. } => WidgetType::Align,
             WidgetKind::Flex { .. } => WidgetType::Flex,
+            WidgetKind::Flexible { .. } => WidgetType::Flexible,
             WidgetKind::Wrap { .. } => WidgetType::Wrap,
             WidgetKind::Table { .. } => WidgetType::Table,
             WidgetKind::Stack { .. } => WidgetType::Stack,
+            WidgetKind::Positioned { .. } => WidgetType::Positioned,
+            WidgetKind::IndexedStack { .. } => WidgetType::IndexedStack,
+            WidgetKind::LayoutBuilder { .. } => WidgetType::LayoutBuilder,
             WidgetKind::Visibility { .. } => WidgetType::Visibility,
             WidgetKind::AspectRatio { .. } => WidgetType::AspectRatio,
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
             WidgetKind::PersistentHeader { .. } => WidgetType::PersistentHeader,
             WidgetKind::VirtualList { .. } => WidgetType::VirtualList,
             WidgetKind::Translate { .. } => WidgetType::Translate,
+            WidgetKind::Transform { .. } => WidgetType::Transform,
+            WidgetKind::Scale { .. } => WidgetType::Scale,
+            WidgetKind::Rotation { .. } => WidgetType::Rotation,
+            WidgetKind::FittedBox { .. } => WidgetType::FittedBox,
             WidgetKind::Opacity { .. } => WidgetType::Opacity,
             WidgetKind::Blur { .. } => WidgetType::Blur,
             WidgetKind::DropShadow { .. } => WidgetType::DropShadow,
@@ -2595,6 +3537,7 @@ impl Widget {
             | WidgetKind::Shape { .. }
             | WidgetKind::CustomPaint { .. }
             | WidgetKind::Text { .. }
+            | WidgetKind::SelectableText { .. }
             | WidgetKind::TextField { .. }
             | WidgetKind::Image { .. } => Vec::new(),
             WidgetKind::Button { child, .. } => {
@@ -2602,17 +3545,29 @@ impl Widget {
             }
             WidgetKind::Padding { child, .. }
             | WidgetKind::Constrained { child, .. }
+            | WidgetKind::Limited { child, .. }
+            | WidgetKind::Overflow { child, .. }
             | WidgetKind::Unconstrained { child, .. }
             | WidgetKind::Fractional { child, .. }
             | WidgetKind::Baseline { child, .. }
             | WidgetKind::RepaintBoundary { child, .. }
             | WidgetKind::Gesture { child, .. }
+            | WidgetKind::Draggable { child, .. }
+            | WidgetKind::DragTarget { child, .. }
+            | WidgetKind::IgnorePointer { child, .. }
+            | WidgetKind::AbsorbPointer { child, .. }
             | WidgetKind::Align { child, .. }
+            | WidgetKind::Flexible { child, .. }
+            | WidgetKind::Positioned { child, .. }
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
             | WidgetKind::Translate { child, .. }
+            | WidgetKind::Transform { child, .. }
+            | WidgetKind::Scale { child, .. }
+            | WidgetKind::Rotation { child, .. }
+            | WidgetKind::FittedBox { child, .. }
             | WidgetKind::Decorated { child, .. }
             | WidgetKind::Opacity { child, .. }
             | WidgetKind::Blur { child, .. }
@@ -2621,11 +3576,13 @@ impl Widget {
             | WidgetKind::Blend { child, .. } => {
                 vec![child.as_ref().clone()]
             }
+            WidgetKind::SelectionArea { child, .. } => vec![child.as_ref().clone()],
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
             | WidgetKind::Stack { children, .. } => children.clone(),
-            WidgetKind::VirtualList { .. } => Vec::new(),
+            WidgetKind::IndexedStack { children, .. } => children.clone(),
+            WidgetKind::VirtualList { .. } | WidgetKind::LayoutBuilder { .. } => Vec::new(),
         }
     }
 }
@@ -2774,6 +3731,61 @@ impl GestureRegion {
 impl From<GestureRegion> for Widget {
     fn from(value: GestureRegion) -> Self {
         Widget::gesture(value.callbacks, value.child)
+    }
+}
+
+/// A retained boundary that makes its child subtree transparent to pointer
+/// hit testing. It does not hide the subtree from painting or accessibility.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IgnorePointer {
+    ignoring: bool,
+    child: Widget,
+}
+impl IgnorePointer {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            ignoring: true,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn ignoring(mut self, ignoring: bool) -> Self {
+        self.ignoring = ignoring;
+        self
+    }
+}
+impl From<IgnorePointer> for Widget {
+    fn from(value: IgnorePointer) -> Self {
+        Widget::ignore_pointer(value.ignoring, value.child)
+    }
+}
+
+/// A retained boundary that consumes pointer hit tests at its own bounds.
+/// Descendants remain visible and semantic but do not receive normal pointer
+/// interaction while absorption is enabled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AbsorbPointer {
+    absorbing: bool,
+    child: Widget,
+}
+impl AbsorbPointer {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            absorbing: true,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn absorbing(mut self, absorbing: bool) -> Self {
+        self.absorbing = absorbing;
+        self
+    }
+}
+impl From<AbsorbPointer> for Widget {
+    fn from(value: AbsorbPointer) -> Self {
+        Widget::absorb_pointer(value.absorbing, value.child)
     }
 }
 
@@ -3002,8 +4014,98 @@ pub struct Text {
     text: String,
     style: TextStyle,
     align: TextAlign,
+    soft_wrap: bool,
+    max_lines: Option<usize>,
+    overflow: TextOverflow,
 }
 impl Text {
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            style: TextStyle::default(),
+            align: TextAlign::Start,
+            soft_wrap: true,
+            max_lines: None,
+            overflow: TextOverflow::Clip,
+        }
+    }
+    #[must_use]
+    pub fn style(mut self, style: TextStyle) -> Self {
+        self.style = style;
+        self
+    }
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.style.color = color;
+        self
+    }
+    #[must_use]
+    pub fn align(mut self, align: TextAlign) -> Self {
+        self.align = align;
+        self
+    }
+    /// Enables or disables Parley's soft line breaking at the allocated width.
+    #[must_use]
+    pub fn soft_wrap(mut self, soft_wrap: bool) -> Self {
+        self.soft_wrap = soft_wrap;
+        self
+    }
+    #[must_use]
+    pub fn max_lines(mut self, max_lines: Option<usize>) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+    #[must_use]
+    pub fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+}
+impl From<Text> for Widget {
+    fn from(value: Text) -> Self {
+        Widget::text_configured(
+            value.text,
+            value.style,
+            value.align,
+            value.soft_wrap,
+            value.max_lines,
+            value.overflow,
+        )
+    }
+}
+
+/// Makes the renderer-independent rich paragraph description available in a
+/// retained widget tree. Paragraph policy is preserved; inline style flattening
+/// follows the existing `incular-text::RichText` contract.
+impl From<RichText> for Widget {
+    fn from(value: RichText) -> Self {
+        let style = value
+            .flatten()
+            .first()
+            .map_or_else(TextStyle::default, |run| run.style.clone());
+        Widget::text_configured(
+            value.plain_text(),
+            style,
+            value.text_align,
+            value.soft_wrap,
+            value.max_lines,
+            value.overflow,
+        )
+    }
+}
+
+/// Read-only text that participates in pointer and keyboard selection.
+///
+/// This is intentionally distinct from [`TextField`]: it owns no text buffer,
+/// caret, IME session, or mutation commands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectableText {
+    text: String,
+    style: TextStyle,
+    align: TextAlign,
+}
+impl SelectableText {
     #[must_use]
     pub fn new(text: impl Into<String>) -> Self {
         Self {
@@ -3028,9 +4130,38 @@ impl Text {
         self
     }
 }
-impl From<Text> for Widget {
-    fn from(value: Text) -> Self {
-        Widget::text_styled(value.text, value.style, value.align)
+impl From<SelectableText> for Widget {
+    fn from(value: SelectableText) -> Self {
+        Widget::selectable_text_styled(value.text, value.style, value.align)
+    }
+}
+
+/// Coordinates selection across all [`SelectableText`] descendants.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectionArea {
+    controller: SelectionAreaController,
+    child: Widget,
+}
+impl SelectionArea {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self::with_controller(SelectionAreaController::new(), child)
+    }
+    #[must_use]
+    pub fn with_controller(controller: SelectionAreaController, child: impl Into<Widget>) -> Self {
+        Self {
+            controller,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn controller(&self) -> SelectionAreaController {
+        self.controller.clone()
+    }
+}
+impl From<SelectionArea> for Widget {
+    fn from(value: SelectionArea) -> Self {
+        Widget::selection_area(value.controller, value.child)
     }
 }
 
@@ -3227,6 +4358,134 @@ impl SlideTransition {
 impl From<SlideTransition> for Widget {
     fn from(value: SlideTransition) -> Self {
         Widget::translate(value.controller, value.child)
+    }
+}
+
+/// An arbitrary retained affine transform. Layout remains the child's normal
+/// layout; only the compositor, pointer coordinate conversion, and semantic
+/// bounds observe the affine transform.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transform {
+    transform: CoreTransform,
+    origin: Option<Offset>,
+    child: Widget,
+}
+impl Transform {
+    #[must_use]
+    pub fn new(transform: CoreTransform, child: impl Into<Widget>) -> Self {
+        Self {
+            transform,
+            origin: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn translation(offset: Offset, child: impl Into<Widget>) -> Self {
+        Self::new(CoreTransform::translation(offset), child)
+    }
+    #[must_use]
+    pub fn scale(scale: f32, child: impl Into<Widget>) -> Self {
+        Self::new(CoreTransform::scale(scale), child)
+    }
+    #[must_use]
+    pub fn rotation(radians: f32, child: impl Into<Widget>) -> Self {
+        Self::new(CoreTransform::rotation(radians), child)
+    }
+    #[must_use]
+    pub fn skew(x: f32, y: f32, child: impl Into<Widget>) -> Self {
+        Self::new(CoreTransform::skew(x, y), child)
+    }
+    /// Selects the local pivot. The default is the child's center.
+    #[must_use]
+    pub fn origin(mut self, origin: Offset) -> Self {
+        self.origin = Some(finite_offset(origin));
+        self
+    }
+}
+impl From<Transform> for Widget {
+    fn from(value: Transform) -> Self {
+        match value.origin {
+            Some(origin) => Widget::transform_around(value.transform, origin, value.child),
+            None => Widget::transform(value.transform, value.child),
+        }
+    }
+}
+
+/// Fits a naturally laid-out child into this widget's constrained box using a
+/// retained affine scale and alignment. Unlike `ImageFit`, it works for any
+/// widget subtree and leaves its child picture/layout cache intact.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FittedBox {
+    fit: ImageFit,
+    alignment: Alignment,
+    child: Widget,
+}
+impl FittedBox {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            fit: ImageFit::Contain,
+            alignment: Alignment::CENTER,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn fit(mut self, fit: ImageFit) -> Self {
+        self.fit = fit;
+        self
+    }
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+}
+impl From<FittedBox> for Widget {
+    fn from(value: FittedBox) -> Self {
+        Widget::fitted_box(value.fit, value.alignment, value.child)
+    }
+}
+
+/// A compositor-only scale transition driven by [`ScaleController`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScaleTransition {
+    controller: ScaleController,
+    child: Widget,
+}
+impl ScaleTransition {
+    #[must_use]
+    pub fn new(controller: ScaleController, child: impl Into<Widget>) -> Self {
+        Self {
+            controller,
+            child: child.into(),
+        }
+    }
+}
+impl From<ScaleTransition> for Widget {
+    fn from(value: ScaleTransition) -> Self {
+        Widget::controlled_scale(value.controller, value.child)
+    }
+}
+
+/// A compositor-only clockwise rotation transition driven by
+/// [`RotationController`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RotationTransition {
+    controller: RotationController,
+    child: Widget,
+}
+impl RotationTransition {
+    #[must_use]
+    pub fn new(controller: RotationController, child: impl Into<Widget>) -> Self {
+        Self {
+            controller,
+            child: child.into(),
+        }
+    }
+}
+impl From<RotationTransition> for Widget {
+    fn from(value: RotationTransition) -> Self {
+        Widget::controlled_rotation(value.controller, value.child)
     }
 }
 
@@ -3560,9 +4819,10 @@ impl ScrollView {
     }
 }
 
-/// A vertically scrolling fixed-extent lazy viewport. It is intentionally
-/// distinct from [`ScrollView`]: items are created only while they intersect
-/// the viewport plus a bounded logical-pixel cache (240px by default).
+/// A vertically scrolling lazy viewport. It is intentionally distinct from
+/// [`ScrollView`]: items are created only while they intersect the viewport
+/// plus a bounded logical-pixel cache (240px by default). Fixed and measured
+/// variable extents share this one retained viewport implementation.
 pub struct VirtualList;
 impl VirtualList {
     pub const DEFAULT_ITEM_EXTENT: f32 = 48.;
@@ -3630,10 +4890,94 @@ impl VirtualList {
         );
         Widget::virtual_list(VirtualListConfig {
             item_count,
-            item_extent,
+            extent: VirtualListExtent::Fixed(item_extent),
             cache_extent,
             controller,
             builder: Rc::new(move |index| builder(index).into()),
+        })
+    }
+
+    /// Creates a variable-extent lazy list. Unmeasured rows use
+    /// `estimated_extent` until their first bounded viewport layout.
+    #[must_use]
+    pub fn variable_extent<W>(
+        item_count: usize,
+        estimated_extent: f32,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::variable_extent_with_controller(
+            item_count,
+            estimated_extent,
+            ScrollController::new(),
+            builder,
+        )
+    }
+
+    /// Variable-extent form with an external controller. Keep the returned
+    /// [`MeasuredExtentIndex`] externally via
+    /// [`Self::variable_extent_with_index`] when the widget description is
+    /// recreated between frames or when application data mutates in place.
+    #[must_use]
+    pub fn variable_extent_with_controller<W>(
+        item_count: usize,
+        estimated_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::variable_extent_with_index(
+            MeasuredExtentIndex::new(item_count, estimated_extent),
+            controller,
+            builder,
+        )
+    }
+
+    /// Variable-extent form backed by a shared measured index. Mutate the
+    /// index with `insert`, `remove`, `move_item`, or `invalidate_extent` as
+    /// application data changes; only the visible range is rebuilt.
+    #[must_use]
+    pub fn variable_extent_with_index<W>(
+        index: MeasuredExtentIndex,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self::variable_extent_with_index_and_cache(
+            index,
+            Self::DEFAULT_CACHE_EXTENT,
+            controller,
+            builder,
+        )
+    }
+
+    /// Variable-extent form with explicit cache extent.
+    #[must_use]
+    pub fn variable_extent_with_index_and_cache<W>(
+        index: MeasuredExtentIndex,
+        cache_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        assert!(
+            cache_extent.is_finite() && cache_extent >= 0.,
+            "cache extent must be finite and non-negative"
+        );
+        Widget::virtual_list(VirtualListConfig {
+            item_count: index.len(),
+            extent: VirtualListExtent::Variable(index),
+            cache_extent,
+            controller,
+            builder: Rc::new(move |item| builder(item).into()),
         })
     }
 }
@@ -3725,6 +5069,11 @@ struct Element {
     /// Parallel to `children` only for a virtual-list element. Item indices
     /// are identity, never reusable visible-slot numbers.
     virtual_indices: Vec<usize>,
+    /// Structural mutations of a variable-extent index require remapping the
+    /// visible index-to-widget descriptions even when its numeric range did
+    /// not change. Pure post-layout measurements do not disturb identity.
+    virtual_structure_revision: u64,
+    layout_builder_constraints: Option<Constraints>,
 }
 #[derive(Clone, Debug, PartialEq)]
 enum RenderKind {
@@ -3758,6 +5107,16 @@ enum RenderKind {
     Constrained {
         constraints: Constraints,
     },
+    Limited {
+        max_width: f32,
+        max_height: f32,
+    },
+    Overflow {
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+    },
     Unconstrained {
         constrained_axis: Option<Axis>,
     },
@@ -3776,6 +5135,10 @@ enum RenderKind {
     Flex {
         axis: Axis,
     },
+    Flexible {
+        flex: u32,
+        fit: incular_config::FlexFit,
+    },
     Wrap {
         axis: Axis,
         spacing: f32,
@@ -3789,6 +5152,19 @@ enum RenderKind {
     Stack {
         alignment: Alignment,
     },
+    Positioned {
+        left: Option<f32>,
+        top: Option<f32>,
+        right: Option<f32>,
+        bottom: Option<f32>,
+        width: Option<f32>,
+        height: Option<f32>,
+    },
+    IndexedStack {
+        alignment: Alignment,
+        index: usize,
+    },
+    LayoutBuilder,
     Visibility {
         visible: bool,
     },
@@ -3799,7 +5175,16 @@ enum RenderKind {
         text: String,
         style: TextStyle,
         align: TextAlign,
+        soft_wrap: bool,
+        max_lines: Option<usize>,
+        overflow: TextOverflow,
     },
+    SelectableText {
+        text: String,
+        style: TextStyle,
+        align: TextAlign,
+    },
+    SelectionArea,
     Image {
         image: ImageHandle,
         width: Option<f32>,
@@ -3827,6 +5212,22 @@ enum RenderKind {
     },
     Translate {
         controller: TranslationController,
+    },
+    Transform {
+        transform: CoreTransform,
+        origin: Option<Offset>,
+    },
+    Scale {
+        controller: ScaleController,
+        origin: Option<Offset>,
+    },
+    Rotation {
+        controller: RotationController,
+        origin: Option<Offset>,
+    },
+    FittedBox {
+        fit: ImageFit,
+        alignment: Alignment,
     },
     Opacity {
         alpha: f32,
@@ -3931,9 +5332,54 @@ struct SemanticBuild {
     actions: Vec<SemanticActionKind>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetainedGestureKind {
+    Pointer,
+    Scale,
+}
+
+struct ActiveGestureMember {
+    element: ElementId,
+    member: GestureArenaMember,
+    kind: RetainedGestureKind,
+    recognizer: Option<GestureDetector>,
+    on_cancel: Option<Rc<dyn Fn()>>,
+}
+
 struct ActiveGesture {
     element: ElementId,
-    recognizer: GestureDetector,
+    members: Vec<ActiveGestureMember>,
+    cancelled_elements: HashSet<ElementId>,
+    start: Offset,
+}
+
+struct ActiveDrag {
+    source: Rc<dyn RetainedDragSource>,
+    target: Option<(ElementId, Rc<dyn RetainedDragTarget>)>,
+    start: Offset,
+}
+
+fn disposition_for(
+    entries: &[GestureArenaEntry],
+    member: GestureArenaMember,
+) -> GestureDisposition {
+    entries
+        .iter()
+        .find(|entry| entry.member == member)
+        .map_or(GestureDisposition::Cancelled, |entry| entry.disposition)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticSelectionPoint {
+    element: ElementId,
+    byte: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticSelection {
+    area: ElementId,
+    anchor: StaticSelectionPoint,
+    extent: StaticSelectionPoint,
 }
 
 /// Persistent UI state. IDs become invalid immediately after unmount.
@@ -3948,11 +5394,15 @@ pub struct WidgetTree {
     compositor_initialized: bool,
     next_action: u64,
     pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
-    active_gestures: HashMap<u64, ActiveGesture>,
+    gesture_arena: GestureArena,
+    active_gestures: HashMap<GestureArenaKey, ActiveGesture>,
+    pointer_captures: HashMap<GestureArenaKey, ElementId>,
+    active_drags: HashMap<GestureArenaKey, ActiveDrag>,
     scale_gestures: HashMap<ElementId, ScaleGestureDetector>,
     scrollbar_drag: Option<ScrollbarDrag>,
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
+    static_selection: Option<StaticSelection>,
 }
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -3973,11 +5423,15 @@ impl WidgetTree {
             compositor_initialized: false,
             next_action: 1,
             pending_handlers: Vec::new(),
+            gesture_arena: GestureArena::new(),
             active_gestures: HashMap::new(),
+            pointer_captures: HashMap::new(),
+            active_drags: HashMap::new(),
             scale_gestures: HashMap::new(),
             scrollbar_drag: None,
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
+            static_selection: None,
         }
     }
     pub fn mount(&mut self, widget: Widget) -> Result<ElementId, TreeError> {
@@ -4010,7 +5464,7 @@ impl WidgetTree {
             let range = element.virtual_indices.first().copied().unwrap_or(0)
                 ..element.virtual_indices.last().map_or(0, |index| index + 1);
             Some(VirtualListDiagnostics {
-                logical_item_count: config.item_count,
+                logical_item_count: config.extent.item_count(config.item_count),
                 materialized_item_count: element.virtual_indices.len(),
                 materialized_range: range,
                 scroll_offset: config.controller.offset(),
@@ -4086,6 +5540,17 @@ impl WidgetTree {
     pub fn render_id(&self, id: ElementId) -> Option<RenderObjectId> {
         self.elements.get(id.0).map(|e| e.render)
     }
+    /// Current world-space bounds for a mounted element. This is useful for
+    /// platform-neutral tooling and tests; it never exposes a render ID.
+    #[must_use]
+    pub fn element_bounds(&self, id: ElementId) -> Option<Rect> {
+        let render = self.render_id(id)?;
+        let size = self.renders.get(render.0)?.size;
+        Some(
+            self.render_world_transform(render)
+                .transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, size)),
+        )
+    }
     #[must_use]
     pub fn element_for_render(&self, render: RenderObjectId) -> Option<ElementId> {
         // Render IDs are opaque; a linear reverse lookup is only on input paths,
@@ -4132,78 +5597,437 @@ impl WidgetTree {
             id = self.parent(id)?;
         }
     }
-    /// Dispatches a pointer event to the deepest hit-tested gesture region,
-    /// preserving an independent capture for every pointer sequence. Regions
-    /// with scale callbacks share a scale recognizer across their captures.
+    /// Requests retained pointer capture for an already active gesture member.
+    /// The returned token is window-local and is released automatically on up,
+    /// cancellation, or unmount. This is the portable guarantee; platform
+    /// adapters may additionally request native OS capture.
+    pub fn request_pointer_capture(
+        &mut self,
+        window: u64,
+        pointer: u64,
+        element: ElementId,
+    ) -> Option<PointerCapture> {
+        let key = GestureArenaKey { window, pointer };
+        let active = self.active_gestures.get(&key)?;
+        if !active
+            .members
+            .iter()
+            .any(|candidate| candidate.element == element)
+        {
+            return None;
+        }
+        self.pointer_captures.insert(key, element);
+        Some(PointerCapture { key })
+    }
+    /// Returns the retained target currently captured for a window/pointer.
+    #[must_use]
+    pub fn pointer_capture_target(&self, window: u64, pointer: u64) -> Option<ElementId> {
+        self.pointer_captures
+            .get(&GestureArenaKey { window, pointer })
+            .copied()
+    }
+    /// Releases a capture token. Releasing a token from another window or a
+    /// stale pointer sequence is harmless and returns `false`.
+    pub fn release_pointer_capture(&mut self, capture: PointerCapture) -> bool {
+        self.pointer_captures.remove(&capture.key).is_some()
+    }
+    /// Dispatches a pointer event in the standalone window (identity zero).
+    /// Multi-window runtimes should use [`Self::dispatch_gesture_in_window`].
     pub fn dispatch_gesture(&mut self, event: PointerEvent) -> Option<ElementId> {
+        self.dispatch_gesture_in_window(0, event)
+    }
+    /// Dispatches a pointer event through the retained gesture arena for one
+    /// window. Every hit-tested gesture ancestor joins the stream pending;
+    /// callbacks run only after its recognizer wins (or is explicitly
+    /// compatible with) that stream's arena.
+    pub fn dispatch_gesture_in_window(
+        &mut self,
+        window: u64,
+        event: PointerEvent,
+    ) -> Option<ElementId> {
         use incular_core::PointerPhase;
 
+        let key = GestureArenaKey {
+            window,
+            pointer: event.pointer,
+        };
         if matches!(event.phase, PointerPhase::Down) {
-            self.active_gestures.remove(&event.pointer);
-            let element = self
+            self.cancel_gesture_stream(key, true);
+            let hit = self
                 .hit_test(event.position)
-                .and_then(|render| self.element_for_render(render))
-                .and_then(|element| self.gesture_ancestor(element))?;
-            let callbacks = match &self.elements.get(element.0)?.widget.kind {
-                WidgetKind::Gesture { callbacks, .. } => callbacks.clone(),
-                _ => return None,
+                .and_then(|render| self.element_for_render(render))?;
+            let elements = self.gesture_ancestors(hit);
+            let element = *elements.first()?;
+            let mut active = ActiveGesture {
+                element,
+                members: Vec::new(),
+                cancelled_elements: HashSet::new(),
+                start: event.position,
             };
-            let scale_callback = callbacks.on_scale_update.clone();
-            let mut recognizer = GestureDetector::new(callbacks);
-            recognizer.handle(event).then_some(())?;
-            if let Some(on_update) = scale_callback {
-                let mut scale = self.scale_gestures.remove(&element).unwrap_or_else(|| {
-                    ScaleGestureDetector::new(move |details| on_update(details))
-                });
-                let _ = scale.handle(event);
-                self.scale_gestures.insert(element, scale);
+            for candidate in elements {
+                let Some(callbacks) = self.gesture_callbacks(candidate) else {
+                    continue;
+                };
+                if callbacks.has_pointer_recognizer() {
+                    let member = self.gesture_arena.add(key, false);
+                    let mut recognizer = GestureDetector::new(callbacks.clone());
+                    let _ = recognizer.observe(event);
+                    active.members.push(ActiveGestureMember {
+                        element: candidate,
+                        member,
+                        kind: RetainedGestureKind::Pointer,
+                        recognizer: Some(recognizer),
+                        on_cancel: callbacks.on_cancel.clone(),
+                    });
+                }
+                if let Some(on_update) = callbacks.on_scale_update.clone() {
+                    let member = self.gesture_arena.add(key, true);
+                    let mut scale = self.scale_gestures.remove(&candidate).unwrap_or_else(|| {
+                        ScaleGestureDetector::new(move |details| on_update(details))
+                    });
+                    let _ = scale.observe(event);
+                    self.scale_gestures.insert(candidate, scale);
+                    active.members.push(ActiveGestureMember {
+                        element: candidate,
+                        member,
+                        kind: RetainedGestureKind::Scale,
+                        recognizer: None,
+                        on_cancel: callbacks.on_cancel.clone(),
+                    });
+                }
             }
-            self.active_gestures.insert(
-                event.pointer,
-                ActiveGesture {
-                    element,
-                    recognizer,
-                },
-            );
+            // A plain hit-tested label must continue through the runtime's
+            // ordinary pointer route (for buttons, editable fields, and
+            // read-only text selection). Only actual recognizers create an
+            // arena stream or retain pointer capture.
+            if active.members.is_empty() {
+                return None;
+            }
+            self.active_gestures.insert(key, active);
+            self.pointer_captures.insert(key, element);
+            let scale_elements = self
+                .active_gestures
+                .get(&key)
+                .map(|active| {
+                    active
+                        .members
+                        .iter()
+                        .filter(|candidate| candidate.kind == RetainedGestureKind::Scale)
+                        .map(|candidate| candidate.element)
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.activate_scale_pairs(key.window, scale_elements);
             return Some(element);
         }
 
-        let mut active = self.active_gestures.remove(&event.pointer)?;
-        let element = active.element;
+        let element = self.active_gestures.get(&key)?.element;
         if !self.elements.contains(element.0) {
-            self.remove_scale_recognizer_when_idle(element);
+            self.cancel_gesture_stream(key, true);
             return None;
         }
-        let mut handled = active.recognizer.handle(event);
-        if let Some(scale) = self.scale_gestures.get_mut(&element) {
-            handled |= scale.handle(event);
+        let dispositions = self.gesture_arena.entries(key);
+        let mut accepts = Vec::new();
+        let mut rejects = Vec::new();
+        let mut callbacks = Vec::new();
+        let mut scale_updates = Vec::new();
+        if let Some(active) = self.active_gestures.get_mut(&key) {
+            for candidate in &mut active.members {
+                let disposition = disposition_for(&dispositions, candidate.member);
+                match candidate.kind {
+                    RetainedGestureKind::Pointer => {
+                        let Some(recognizer) = candidate.recognizer.as_mut() else {
+                            continue;
+                        };
+                        match recognizer.observe(event) {
+                            GestureDecision::Accept(action) => match disposition {
+                                GestureDisposition::Accepted => {
+                                    callbacks.push((candidate.member, action))
+                                }
+                                GestureDisposition::Pending => {
+                                    accepts.push((candidate.member, action))
+                                }
+                                GestureDisposition::Rejected | GestureDisposition::Cancelled => {}
+                            },
+                            GestureDecision::Reject | GestureDecision::Cancelled
+                                if disposition == GestureDisposition::Pending =>
+                            {
+                                rejects.push(candidate.member);
+                            }
+                            GestureDecision::Pending
+                            | GestureDecision::Reject
+                            | GestureDecision::Cancelled => {}
+                        }
+                    }
+                    RetainedGestureKind::Scale => {
+                        if let Some(scale) = self.scale_gestures.get_mut(&candidate.element) {
+                            if let Some(details) = scale.observe(event)
+                                && disposition == GestureDisposition::Accepted
+                            {
+                                scale_updates.push((candidate.element, details));
+                            }
+                        }
+                    }
+                }
+            }
         }
-        if !matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
-            self.active_gestures.insert(event.pointer, active);
+        for member in rejects {
+            self.gesture_arena.reject(key, member);
+            self.apply_arena_entries(key, self.gesture_arena.entries(key));
+        }
+        for (member, action) in accepts {
+            let entries = self.gesture_arena.accept(key, member);
+            self.apply_arena_entries(key, entries);
+            if disposition_for(&self.gesture_arena.entries(key), member)
+                == GestureDisposition::Accepted
+            {
+                callbacks.push((member, action));
+            }
+        }
+        for (member, action) in callbacks {
+            self.dispatch_gesture_action(key, member, action);
+        }
+        for (scale_element, details) in scale_updates {
+            if let Some(scale) = self.scale_gestures.get(&scale_element) {
+                scale.dispatch(details);
+            }
+        }
+        let handled = !self.gesture_arena.entries(key).is_empty();
+        if matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
+            self.finish_drag(
+                key,
+                matches!(event.phase, PointerPhase::Cancel),
+                event.position,
+            );
+            self.cancel_gesture_stream(key, matches!(event.phase, PointerPhase::Cancel));
         } else {
-            self.remove_scale_recognizer_when_idle(element);
+            self.remove_scale_recognizers_when_idle();
         }
         handled.then_some(element)
     }
-    fn remove_scale_recognizer_when_idle(&mut self, element: ElementId) {
-        if !self
-            .active_gestures
-            .values()
-            .any(|active| active.element == element)
-        {
-            self.scale_gestures.remove(&element);
+
+    fn gesture_callbacks(&self, element: ElementId) -> Option<GestureCallbacks> {
+        match &self.elements.get(element.0)?.widget.kind {
+            WidgetKind::Gesture { callbacks, .. } => Some(callbacks.clone()),
+            WidgetKind::Draggable { .. } => Some(GestureCallbacks {
+                on_pan_update: Some(Rc::new(|_| {})),
+                ..GestureCallbacks::default()
+            }),
+            _ => None,
         }
     }
-    fn gesture_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
+    fn gesture_ancestors(&self, mut id: ElementId) -> Vec<ElementId> {
+        let mut ancestors = Vec::new();
         loop {
-            if matches!(
-                self.elements.get(id.0)?.widget.kind,
-                WidgetKind::Gesture { .. }
-            ) {
-                return Some(id);
+            if self.elements.get(id.0).is_none() {
+                return ancestors;
             }
-            id = self.parent(id)?;
+            if self.elements.get(id.0).is_some_and(|element| {
+                matches!(
+                    element.widget.kind,
+                    WidgetKind::Gesture { .. } | WidgetKind::Draggable { .. }
+                )
+            }) {
+                ancestors.push(id);
+            }
+            let Some(parent) = self.parent(id) else {
+                return ancestors;
+            };
+            id = parent;
         }
+    }
+    fn activate_scale_pairs(&mut self, window: u64, elements: Vec<ElementId>) {
+        for element in elements {
+            let members: Vec<_> = self
+                .active_gestures
+                .iter()
+                .filter(|(key, _)| key.window == window)
+                .flat_map(|(key, active)| {
+                    active.members.iter().filter_map(move |candidate| {
+                        (candidate.element == element
+                            && candidate.kind == RetainedGestureKind::Scale)
+                            .then_some((*key, candidate.member))
+                    })
+                })
+                .collect();
+            if members.len() < 2 {
+                continue;
+            }
+            for (key, member) in members {
+                let entries = self.gesture_arena.accept(key, member);
+                self.apply_arena_entries(key, entries);
+            }
+        }
+    }
+    fn apply_arena_entries(&mut self, key: GestureArenaKey, entries: Vec<GestureArenaEntry>) {
+        let mut callbacks = Vec::new();
+        if let Some(active) = self.active_gestures.get_mut(&key) {
+            for entry in entries {
+                if !matches!(
+                    entry.disposition,
+                    GestureDisposition::Rejected | GestureDisposition::Cancelled
+                ) {
+                    continue;
+                }
+                let Some(candidate) = active
+                    .members
+                    .iter()
+                    .find(|candidate| candidate.member == entry.member)
+                else {
+                    continue;
+                };
+                if active.cancelled_elements.insert(candidate.element) {
+                    if let Some(callback) = &candidate.on_cancel {
+                        callbacks.push(callback.clone());
+                    }
+                }
+            }
+        }
+        for callback in callbacks {
+            callback();
+        }
+    }
+    fn dispatch_gesture_action(
+        &mut self,
+        key: GestureArenaKey,
+        member: GestureArenaMember,
+        action: GestureAction,
+    ) {
+        self.update_drag_from_action(key, member, action);
+        if let Some(recognizer) = self.active_gestures.get_mut(&key).and_then(|active| {
+            active
+                .members
+                .iter_mut()
+                .find(|candidate| candidate.member == member)
+                .and_then(|candidate| candidate.recognizer.as_mut())
+        }) {
+            recognizer.dispatch(action);
+        }
+    }
+    fn update_drag_from_action(
+        &mut self,
+        key: GestureArenaKey,
+        member: GestureArenaMember,
+        action: GestureAction,
+    ) {
+        let (GestureAction::Pan(delta)
+        | GestureAction::HorizontalDrag(delta)
+        | GestureAction::VerticalDrag(delta)) = action
+        else {
+            return;
+        };
+        let Some((source, start)) = self.active_gestures.get(&key).and_then(|active| {
+            active
+                .members
+                .iter()
+                .find(|candidate| candidate.member == member)
+                .and_then(|candidate| self.drag_source(candidate.element))
+                .map(|source| (source, active.start))
+        }) else {
+            return;
+        };
+        let position = start + delta;
+        self.active_drags.entry(key).or_insert_with(|| {
+            source.start(start);
+            ActiveDrag {
+                source: source.clone(),
+                target: None,
+                start,
+            }
+        });
+        source.update(position);
+        self.update_drag_target(key, position);
+    }
+    fn drag_source(&self, element: ElementId) -> Option<Rc<dyn RetainedDragSource>> {
+        match &self.elements.get(element.0)?.widget.kind {
+            WidgetKind::Draggable { source, .. } => Some(source.clone()),
+            _ => None,
+        }
+    }
+    fn drag_target(&self, element: ElementId) -> Option<Rc<dyn RetainedDragTarget>> {
+        match &self.elements.get(element.0)?.widget.kind {
+            WidgetKind::DragTarget { target, .. } => Some(target.clone()),
+            _ => None,
+        }
+    }
+    fn drag_target_ancestor(
+        &self,
+        mut element: ElementId,
+    ) -> Option<(ElementId, Rc<dyn RetainedDragTarget>)> {
+        loop {
+            if let Some(target) = self.drag_target(element) {
+                return Some((element, target));
+            }
+            element = self.parent(element)?;
+        }
+    }
+    fn update_drag_target(&mut self, key: GestureArenaKey, position: Offset) {
+        let next = self
+            .hit_test(position)
+            .and_then(|render| self.element_for_render(render))
+            .and_then(|element| self.drag_target_ancestor(element));
+        let Some(active) = self.active_drags.get_mut(&key) else {
+            return;
+        };
+        let source_context = active.source.context_id();
+        let next = next.filter(|(_, target)| target.context_id() == source_context);
+        if active.target.as_ref().map(|(element, _)| *element)
+            == next.as_ref().map(|(element, _)| *element)
+        {
+            if let Some((_, target)) = &active.target {
+                target.update(position);
+            }
+            return;
+        }
+        if let Some((_, target)) = active.target.take() {
+            target.leave();
+        }
+        if let Some((element, target)) = next {
+            if target.enter() {
+                target.update(position);
+                active.target = Some((element, target));
+            }
+        }
+    }
+    fn finish_drag(&mut self, key: GestureArenaKey, cancelled: bool, position: Offset) {
+        self.update_drag_target(key, position);
+        let Some(active) = self.active_drags.remove(&key) else {
+            return;
+        };
+        if cancelled {
+            if let Some((_, target)) = active.target {
+                target.leave();
+            }
+            active.source.cancel();
+        } else {
+            if let Some((_, target)) = active.target {
+                target.drop_payload();
+            }
+            active.source.finish();
+        }
+    }
+    fn cancel_gesture_stream(&mut self, key: GestureArenaKey, notify: bool) {
+        let position = self
+            .active_drags
+            .get(&key)
+            .map_or(Offset::ZERO, |drag| drag.start);
+        self.finish_drag(key, true, position);
+        let entries = self.gesture_arena.cancel(key);
+        if notify {
+            self.apply_arena_entries(key, entries);
+        }
+        self.active_gestures.remove(&key);
+        self.pointer_captures.remove(&key);
+        self.remove_scale_recognizers_when_idle();
+    }
+    fn remove_scale_recognizers_when_idle(&mut self) {
+        self.scale_gestures.retain(|element, _| {
+            self.active_gestures.values().any(|active| {
+                active.members.iter().any(|candidate| {
+                    candidate.element == *element && candidate.kind == RetainedGestureKind::Scale
+                })
+            })
+        });
     }
     #[must_use]
     pub fn render_size(&self, id: RenderObjectId) -> Option<Size> {
@@ -4278,7 +6102,7 @@ impl WidgetTree {
                     if let Some(content) = content_layer
                         && self.compositor.update_transform(
                             content,
-                            Transform::translation(Offset::new(0., -controller.offset())),
+                            CoreTransform::translation(Offset::new(0., -controller.offset())),
                         )
                     {
                         changed = true;
@@ -4296,7 +6120,10 @@ impl WidgetTree {
                     if let Some(content) = content_layer
                         && self.compositor.update_transform(
                             content,
-                            Transform::translation(Offset::new(0., -config.controller.offset())),
+                            CoreTransform::translation(Offset::new(
+                                0.,
+                                -config.controller.offset(),
+                            )),
                         )
                     {
                         changed = true;
@@ -4313,7 +6140,7 @@ impl WidgetTree {
                     if let Some(content) = content_layer
                         && self
                             .compositor
-                            .update_transform(content, Transform::translation(offset))
+                            .update_transform(content, CoreTransform::translation(offset))
                     {
                         changed = true;
                         self.diagnostics.scroll_offset_updates += 1;
@@ -4327,11 +6154,76 @@ impl WidgetTree {
                     // Layout placement lives on `layer`; the inner retained
                     // transform carries only the compositor-only movement.
                     if let Some(content) = content_layer
-                        && self
-                            .compositor
-                            .update_transform(content, Transform::translation(controller.offset()))
+                        && self.compositor.update_transform(
+                            content,
+                            CoreTransform::translation(controller.offset()),
+                        )
                     {
                         changed = true;
+                    }
+                }
+                RenderKind::Transform { transform, origin } => {
+                    if let Some(content) = content_layer {
+                        let size = self.renders.get(_render.0).expect("live").size;
+                        if self
+                            .compositor
+                            .update_transform(content, transform_around(transform, origin, size))
+                        {
+                            changed = true;
+                        }
+                    }
+                }
+                RenderKind::Scale { controller, origin } => {
+                    if controller.tick(now) {
+                        self.diagnostics.animation_ticks += 1;
+                    }
+                    active |= controller.is_active();
+                    if let Some(content) = content_layer {
+                        let size = self.renders.get(_render.0).expect("live").size;
+                        if self.compositor.update_transform(
+                            content,
+                            transform_around(
+                                CoreTransform::scale(controller.scale()),
+                                origin,
+                                size,
+                            ),
+                        ) {
+                            changed = true;
+                        }
+                    }
+                }
+                RenderKind::Rotation { controller, origin } => {
+                    if controller.tick(now) {
+                        self.diagnostics.animation_ticks += 1;
+                    }
+                    active |= controller.is_active();
+                    if let Some(content) = content_layer {
+                        let size = self.renders.get(_render.0).expect("live").size;
+                        if self.compositor.update_transform(
+                            content,
+                            transform_around(
+                                CoreTransform::rotation(controller.radians()),
+                                origin,
+                                size,
+                            ),
+                        ) {
+                            changed = true;
+                        }
+                    }
+                }
+                RenderKind::FittedBox { fit, alignment } => {
+                    if let (Some(content), Some(&child)) = (
+                        content_layer,
+                        self.renders.get(_render.0).expect("live").children.first(),
+                    ) {
+                        let size = self.renders.get(_render.0).expect("live").size;
+                        let child_size = self.renders.get(child.0).expect("live").size;
+                        if self.compositor.update_transform(
+                            content,
+                            fitted_transform(child_size, size, fit, alignment),
+                        ) {
+                            changed = true;
+                        }
                     }
                 }
                 RenderKind::Opacity { alpha, controller } => {
@@ -4436,24 +6328,30 @@ impl WidgetTree {
         (changed, active)
     }
     pub fn scroll_at(&mut self, point: Offset, delta: Offset) -> bool {
-        let Some(root) = self.root.and_then(|id| self.render_id(id)) else {
+        let Some(mut element) = self
+            .hit_test(point)
+            .and_then(|render| self.element_for_render(render))
+        else {
             return false;
         };
-        let Some(scroll) = self.scroll_target(root, point, Offset::ZERO) else {
-            return false;
-        };
-        let controller = match self
-            .renders
-            .get(scroll.0)
-            .expect("live scroll")
-            .kind
-            .clone()
-        {
-            RenderKind::Scroll { controller } => controller,
-            RenderKind::VirtualList { config } => config.controller.clone(),
-            _ => return false,
-        };
-        if controller.scroll_by(delta.y) {
+        // The hit-tested leaf walks outward through its retained ancestors.
+        // Passing the resulting innermost-first chain to the coordinator
+        // transfers only boundary remainder to an outer scroll viewport.
+        let mut controllers = Vec::new();
+        loop {
+            let render = self.elements.get(element.0).expect("live element").render;
+            match &self.renders.get(render.0).expect("live render").kind {
+                RenderKind::Scroll { controller } => controllers.push(controller.clone()),
+                RenderKind::VirtualList { config } => controllers.push(config.controller.clone()),
+                _ => {}
+            }
+            let Some(parent) = self.parent(element) else {
+                break;
+            };
+            element = parent;
+        }
+        let result = NestedScrollCoordinator::new(controllers).apply_delta(delta.y);
+        if result.consumed != 0. {
             self.diagnostics.scroll_events += 1;
             true
         } else {
@@ -4491,8 +6389,11 @@ impl WidgetTree {
                     return false;
                 };
                 let (controller, geometry) = self
-                    .scrollbar_controller_and_geometry(render)
+                    .scrollbar_local_geometry(render)
                     .expect("scrollbar render");
+                let point = self
+                    .scrollbar_local_point(render, point)
+                    .expect("invertible scrollbar");
                 if geometry.thumb.contains(point) {
                     let grab = point.y - geometry.thumb.origin.y;
                     self.scrollbar_drag = Some(ScrollbarDrag {
@@ -4521,8 +6422,11 @@ impl WidgetTree {
             incular_core::PointerPhase::Move => {
                 if let Some(drag) = self.scrollbar_drag {
                     let (controller, geometry) = self
-                        .scrollbar_controller_and_geometry(drag.render)
+                        .scrollbar_local_geometry(drag.render)
                         .expect("live drag");
+                    let point = self
+                        .scrollbar_local_point(drag.render, point)
+                        .expect("invertible scrollbar");
                     let thumb_top = point.y - drag.grab_offset;
                     let offset = geometry.offset_for_thumb_top(thumb_top);
                     let changed = controller.jump_to(offset);
@@ -4717,6 +6621,17 @@ impl WidgetTree {
                     SemanticState::default(),
                     vec![],
                 ),
+                WidgetKind::SelectableText { text, .. } => (
+                    Some(SemanticRole::Text),
+                    Some(text.clone()),
+                    None,
+                    SemanticState {
+                        focusable: true,
+                        focused: render.focused,
+                        ..SemanticState::default()
+                    },
+                    vec![SemanticActionKind::Focus],
+                ),
                 WidgetKind::Image { .. } if entry.widget.semantics.label.is_some() => (
                     Some(SemanticRole::Image),
                     None,
@@ -4776,7 +6691,7 @@ impl WidgetTree {
                     None,
                     None,
                     SemanticState {
-                        set_size: Some(config.item_count),
+                        set_size: Some(config.extent.item_count(config.item_count)),
                         ..SemanticState::default()
                     },
                     vec![
@@ -4810,7 +6725,7 @@ impl WidgetTree {
                 if let WidgetKind::VirtualList { config } = &parent.widget.kind {
                     if let Some(slot) = parent.children.iter().position(|child| *child == element) {
                         state.item_index = parent.virtual_indices.get(slot).copied();
-                        state.set_size = Some(config.item_count);
+                        state.set_size = Some(config.extent.item_count(config.item_count));
                     }
                 }
             }
@@ -4826,7 +6741,7 @@ impl WidgetTree {
                     .description
                     .clone()
                     .or(explicit_description),
-                bounds: Rect::from_origin_size(self.render_origin(entry.render), render.size),
+                bounds: self.semantic_bounds(entry.render, render.size),
                 state,
                 actions,
             });
@@ -4848,8 +6763,14 @@ impl WidgetTree {
                         .is_some_and(|child| child.widget.semantics.block_previous_siblings)
                 })
                 .unwrap_or(0);
-            for child in &entry.children[first_visible_child..] {
-                self.collect_semantics(*child, this_parent, out);
+            let semantic_children: Vec<_> = match entry.widget.kind {
+                WidgetKind::IndexedStack { index, .. } => {
+                    entry.children.get(index).copied().into_iter().collect()
+                }
+                _ => entry.children[first_visible_child..].to_vec(),
+            };
+            for child in semantic_children {
+                self.collect_semantics(child, this_parent, out);
             }
         }
     }
@@ -4906,6 +6827,10 @@ impl WidgetTree {
                     controller.reset_caret(now);
                 }
             }
+        }
+        if matches!(node.kind, RenderKind::SelectableText { .. }) && node.focused != focused {
+            node.focused = focused;
+            node.dirty.insert(DirtyFlags::PAINT);
         }
         Ok(())
     }
@@ -4992,7 +6917,7 @@ impl WidgetTree {
         }
         let line = line_for_byte(&layout, controller.value().selection.extent);
         let target = if end {
-            layout.lines[line].end
+            layout.lines[line].caret_end
         } else {
             layout.lines[line].start
         };
@@ -5035,9 +6960,12 @@ impl WidgetTree {
                 )) => (layout, scroll_x, scroll_y, *multiline, controller.clone()),
                 _ => return false,
             };
-        let origin = self.render_origin(render);
-        let x = point.x - origin.x - 8. + scroll_x;
-        let y = point.y - origin.y - if multiline { 8. } else { 0. } + scroll_y;
+        let local = self
+            .render_world_transform(render)
+            .inverse_transform_point(point)
+            .unwrap_or(point);
+        let x = local.x - 8. + scroll_x;
+        let y = local.y - if multiline { 8. } else { 0. } + scroll_y;
         let text_len = controller.text().len();
         let index = layout.as_ref().map_or(0, |layout| {
             let line = layout
@@ -5063,6 +6991,265 @@ impl WidgetTree {
             .dirty
             .insert(DirtyFlags::PAINT);
         true
+    }
+    /// Returns the selectable label under `point`, if it belongs to a selection area.
+    #[must_use]
+    pub fn selectable_text_at(&self, point: Offset) -> Option<ElementId> {
+        let hit = self
+            .hit_test(point)
+            .and_then(|render| self.element_for_render(render))?;
+        self.selectable_text_ancestor(hit)
+    }
+    #[must_use]
+    pub fn is_selectable_text(&self, id: ElementId) -> bool {
+        self.elements
+            .get(id.0)
+            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
+    }
+    /// Starts or extends read-only selection from a pointer position. The
+    /// caret index is recovered from the cached Parley-backed layout; changing
+    /// selection therefore never reshapes or rasterizes the text.
+    pub fn selectable_text_set_selection(
+        &mut self,
+        id: ElementId,
+        point: Offset,
+        extend: bool,
+    ) -> bool {
+        let Some(area) = self.selection_area_ancestor(id) else {
+            return false;
+        };
+        let Some(render) = self.render_id(id) else {
+            return false;
+        };
+        let Some(layout) = self
+            .renders
+            .get(render.0)
+            .and_then(|node| node.text_layout.clone())
+        else {
+            return false;
+        };
+        let local = self
+            .render_world_transform(render)
+            .inverse_transform_point(point)
+            .unwrap_or(point);
+        let line = layout
+            .lines
+            .get((local.y / layout.metrics.line_height).floor().max(0.) as usize)
+            .or_else(|| layout.lines.last());
+        let byte = line.map_or(0, |line| caret_for_line_x(line, local.x));
+        let point = StaticSelectionPoint { element: id, byte };
+        if extend
+            && self
+                .static_selection
+                .is_some_and(|selection| selection.area != area)
+        {
+            return false;
+        }
+        let anchor = if extend {
+            self.static_selection
+                .filter(|selection| selection.area == area)
+                .map(|selection| selection.anchor)
+                .unwrap_or(point)
+        } else {
+            point
+        };
+        self.static_selection = Some(StaticSelection {
+            area,
+            anchor,
+            extent: point,
+        });
+        self.sync_static_selection(area);
+        true
+    }
+    /// Moves the active static-text selection by one grapheme cluster. Only
+    /// selection state changes; there is no editable caret or IME route.
+    pub fn selectable_text_move(&mut self, id: ElementId, right: bool, extend: bool) -> bool {
+        let Some(area) = self.selection_area_ancestor(id) else {
+            return false;
+        };
+        let Some(text) = self.selectable_text_value(id) else {
+            return false;
+        };
+        let current = self
+            .static_selection
+            .filter(|selection| selection.area == area && selection.extent.element == id)
+            .map(|selection| selection.extent.byte)
+            .unwrap_or(0);
+        let byte = if right {
+            next_grapheme_boundary(&text, current)
+        } else {
+            previous_grapheme_boundary(&text, current)
+        };
+        let point = StaticSelectionPoint { element: id, byte };
+        let anchor = if extend {
+            self.static_selection
+                .filter(|selection| selection.area == area)
+                .map(|selection| selection.anchor)
+                .unwrap_or(point)
+        } else {
+            point
+        };
+        self.static_selection = Some(StaticSelection {
+            area,
+            anchor,
+            extent: point,
+        });
+        self.sync_static_selection(area);
+        true
+    }
+    pub fn selectable_text_move_to_edge(&mut self, id: ElementId, end: bool, extend: bool) -> bool {
+        let Some(area) = self.selection_area_ancestor(id) else {
+            return false;
+        };
+        let Some(text) = self.selectable_text_value(id) else {
+            return false;
+        };
+        let point = StaticSelectionPoint {
+            element: id,
+            byte: if end { text.len() } else { 0 },
+        };
+        let anchor = if extend {
+            self.static_selection
+                .filter(|selection| selection.area == area)
+                .map(|selection| selection.anchor)
+                .unwrap_or(point)
+        } else {
+            point
+        };
+        self.static_selection = Some(StaticSelection {
+            area,
+            anchor,
+            extent: point,
+        });
+        self.sync_static_selection(area);
+        true
+    }
+    pub fn selectable_text_select_all(&mut self, id: ElementId) -> bool {
+        let Some(area) = self.selection_area_ancestor(id) else {
+            return false;
+        };
+        let entries = self.selectable_texts_in_area(area);
+        let Some(first) = entries.first().copied() else {
+            return false;
+        };
+        let Some(last) = entries.last().copied() else {
+            return false;
+        };
+        let last_len = self
+            .selectable_text_value(last)
+            .map_or(0, |text| text.len());
+        self.static_selection = Some(StaticSelection {
+            area,
+            anchor: StaticSelectionPoint {
+                element: first,
+                byte: 0,
+            },
+            extent: StaticSelectionPoint {
+                element: last,
+                byte: last_len,
+            },
+        });
+        self.sync_static_selection(area);
+        true
+    }
+    #[must_use]
+    pub fn selectable_text_selected_text(&self, id: ElementId) -> Option<String> {
+        let area = self.selection_area_ancestor(id)?;
+        if let Some(controller) = self.selection_area_controller(area) {
+            return Some(controller.selected_text());
+        }
+        let selection = self
+            .static_selection
+            .filter(|selection| selection.area == area)?;
+        let entries = self.selectable_texts_in_area(area);
+        Some(static_selection_text(self, &entries, selection))
+    }
+    fn selectable_text_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
+        loop {
+            if self.elements.get(id.0).is_some_and(|element| {
+                matches!(element.widget.kind, WidgetKind::SelectableText { .. })
+            }) {
+                return Some(id);
+            }
+            id = self.parent(id)?;
+        }
+    }
+    fn selection_area_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
+        let selectable = id;
+        loop {
+            if self.elements.get(id.0).is_some_and(|element| {
+                matches!(element.widget.kind, WidgetKind::SelectionArea { .. })
+            }) {
+                return Some(id);
+            }
+            let Some(parent) = self.parent(id) else {
+                // A standalone SelectableText is its own one-label region.
+                return self
+                    .elements
+                    .get(selectable.0)
+                    .is_some_and(|element| {
+                        matches!(element.widget.kind, WidgetKind::SelectableText { .. })
+                    })
+                    .then_some(selectable);
+            };
+            id = parent;
+        }
+    }
+    fn selection_area_controller(&self, id: ElementId) -> Option<SelectionAreaController> {
+        let WidgetKind::SelectionArea { controller, .. } = &self.elements.get(id.0)?.widget.kind
+        else {
+            return None;
+        };
+        Some(controller.clone())
+    }
+    fn selectable_text_value(&self, id: ElementId) -> Option<String> {
+        let WidgetKind::SelectableText { text, .. } = &self.elements.get(id.0)?.widget.kind else {
+            return None;
+        };
+        Some(text.clone())
+    }
+    fn selectable_texts_in_area(&self, area: ElementId) -> Vec<ElementId> {
+        let mut entries = Vec::new();
+        self.collect_selectable_texts(area, &mut entries);
+        entries
+    }
+    fn collect_selectable_texts(&self, id: ElementId, entries: &mut Vec<ElementId>) {
+        let Some(element) = self.elements.get(id.0) else {
+            return;
+        };
+        if matches!(element.widget.kind, WidgetKind::SelectableText { .. }) {
+            entries.push(id);
+        }
+        for child in &element.children {
+            self.collect_selectable_texts(*child, entries);
+        }
+    }
+    fn sync_static_selection(&mut self, area: ElementId) {
+        let entries = self.selectable_texts_in_area(area);
+        let Some(selection) = self
+            .static_selection
+            .filter(|selection| selection.area == area)
+        else {
+            return;
+        };
+        let selected = static_selection_text(self, &entries, selection);
+        if let Some(controller) = self.selection_area_controller(area) {
+            controller.set_selected_text(selected);
+        }
+        for element in entries {
+            if let Some(render) = self.render_id(element) {
+                self.renders
+                    .get_mut(render.0)
+                    .expect("live selectable text")
+                    .dirty
+                    .insert(DirtyFlags::PAINT);
+            }
+        }
+    }
+    fn static_selection_range(&self, element: ElementId) -> Option<TextRange> {
+        let selection = self.static_selection?;
+        let entries = self.selectable_texts_in_area(selection.area);
+        static_selection_range(self, &entries, selection, element)
     }
     #[must_use]
     pub fn text_controller(&self, id: ElementId) -> Option<TextEditingController> {
@@ -5098,7 +7285,7 @@ impl WidgetTree {
         self.check_keys(&widget.children())?;
         let layer = self
             .compositor
-            .create_transform(Transform::translation(Offset::ZERO));
+            .create_transform(CoreTransform::translation(Offset::ZERO));
         let picture = matches!(
             widget.kind,
             WidgetKind::Box { .. }
@@ -5108,6 +7295,7 @@ impl WidgetTree {
                 | WidgetKind::Decorated { .. }
                 | WidgetKind::Button { .. }
                 | WidgetKind::Text { .. }
+                | WidgetKind::SelectableText { .. }
                 | WidgetKind::TextField { .. }
                 | WidgetKind::Image { .. }
                 | WidgetKind::Scroll { .. }
@@ -5134,7 +7322,7 @@ impl WidgetTree {
                     .create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 let content = self
                     .compositor
-                    .create_transform(Transform::translation(Offset::ZERO));
+                    .create_transform(CoreTransform::translation(Offset::ZERO));
                 self.compositor
                     .set_children(layer, std::iter::once(clip).chain(picture).collect());
                 self.compositor.set_children(clip, vec![content]);
@@ -5145,7 +7333,7 @@ impl WidgetTree {
                 // header still occupies its normal sliver extent in layout.
                 let content = self
                     .compositor
-                    .create_transform(Transform::translation(Offset::ZERO));
+                    .create_transform(CoreTransform::translation(Offset::ZERO));
                 self.compositor.set_children(layer, vec![content]);
                 (None, Some(content), None, None, None, None, None)
             }
@@ -5156,7 +7344,15 @@ impl WidgetTree {
                 // repainting local picture commands.
                 let content = self
                     .compositor
-                    .create_transform(Transform::translation(Offset::ZERO));
+                    .create_transform(CoreTransform::translation(Offset::ZERO));
+                self.compositor.set_children(layer, vec![content]);
+                (None, Some(content), None, None, None, None, None)
+            }
+            WidgetKind::Transform { .. }
+            | WidgetKind::Scale { .. }
+            | WidgetKind::Rotation { .. }
+            | WidgetKind::FittedBox { .. } => {
+                let content = self.compositor.create_transform(CoreTransform::IDENTITY);
                 self.compositor.set_children(layer, vec![content]);
                 (None, Some(content), None, None, None, None, None)
             }
@@ -5241,6 +7437,8 @@ impl WidgetTree {
             render: RenderObjectId(render),
             dirty: DirtyFlags::NONE,
             virtual_indices: Vec::new(),
+            virtual_structure_revision: 0,
+            layout_builder_constraints: None,
         }));
         let mut children = Vec::with_capacity(widget.children().len());
         for child in widget.children() {
@@ -5276,6 +7474,7 @@ impl WidgetTree {
         if old_kind != new_kind {
             let opacity_only = opacity_composite_only_change(&old_kind, &new_kind);
             let effect_only = effect_composite_only_change(&old_kind, &new_kind);
+            let affine_only = affine_composite_only_change(&old_kind, &new_kind);
             self.renders.get_mut(render.0).expect("present").kind = new_kind.clone();
             if opacity_only {
                 // Alpha is consumed by the retained compositor layer. Keep
@@ -5327,6 +7526,15 @@ impl WidgetTree {
                         }
                     }
                     _ => {}
+                }
+            } else if affine_only {
+                if let (Some(layer), Some(transform)) = (
+                    self.renders
+                        .get(render.0)
+                        .and_then(|node| node.content_layer),
+                    self.content_transform(render),
+                ) {
+                    self.compositor.update_transform(layer, transform);
                 }
             } else if text_paint_only_change(&old_kind, &new_kind)
                 || custom_paint_only_change(&old_kind, &new_kind)
@@ -5452,27 +7660,38 @@ impl WidgetTree {
         _constraints: Constraints,
     ) {
         let element_id = self.element_for_render(id).expect("virtual list element");
-        let wanted = fixed_extent_materialized_range(
+        let wanted = config.extent.materialized_range(
             config.item_count,
-            config.item_extent,
             config.controller.offset(),
             viewport.height,
             config.cache_extent,
         );
-        let (old_indices, old_children) = {
+        let (old_indices, old_children, old_structure_revision) = {
             let element = self
                 .elements
                 .get(element_id.0)
                 .expect("virtual list element");
-            (element.virtual_indices.clone(), element.children.clone())
+            (
+                element.virtual_indices.clone(),
+                element.children.clone(),
+                element.virtual_structure_revision,
+            )
         };
-        if old_indices.as_slice() == (wanted.clone().collect::<Vec<_>>()).as_slice() {
+        let structure_changed = old_structure_revision != config.extent.structure_revision();
+        if !structure_changed
+            && old_indices.as_slice() == (wanted.clone().collect::<Vec<_>>()).as_slice()
+        {
             return;
         }
-        let existing = old_indices
-            .into_iter()
-            .zip(old_children.iter().copied())
-            .collect::<HashMap<_, _>>();
+        let existing = if structure_changed {
+            HashMap::new()
+        } else {
+            old_indices
+                .iter()
+                .copied()
+                .zip(old_children.iter().copied())
+                .collect::<HashMap<_, _>>()
+        };
         let mut next_indices = Vec::with_capacity(wanted.len());
         let mut next_children = Vec::with_capacity(wanted.len());
         for index in wanted.clone() {
@@ -5516,6 +7735,46 @@ impl WidgetTree {
             .expect("virtual list element");
         element.children = next_children;
         element.virtual_indices = next_indices;
+        element.virtual_structure_revision = config.extent.structure_revision();
+        self.sync_render_children(element_id);
+    }
+    fn materialize_layout_builder(&mut self, id: RenderObjectId, constraints: Constraints) {
+        let element_id = self.element_for_render(id).expect("layout builder element");
+        let (builder, previous_constraints, previous_children) = {
+            let element = self
+                .elements
+                .get(element_id.0)
+                .expect("layout builder element");
+            let WidgetKind::LayoutBuilder { builder } = &element.widget.kind else {
+                return;
+            };
+            (
+                builder.clone(),
+                element.layout_builder_constraints,
+                element.children.clone(),
+            )
+        };
+        if previous_constraints == Some(constraints) && previous_children.len() == 1 {
+            return;
+        }
+        let mut child = builder(constraints);
+        let handlers = &mut self.pending_handlers;
+        let next = &mut self.next_action;
+        child.bind_callbacks(&mut |callback| {
+            let action = ActionId(*next);
+            *next += 1;
+            handlers.push((action, callback));
+            action
+        });
+        let children = self
+            .reconcile_children(element_id, previous_children, vec![child])
+            .expect("layout builder child must have unique sibling keys");
+        let element = self
+            .elements
+            .get_mut(element_id.0)
+            .expect("layout builder element");
+        element.children = children;
+        element.layout_builder_constraints = Some(constraints);
         self.sync_render_children(element_id);
     }
     /// A controller can change independently of widget BUILD. Only mark the
@@ -5530,16 +7789,17 @@ impl WidgetTree {
                     return None;
                 };
                 let element = self.element_for_render(RenderObjectId(raw))?;
-                let indices = &self.elements.get(element.0)?.virtual_indices;
-                let desired = fixed_extent_materialized_range(
+                let element = self.elements.get(element.0)?;
+                let indices = &element.virtual_indices;
+                let desired = config.extent.materialized_range(
                     config.item_count,
-                    config.item_extent,
                     config.controller.offset(),
                     render.size.height,
                     config.cache_extent,
                 );
-                (indices.as_slice() != desired.clone().collect::<Vec<_>>().as_slice())
-                    .then_some(RenderObjectId(raw))
+                (element.virtual_structure_revision != config.extent.structure_revision()
+                    || indices.as_slice() != desired.clone().collect::<Vec<_>>().as_slice())
+                .then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
         for render in pending {
@@ -5570,12 +7830,20 @@ impl WidgetTree {
         };
         if matches!(
             element.widget.kind,
-            WidgetKind::Button { .. } | WidgetKind::TextField { .. }
+            WidgetKind::Button { .. }
+                | WidgetKind::TextField { .. }
+                | WidgetKind::SelectableText { .. }
         ) {
             out.push(id);
         }
-        for child in &element.children {
-            self.collect_focusable(*child, out);
+        let focus_children: Vec<_> = match element.widget.kind {
+            WidgetKind::IndexedStack { index, .. } => {
+                element.children.get(index).copied().into_iter().collect()
+            }
+            _ => element.children.clone(),
+        };
+        for child in focus_children {
+            self.collect_focusable(child, out);
         }
     }
     fn text_field_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
@@ -5586,6 +7854,74 @@ impl WidgetTree {
             id = self.parent(id)?;
         }
     }
+    fn content_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
+        let node = self.renders.get(id.0)?;
+        match &node.kind {
+            RenderKind::Transform { transform, origin } => {
+                Some(transform_around(*transform, *origin, node.size))
+            }
+            RenderKind::Scale { controller, origin } => Some(transform_around(
+                CoreTransform::scale(controller.scale()),
+                *origin,
+                node.size,
+            )),
+            RenderKind::Rotation { controller, origin } => Some(transform_around(
+                CoreTransform::rotation(controller.radians()),
+                *origin,
+                node.size,
+            )),
+            RenderKind::FittedBox { fit, alignment } => {
+                let child = *node.children.first()?;
+                let child_size = self.renders.get(child.0)?.size;
+                Some(fitted_transform(child_size, node.size, *fit, *alignment))
+            }
+            _ => None,
+        }
+    }
+    fn child_content_transform(&self, id: RenderObjectId) -> CoreTransform {
+        let node = self.renders.get(id.0).expect("live render");
+        match &node.kind {
+            RenderKind::Scroll { controller } => {
+                CoreTransform::translation(Offset::new(0., -controller.offset()))
+            }
+            RenderKind::VirtualList { config } => {
+                CoreTransform::translation(Offset::new(0., -config.controller.offset()))
+            }
+            RenderKind::PersistentHeader { controller } => {
+                CoreTransform::translation(self.persistent_header_translation(id, controller))
+            }
+            RenderKind::Translate { controller } => CoreTransform::translation(controller.offset()),
+            _ => self
+                .content_transform(id)
+                .unwrap_or(CoreTransform::IDENTITY),
+        }
+    }
+    fn render_world_transform(&self, id: RenderObjectId) -> CoreTransform {
+        let mut path = Vec::new();
+        let mut cursor = Some(id);
+        while let Some(current) = cursor {
+            path.push(current);
+            cursor = self.renders.get(current.0).expect("live render").parent;
+        }
+        path.reverse();
+        let mut world = CoreTransform::IDENTITY;
+        for (index, current) in path.iter().enumerate() {
+            let node = self.renders.get(current.0).expect("live render");
+            world = world.then(CoreTransform::translation(node.offset));
+            if index + 1 != path.len() {
+                world = world.then(self.child_content_transform(*current));
+            }
+        }
+        world
+    }
+    fn semantic_bounds(&self, id: RenderObjectId, size: Size) -> Rect {
+        let mut world = self.render_world_transform(id);
+        if self.content_transform(id).is_some() {
+            world = world.then(self.child_content_transform(id));
+        }
+        world.transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, size))
+    }
+    #[cfg(test)]
     fn render_origin(&self, mut id: RenderObjectId) -> Offset {
         let mut origin = Offset::ZERO;
         loop {
@@ -5712,8 +8048,13 @@ impl WidgetTree {
         let Some(element) = self.elements.remove(id.0) else {
             return;
         };
-        self.active_gestures
-            .retain(|_, active| active.element != id);
+        self.active_gestures.retain(|_, active| {
+            active
+                .members
+                .iter()
+                .all(|candidate| candidate.element != id)
+        });
+        self.pointer_captures.retain(|_, target| *target != id);
         self.scale_gestures.remove(&id);
         for child in element.children {
             self.unmount_element(child);
@@ -5784,6 +8125,7 @@ impl WidgetTree {
             shadow_layer,
             color_filter_layer,
             blend_layer,
+            kind,
         ) = {
             let node = self.renders.get(render.0).expect("mounted");
             (
@@ -5795,12 +8137,16 @@ impl WidgetTree {
                 node.shadow_layer,
                 node.color_filter_layer,
                 node.blend_layer,
+                node.kind.clone(),
             )
         };
-        let child_layers = render_children
+        let mut child_layers = render_children
             .iter()
             .filter_map(|child| self.renders.get(child.0).map(|render| render.layer))
             .collect::<Vec<_>>();
+        if let RenderKind::IndexedStack { index, .. } = kind {
+            child_layers = child_layers.get(index).copied().into_iter().collect();
+        }
         if let Some(opacity) = opacity_layer {
             self.compositor.set_children(opacity, child_layers);
             self.compositor.set_children(layer, vec![opacity]);
@@ -5853,6 +8199,12 @@ impl WidgetTree {
             || self.renders.get(id.0).expect("live").constraints != Some(constraints);
         if !needs {
             return;
+        }
+        if matches!(
+            self.renders.get(id.0).expect("live").kind,
+            RenderKind::LayoutBuilder
+        ) {
+            self.materialize_layout_builder(id, constraints);
         }
         let (kind, children) = {
             let n = self.renders.get(id.0).expect("live");
@@ -5921,6 +8273,56 @@ impl WidgetTree {
                 constraints: additional,
             } => {
                 let child_constraints = enforced_constraints(constraints, additional);
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, child_constraints);
+                    let size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::Limited {
+                max_width,
+                max_height,
+            } => {
+                let child_constraints = Constraints::new(
+                    constraints.min_width,
+                    if constraints.max_width.is_infinite() {
+                        max_width
+                    } else {
+                        constraints.max_width
+                    },
+                    constraints.min_height,
+                    if constraints.max_height.is_infinite() {
+                        max_height
+                    } else {
+                        constraints.max_height
+                    },
+                );
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, child_constraints);
+                    let size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::Overflow {
+                min_width,
+                max_width,
+                min_height,
+                max_height,
+            } => {
+                let child_constraints = Constraints::new(
+                    min_width.unwrap_or(constraints.min_width),
+                    max_width
+                        .unwrap_or(constraints.max_width)
+                        .max(min_width.unwrap_or(constraints.min_width)),
+                    min_height.unwrap_or(constraints.min_height),
+                    max_height
+                        .unwrap_or(constraints.max_height)
+                        .max(min_height.unwrap_or(constraints.min_height)),
+                );
                 if let Some(&child) = children.first() {
                     self.layout_render(child, child_constraints);
                     let size = self.renders.get(child.0).expect("live").size;
@@ -6002,19 +8404,75 @@ impl WidgetTree {
                 }
             }
             RenderKind::Flex { axis } => {
-                let child_constraints = match axis {
-                    Axis::Horizontal => {
-                        Constraints::new(0.0, f32::INFINITY, 0.0, constraints.max_height)
-                    }
-                    Axis::Vertical => {
-                        Constraints::new(0.0, constraints.max_width, 0.0, f32::INFINITY)
-                    }
+                let cross_max = match axis {
+                    Axis::Horizontal => constraints.max_height,
+                    Axis::Vertical => constraints.max_width,
                 };
+                let main_max = match axis {
+                    Axis::Horizontal => constraints.max_width,
+                    Axis::Vertical => constraints.max_height,
+                };
+                let loose = match axis {
+                    Axis::Horizontal => Constraints::new(0., f32::INFINITY, 0., cross_max),
+                    Axis::Vertical => Constraints::new(0., cross_max, 0., f32::INFINITY),
+                };
+                let flexes = children
+                    .iter()
+                    .map(
+                        |child| match &self.renders.get(child.0).expect("live").kind {
+                            RenderKind::Flexible { flex, fit } => Some((*flex, *fit)),
+                            _ => None,
+                        },
+                    )
+                    .collect::<Vec<_>>();
+                let mut occupied = 0.;
+                let mut cross: f32 = 0.;
+                for (child, flex) in children.iter().zip(&flexes) {
+                    if flex.is_none() || !main_max.is_finite() {
+                        self.layout_render(*child, loose);
+                        let size = self.renders.get(child.0).expect("live").size;
+                        occupied += axis.main_extent(size);
+                        cross = cross.max(axis.cross_extent(size));
+                    }
+                }
+                let total_flex: u32 = flexes.iter().flatten().map(|(flex, _)| *flex).sum();
+                if main_max.is_finite() && total_flex > 0 {
+                    let remaining = (main_max - occupied).max(0.);
+                    for (child, flex) in children.iter().zip(&flexes) {
+                        let Some((flex, fit)) = flex else {
+                            continue;
+                        };
+                        let allocation = remaining * *flex as f32 / total_flex as f32;
+                        let child_constraints = match axis {
+                            Axis::Horizontal => Constraints::new(
+                                if *fit == incular_config::FlexFit::Tight {
+                                    allocation
+                                } else {
+                                    0.
+                                },
+                                allocation,
+                                0.,
+                                cross_max,
+                            ),
+                            Axis::Vertical => Constraints::new(
+                                0.,
+                                cross_max,
+                                if *fit == incular_config::FlexFit::Tight {
+                                    allocation
+                                } else {
+                                    0.
+                                },
+                                allocation,
+                            ),
+                        };
+                        self.layout_render(*child, child_constraints);
+                        let size = self.renders.get(child.0).expect("live").size;
+                        cross = cross.max(axis.cross_extent(size));
+                    }
+                }
                 let mut main = 0.0;
-                let mut cross: f32 = 0.0;
                 let mut offsets = Vec::with_capacity(children.len());
                 for child in &children {
-                    self.layout_render(*child, child_constraints);
                     let s = self.renders.get(child.0).expect("live").size;
                     offsets.push(match axis {
                         Axis::Horizontal => Offset::new(main, 0.0),
@@ -6024,16 +8482,21 @@ impl WidgetTree {
                         Axis::Horizontal => s.width,
                         Axis::Vertical => s.height,
                     };
-                    cross = cross.max(match axis {
-                        Axis::Horizontal => s.height,
-                        Axis::Vertical => s.width,
-                    });
                 }
                 let natural = match axis {
                     Axis::Horizontal => Size::new(main, cross),
                     Axis::Vertical => Size::new(cross, main),
                 };
                 (constraints.constrain(natural), offsets)
+            }
+            RenderKind::Flexible { .. } | RenderKind::Positioned { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints);
+                    let size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
             }
             RenderKind::Wrap {
                 axis,
@@ -6106,6 +8569,72 @@ impl WidgetTree {
             RenderKind::Stack { alignment } => {
                 let mut natural = Size::ZERO;
                 for child in &children {
+                    if matches!(
+                        self.renders.get(child.0).expect("live").kind,
+                        RenderKind::Positioned { .. }
+                    ) {
+                        continue;
+                    }
+                    self.layout_render(*child, constraints.loosen());
+                    let child_size = self.renders.get(child.0).expect("live").size;
+                    natural = Size::new(
+                        natural.width.max(child_size.width),
+                        natural.height.max(child_size.height),
+                    );
+                }
+                let size = constraints.constrain(natural);
+                let mut offsets = Vec::with_capacity(children.len());
+                for child in &children {
+                    let kind = self.renders.get(child.0).expect("live").kind.clone();
+                    if let RenderKind::Positioned {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                        width,
+                        height,
+                    } = kind
+                    {
+                        let width = width.or_else(|| {
+                            left.zip(right)
+                                .map(|(left, right)| (size.width - left - right).max(0.))
+                        });
+                        let height = height.or_else(|| {
+                            top.zip(bottom)
+                                .map(|(top, bottom)| (size.height - top - bottom).max(0.))
+                        });
+                        self.layout_render(
+                            *child,
+                            Constraints::new(
+                                0.,
+                                width.unwrap_or(size.width),
+                                0.,
+                                height.unwrap_or(size.height),
+                            ),
+                        );
+                        let child_size = self.renders.get(child.0).expect("live").size;
+                        offsets.push(Offset::new(
+                            left.unwrap_or_else(|| {
+                                right.map_or(0., |right| {
+                                    (size.width - right - child_size.width).max(0.)
+                                })
+                            }),
+                            top.unwrap_or_else(|| {
+                                bottom.map_or(0., |bottom| {
+                                    (size.height - bottom - child_size.height).max(0.)
+                                })
+                            }),
+                        ));
+                    } else {
+                        let child_size = self.renders.get(child.0).expect("live").size;
+                        offsets.push(alignment.within(size, child_size));
+                    }
+                }
+                (size, offsets)
+            }
+            RenderKind::IndexedStack { alignment, .. } => {
+                let mut natural = Size::ZERO;
+                for child in &children {
                     self.layout_render(*child, constraints.loosen());
                     let child_size = self.renders.get(child.0).expect("live").size;
                     natural = Size::new(
@@ -6117,11 +8646,19 @@ impl WidgetTree {
                 let offsets = children
                     .iter()
                     .map(|child| {
-                        let child_size = self.renders.get(child.0).expect("live").size;
-                        alignment.within(size, child_size)
+                        alignment.within(size, self.renders.get(child.0).expect("live").size)
                     })
                     .collect();
                 (size, offsets)
+            }
+            RenderKind::LayoutBuilder => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints);
+                    let size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
             }
             RenderKind::Visibility { visible } => {
                 if visible {
@@ -6156,7 +8693,32 @@ impl WidgetTree {
                     (size, Vec::new())
                 }
             }
-            RenderKind::Text { text, style, align } => {
+            RenderKind::Text {
+                text,
+                style,
+                align,
+                soft_wrap,
+                max_lines,
+                overflow,
+            } => {
+                let width = constraints
+                    .is_width_bounded()
+                    .then_some(constraints.max_width);
+                let layout = self.text_engine.layout_with_options(
+                    &text,
+                    &style,
+                    TextLayoutOptions::new(width, align)
+                        .soft_wrap(soft_wrap)
+                        .max_lines(max_lines)
+                        .overflow(overflow),
+                );
+                let size = constraints.constrain(layout.metrics.size);
+                let node = self.renders.get_mut(id.0).expect("live");
+                node.text_layout = Some(layout.clone());
+                node.baseline = Some(layout.metrics.baseline);
+                (size, Vec::new())
+            }
+            RenderKind::SelectableText { text, style, align } => {
                 let width = constraints
                     .is_width_bounded()
                     .then_some(constraints.max_width);
@@ -6166,6 +8728,15 @@ impl WidgetTree {
                 node.text_layout = Some(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
+            }
+            RenderKind::SelectionArea => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints);
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
             }
             RenderKind::Image {
                 image,
@@ -6245,10 +8816,9 @@ impl WidgetTree {
                         0.
                     },
                 ));
-                config.controller.update_extents(
-                    fixed_extent_content_extent(config.item_count, config.item_extent),
-                    size.height,
-                );
+                config
+                    .controller
+                    .update_extents(config.extent.content_extent(config.item_count), size.height);
                 self.materialize_virtual_children(id, &config, size, constraints);
                 let materialized = self.renders.get(id.0).expect("live").children.clone();
                 let item_indices = self
@@ -6257,22 +8827,73 @@ impl WidgetTree {
                     .expect("virtual element")
                     .virtual_indices
                     .clone();
+                // Anchor the first visible logical row before applying any
+                // post-layout extent corrections. Measurements above that row
+                // are compensated in the controller so content does not jump.
+                let anchor = match &config.extent {
+                    VirtualListExtent::Variable(index) => index
+                        .index_at_offset(config.controller.offset())
+                        .map(|item| {
+                            let leading = index.offset_for_index(item);
+                            (item, config.controller.offset() - leading)
+                        }),
+                    VirtualListExtent::Fixed(_) => None,
+                };
+                let anchor_before = anchor
+                    .as_ref()
+                    .map(|(item, _)| config.extent.offset_for_index(*item));
+                let mut measured_changed = false;
                 for (child, item) in materialized.into_iter().zip(item_indices) {
-                    self.layout_render(
-                        child,
-                        Constraints::new(
-                            0.,
-                            constraints.max_width,
-                            config.item_extent,
-                            config.item_extent,
-                        ),
-                    );
+                    let child_constraints = match &config.extent {
+                        VirtualListExtent::Fixed(item_extent) => {
+                            Constraints::new(0., constraints.max_width, *item_extent, *item_extent)
+                        }
+                        // Variable rows receive normal loose vertical
+                        // constraints; their resolved height feeds the shared
+                        // measured-prefix index after this layout.
+                        VirtualListExtent::Variable(_) => {
+                            Constraints::new(0., constraints.max_width, 0., f32::INFINITY)
+                        }
+                    };
+                    self.layout_render(child, child_constraints);
+                    if let VirtualListExtent::Variable(index) = &config.extent {
+                        let measured = self.renders.get(child.0).expect("live").size.height;
+                        measured_changed |= index.set_measured_extent(item, measured);
+                    }
                     let child = self.renders.get_mut(child.0).expect("live");
-                    let offset =
-                        Offset::new(0., (item as f64 * f64::from(config.item_extent)) as f32);
+                    let offset = Offset::new(0., config.extent.offset_for_index(item));
                     child.offset = offset;
                     self.compositor
-                        .update_transform(child.layer, Transform::translation(offset));
+                        .update_transform(child.layer, CoreTransform::translation(offset));
+                }
+                if measured_changed {
+                    config.controller.update_extents(
+                        config.extent.content_extent(config.item_count),
+                        size.height,
+                    );
+                    if let (Some((item, _)), Some(before)) = (anchor, anchor_before) {
+                        let after = config.extent.offset_for_index(item);
+                        // `update_extents` must precede this jump so an
+                        // enlarged estimate does not clamp the correction.
+                        config
+                            .controller
+                            .jump_to(config.controller.offset() + after - before);
+                    }
+                    // Positions may have changed for later materialized rows.
+                    let children = self.renders.get(id.0).expect("live").children.clone();
+                    let indices = self
+                        .elements
+                        .get(self.element_for_render(id).expect("virtual element").0)
+                        .expect("virtual element")
+                        .virtual_indices
+                        .clone();
+                    for (child, item) in children.into_iter().zip(indices) {
+                        let offset = Offset::new(0., config.extent.offset_for_index(item));
+                        let child = self.renders.get_mut(child.0).expect("live");
+                        child.offset = offset;
+                        self.compositor
+                            .update_transform(child.layer, CoreTransform::translation(offset));
+                    }
                 }
                 self.diagnostics.lazy_layouts += 1;
                 (size, Vec::new())
@@ -6282,6 +8903,29 @@ impl WidgetTree {
                     self.layout_render(child, constraints.loosen());
                     let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
                     (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::Transform { .. }
+            | RenderKind::Scale { .. }
+            | RenderKind::Rotation { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::FittedBox { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(
+                        child,
+                        Constraints::new(0., f32::INFINITY, 0., f32::INFINITY),
+                    );
+                    let child_size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(child_size), vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
@@ -6315,7 +8959,7 @@ impl WidgetTree {
             let child = self.renders.get_mut(child.0).expect("live");
             child.offset = offset;
             self.compositor
-                .update_transform(child.layer, Transform::translation(offset));
+                .update_transform(child.layer, CoreTransform::translation(offset));
         }
         let node = self.renders.get_mut(id.0).expect("live");
         node.size = size;
@@ -6323,10 +8967,20 @@ impl WidgetTree {
         node.dirty.remove(DirtyFlags::LAYOUT);
         node.dirty.insert(DirtyFlags::PAINT);
         self.compositor
-            .update_transform(node.layer, Transform::translation(node.offset));
+            .update_transform(node.layer, CoreTransform::translation(node.offset));
         if let Some(clip) = node.clip_layer {
             self.compositor
                 .update_clip(clip, Rect::from_origin_size(Offset::ZERO, node.size));
+        }
+        // Static affine wrappers and FittedBox receive their initial retained
+        // transform during layout. Later controller changes are handled by
+        // `update_compositor` without revisiting this path.
+        let (content_layer, transform) = {
+            let node = self.renders.get(id.0).expect("live");
+            (node.content_layer, self.content_transform(id))
+        };
+        if let (Some(content), Some(transform)) = (content_layer, transform) {
+            self.compositor.update_transform(content, transform);
         }
         self.diagnostics.layouts += 1;
     }
@@ -6419,8 +9073,53 @@ impl WidgetTree {
                         .into(),
                     });
                 }
-                RenderKind::Text { style, .. } => {
+                RenderKind::Text {
+                    style, overflow, ..
+                } => {
                     if let Some(layout) = self.renders.get(id.0).expect("live").text_layout.clone()
+                    {
+                        if overflow == TextOverflow::Clip {
+                            cache.push(PaintCommand::PushClip {
+                                rect: Rect::from_origin_size(Offset::ZERO, size),
+                            });
+                        }
+                        for line in layout.lines.iter() {
+                            for run in line.runs.iter() {
+                                cache.push(PaintCommand::GlyphRun {
+                                    run: run.clone(),
+                                    color: style.color,
+                                });
+                            }
+                        }
+                        if overflow == TextOverflow::Clip {
+                            cache.push(PaintCommand::PopClip);
+                        }
+                    }
+                }
+                RenderKind::SelectableText { style, .. } => {
+                    let selection = self
+                        .element_for_render(id)
+                        .and_then(|element| self.static_selection_range(element));
+                    if let (Some(layout), Some(selection)) = (
+                        self.renders.get(id.0).expect("live").text_layout.clone(),
+                        selection,
+                    ) {
+                        for rect in selection_rects(&layout, selection, 0., 0., 0.) {
+                            cache.push(PaintCommand::Rect {
+                                rect,
+                                color: Color::rgba(72, 120, 220, 150),
+                            });
+                        }
+                        for line in layout.lines.iter() {
+                            for run in line.runs.iter() {
+                                cache.push(PaintCommand::GlyphRun {
+                                    run: run.clone(),
+                                    color: style.color,
+                                });
+                            }
+                        }
+                    } else if let Some(layout) =
+                        self.renders.get(id.0).expect("live").text_layout.clone()
                     {
                         for line in layout.lines.iter() {
                             for run in line.runs.iter() {
@@ -6432,6 +9131,7 @@ impl WidgetTree {
                         }
                     }
                 }
+                RenderKind::SelectionArea => {}
                 RenderKind::Image {
                     image,
                     fit,
@@ -6535,7 +9235,7 @@ impl WidgetTree {
                             ),
                         });
                         cache.push(PaintCommand::PushTransform {
-                            transform: Transform::translation(Offset::new(
+                            transform: CoreTransform::translation(Offset::new(
                                 8. - active_scroll_x,
                                 top - active_scroll_y,
                             )),
@@ -6607,7 +9307,7 @@ impl WidgetTree {
             self.diagnostics.paints += 1;
         }
         output.push(PaintCommand::PushTransform {
-            transform: Transform::translation(offset),
+            transform: CoreTransform::translation(offset),
         });
         output.extend_from(if dirty {
             &self.renders.get(id.0).expect("live").cache
@@ -6653,6 +9353,43 @@ impl WidgetTree {
         origin: Offset,
     ) -> Option<RenderObjectId> {
         let node = self.renders.get(id.0)?;
+        match self
+            .element_for_render(id)
+            .and_then(|element| self.elements.get(element.0))
+            .map(|element| &element.widget.kind)
+        {
+            Some(WidgetKind::IgnorePointer { ignoring: true, .. }) => return None,
+            Some(WidgetKind::AbsorbPointer {
+                absorbing: true, ..
+            }) => return Some(id),
+            _ => {}
+        }
+        if matches!(
+            node.kind,
+            RenderKind::Transform { .. }
+                | RenderKind::Scale { .. }
+                | RenderKind::Rotation { .. }
+                | RenderKind::FittedBox { .. }
+        ) {
+            let current = origin + node.offset;
+            let local = self
+                .child_content_transform(id)
+                .inverse_transform_point(point - current)?;
+            let child_size = node
+                .children
+                .first()
+                .and_then(|child| self.renders.get(child.0))
+                .map_or(node.size, |child| child.size);
+            if !Rect::from_origin_size(Offset::ZERO, child_size).contains(local) {
+                return None;
+            }
+            for child in node.children.iter().rev() {
+                if let Some(hit) = self.hit_test_render(*child, local, Offset::ZERO) {
+                    return Some(hit);
+                }
+            }
+            return None;
+        }
         let current = match &node.kind {
             RenderKind::Translate { controller } => origin + node.offset + controller.offset(),
             RenderKind::PersistentHeader { controller } => {
@@ -6674,48 +9411,18 @@ impl WidgetTree {
             RenderKind::Translate { .. } => current,
             _ => current,
         };
-        for child in node.children.iter().rev() {
+        let hit_children: Vec<_> = match node.kind {
+            RenderKind::IndexedStack { index, .. } => {
+                node.children.get(index).copied().into_iter().collect()
+            }
+            _ => node.children.clone(),
+        };
+        for child in hit_children.iter().rev() {
             if let Some(hit) = self.hit_test_render(*child, point, child_origin) {
                 return Some(hit);
             }
         }
         Some(id)
-    }
-    fn scroll_target(
-        &self,
-        id: RenderObjectId,
-        point: Offset,
-        origin: Offset,
-    ) -> Option<RenderObjectId> {
-        let node = self.renders.get(id.0)?;
-        let current = match &node.kind {
-            RenderKind::Translate { controller } => origin + node.offset + controller.offset(),
-            RenderKind::PersistentHeader { controller } => {
-                origin + node.offset + self.persistent_header_translation(id, controller)
-            }
-            _ => origin + node.offset,
-        };
-        if !Rect::from_origin_size(current, node.size).contains(point) {
-            return None;
-        }
-        let child_origin = match &node.kind {
-            RenderKind::Scroll { controller } => current - Offset::new(0., controller.offset()),
-            RenderKind::VirtualList { config } => {
-                current - Offset::new(0., config.controller.offset())
-            }
-            RenderKind::Translate { .. } => current,
-            _ => current,
-        };
-        for child in node.children.iter().rev() {
-            if let Some(found) = self.scroll_target(*child, point, child_origin) {
-                return Some(found);
-            }
-        }
-        matches!(
-            node.kind,
-            RenderKind::Scroll { .. } | RenderKind::VirtualList { .. }
-        )
-        .then_some(id)
     }
     fn scrollbar_controller_and_geometry(
         &self,
@@ -6733,13 +9440,34 @@ impl WidgetTree {
         geometry.thumb.origin = geometry.thumb.origin + origin;
         Some((controller, geometry))
     }
+    fn scrollbar_local_geometry(
+        &self,
+        render: RenderObjectId,
+    ) -> Option<(ScrollController, ScrollbarGeometry)> {
+        let node = self.renders.get(render.0)?;
+        let controller = match &node.kind {
+            RenderKind::Scroll { controller } => controller.clone(),
+            RenderKind::VirtualList { config } => config.controller.clone(),
+            _ => return None,
+        };
+        Some((
+            controller.clone(),
+            scrollbar_geometry(node.size, &controller, ScrollbarStyle::default()),
+        ))
+    }
+    fn scrollbar_local_point(&self, render: RenderObjectId, point: Offset) -> Option<Offset> {
+        self.render_world_transform(render)
+            .inverse_transform_point(point)
+    }
     fn scrollbar_at(&self, point: Offset) -> Option<RenderObjectId> {
         self.renders.iter().fold(None, |found, (raw, _)| {
             let render = RenderObjectId(raw);
             found.or_else(|| {
-                self.scrollbar_controller_and_geometry(render)
+                self.scrollbar_local_geometry(render)
                     .and_then(|(_, geometry)| {
-                        (geometry.visible && geometry.track.contains(point)).then_some(render)
+                        self.scrollbar_local_point(render, point).and_then(|point| {
+                            (geometry.visible && geometry.track.contains(point)).then_some(render)
+                        })
                     })
             })
         })
@@ -6775,20 +9503,33 @@ fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) 
 
 fn widget_text(widget: &Widget) -> Option<String> {
     match &widget.kind {
-        WidgetKind::Text { text, .. } => Some(text.clone()),
+        WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
+            Some(text.clone())
+        }
         WidgetKind::Button { child, .. } => child.as_deref().and_then(widget_text),
         WidgetKind::Padding { child, .. }
+        | WidgetKind::Limited { child, .. }
+        | WidgetKind::Overflow { child, .. }
         | WidgetKind::Align { child, .. }
+        | WidgetKind::Flexible { child, .. }
+        | WidgetKind::Positioned { child, .. }
         | WidgetKind::Visibility { child, .. }
         | WidgetKind::AspectRatio { child, .. }
         | WidgetKind::Scroll { child, .. }
         | WidgetKind::Translate { child, .. }
+        | WidgetKind::Transform { child, .. }
+        | WidgetKind::Scale { child, .. }
+        | WidgetKind::Rotation { child, .. }
+        | WidgetKind::FittedBox { child, .. }
         | WidgetKind::Opacity { child, .. }
         | WidgetKind::Blur { child, .. }
         | WidgetKind::DropShadow { child, .. }
         | WidgetKind::ColorFiltered { child, .. }
         | WidgetKind::Blend { child, .. } => widget_text(child),
-        WidgetKind::Flex { children, .. } | WidgetKind::Stack { children, .. } => {
+        WidgetKind::SelectionArea { child, .. } => widget_text(child),
+        WidgetKind::Flex { children, .. }
+        | WidgetKind::Stack { children, .. }
+        | WidgetKind::IndexedStack { children, .. } => {
             let text: String = children
                 .iter()
                 .filter_map(widget_text)
@@ -6836,11 +9577,27 @@ fn render_kind(widget: &Widget) -> RenderKind {
             desired: *size,
             color: *color,
         },
-        WidgetKind::Text { text, style, align } => RenderKind::Text {
+        WidgetKind::Text {
+            text,
+            style,
+            align,
+            soft_wrap,
+            max_lines,
+            overflow,
+        } => RenderKind::Text {
+            text: text.clone(),
+            style: style.clone(),
+            align: *align,
+            soft_wrap: *soft_wrap,
+            max_lines: *max_lines,
+            overflow: *overflow,
+        },
+        WidgetKind::SelectableText { text, style, align } => RenderKind::SelectableText {
             text: text.clone(),
             style: style.clone(),
             align: *align,
         },
+        WidgetKind::SelectionArea { .. } => RenderKind::SelectionArea,
         WidgetKind::Image {
             image,
             width,
@@ -6876,6 +9633,26 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Constrained { constraints, .. } => RenderKind::Constrained {
             constraints: *constraints,
         },
+        WidgetKind::Limited {
+            max_width,
+            max_height,
+            ..
+        } => RenderKind::Limited {
+            max_width: *max_width,
+            max_height: *max_height,
+        },
+        WidgetKind::Overflow {
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            ..
+        } => RenderKind::Overflow {
+            min_width: *min_width,
+            max_width: *max_width,
+            min_height: *min_height,
+            max_height: *max_height,
+        },
         WidgetKind::Unconstrained {
             constrained_axis, ..
         } => RenderKind::Unconstrained {
@@ -6894,10 +9671,16 @@ fn render_kind(widget: &Widget) -> RenderKind {
         },
         WidgetKind::RepaintBoundary { .. } => RenderKind::RepaintBoundary,
         WidgetKind::Gesture { .. } => RenderKind::Gesture,
+        WidgetKind::Draggable { .. } | WidgetKind::DragTarget { .. } => RenderKind::Gesture,
+        WidgetKind::IgnorePointer { .. } | WidgetKind::AbsorbPointer { .. } => RenderKind::Gesture,
         WidgetKind::Align { alignment, .. } => RenderKind::Align {
             alignment: *alignment,
         },
         WidgetKind::Flex { axis, .. } => RenderKind::Flex { axis: *axis },
+        WidgetKind::Flexible { flex, fit, .. } => RenderKind::Flexible {
+            flex: *flex,
+            fit: *fit,
+        },
         WidgetKind::Wrap {
             axis,
             spacing,
@@ -6921,6 +9704,29 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Stack { alignment, .. } => RenderKind::Stack {
             alignment: *alignment,
         },
+        WidgetKind::Positioned {
+            left,
+            top,
+            right,
+            bottom,
+            width,
+            height,
+            ..
+        } => RenderKind::Positioned {
+            left: *left,
+            top: *top,
+            right: *right,
+            bottom: *bottom,
+            width: *width,
+            height: *height,
+        },
+        WidgetKind::IndexedStack {
+            alignment, index, ..
+        } => RenderKind::IndexedStack {
+            alignment: *alignment,
+            index: *index,
+        },
+        WidgetKind::LayoutBuilder { .. } => RenderKind::LayoutBuilder,
         WidgetKind::Visibility { visible, .. } => RenderKind::Visibility { visible: *visible },
         WidgetKind::AspectRatio { ratio, .. } => RenderKind::AspectRatio { ratio: *ratio },
         WidgetKind::Scroll { controller, .. } => RenderKind::Scroll {
@@ -6934,6 +9740,28 @@ fn render_kind(widget: &Widget) -> RenderKind {
         },
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
             controller: controller.clone(),
+        },
+        WidgetKind::Transform {
+            transform, origin, ..
+        } => RenderKind::Transform {
+            transform: *transform,
+            origin: *origin,
+        },
+        WidgetKind::Scale {
+            controller, origin, ..
+        } => RenderKind::Scale {
+            controller: controller.clone(),
+            origin: *origin,
+        },
+        WidgetKind::Rotation {
+            controller, origin, ..
+        } => RenderKind::Rotation {
+            controller: controller.clone(),
+            origin: *origin,
+        },
+        WidgetKind::FittedBox { fit, alignment, .. } => RenderKind::FittedBox {
+            fit: *fit,
+            alignment: *alignment,
         },
         WidgetKind::Opacity {
             alpha, controller, ..
@@ -6973,6 +9801,47 @@ fn render_kind(widget: &Widget) -> RenderKind {
         },
         WidgetKind::Blend { mode, .. } => RenderKind::Blend { mode: *mode },
     }
+}
+
+fn transform_around(transform: CoreTransform, origin: Option<Offset>, size: Size) -> CoreTransform {
+    let origin = origin.unwrap_or(Offset::new(size.width * 0.5, size.height * 0.5));
+    CoreTransform::translation(origin)
+        .then(transform)
+        .then(CoreTransform::translation(Offset::new(
+            -origin.x, -origin.y,
+        )))
+}
+
+fn fitted_transform(
+    source: Size,
+    bounds: Size,
+    fit: ImageFit,
+    alignment: Alignment,
+) -> CoreTransform {
+    if source.width <= 0. || source.height <= 0. || bounds.width <= 0. || bounds.height <= 0. {
+        return CoreTransform::IDENTITY;
+    }
+    let sx = bounds.width / source.width;
+    let sy = bounds.height / source.height;
+    let (scale_x, scale_y) = match fit {
+        ImageFit::Fill => (sx, sy),
+        ImageFit::Cover => {
+            let scale = sx.max(sy);
+            (scale, scale)
+        }
+        ImageFit::None => (1., 1.),
+        ImageFit::ScaleDown => {
+            let scale = sx.min(sy).min(1.);
+            (scale, scale)
+        }
+        ImageFit::Contain => {
+            let scale = sx.min(sy);
+            (scale, scale)
+        }
+    };
+    let fitted = Size::new(source.width * scale_x, source.height * scale_y);
+    let offset = alignment.within(bounds, fitted);
+    CoreTransform::translation(offset).then(CoreTransform::scale_non_uniform(scale_x, scale_y))
 }
 
 /// Returns the pixel source crop and logical destination for a fit operation.
@@ -7121,11 +9990,17 @@ fn text_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
             text: old_text,
             style: old_style,
             align: old_align,
+            soft_wrap: old_soft_wrap,
+            max_lines: old_max_lines,
+            overflow: old_overflow,
         },
         RenderKind::Text {
             text: new_text,
             style: new_style,
             align: new_align,
+            soft_wrap: new_soft_wrap,
+            max_lines: new_max_lines,
+            overflow: new_overflow,
         },
     ) = (old, new)
     else {
@@ -7133,6 +10008,9 @@ fn text_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
     };
     old_text == new_text
         && old_align == new_align
+        && old_soft_wrap == new_soft_wrap
+        && old_max_lines == new_max_lines
+        && old_overflow == new_overflow
         && old_style.family == new_style.family
         && old_style.size == new_style.size
         && old_style.weight == new_style.weight
@@ -7177,6 +10055,15 @@ fn effect_composite_only_change(old: &RenderKind, new: &RenderKind) -> bool {
     )
 }
 
+fn affine_composite_only_change(old: &RenderKind, new: &RenderKind) -> bool {
+    matches!(
+        (old, new),
+        (RenderKind::Transform { .. }, RenderKind::Transform { .. })
+            | (RenderKind::Scale { .. }, RenderKind::Scale { .. })
+            | (RenderKind::Rotation { .. }, RenderKind::Rotation { .. })
+    )
+}
+
 fn text_field_display(value: &TextEditingValue, placeholder: &str) -> String {
     if let Some(preedit) = &value.preedit {
         let range = value.selection.range();
@@ -7190,7 +10077,7 @@ fn text_field_display(value: &TextEditingValue, placeholder: &str) -> String {
     }
 }
 fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
-    if byte >= line.end {
+    if byte >= line.caret_end {
         return line.width;
     }
     let mut x = 0.;
@@ -7204,7 +10091,7 @@ fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
 }
 fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
     if x >= line.width {
-        return line.end;
+        return line.caret_end;
     }
     let mut best = 0usize;
     for glyph in line.glyphs.iter() {
@@ -7266,6 +10153,67 @@ fn selection_rects(
         .collect()
 }
 
+fn static_selection_range(
+    tree: &WidgetTree,
+    entries: &[ElementId],
+    selection: StaticSelection,
+    element: ElementId,
+) -> Option<TextRange> {
+    let anchor_index = entries
+        .iter()
+        .position(|entry| *entry == selection.anchor.element)?;
+    let extent_index = entries
+        .iter()
+        .position(|entry| *entry == selection.extent.element)?;
+    let element_index = entries.iter().position(|entry| *entry == element)?;
+    let (first_index, last_index, first_byte, last_byte) = if anchor_index <= extent_index {
+        (
+            anchor_index,
+            extent_index,
+            selection.anchor.byte,
+            selection.extent.byte,
+        )
+    } else {
+        (
+            extent_index,
+            anchor_index,
+            selection.extent.byte,
+            selection.anchor.byte,
+        )
+    };
+    if !(first_index..=last_index).contains(&element_index) {
+        return None;
+    }
+    let text = tree.selectable_text_value(element)?;
+    let start = if element_index == first_index {
+        valid_boundary(&text, first_byte)
+    } else {
+        0
+    };
+    let end = if element_index == last_index {
+        valid_boundary(&text, last_byte)
+    } else {
+        text.len()
+    };
+    (start < end).then_some(TextRange::new(start, end))
+}
+
+fn static_selection_text(
+    tree: &WidgetTree,
+    entries: &[ElementId],
+    selection: StaticSelection,
+) -> String {
+    entries
+        .iter()
+        .filter_map(|element| {
+            let range = static_selection_range(tree, entries, selection, *element)?;
+            let text = tree.selectable_text_value(*element)?;
+            Some(text[range.start..range.end].to_owned())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -7273,6 +10221,10 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::{
+        DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable, Expanded, Flexible,
+        IndexedStack, Positioned, SizedBox, Spacer,
+    };
 
     #[derive(Default)]
     struct MemoryRestorationBackend(RefCell<BTreeMap<Vec<RestorationKey>, Value>>);
@@ -7307,7 +10259,7 @@ mod tests {
         for command in list.commands() {
             match command {
                 PaintCommand::PushTransform { transform } => {
-                    transforms.push(*transforms.last().unwrap() + transform.translation);
+                    transforms.push(*transforms.last().unwrap() + transform.translation_offset());
                 }
                 PaintCommand::PopTransform => {
                     transforms.pop();
@@ -7324,6 +10276,7 @@ mod tests {
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
+                | PaintCommand::PushClipOval { .. }
                 | PaintCommand::PopClip
                 | PaintCommand::PushOpacity { .. }
                 | PaintCommand::PopOpacity
@@ -7342,7 +10295,7 @@ mod tests {
         for command in list.commands() {
             match command {
                 PaintCommand::PushTransform { transform } => {
-                    transforms.push(*transforms.last().unwrap() + transform.translation);
+                    transforms.push(*transforms.last().unwrap() + transform.translation_offset());
                 }
                 PaintCommand::PopTransform => {
                     transforms.pop();
@@ -7359,6 +10312,7 @@ mod tests {
                 | PaintCommand::PushClip { .. }
                 | PaintCommand::PushClipRRect { .. }
                 | PaintCommand::PushClipPath { .. }
+                | PaintCommand::PushClipOval { .. }
                 | PaintCommand::PopClip
                 | PaintCommand::PushOpacity { .. }
                 | PaintCommand::PopOpacity
@@ -7377,7 +10331,7 @@ mod tests {
         for command in list.commands() {
             match command {
                 PaintCommand::PushTransform { transform } => {
-                    transforms.push(*transforms.last().unwrap() + transform.translation);
+                    transforms.push(*transforms.last().unwrap() + transform.translation_offset());
                 }
                 PaintCommand::PopTransform => {
                     transforms.pop();
@@ -7392,6 +10346,324 @@ mod tests {
     }
     fn box_(key: u64) -> Widget {
         Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(key)
+    }
+    #[test]
+    fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
+        let mut limited = WidgetTree::new();
+        let root = limited
+            .mount(Widget::limited_box(
+                20.,
+                30.,
+                Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
+            ))
+            .unwrap();
+        limited.layout(Constraints::new(0., f32::INFINITY, 0., f32::INFINITY));
+        assert_eq!(
+            limited.render_size(limited.render_id(root).unwrap()),
+            Some(Size::new(20., 30.))
+        );
+        limited.layout(Constraints::new(0., 100., 0., 100.));
+        assert_eq!(
+            limited.render_size(limited.render_id(root).unwrap()),
+            Some(Size::new(80., 80.))
+        );
+
+        let mut overflow = WidgetTree::new();
+        let root = overflow
+            .mount(Widget::overflow_box(
+                None,
+                Some(80.),
+                None,
+                Some(80.),
+                Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
+            ))
+            .unwrap();
+        overflow.layout(Constraints::tight(Size::new(20., 20.)));
+        let child = overflow.children(root).unwrap()[0];
+        assert_eq!(
+            overflow.render_size(overflow.render_id(root).unwrap()),
+            Some(Size::new(20., 20.))
+        );
+        assert_eq!(
+            overflow.render_size(overflow.render_id(child).unwrap()),
+            Some(Size::new(80., 80.))
+        );
+    }
+    #[test]
+    fn flexible_expanded_and_spacer_allocate_bounded_main_axis_space() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::row(vec![
+                Widget::fixed_box(Size::new(10., 10.), Color::WHITE),
+                Expanded::new(Widget::fixed_box(Size::new(1., 10.), Color::WHITE))
+                    .flex(2)
+                    .into(),
+                Flexible::new(1, Widget::fixed_box(Size::new(15., 10.), Color::WHITE)).into(),
+                Spacer::new().flex(1).into(),
+            ]))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 20.)));
+        let children = tree.children(root).unwrap();
+        assert_eq!(
+            tree.render_size(tree.render_id(children[1]).unwrap()),
+            Some(Size::new(45., 10.))
+        );
+        assert_eq!(
+            tree.render_size(tree.render_id(children[2]).unwrap()),
+            Some(Size::new(15., 10.))
+        );
+        assert_eq!(
+            tree.render_size(tree.render_id(children[3]).unwrap()),
+            Some(Size::new(22.5, 0.))
+        );
+    }
+    #[test]
+    fn positioned_and_indexed_stacks_keep_only_the_selected_branch_interactive_and_semantic() {
+        let positioned = Positioned::new(Widget::fixed_box(Size::new(100., 100.), Color::WHITE))
+            .left(10.)
+            .right(20.)
+            .top(5.)
+            .bottom(15.);
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::stack(Alignment::TOP_LEFT, vec![positioned.into()]))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let positioned = tree.children(root).unwrap()[0];
+        assert_eq!(
+            tree.render_size(tree.render_id(positioned).unwrap()),
+            Some(Size::new(70., 80.))
+        );
+        assert_eq!(
+            tree.render_origin(tree.render_id(positioned).unwrap()),
+            Offset::new(10., 5.)
+        );
+
+        let mut indexed = WidgetTree::new();
+        let _root = indexed
+            .mount(
+                IndexedStack::new([Widget::text("hidden"), Widget::text("shown")])
+                    .index(1)
+                    .into(),
+            )
+            .unwrap();
+        indexed.layout(Constraints::tight(Size::new(100., 40.)));
+        indexed.update_semantics();
+        assert_eq!(indexed.semantics().len(), 1);
+        assert!(indexed.semantics_debug_dump().contains("shown"));
+        assert!(!indexed.semantics_debug_dump().contains("hidden"));
+    }
+    #[test]
+    fn layout_builder_rebuilds_only_when_constraints_change() {
+        let builds = Rc::new(Cell::new(0));
+        let observed = builds.clone();
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::layout_builder(move |constraints| {
+                observed.set(observed.get() + 1);
+                Widget::fixed_box(Size::new(constraints.max_width, 10.), Color::WHITE)
+            }))
+            .unwrap();
+        tree.layout(Constraints::new(0., 30., 0., 20.));
+        let child = tree.children(root).unwrap()[0];
+        assert_eq!(
+            tree.render_size(tree.render_id(child).unwrap()),
+            Some(Size::new(30., 10.))
+        );
+        tree.layout(Constraints::new(0., 30., 0., 20.));
+        assert_eq!(builds.get(), 1);
+        tree.layout(Constraints::new(0., 40., 0., 20.));
+        assert_eq!(builds.get(), 2);
+    }
+    #[test]
+    fn affine_transform_uses_inverse_hit_testing_and_transformed_semantics() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::transform(
+                CoreTransform::translation(Offset::new(20., 10.)),
+                Widget::button(Size::new(10., 10.), Color::WHITE, ActionId(1)),
+            ))
+            .unwrap();
+        let button = tree.children(root).unwrap()[0];
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let (changed, _) = tree.update_compositor(Instant::now());
+        assert!(changed);
+        assert_eq!(
+            tree.element_for_render(tree.hit_test(Offset::new(25., 15.)).unwrap()),
+            Some(button)
+        );
+        assert!(tree.hit_test(Offset::new(5., 5.)).is_none());
+        tree.update_semantics();
+        let semantic = tree
+            .semantic_node_for_element(button)
+            .and_then(|id| tree.semantics().node(id))
+            .expect("button semantics");
+        assert_eq!(semantic.bounds.origin, Offset::new(20., 10.));
+        assert_eq!(semantic.bounds.size, Size::new(10., 10.));
+    }
+    #[test]
+    fn fitted_box_scales_hits_into_the_child_coordinate_space() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::fitted_box(
+                ImageFit::Contain,
+                Alignment::CENTER,
+                Widget::box_(Size::new(10., 20.), Color::WHITE),
+            ))
+            .unwrap();
+        let child = tree.children(root).unwrap()[0];
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let _ = tree.update_compositor(Instant::now());
+        assert_eq!(
+            tree.element_for_render(tree.hit_test(Offset::new(30., 10.)).unwrap()),
+            Some(child)
+        );
+        assert!(tree.hit_test(Offset::new(20., 10.)).is_none());
+    }
+
+    #[test]
+    fn selectable_text_drag_uses_cached_parley_layout_and_copies_across_widgets() {
+        let controller = SelectionAreaController::new();
+        let mut tree = WidgetTree::new();
+        let area = tree
+            .mount(
+                SelectionArea::with_controller(
+                    controller.clone(),
+                    Widget::column(vec![
+                        SelectableText::new("Latin café").into(),
+                        SelectableText::new("עברית mixed 世界").into(),
+                    ]),
+                )
+                .into(),
+            )
+            .expect("mount selection area");
+        tree.layout(Constraints::tight(Size::new(180., 80.)));
+        let column = tree.children(area).unwrap()[0];
+        let labels = tree.children(column).unwrap();
+        let first = labels[0];
+        let second = labels[1];
+        let first_render = tree.render_id(first).unwrap();
+        let second_render = tree.render_id(second).unwrap();
+        let first_origin = tree
+            .render_world_transform(first_render)
+            .transform_point(Offset::ZERO);
+        let second_origin = tree
+            .render_world_transform(second_render)
+            .transform_point(Offset::ZERO);
+        assert!(tree.selectable_text_set_selection(first, first_origin, false));
+        assert!(tree.selectable_text_set_selection(
+            second,
+            second_origin + Offset::new(10_000., 0.),
+            true,
+        ));
+        assert_eq!(controller.selected_text(), "Latin café\nעברית mixed 世界");
+        let before = tree.text_engine.diagnostics().layouts_requested;
+        let _ = tree.paint();
+        assert_eq!(tree.text_engine.diagnostics().layouts_requested, before);
+        assert!(tree.static_selection_range(first).is_some());
+        assert!(tree.static_selection_range(second).is_some());
+    }
+
+    #[test]
+    fn selectable_text_keyboard_motion_stays_on_grapheme_boundaries() {
+        let controller = SelectionAreaController::new();
+        let mut tree = WidgetTree::new();
+        let area = tree
+            .mount(
+                SelectionArea::with_controller(
+                    controller.clone(),
+                    SelectableText::new("a👩\u{200d}💻b"),
+                )
+                .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(180., 40.)));
+        let label = tree.children(area).unwrap()[0];
+        assert!(tree.selectable_text_move(label, true, false));
+        assert!(tree.selectable_text_move(label, true, true));
+        assert_eq!(controller.selected_text(), "👩\u{200d}💻");
+        assert!(tree.selectable_text_select_all(label));
+        assert_eq!(controller.selected_text(), "a👩\u{200d}💻b");
+    }
+
+    #[test]
+    fn standalone_selectable_text_has_its_own_read_only_selection_region() {
+        let mut tree = WidgetTree::new();
+        let label = tree.mount(SelectableText::new("copy me").into()).unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 30.)));
+        assert!(tree.selectable_text_select_all(label));
+        assert_eq!(
+            tree.selectable_text_selected_text(label),
+            Some("copy me".into())
+        );
+    }
+
+    #[test]
+    fn retained_text_honors_wrap_line_limit_overflow_and_rich_text_conversion() {
+        let mut tree = WidgetTree::new();
+        let label = tree
+            .mount(
+                Text::new("one two three four five six seven")
+                    .style(TextStyle::default().font_size(18.))
+                    .max_lines(Some(1))
+                    .overflow(TextOverflow::Ellipsis)
+                    .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(75., 30.)));
+        let render = tree.render_id(label).unwrap();
+        let layout = tree
+            .renders
+            .get(render.0)
+            .unwrap()
+            .text_layout
+            .clone()
+            .unwrap();
+        assert_eq!(layout.lines.len(), 1);
+        assert!(layout.overflowed);
+
+        let rich: Widget = RichText::new(incular_text::TextSpan::new("one two three four"))
+            .max_lines(Some(1))
+            .overflow(TextOverflow::Clip)
+            .into();
+        let rich_label = tree.mount(rich).unwrap();
+        tree.layout(Constraints::tight(Size::new(60., 30.)));
+        let rich_render = tree.render_id(rich_label).unwrap();
+        assert!(
+            tree.renders
+                .get(rich_render.0)
+                .unwrap()
+                .text_layout
+                .as_ref()
+                .unwrap()
+                .overflowed
+        );
+    }
+    #[test]
+    fn scale_and_rotation_transitions_update_only_retained_compositor_layers() {
+        let scale = ScaleController::new();
+        let rotation = RotationController::new();
+        let mut tree = WidgetTree::new();
+        tree.mount(
+            RotationTransition::new(
+                rotation.clone(),
+                ScaleTransition::new(
+                    scale.clone(),
+                    Widget::box_(Size::new(20., 20.), Color::WHITE),
+                ),
+            )
+            .into(),
+        )
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(80., 80.)));
+        let _ = tree.paint();
+        let before = tree.diagnostics();
+        scale.set_scale(1.5);
+        rotation.set_radians(0.25);
+        assert!(tree.update_compositor(Instant::now()).0);
+        let after = tree.diagnostics();
+        assert_eq!(after.layouts, before.layouts);
+        assert_eq!(after.paints, before.paints);
     }
     #[test]
     fn keyed_reorder_reuses_elements() {
@@ -8060,6 +11332,89 @@ mod tests {
     }
 
     #[test]
+    fn million_item_variable_list_deep_jump_builds_only_destination_rows() {
+        let controller = ScrollController::new();
+        let index = MeasuredExtentIndex::new(1_000_000, 40.);
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::variable_extent_with_index(
+            index.clone(),
+            controller.clone(),
+            move |item| {
+                observed.set(observed.get() + 1);
+                Widget::box_(
+                    Size::new(80., if item % 2 == 0 { 32. } else { 56. }),
+                    Color::rgba(item as u8, 0, 0, 255),
+                )
+            },
+        ))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(100., 600.));
+        tree.layout(constraints);
+        assert!(controller.jump_to(900_000. * 40.));
+        tree.layout(constraints);
+        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        assert!(diagnostics.materialized_range.contains(&900_000));
+        assert!(diagnostics.materialized_item_count < 100);
+        assert!(calls.get() < 200);
+        // The cache window, not the skipped prefix, is what becomes exact.
+        assert!(index.measured_count() < 200);
+    }
+
+    #[test]
+    fn variable_measurements_above_visible_anchor_compensate_scroll_offset() {
+        let controller = ScrollController::new();
+        let index = MeasuredExtentIndex::new(1_000_000, 40.);
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::variable_extent_with_index(
+            index,
+            controller.clone(),
+            |item| {
+                Widget::box_(
+                    Size::new(80., if item < 900_000 { 80. } else { 40. }),
+                    Color::WHITE,
+                )
+            },
+        ))
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(100., 600.));
+        tree.layout(constraints);
+        let target = 900_000. * 40.;
+        assert!(controller.jump_to(target));
+        tree.layout(constraints);
+        // Six cached rows before the first visible row grew by 40px. The
+        // controller compensates so logical row 900_000 stays in place.
+        assert_eq!(controller.offset(), target + 240.);
+    }
+
+    #[test]
+    fn variable_index_structure_change_rematerializes_only_visible_rows() {
+        let controller = ScrollController::new();
+        let index = MeasuredExtentIndex::new(10_000, 40.);
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        let mut tree = WidgetTree::new();
+        tree.mount(VirtualList::variable_extent_with_index(
+            index.clone(),
+            controller,
+            move |item| {
+                observed.set(observed.get() + 1);
+                Widget::box_(Size::new(80., 40.), Color::rgba(item as u8, 0, 0, 255))
+            },
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let before = calls.get();
+        index.insert(2, 3);
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        assert!(calls.get() - before < 30);
+        assert!(diagnostics.materialized_item_count < 30);
+        assert_eq!(diagnostics.logical_item_count, 10_003);
+    }
+
+    #[test]
     fn restored_virtual_list_offset_stays_viewport_bounded() {
         let scope = restoration_scope();
         let key = restoration_key("million-items");
@@ -8406,6 +11761,36 @@ mod tests {
     }
 
     #[test]
+    fn wheel_at_nested_scroll_transfers_child_boundary_remainder_to_parent_once() {
+        let outer = ScrollController::new();
+        let inner = ScrollController::new();
+        let nested: Widget = SizedBox::new(
+            Size::new(100., 100.),
+            Widget::scroll_view(
+                inner.clone(),
+                Widget::fixed_box(Size::new(100., 300.), Color::WHITE),
+            ),
+        )
+        .into();
+        let content = Widget::column(vec![
+            Widget::fixed_box(Size::new(100., 10.), Color::BLACK),
+            nested,
+            Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
+        ]);
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::scroll_view(outer.clone(), content))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        assert!(outer.jump_to(100.));
+        assert_eq!(inner.offset(), 0.);
+        // At the inner top, upward wheel delta is consumed by the outer
+        // viewport only; it is never duplicated into both controllers.
+        assert!(tree.scroll_at(Offset::new(50., 20.), Offset::new(0., -40.)));
+        assert_eq!(inner.offset(), 0.);
+        assert_eq!(outer.offset(), 60.);
+    }
+
+    #[test]
     fn textarea_uses_shaped_lines_for_pointer_and_vertical_navigation() {
         let controller = TextEditingController::with_text("abcdef\nxy\n123456");
         let mut tree = WidgetTree::new();
@@ -8423,7 +11808,10 @@ mod tests {
         assert!(tree.text_field_move_vertical(root, true, true));
         let selection = controller.value().selection;
         assert_eq!(selection.base, initial);
-        assert!(selection.extent > 6 && selection.extent <= 9);
+        assert!(
+            selection.extent > 6 && selection.extent <= 9,
+            "vertical move should land on the second shaped line: {selection:?}"
+        );
         assert!(tree.text_field_move_line_edge(root, true, false));
         assert_eq!(controller.value().selection.extent, 9);
         tree.text_field_set_caret(root, Offset::new(5., 55.), false, Instant::now());
@@ -8539,6 +11927,494 @@ mod tests {
             }),
             Some(root)
         );
+    }
+
+    #[test]
+    fn retained_arena_allows_drag_to_defeat_nested_tap_before_callbacks() {
+        let taps = Rc::new(Cell::new(0));
+        let pans = Rc::new(Cell::new(0));
+        let cancelled = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::gesture(
+            GestureCallbacks {
+                on_pan_update: Some({
+                    let pans = pans.clone();
+                    Rc::new(move |_| pans.set(pans.get() + 1))
+                }),
+                ..GestureCallbacks::default()
+            },
+            Widget::gesture(
+                GestureCallbacks {
+                    on_tap: Some({
+                        let taps = taps.clone();
+                        Rc::new(move || taps.set(taps.get() + 1))
+                    }),
+                    on_cancel: Some({
+                        let cancelled = cancelled.clone();
+                        Rc::new(move || cancelled.set(cancelled.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            ),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        for (phase, position) in [
+            (incular_core::PointerPhase::Down, Offset::new(10., 10.)),
+            (incular_core::PointerPhase::Move, Offset::new(40., 10.)),
+            (incular_core::PointerPhase::Up, Offset::new(40., 10.)),
+        ] {
+            assert!(
+                tree.dispatch_gesture(PointerEvent {
+                    pointer: 1,
+                    position,
+                    phase,
+                    time: now
+                })
+                .is_some()
+            );
+        }
+        assert_eq!(pans.get(), 1);
+        assert_eq!(taps.get(), 0);
+        assert_eq!(cancelled.get(), 1);
+    }
+
+    #[test]
+    fn retained_arena_arbitrates_horizontal_against_vertical_drag() {
+        let horizontal = Rc::new(Cell::new(0));
+        let vertical = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::gesture(
+            GestureCallbacks {
+                on_vertical_drag_update: Some({
+                    let vertical = vertical.clone();
+                    Rc::new(move |_| vertical.set(vertical.get() + 1))
+                }),
+                ..GestureCallbacks::default()
+            },
+            Widget::gesture(
+                GestureCallbacks {
+                    on_horizontal_drag_update: Some({
+                        let horizontal = horizontal.clone();
+                        Rc::new(move |_| horizontal.set(horizontal.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            ),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        for (phase, position) in [
+            (incular_core::PointerPhase::Down, Offset::new(10., 10.)),
+            (incular_core::PointerPhase::Move, Offset::new(12., 40.)),
+            (incular_core::PointerPhase::Up, Offset::new(12., 40.)),
+        ] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer: 2,
+                position,
+                phase,
+                time: now,
+            });
+        }
+        assert_eq!(horizontal.get(), 0);
+        assert_eq!(vertical.get(), 1);
+    }
+
+    #[test]
+    fn retained_arena_cancels_long_press_when_drag_claims_stream() {
+        let long_presses = Rc::new(Cell::new(0));
+        let cancellations = Rc::new(Cell::new(0));
+        let pans = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::gesture(
+            GestureCallbacks {
+                on_pan_update: Some({
+                    let pans = pans.clone();
+                    Rc::new(move |_| pans.set(pans.get() + 1))
+                }),
+                ..GestureCallbacks::default()
+            },
+            Widget::gesture(
+                GestureCallbacks {
+                    on_long_press: Some({
+                        let long_presses = long_presses.clone();
+                        Rc::new(move || long_presses.set(long_presses.get() + 1))
+                    }),
+                    on_cancel: Some({
+                        let cancellations = cancellations.clone();
+                        Rc::new(move || cancellations.set(cancellations.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            ),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        let _ = tree.dispatch_gesture(PointerEvent {
+            pointer: 3,
+            position: Offset::new(10., 10.),
+            phase: incular_core::PointerPhase::Down,
+            time: now,
+        });
+        let _ = tree.dispatch_gesture(PointerEvent {
+            pointer: 3,
+            position: Offset::new(40., 10.),
+            phase: incular_core::PointerPhase::Move,
+            time: now + Duration::from_millis(100),
+        });
+        let _ = tree.dispatch_gesture(PointerEvent {
+            pointer: 3,
+            position: Offset::new(40., 10.),
+            phase: incular_core::PointerPhase::Up,
+            time: now + GestureDetector::LONG_PRESS_TIMEOUT + Duration::from_millis(1),
+        });
+        assert_eq!(pans.get(), 1);
+        assert_eq!(long_presses.get(), 0);
+        assert_eq!(cancellations.get(), 1);
+    }
+
+    #[test]
+    fn retained_arena_allows_scale_to_defeat_pan_and_share_two_contacts() {
+        let pans = Rc::new(Cell::new(0));
+        let scales = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::gesture(
+            GestureCallbacks {
+                on_pan_update: Some({
+                    let pans = pans.clone();
+                    Rc::new(move |_| pans.set(pans.get() + 1))
+                }),
+                ..GestureCallbacks::default()
+            },
+            Widget::gesture(
+                GestureCallbacks {
+                    on_scale_update: Some({
+                        let scales = scales.clone();
+                        Rc::new(move |_| scales.set(scales.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            ),
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        for (pointer, position) in [(10, Offset::new(10., 10.)), (11, Offset::new(20., 10.))] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer,
+                position,
+                phase: incular_core::PointerPhase::Down,
+                time: now,
+            });
+        }
+        let _ = tree.dispatch_gesture(PointerEvent {
+            pointer: 11,
+            position: Offset::new(40., 10.),
+            phase: incular_core::PointerPhase::Move,
+            time: now + Duration::from_millis(16),
+        });
+        assert_eq!(pans.get(), 0);
+        assert_eq!(scales.get(), 1);
+    }
+
+    #[test]
+    fn ignore_pointer_skips_its_subtree_and_reveals_a_stacked_target() {
+        let behind = Rc::new(Cell::new(0));
+        let ignored = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::stack(
+            Alignment::CENTER,
+            vec![
+                Widget::gesture(
+                    GestureCallbacks {
+                        on_tap: Some({
+                            let behind = behind.clone();
+                            Rc::new(move || behind.set(behind.get() + 1))
+                        }),
+                        ..GestureCallbacks::default()
+                    },
+                    Widget::box_(Size::new(100., 100.), Color::WHITE),
+                ),
+                IgnorePointer::new(Widget::gesture(
+                    GestureCallbacks {
+                        on_tap: Some({
+                            let ignored = ignored.clone();
+                            Rc::new(move || ignored.set(ignored.get() + 1))
+                        }),
+                        ..GestureCallbacks::default()
+                    },
+                    Widget::box_(Size::new(100., 100.), Color::BLACK),
+                ))
+                .into(),
+            ],
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        for phase in [
+            incular_core::PointerPhase::Down,
+            incular_core::PointerPhase::Up,
+        ] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer: 20,
+                position: Offset::new(20., 20.),
+                phase,
+                time: now,
+            });
+        }
+        assert_eq!(behind.get(), 1);
+        assert_eq!(ignored.get(), 0);
+    }
+
+    #[test]
+    fn absorb_pointer_blocks_descendant_and_stacked_gesture_targets() {
+        let behind = Rc::new(Cell::new(0));
+        let absorbed_child = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::stack(
+            Alignment::CENTER,
+            vec![
+                Widget::gesture(
+                    GestureCallbacks {
+                        on_tap: Some({
+                            let behind = behind.clone();
+                            Rc::new(move || behind.set(behind.get() + 1))
+                        }),
+                        ..GestureCallbacks::default()
+                    },
+                    Widget::box_(Size::new(100., 100.), Color::WHITE),
+                ),
+                AbsorbPointer::new(Widget::gesture(
+                    GestureCallbacks {
+                        on_tap: Some({
+                            let absorbed_child = absorbed_child.clone();
+                            Rc::new(move || absorbed_child.set(absorbed_child.get() + 1))
+                        }),
+                        ..GestureCallbacks::default()
+                    },
+                    Widget::box_(Size::new(100., 100.), Color::BLACK),
+                ))
+                .into(),
+            ],
+        ))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        for phase in [
+            incular_core::PointerPhase::Down,
+            incular_core::PointerPhase::Up,
+        ] {
+            assert!(
+                tree.dispatch_gesture(PointerEvent {
+                    pointer: 21,
+                    position: Offset::new(20., 20.),
+                    phase,
+                    time: now,
+                })
+                .is_none()
+            );
+        }
+        assert_eq!(behind.get(), 0);
+        assert_eq!(absorbed_child.get(), 0);
+    }
+
+    #[test]
+    fn retained_pointer_capture_is_window_local_and_released_with_the_stream() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::gesture(
+                GestureCallbacks {
+                    on_tap: Some(Rc::new(|| {})),
+                    ..GestureCallbacks::default()
+                },
+                Widget::box_(Size::new(100., 100.), Color::WHITE),
+            ))
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let now = Instant::now();
+        let _ = tree.dispatch_gesture_in_window(
+            9,
+            PointerEvent {
+                pointer: 5,
+                position: Offset::new(10., 10.),
+                phase: incular_core::PointerPhase::Down,
+                time: now,
+            },
+        );
+        assert_eq!(tree.pointer_capture_target(9, 5), Some(root));
+        assert_eq!(tree.pointer_capture_target(10, 5), None);
+        let capture = tree.request_pointer_capture(9, 5, root).unwrap();
+        assert_eq!(capture.window(), 9);
+        assert_eq!(capture.pointer(), 5);
+        assert!(tree.release_pointer_capture(capture));
+        assert_eq!(tree.pointer_capture_target(9, 5), None);
+        let _ = tree.dispatch_gesture_in_window(
+            9,
+            PointerEvent {
+                pointer: 5,
+                position: Offset::new(90., 90.),
+                phase: incular_core::PointerPhase::Up,
+                time: now,
+            },
+        );
+        assert_eq!(tree.pointer_capture_target(9, 5), None);
+    }
+
+    #[test]
+    fn typed_local_drag_drop_enters_updates_and_drops_through_the_arena() {
+        let context = DragDropContext::new();
+        let entered = Rc::new(Cell::new(0));
+        let updates = Rc::new(Cell::new(0));
+        let dropped = Rc::new(Cell::new(0));
+        let ended = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::row(vec![
+            Draggable::new(
+                context.clone(),
+                String::from("card"),
+                Widget::box_(Size::new(100., 80.), Color::WHITE),
+            )
+            .feedback(|payload| Text::new(payload).into())
+            .on_end({
+                let ended = ended.clone();
+                move |_| ended.set(ended.get() + 1)
+            })
+            .into(),
+            DragTarget::new(
+                context.clone(),
+                Widget::box_(Size::new(100., 80.), Color::BLACK),
+            )
+            .on_enter({
+                let entered = entered.clone();
+                move |_| entered.set(entered.get() + 1)
+            })
+            .on_update({
+                let updates = updates.clone();
+                move |_, _| updates.set(updates.get() + 1)
+            })
+            .on_drop({
+                let dropped = dropped.clone();
+                move |payload| {
+                    assert_eq!(payload, "card");
+                    dropped.set(dropped.get() + 1);
+                }
+            })
+            .into(),
+        ]))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(200., 80.)));
+        let now = Instant::now();
+        for (phase, position) in [
+            (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(35., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(140., 20.)),
+            (incular_core::PointerPhase::Up, Offset::new(140., 20.)),
+        ] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer: 30,
+                position,
+                phase,
+                time: now,
+            });
+        }
+        assert_eq!(entered.get(), 1);
+        assert!(updates.get() >= 1);
+        assert_eq!(dropped.get(), 1);
+        assert_eq!(ended.get(), 1);
+        assert!(!context.is_dragging());
+        assert!(context.feedback().is_none());
+    }
+
+    #[test]
+    fn typed_local_drag_drop_leaves_and_cancels_without_drop() {
+        let context = DragDropContext::new();
+        let left = Rc::new(Cell::new(0));
+        let cancelled = Rc::new(Cell::new(0));
+        let dropped = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(Widget::row(vec![
+            Draggable::new(
+                context.clone(),
+                7_u32,
+                Widget::box_(Size::new(100., 80.), Color::WHITE),
+            )
+            .on_cancel({
+                let cancelled = cancelled.clone();
+                move |_| cancelled.set(cancelled.get() + 1)
+            })
+            .into(),
+            DragTarget::new(context, Widget::box_(Size::new(100., 80.), Color::BLACK))
+                .on_leave({
+                    let left = left.clone();
+                    move |_| left.set(left.get() + 1)
+                })
+                .on_drop({
+                    let dropped = dropped.clone();
+                    move |_| dropped.set(dropped.get() + 1)
+                })
+                .into(),
+        ]))
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(200., 80.)));
+        let now = Instant::now();
+        for (phase, position) in [
+            (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(35., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(140., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(230., 20.)),
+            (incular_core::PointerPhase::Cancel, Offset::new(230., 20.)),
+        ] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer: 31,
+                position,
+                phase,
+                time: now,
+            });
+        }
+        assert_eq!(left.get(), 1);
+        assert_eq!(cancelled.get(), 1);
+        assert_eq!(dropped.get(), 0);
+    }
+
+    #[test]
+    fn dismissible_claims_its_directional_drag_before_callback() {
+        let dismissals = Rc::new(Cell::new(0));
+        let mut tree = WidgetTree::new();
+        tree.mount(
+            Dismissible::new(
+                DismissDirection::Horizontal,
+                Widget::box_(Size::new(120., 80.), Color::WHITE),
+                {
+                    let dismissals = dismissals.clone();
+                    move |_| dismissals.set(dismissals.get() + 1)
+                },
+            )
+            .threshold(40.)
+            .into(),
+        )
+        .unwrap();
+        tree.layout(Constraints::tight(Size::new(120., 80.)));
+        let now = Instant::now();
+        for (phase, position) in [
+            (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
+            (incular_core::PointerPhase::Move, Offset::new(70., 20.)),
+            (incular_core::PointerPhase::Up, Offset::new(70., 20.)),
+        ] {
+            let _ = tree.dispatch_gesture(PointerEvent {
+                pointer: 32,
+                position,
+                phase,
+                time: now,
+            });
+        }
+        assert_eq!(dismissals.get(), 1);
     }
 
     #[test]

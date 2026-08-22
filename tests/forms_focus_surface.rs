@@ -29,16 +29,11 @@ fn facade_exposes_form_autocomplete_focus_and_typed_actions() {
     actions.register(Command::new("save"), || {});
     let mut shortcuts = Shortcuts::new();
     shortcuts.bind(
-        incular::gestures::ShortcutKey::new(KeyCode::KeyA, Modifiers::default()),
+        incular::gestures::ShortcutKey::new(Code::KeyA, Modifiers::default()),
         "save",
     );
     assert!(shortcuts.handle_actions(
-        KeyEvent {
-            code: KeyCode::KeyA,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::default(),
-        },
+        KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::Unidentified), Code::KeyA),
         &actions,
     ));
 }

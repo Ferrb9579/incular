@@ -3,11 +3,28 @@
 //! Layout stays in logical pixels. This crate is the single conversion boundary
 //! between those coordinates and physical surface/window coordinates.
 
+use directories::ProjectDirs;
 use incular_core::{
-    ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset, PointerPhase, Size,
+    Code, ImeEvent, InputEvent, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers,
+    NamedKey, Offset, PointerPhase, Size,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-use std::fmt;
+use std::{fmt, path::PathBuf};
+
+/// Resolves the persistent, local application-data directory through the
+/// operating system's standard project-directory conventions.
+///
+/// The caller supplies a stable application identifier (normally a reverse
+/// domain ID).  Incular intentionally never derives it from a window title,
+/// executable path, current directory, or transient window ID.  Restoration
+/// snapshots belong in local data rather than the regenerable cache directory.
+#[must_use]
+pub fn application_data_local_directory(application_id: &str) -> Option<PathBuf> {
+    (!application_id.trim().is_empty())
+        .then(|| ProjectDirs::from("org", "Incular", application_id))
+        .flatten()
+        .map(|directories| directories.data_local_dir().to_path_buf())
+}
 
 /// Stable identity for an Incular window.
 ///
@@ -469,62 +486,52 @@ pub fn key_event(
     event: &winit::event::KeyEvent,
     modifiers: winit::keyboard::ModifiersState,
 ) -> PlatformEvent {
-    use winit::keyboard::{Key, KeyCode as NativeKeyCode, PhysicalKey};
-    let code = match event.physical_key {
-        PhysicalKey::Code(NativeKeyCode::Tab) => KeyCode::Tab,
-        PhysicalKey::Code(NativeKeyCode::Enter) => KeyCode::Enter,
-        PhysicalKey::Code(NativeKeyCode::Escape) => KeyCode::Escape,
-        PhysicalKey::Code(NativeKeyCode::Backspace) => KeyCode::Backspace,
-        PhysicalKey::Code(NativeKeyCode::Delete) => KeyCode::Delete,
-        PhysicalKey::Code(NativeKeyCode::ArrowLeft) => KeyCode::ArrowLeft,
-        PhysicalKey::Code(NativeKeyCode::ArrowRight) => KeyCode::ArrowRight,
-        PhysicalKey::Code(NativeKeyCode::ArrowUp) => KeyCode::ArrowUp,
-        PhysicalKey::Code(NativeKeyCode::ArrowDown) => KeyCode::ArrowDown,
-        PhysicalKey::Code(NativeKeyCode::Home) => KeyCode::Home,
-        PhysicalKey::Code(NativeKeyCode::End) => KeyCode::End,
-        PhysicalKey::Code(NativeKeyCode::PageUp) => KeyCode::PageUp,
-        PhysicalKey::Code(NativeKeyCode::PageDown) => KeyCode::PageDown,
-        PhysicalKey::Code(NativeKeyCode::KeyA) => KeyCode::KeyA,
-        PhysicalKey::Code(NativeKeyCode::KeyC) => KeyCode::KeyC,
-        PhysicalKey::Code(NativeKeyCode::KeyV) => KeyCode::KeyV,
-        PhysicalKey::Code(NativeKeyCode::KeyX) => KeyCode::KeyX,
-        _ => match &event.logical_key {
-            Key::Named(named) => named_key_code(*named),
-            _ => KeyCode::Other,
+    PlatformEvent::Input(InputEvent::Key(KeyboardEvent {
+        code: physical_code(event.physical_key),
+        key: logical_key(&event.logical_key),
+        state: if event.state.is_pressed() {
+            KeyState::Down
+        } else {
+            KeyState::Up
         },
-    };
-    PlatformEvent::Input(InputEvent::Key(KeyEvent {
-        code,
-        pressed: event.state.is_pressed(),
+        location: match event.location {
+            winit::keyboard::KeyLocation::Standard => Location::Standard,
+            winit::keyboard::KeyLocation::Left => Location::Left,
+            winit::keyboard::KeyLocation::Right => Location::Right,
+            winit::keyboard::KeyLocation::Numpad => Location::Numpad,
+        },
         repeat: event.repeat,
-        modifiers: Modifiers {
-            shift: modifiers.shift_key(),
-            control: modifiers.control_key(),
-            alt: modifiers.alt_key(),
-            super_key: modifiers.super_key(),
-            // This Linux backend treats Control as the desktop shortcut key.
-            command: modifiers.control_key(),
-        },
+        modifiers: normalized_modifiers(modifiers),
+        // Winit emits preedit/commit separately and has no per-key composing flag.
+        is_composing: false,
     }))
 }
-fn named_key_code(key: winit::keyboard::NamedKey) -> KeyCode {
-    use winit::keyboard::NamedKey;
+fn physical_code(key: winit::keyboard::PhysicalKey) -> Code {
     match key {
-        NamedKey::Tab => KeyCode::Tab,
-        NamedKey::Enter => KeyCode::Enter,
-        NamedKey::Escape => KeyCode::Escape,
-        NamedKey::Backspace => KeyCode::Backspace,
-        NamedKey::Delete => KeyCode::Delete,
-        NamedKey::ArrowLeft => KeyCode::ArrowLeft,
-        NamedKey::ArrowRight => KeyCode::ArrowRight,
-        NamedKey::ArrowUp => KeyCode::ArrowUp,
-        NamedKey::ArrowDown => KeyCode::ArrowDown,
-        NamedKey::Home => KeyCode::Home,
-        NamedKey::End => KeyCode::End,
-        NamedKey::PageUp => KeyCode::PageUp,
-        NamedKey::PageDown => KeyCode::PageDown,
-        _ => KeyCode::Other,
+        winit::keyboard::PhysicalKey::Code(code) => {
+            format!("{code:?}").parse().unwrap_or(Code::Unidentified)
+        }
+        winit::keyboard::PhysicalKey::Unidentified(_) => Code::Unidentified,
     }
+}
+fn logical_key(key: &winit::keyboard::Key) -> KeyboardKey {
+    match key {
+        winit::keyboard::Key::Named(named) => format!("{named:?}")
+            .parse::<NamedKey>()
+            .map(KeyboardKey::Named)
+            .unwrap_or(KeyboardKey::Named(NamedKey::Unidentified)),
+        winit::keyboard::Key::Character(text) => KeyboardKey::Character(text.to_string()),
+        winit::keyboard::Key::Dead(_) => KeyboardKey::Named(NamedKey::Dead),
+        winit::keyboard::Key::Unidentified(_) => KeyboardKey::Named(NamedKey::Unidentified),
+    }
+}
+fn normalized_modifiers(state: winit::keyboard::ModifiersState) -> Modifiers {
+    let mut modifiers = Modifiers::default();
+    modifiers.set(Modifiers::SHIFT, state.shift_key());
+    modifiers.set(Modifiers::CONTROL, state.control_key());
+    modifiers.set(Modifiers::ALT, state.alt_key());
+    modifiers.set(Modifiers::META, state.super_key());
+    modifiers
 }
 #[must_use]
 pub fn text_event(event: &winit::event::KeyEvent) -> Option<PlatformEvent> {
@@ -703,10 +710,24 @@ mod tests {
         assert!(is_committed_text("é"));
     }
     #[test]
-    fn named_backspace_falls_back_when_no_physical_code_is_available() {
+    fn standardized_key_mapping_preserves_named_and_physical_values() {
         assert_eq!(
-            named_key_code(winit::keyboard::NamedKey::Backspace),
-            KeyCode::Backspace
+            physical_code(winit::keyboard::PhysicalKey::Code(
+                winit::keyboard::KeyCode::Backspace,
+            )),
+            Code::Backspace
         );
+        assert_eq!(
+            logical_key(&winit::keyboard::Key::Named(
+                winit::keyboard::NamedKey::Backspace,
+            )),
+            KeyboardKey::Named(NamedKey::Backspace)
+        );
+    }
+
+    #[test]
+    fn application_data_directory_requires_a_stable_identifier() {
+        assert!(application_data_local_directory("").is_none());
+        assert!(application_data_local_directory("  ").is_none());
     }
 }

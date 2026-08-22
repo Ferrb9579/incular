@@ -4,7 +4,8 @@
 //! details. `incular-runtime` owns their current value and invalidation; native
 //! adapters only normalize platform data into this snapshot.
 
-use crate::{EdgeInsets, TextDirection};
+use crate::{EdgeInsets, LocaleResolver, TextDirection};
+use icu_locale::Locale;
 use incular_core::Size;
 
 /// The platform colour preference known to the application.
@@ -38,7 +39,8 @@ pub struct RuntimeEnvironment {
     pub text_scale: f32,
     pub safe_insets: EdgeInsets,
     pub view_insets: EdgeInsets,
-    pub locales: Vec<String>,
+    /// Ordered locale preferences parsed and canonicalized by ICU4X.
+    pub locales: Vec<Locale>,
     pub text_direction: TextDirection,
     pub reduced_motion: bool,
     pub input: InputCapabilities,
@@ -84,13 +86,22 @@ impl RuntimeEnvironment {
         };
         self.safe_insets = self.safe_insets.normalized();
         self.view_insets = self.view_insets.normalized();
-        self.locales.retain(|locale| !locale.trim().is_empty());
+        if let Some(locale) = self.primary_locale() {
+            self.text_direction = LocaleResolver::text_direction(locale);
+        }
         self
     }
 
     #[must_use]
-    pub fn primary_locale(&self) -> Option<&str> {
-        self.locales.first().map(String::as_str)
+    pub fn primary_locale(&self) -> Option<&Locale> {
+        self.locales.first()
+    }
+
+    /// Resolves application-supported locales from the platform's ordered
+    /// preferences using ICU4X parent-locale fallback.
+    #[must_use]
+    pub fn resolve_locale(&self, supported: &[Locale]) -> Option<Locale> {
+        LocaleResolver::resolve(&self.locales, supported)
     }
 }
 
@@ -104,13 +115,36 @@ mod tests {
             scale_factor: f64::NAN,
             text_scale: -1.,
             safe_insets: EdgeInsets::only(-1., 2., f32::NAN, 4.),
-            locales: vec!["".into(), "en-IN".into()],
+            locales: vec!["en-IN".parse().expect("valid ICU locale")],
             ..RuntimeEnvironment::default()
         }
         .normalized();
         assert_eq!(environment.scale_factor, 1.);
         assert_eq!(environment.text_scale, 1.);
         assert_eq!(environment.safe_insets, EdgeInsets::only(0., 2., 0., 4.));
-        assert_eq!(environment.primary_locale(), Some("en-IN"));
+        assert_eq!(
+            environment
+                .primary_locale()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("en-IN")
+        );
+    }
+
+    #[test]
+    fn locales_use_icu_canonical_casing() {
+        let locale: Locale = "en-us".parse().expect("valid ICU locale");
+        assert_eq!(locale.to_string(), "en-US");
+    }
+
+    #[test]
+    fn normalized_locale_resolves_direction_with_icu() {
+        let environment = RuntimeEnvironment {
+            locales: vec!["ar".parse().expect("valid ICU locale")],
+            text_direction: TextDirection::Ltr,
+            ..RuntimeEnvironment::default()
+        }
+        .normalized();
+        assert_eq!(environment.text_direction, TextDirection::Rtl);
     }
 }

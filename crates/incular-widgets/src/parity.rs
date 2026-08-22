@@ -2,7 +2,7 @@
 //! tree.  These types deliberately compose the small renderer-native set
 //! instead of mirroring Flutter's inheritance hierarchy.
 
-use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
+use incular_config::{Alignment, Axis, Constraints, EdgeInsets, FlexFit};
 use incular_core::{Color, Size};
 
 use crate::{DecoratedBox, Widget};
@@ -84,6 +84,95 @@ impl From<Flex> for Widget {
             Axis::Horizontal => Widget::row(value.children),
             Axis::Vertical => Widget::column(value.children),
         }
+    }
+}
+
+/// Allocates a proportional share of a bounded `Row` or `Column` main axis.
+#[derive(Clone)]
+pub struct Flexible {
+    flex: u32,
+    fit: FlexFit,
+    child: Widget,
+}
+impl Flexible {
+    #[must_use]
+    pub fn new(flex: u32, child: impl Into<Widget>) -> Self {
+        Self {
+            flex: flex.max(1),
+            fit: FlexFit::Loose,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn tight(mut self) -> Self {
+        self.fit = FlexFit::Tight;
+        self
+    }
+    #[must_use]
+    pub fn fit(mut self, fit: FlexFit) -> Self {
+        self.fit = fit;
+        self
+    }
+}
+impl From<Flexible> for Widget {
+    fn from(value: Flexible) -> Self {
+        Widget::flexible(value.flex, value.fit, value.child)
+    }
+}
+
+/// A tight flexible child. `Spacer` is `Expanded` around a zero-size box.
+#[derive(Clone)]
+pub struct Expanded {
+    flex: u32,
+    child: Widget,
+}
+impl Expanded {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            flex: 1,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn flex(mut self, flex: u32) -> Self {
+        self.flex = flex.max(1);
+        self
+    }
+}
+impl From<Expanded> for Widget {
+    fn from(value: Expanded) -> Self {
+        Widget::flexible(value.flex, FlexFit::Tight, value.child)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spacer {
+    flex: u32,
+}
+impl Spacer {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { flex: 1 }
+    }
+    #[must_use]
+    pub fn flex(mut self, flex: u32) -> Self {
+        self.flex = flex.max(1);
+        self
+    }
+}
+impl Default for Spacer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl From<Spacer> for Widget {
+    fn from(value: Spacer) -> Self {
+        Widget::flexible(
+            value.flex,
+            FlexFit::Tight,
+            Widget::fixed_box(Size::ZERO, Color::TRANSPARENT),
+        )
     }
 }
 
@@ -203,6 +292,124 @@ impl Stack {
 impl From<Stack> for Widget {
     fn from(value: Stack) -> Self {
         Widget::stack(value.alignment, value.children)
+    }
+}
+
+/// Pins one child to supplied stack edges or explicit dimensions.
+#[derive(Clone)]
+pub struct Positioned {
+    left: Option<f32>,
+    top: Option<f32>,
+    right: Option<f32>,
+    bottom: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
+    child: Widget,
+}
+impl Positioned {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            left: None,
+            top: None,
+            right: None,
+            bottom: None,
+            width: None,
+            height: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn left(mut self, value: f32) -> Self {
+        self.left = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn top(mut self, value: f32) -> Self {
+        self.top = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn right(mut self, value: f32) -> Self {
+        self.right = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn bottom(mut self, value: f32) -> Self {
+        self.bottom = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn width(mut self, value: f32) -> Self {
+        self.width = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn height(mut self, value: f32) -> Self {
+        self.height = Some(value);
+        self
+    }
+}
+impl From<Positioned> for Widget {
+    fn from(value: Positioned) -> Self {
+        Widget::positioned(
+            value.left,
+            value.top,
+            value.right,
+            value.bottom,
+            value.width,
+            value.height,
+            value.child,
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct IndexedStack {
+    alignment: Alignment,
+    index: usize,
+    children: Vec<Widget>,
+}
+impl IndexedStack {
+    #[must_use]
+    pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
+        Self {
+            alignment: Alignment::TOP_LEFT,
+            index: 0,
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+    #[must_use]
+    pub fn alignment(mut self, value: Alignment) -> Self {
+        self.alignment = value;
+        self
+    }
+    #[must_use]
+    pub fn index(mut self, value: usize) -> Self {
+        self.index = value;
+        self
+    }
+}
+impl From<IndexedStack> for Widget {
+    fn from(value: IndexedStack) -> Self {
+        Widget::indexed_stack(value.alignment, value.index, value.children)
+    }
+}
+
+pub struct LayoutBuilder {
+    builder: Box<dyn Fn(Constraints) -> Widget>,
+}
+impl LayoutBuilder {
+    #[must_use]
+    pub fn new(builder: impl Fn(Constraints) -> Widget + 'static) -> Self {
+        Self {
+            builder: Box::new(builder),
+        }
+    }
+}
+impl From<LayoutBuilder> for Widget {
+    fn from(value: LayoutBuilder) -> Self {
+        Widget::layout_builder(value.builder)
     }
 }
 
@@ -338,6 +545,83 @@ impl ConstrainedBox {
 impl From<ConstrainedBox> for Widget {
     fn from(value: ConstrainedBox) -> Self {
         Widget::constrained(value.constraints, value.child)
+    }
+}
+
+/// Applies maximum dimensions only where the incoming axis is unbounded.
+#[derive(Clone)]
+pub struct LimitedBox {
+    max_width: f32,
+    max_height: f32,
+    child: Widget,
+}
+impl LimitedBox {
+    #[must_use]
+    pub fn new(max_width: f32, max_height: f32, child: impl Into<Widget>) -> Self {
+        Self {
+            max_width,
+            max_height,
+            child: child.into(),
+        }
+    }
+}
+impl From<LimitedBox> for Widget {
+    fn from(value: LimitedBox) -> Self {
+        Widget::limited_box(value.max_width, value.max_height, value.child)
+    }
+}
+
+/// Lets a child receive independently configured constraints while this
+/// wrapper itself continues reporting a size constrained by its parent.
+#[derive(Clone)]
+pub struct OverflowBox {
+    min_width: Option<f32>,
+    max_width: Option<f32>,
+    min_height: Option<f32>,
+    max_height: Option<f32>,
+    child: Widget,
+}
+impl OverflowBox {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            child: child.into(),
+        }
+    }
+    #[must_use]
+    pub fn min_width(mut self, value: f32) -> Self {
+        self.min_width = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn max_width(mut self, value: f32) -> Self {
+        self.max_width = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn min_height(mut self, value: f32) -> Self {
+        self.min_height = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn max_height(mut self, value: f32) -> Self {
+        self.max_height = Some(value);
+        self
+    }
+}
+impl From<OverflowBox> for Widget {
+    fn from(value: OverflowBox) -> Self {
+        Widget::overflow_box(
+            value.min_width,
+            value.max_width,
+            value.min_height,
+            value.max_height,
+            value.child,
+        )
     }
 }
 

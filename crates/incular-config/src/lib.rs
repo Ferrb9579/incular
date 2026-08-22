@@ -8,6 +8,7 @@ mod alignment;
 mod constraints;
 mod environment;
 mod insets;
+mod localization;
 
 pub use alignment::{
     Alignment, AlignmentDirectional, Axis, AxisDirection, CrossAxisAlignment, FlexFit,
@@ -16,4 +17,9 @@ pub use alignment::{
 };
 pub use constraints::{ConstraintError, Constraints};
 pub use environment::{Brightness, InputCapabilities, RuntimeEnvironment};
+pub use icu_locale::Locale;
 pub use insets::EdgeInsets;
+pub use localization::{
+    LocaleResolver, LocalizationCatalog, LocalizationError, LocalizedMessage, PluralCategory,
+    PluralForms,
+};

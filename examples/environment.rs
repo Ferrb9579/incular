@@ -14,7 +14,10 @@ fn main() {
             environment.scale_factor,
             environment.text_scale,
             environment.brightness,
-            environment.primary_locale().unwrap_or("platform default"),
+            environment
+                .primary_locale()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "platform default".into()),
             environment.text_direction,
             environment.safe_insets,
         );

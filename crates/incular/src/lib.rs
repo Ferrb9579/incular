@@ -25,21 +25,24 @@ pub use incular_widgets as widgets;
 pub mod prelude {
     pub use incular_config::{
         Alignment, AlignmentDirectional, Axis, AxisDirection, Brightness, Constraints,
-        CrossAxisAlignment, EdgeInsets, FlexFit, InputCapabilities, MainAxisAlignment,
-        MainAxisSize, RuntimeEnvironment, TextDirection, VerticalDirection, WrapAlignment,
-        WrapCrossAlignment,
+        CrossAxisAlignment, EdgeInsets, FlexFit, InputCapabilities, Locale, LocaleResolver,
+        LocalizationCatalog, LocalizationError, LocalizedMessage, MainAxisAlignment, MainAxisSize,
+        PluralCategory, PluralForms, RuntimeEnvironment, TextDirection, VerticalDirection,
+        WrapAlignment, WrapCrossAlignment,
     };
     pub use incular_core::{
-        Color, HslColor, HsvColor, ImeEvent, InputEvent, KeyCode, KeyEvent, Modifiers, Offset,
-        PointerPhase, RestorationKey, RestorationKeyError, RestorationScope, Size,
+        Code, Color, HslColor, HsvColor, ImeEvent, InputEvent, KeyState, KeyboardEvent,
+        KeyboardKey, Location, Modifiers, NamedKey, Offset, PointerPhase, RestorationKey,
+        RestorationKeyError, RestorationScope, Size, Transform as AffineTransform,
     };
     pub use incular_image::{
         DecodedImage, ImageCache, ImageCacheDiagnostics, ImageError, ImageHandle, ImageId,
         ImageSource,
     };
     pub use incular_navigation::{
-        BottomSheet, Dialog, ModalBarrier, NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
-        NavigationRestoreReport, Navigator, NavigatorSnapshot, Overlay, OverlayEntry, Page,
+        BackDispatchReport, BackDispatcher, BottomSheet, Dialog, ModalBarrier,
+        NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigationEvent, NavigationRestoreReport, Navigator,
+        NavigatorObserver, NavigatorSnapshot, Overlay, OverlayEntry, Page, PopDecision, PopResult,
         RestorableNavigationError, RestorableRoute, RestorableRouteBuildError, RestorableRouteId,
         RestorableRouteIdError, RestorableRouteRegistrationError, Route, RouteRegistry,
         RouteScopeKey, RouteScopeKeyError, RouteTransition,
@@ -53,7 +56,7 @@ pub mod prelude {
         BlendMode, Border, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii, Decoration,
         DisplayList, DropShadowEffect, Effect, EffectChain, FillRule, GaussianBlur, GradientId,
         GradientStop, GradientStops, ImageSampling, LineCap, LineJoin, LinearGradient, Path,
-        PathBuilder, PathId, RRect, RadialGradient, Stroke, blend_premultiplied,
+        PathBuilder, PathId, RRect, RadialGradient, Stroke, SweepGradient, blend_premultiplied,
     };
     pub use incular_runtime::{
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
@@ -70,25 +73,33 @@ pub mod prelude {
         SemanticsDiagnostics, SemanticsTree,
     };
     pub use incular_text::{
-        EditableText, FontFamily, FontStyle, FontWeight, RichText, TextAlign, TextScaler, TextSpan,
-        TextStyle, WidgetSpan,
+        EditableText, FontFamily, FontStyle, FontWeight, RichText, TextAlign, TextLayoutOptions,
+        TextOverflow, TextScaler, TextSpan, TextStyle, WidgetSpan,
     };
     pub use incular_widgets::{
-        ActionId, Actions, Align, AspectRatio, Autocomplete, AutovalidateMode, Baseline, Blend,
-        Blur, BlurController, Button, Center, ColorFilterController, ColorFiltered,
-        ColorMatrixController, ColoredBox, Column, Command, ConstrainedBox, CustomPaint,
-        CustomScrollView, DecoratedBox, DragCallbacks, DragEndDetails, DragGestureDetector,
-        DragUpdateDetails, DropShadow, DropShadowController, Effects, FadeTransition, Flex,
-        FocusManager, FocusNode, Form, FormField, FormFieldId, FractionallySizedBox,
-        GestureCallbacks, GestureDetector, GestureRegion, GridView, Icon, Image, ImageFit,
-        ImageRepeat, Key, ListView, MouseRegion, Offstage, Opacity, OpacityController, Padding,
-        PageController, PageView, PathView, PointerEvent, RepaintBoundary, Row, SafeArea,
-        ScaleGestureDetector, ScaleUpdateDetails, ScrollController, ScrollView,
-        ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, Semantics, Shortcuts,
-        SizedBox, SlideTransition, Sliver, SliverAppBar, SliverBox, SliverGrid, SliverList,
-        SliverPadding, SliverPersistentHeader, Stack, Table, Text, TextArea, TextEditingController,
-        TextEditingValue, TextField, TextRange, TextSelection, Transition, TranslationController,
-        UnconstrainedBox, VirtualList, Visibility, Widget, Wrap, icons,
+        AbsorbPointer, ActionId, Actions, Align, AspectRatio, Autocomplete, AutovalidateMode,
+        Baseline, Blend, Blur, BlurController, BoundaryPhysics, Button, Center,
+        ColorFilterController, ColorFiltered, ColorMatrixController, ColoredBox, Column, Command,
+        ConstrainedBox, CustomPaint, CustomScrollView, DecoratedBox, DismissDirection, Dismissible,
+        DragCallbacks, DragDropContext, DragEndDetails, DragFeedback, DragGestureDetector,
+        DragTarget, DragUpdateDetails, Draggable, DropShadow, DropShadowController, Effects,
+        Expanded, FadeTransition, FittedBox, Flex, Flexible, FocusManager, FocusNode, Form,
+        FormField, FormFieldId, FractionallySizedBox, GestureAction, GestureArena,
+        GestureArenaEntry, GestureArenaKey, GestureArenaMember, GestureCallbacks, GestureDecision,
+        GestureDetector, GestureDisposition, GestureRegion, GridView, Icon, IgnorePointer, Image,
+        ImageFit, ImageRepeat, IndexedStack, Key, LayoutBuilder, LimitedBox, ListView,
+        MeasuredExtentIndex, MouseRegion, NestedScrollCoordinator, Offstage, Opacity,
+        OpacityController, OverflowBox, Padding, PageController, PageView, PathView,
+        PointerCapture, PointerEvent, Positioned, RepaintBoundary, RotationController,
+        RotationTransition, Row, SafeArea, ScaleController, ScaleGestureDetector, ScaleTransition,
+        ScaleUpdateDetails, ScrollController, ScrollDelta, ScrollPhysics, ScrollSpringStep,
+        ScrollView, Scrollability, ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle,
+        SelectableText, SelectionArea, SelectionAreaController, Semantics, Shortcuts, SizedBox,
+        SlideTransition, Sliver, SliverAppBar, SliverBox, SliverGrid, SliverList, SliverPadding,
+        SliverPersistentHeader, SnapPhysics, Spacer, Stack, Table, Text, TextArea,
+        TextEditingController, TextEditingValue, TextField, TextRange, TextSelection, Transform,
+        Transition, TranslationController, UnconstrainedBox, VirtualList, Visibility, Widget, Wrap,
+        icons,
     };
 }
 

@@ -37,6 +37,34 @@ instance, surface, adapter/device/queue, static unit-rectangle mesh, retained
 pipeline, and geometrically-grown instance buffer. Layout uses logical pixels;
 the renderer applies scale while converting instances to physical/NDC space.
 
+## Standard-library authorities
+
+Low-level standardized behavior has one authority. `keyboard-types` defines
+logical keys, physical codes, locations, modifiers, repeat and key state after
+the Winit-to-platform conversion. ICU4X supplies the canonical locale model,
+locale fallback, script directionality, decimal/date formatting, and standalone
+segmentation; application message catalogs implement the small
+`LocalizationCatalog` boundary in `incular-config`, rather than a framework
+translation parser. ICU4X is deliberately not scattered through widget code.
+`directories::ProjectDirs` selects production configuration, data and cache
+locations, while restoration preserves its explicit in-memory/file overrides
+for tests.
+
+Kurbo is the advanced vector-geometry authority: retained `Transform` values
+wrap `kurbo::Affine`, and paths wrap `kurbo::BezPath`; Incular keeps compact
+`f32` `Size`, `Offset`, and `Rect` values for ordinary layout. Lyon remains the
+tessellator and WGPU remains the renderer. Palette owns CPU sRGB/linear, HSL,
+and HSV conversions; WGSL retains equivalent explicit GPU math and the
+established straight/premultiplied-alpha boundary.
+
+Do not reimplement Unicode segmentation, keyboard vocabularies, OS directory
+selection, affine/Bezier algorithms, CPU color-space transfer functions, or
+text shaping/fallback/line-breaking in Inc﻿ular. The only retained exceptions
+are framework architecture and renderer contracts: Widget/Element/RenderObject
+/layer lifecycle, Fontdue glyph rasterization into the R8 atlas, Lyon
+tessellation, and WGPU lowering. Parley/Fontique/HarfRust are the text-layout
+authority; Fontdue remains the production rasterizer.
+
 Current dependency DAG: `core -> {layout, rendering, animation, assets,
 platform}; {core, layout, rendering} -> widgets; widgets -> accessibility;
 {widgets, layout, rendering, core, accessibility, animation, assets} -> runtime;
@@ -69,12 +97,12 @@ before dispatch. Hover and pressed visual state are paint-only changes.
 
 ## Text pipeline
 
-`incular-assets` owns `FontHandle` bytes and `FontId`; `incular-text` discovers
-system fonts with `fontdb`, shapes UTF-8/OpenType text using `rustybuzz`, and
-uses Unicode break opportunities for logical-pixel lines. Its bounded 256-entry
-cache keys only metric inputs, not foreground color. Text layouts expose
-baseline/line metrics and contiguous glyph arrays through renderer-neutral
-`PaintCommand::GlyphRun` values.
+`incular-assets` owns `FontHandle` bytes and `FontId`; `incular-text` uses
+Parley's `FontContext` and reusable `LayoutContext` for system-font discovery,
+UTF-8/OpenType shaping, fallback, bidirectional ordering, and logical-pixel
+line breaking. Its bounded 256-entry cache keys only metric inputs, not
+foreground color. Text layouts expose baseline/line metrics and contiguous glyph
+arrays through renderer-neutral `PaintCommand::GlyphRun` values.
 
 The GPU boundary applies the existing single DPI scale factor to glyph raster
 size without changing logical layout. `incular-wgpu` owns a retained glyph atlas
@@ -368,7 +396,14 @@ rounded masks share the analytic RRect radius convention.
 
 ## Font fallback
 
-`incular-text` owns the renderer-neutral `fontdb` database and resolves `SystemUi`, generic, named, and application fallback families before shaping. Coverage is checked for whole grapheme clusters and cached by style/fallback chain/database generation; a one-time per-script candidate index avoids a full installed-font scan for every character. Each resolved face shapes its own Rustybuzz run, preserving its advances and bidi direction. A logical line carries several `GlyphRun`s on one baseline plus flattened caret/hit-test geometry. `FontId` incorporates collection-face identity, so `incular-wgpu` safely keys all fallback glyph masks in the shared Fontdue/R8 atlas. Color glyph formats remain explicitly outside the current alpha-mask path.
+`incular-text` owns Parley's renderer-neutral Fontique collection and resolves
+`SystemUi`, generic, named, and application fallback families before shaping.
+Parley keeps grapheme, script, coverage, fallback, bidi, and line-break policy
+coherent for each layout. A logical line carries several `GlyphRun`s on one
+baseline plus flattened caret/hit-test geometry. `FontId` incorporates
+collection-face identity, so `incular-wgpu` safely keys all fallback glyph masks
+in the shared Fontdue/R8 atlas. Color glyph formats remain explicitly outside
+the current alpha-mask path.
 
 ## Text coverage quality
 

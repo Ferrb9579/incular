@@ -62,6 +62,22 @@ pub enum TextAlign {
     End,
 }
 
+/// What to do when a paragraph cannot fit its configured line or width limit.
+///
+/// `Ellipsis` is a shaped U+2026 glyph run in the paragraph's resolved font;
+/// Incular never slices the UTF-8 source string to synthesize it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextOverflow {
+    /// Keep only the visible lines. A retained parent may additionally clip
+    /// painting to its bounds.
+    #[default]
+    Clip,
+    /// Replace the omitted suffix with a shaped ellipsis.
+    Ellipsis,
+    /// Keep the complete logical layout even if its painted bounds overflow.
+    Visible,
+}
+
 /// Text scaling policy applied after a style's logical font size is chosen.
 /// Keeping this separate from [`TextStyle`] lets the same style be rendered at
 /// different accessibility scales without rebuilding a span tree.
@@ -143,6 +159,11 @@ pub struct TextStyle {
     pub color: Color,
     pub line_height: Option<f32>,
     pub letter_spacing: f32,
+    /// CSS-style OpenType variation settings (for example `"wght" 650`).
+    /// Parley validates and applies settings supported by the selected face.
+    pub font_variations: Option<Arc<str>>,
+    /// CSS-style OpenType feature settings (for example `"liga" 0`).
+    pub font_features: Option<Arc<str>>,
 }
 
 impl TextStyle {
@@ -226,6 +247,18 @@ impl TextStyle {
         self
     }
 
+    #[must_use]
+    pub fn font_variations(mut self, settings: impl Into<Arc<str>>) -> Self {
+        self.font_variations = Some(settings.into());
+        self
+    }
+
+    #[must_use]
+    pub fn font_features(mut self, settings: impl Into<Arc<str>>) -> Self {
+        self.font_features = Some(settings.into());
+        self
+    }
+
     /// Returns a style with values from `other` replacing this style where
     /// `other` has a meaningful value. This is useful for inherited spans.
     /// Since the historical `TextStyle` stores concrete values, zero/`None`
@@ -248,6 +281,12 @@ impl TextStyle {
         }
         if other.letter_spacing != 0.0 {
             merged.letter_spacing = other.letter_spacing;
+        }
+        if other.font_variations.is_some() {
+            merged.font_variations = other.font_variations.clone();
+        }
+        if other.font_features.is_some() {
+            merged.font_features = other.font_features.clone();
         }
         merged
     }
@@ -291,6 +330,16 @@ impl TextStyle {
                 (None, None) => None,
             },
             letter_spacing: mix(a.letter_spacing, b.letter_spacing),
+            font_variations: if t < 0.5 {
+                a.font_variations.clone()
+            } else {
+                b.font_variations.clone()
+            },
+            font_features: if t < 0.5 {
+                a.font_features.clone()
+            } else {
+                b.font_features.clone()
+            },
         }
     }
 }
@@ -306,6 +355,8 @@ impl Default for TextStyle {
             color: Color::WHITE,
             line_height: None,
             letter_spacing: 0.0,
+            font_variations: None,
+            font_features: None,
         }
     }
 }

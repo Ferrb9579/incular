@@ -104,6 +104,11 @@ and stale-command state without leaking native details.
 
 ## Opt-in state restoration
 
+The default file-backed restoration store resolves its persistent location with
+`directories::ProjectDirs` through `incular-platform`. It uses the OS local
+application-data directory, never the cache directory; explicit file and
+in-memory stores remain available for embedding and tests.
+
 Restoration persists small, declarative application values—not a live widget,
 element, render, layer, semantics, native-window, WGPU, gesture, callback, or
 Tokio-task graph. It is disabled unless the application uses

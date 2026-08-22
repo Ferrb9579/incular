@@ -26,6 +26,9 @@ path = "../../examples/canvas_layers.rs"
 name = "counter"
 path = "../../examples/counter.rs"
 [[example]]
+name = "custom"
+path = "../../examples/custom.rs"
+[[example]]
 name = "effects"
 path = "../../examples/effects.rs"
 [[example]]
@@ -35,11 +38,20 @@ path = "../../examples/environment.rs"
 name = "gesture_gallery"
 path = "../../examples/gesture_gallery.rs"
 [[example]]
+name = "interaction_complete"
+path = "../../examples/interaction_complete.rs"
+[[example]]
 name = "images"
 path = "../../examples/images.rs"
 [[example]]
 name = "layout_gallery"
 path = "../../examples/layout_gallery.rs"
+[[example]]
+name = "layout_complete"
+path = "../../examples/layout_complete.rs"
+[[example]]
+name = "localization"
+path = "../../examples/localization.rs"
 [[example]]
 name = "multi_window"
 path = "../../examples/multi_window.rs"
@@ -55,6 +67,9 @@ path = "../../examples/painting.rs"
 [[example]]
 name = "scroll"
 path = "../../examples/scroll.rs"
+[[example]]
+name = "scrolling_complete"
+path = "../../examples/scrolling_complete.rs"
 [[example]]
 name = "responsive_layout"
 path = "../../examples/responsive_layout.rs"

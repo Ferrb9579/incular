@@ -2,6 +2,11 @@
 
 use std::ops::{Add, BitOr, Sub};
 
+use palette::{FromColor, Hsl, Hsv, Srgba, WithAlpha};
+
+pub use kurbo::Affine;
+use kurbo::{Point, Vec2};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Size {
     pub width: f32,
@@ -121,13 +126,23 @@ impl Color {
         }
     }
 
+    /// Converts the compact encoded sRGBA8 value to straight, linear-sRGB
+    /// components. Palette owns the CPU transfer function; WGSL retains its
+    /// equivalent explicit shader-side math at the GPU boundary.
     #[must_use]
-    pub const fn to_linear_rgba(self) -> [f32; 4] {
-        [
+    pub fn to_linear_rgba(self) -> [f32; 4] {
+        let linear = Srgba::new(
             self.red as f32 / 255.0,
             self.green as f32 / 255.0,
             self.blue as f32 / 255.0,
             self.alpha as f32 / 255.0,
+        )
+        .into_linear();
+        [
+            linear.color.red,
+            linear.color.green,
+            linear.color.blue,
+            linear.alpha,
         ]
     }
 
@@ -172,34 +187,24 @@ impl HslColor {
 
     #[must_use]
     pub fn from_color(color: Color) -> Self {
-        let r = color.red as f32 / 255.0;
-        let g = color.green as f32 / 255.0;
-        let b = color.blue as f32 / 255.0;
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let delta = max - min;
-        let lightness = (max + min) * 0.5;
-        let saturation = if delta <= f32::EPSILON {
-            0.0
-        } else {
-            delta / (1.0 - (2.0 * lightness - 1.0).abs())
-        };
+        let source = palette_color(color);
+        let hsl = Hsl::from_color(source.color);
         Self::new(
-            hue_from_rgb(r, g, b, max, delta),
-            saturation,
-            lightness,
-            color.alpha as f32 / 255.0,
+            hsl.hue.into_degrees(),
+            hsl.saturation,
+            hsl.lightness,
+            source.alpha,
         )
     }
 
     #[must_use]
     pub fn to_color(self) -> Color {
-        let h = normalize_hue(self.hue) / 360.0;
-        let saturation = unit(self.saturation);
-        let lightness = unit(self.lightness);
-        let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-        let (r, g, b) = rgb_from_hue_chroma(h, chroma, lightness - chroma * 0.5);
-        color_from_unit(r, g, b, self.alpha)
+        let hsl = Hsl::new_srgb(
+            normalize_hue(self.hue),
+            unit(self.saturation),
+            unit(self.lightness),
+        );
+        color_from_palette(Srgba::from_color(hsl).with_alpha(unit(self.alpha)))
     }
 }
 
@@ -225,31 +230,24 @@ impl HsvColor {
 
     #[must_use]
     pub fn from_color(color: Color) -> Self {
-        let r = color.red as f32 / 255.0;
-        let g = color.green as f32 / 255.0;
-        let b = color.blue as f32 / 255.0;
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let delta = max - min;
+        let source = palette_color(color);
+        let hsv = Hsv::from_color(source.color);
         Self::new(
-            hue_from_rgb(r, g, b, max, delta),
-            if max <= f32::EPSILON {
-                0.0
-            } else {
-                delta / max
-            },
-            max,
-            color.alpha as f32 / 255.0,
+            hsv.hue.into_degrees(),
+            hsv.saturation,
+            hsv.value,
+            source.alpha,
         )
     }
 
     #[must_use]
     pub fn to_color(self) -> Color {
-        let value = unit(self.value);
-        let chroma = value * unit(self.saturation);
-        let (r, g, b) =
-            rgb_from_hue_chroma(normalize_hue(self.hue) / 360.0, chroma, value - chroma);
-        color_from_unit(r, g, b, self.alpha)
+        let hsv = Hsv::new_srgb(
+            normalize_hue(self.hue),
+            unit(self.saturation),
+            unit(self.value),
+        );
+        color_from_palette(Srgba::from_color(hsv).with_alpha(unit(self.alpha)))
     }
 }
 
@@ -269,70 +267,135 @@ fn normalize_hue(hue: f32) -> f32 {
     }
 }
 
-fn hue_from_rgb(r: f32, g: f32, b: f32, max: f32, delta: f32) -> f32 {
-    if delta <= f32::EPSILON {
-        return 0.0;
-    }
-    let hue = if (max - r).abs() <= f32::EPSILON {
-        ((g - b) / delta).rem_euclid(6.0)
-    } else if (max - g).abs() <= f32::EPSILON {
-        (b - r) / delta + 2.0
-    } else {
-        (r - g) / delta + 4.0
-    };
-    normalize_hue(hue * 60.0)
+fn palette_color(color: Color) -> Srgba {
+    Srgba::new(
+        color.red as f32 / 255.0,
+        color.green as f32 / 255.0,
+        color.blue as f32 / 255.0,
+        color.alpha as f32 / 255.0,
+    )
 }
 
-fn rgb_from_hue_chroma(hue: f32, chroma: f32, offset: f32) -> (f32, f32, f32) {
-    let segment = hue * 6.0;
-    let x = chroma * (1.0 - (segment.rem_euclid(2.0) - 1.0).abs());
-    let (r, g, b) = if segment < 1.0 {
-        (chroma, x, 0.0)
-    } else if segment < 2.0 {
-        (x, chroma, 0.0)
-    } else if segment < 3.0 {
-        (0.0, chroma, x)
-    } else if segment < 4.0 {
-        (0.0, x, chroma)
-    } else if segment < 5.0 {
-        (x, 0.0, chroma)
-    } else {
-        (chroma, 0.0, x)
-    };
-    (r + offset, g + offset, b + offset)
-}
-
-fn color_from_unit(red: f32, green: f32, blue: f32, alpha: f32) -> Color {
+fn color_from_palette(color: Srgba) -> Color {
     let byte = |value: f32| (unit(value) * 255.0).round() as u8;
-    Color::rgba(byte(red), byte(green), byte(blue), byte(alpha))
+    Color::rgba(
+        byte(color.color.red),
+        byte(color.color.green),
+        byte(color.color.blue),
+        byte(color.alpha),
+    )
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Transform {
-    pub translation: Offset,
+/// A retained two-dimensional affine transform.
+///
+/// Incular keeps its ordinary layout geometry in `f32`; Kurbo is the single
+/// authority for affine composition, inversion, and geometric bounds. The
+/// conversion happens only at this boundary, so applications do not need to
+/// adopt a second basic point/rectangle vocabulary for normal widget code.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform(Affine);
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
 }
 
 impl Transform {
+    pub const IDENTITY: Self = Self(Affine::IDENTITY);
+
     #[must_use]
-    pub const fn translation(offset: Offset) -> Self {
-        Self {
-            translation: offset,
-        }
+    pub fn translation(offset: Offset) -> Self {
+        Self(Affine::translate(Vec2::new(
+            f64::from(offset.x),
+            f64::from(offset.y),
+        )))
     }
 
     #[must_use]
-    pub const fn inverse_translation(self) -> Self {
-        Self::translation(Offset::new(-self.translation.x, -self.translation.y))
+    pub const fn scale(scale: f32) -> Self {
+        Self(Affine::scale(scale as f64))
     }
 
     #[must_use]
-    pub const fn transform_point(self, point: Offset) -> Offset {
-        Offset::new(point.x + self.translation.x, point.y + self.translation.y)
+    pub const fn scale_non_uniform(x: f32, y: f32) -> Self {
+        Self(Affine::scale_non_uniform(x as f64, y as f64))
+    }
+
+    /// Rotates clockwise in Incular's y-down coordinate system.
+    #[must_use]
+    pub fn rotation(radians: f32) -> Self {
+        Self(Affine::rotate(f64::from(radians)))
     }
 
     #[must_use]
-    pub const fn inverse_transform_point(self, point: Offset) -> Offset {
-        Offset::new(point.x - self.translation.x, point.y - self.translation.y)
+    pub const fn skew(x: f32, y: f32) -> Self {
+        Self(Affine::skew(x as f64, y as f64))
+    }
+
+    #[must_use]
+    pub const fn from_kurbo(affine: Affine) -> Self {
+        Self(affine)
+    }
+
+    #[must_use]
+    pub const fn to_kurbo(self) -> Affine {
+        self.0
+    }
+
+    /// Applies `other` first, then this transform.
+    #[must_use]
+    pub fn then(self, other: Self) -> Self {
+        Self(self.0 * other.0)
+    }
+
+    #[must_use]
+    pub fn inverse(self) -> Option<Self> {
+        let inverse = self.0.inverse();
+        inverse.is_finite().then_some(Self(inverse))
+    }
+
+    #[must_use]
+    pub fn inverse_translation(self) -> Self {
+        self.inverse().unwrap_or(Self::IDENTITY)
+    }
+
+    #[must_use]
+    pub fn translation_offset(self) -> Offset {
+        let coefficients = self.0.as_coeffs();
+        Offset::new(coefficients[4] as f32, coefficients[5] as f32)
+    }
+
+    #[must_use]
+    pub fn is_translation(self) -> bool {
+        let [a, b, c, d, _, _] = self.0.as_coeffs();
+        a == 1. && b == 0. && c == 0. && d == 1.
+    }
+
+    #[must_use]
+    pub fn transform_point(self, point: Offset) -> Offset {
+        let point = self.0 * Point::new(f64::from(point.x), f64::from(point.y));
+        Offset::new(point.x as f32, point.y as f32)
+    }
+
+    #[must_use]
+    pub fn inverse_transform_point(self, point: Offset) -> Option<Offset> {
+        self.inverse().map(|inverse| inverse.transform_point(point))
+    }
+
+    #[must_use]
+    pub fn transform_rect_bbox(self, rect: Rect) -> Rect {
+        let rect = kurbo::Rect::new(
+            f64::from(rect.origin.x),
+            f64::from(rect.origin.y),
+            f64::from(rect.origin.x + rect.size.width),
+            f64::from(rect.origin.y + rect.size.height),
+        );
+        let rect = self.0.transform_rect_bbox(rect);
+        Rect::from_origin_size(
+            Offset::new(rect.x0 as f32, rect.y0 as f32),
+            Size::new((rect.x1 - rect.x0) as f32, (rect.y1 - rect.y0) as f32),
+        )
     }
 }
 
@@ -390,6 +453,24 @@ mod tests {
     }
 
     #[test]
+    fn affine_composition_inverse_and_bounds_use_kurbo() {
+        let transform = Transform::translation(Offset::new(10., 20.))
+            .then(Transform::rotation(std::f32::consts::FRAC_PI_2))
+            .then(Transform::scale_non_uniform(2., 3.));
+        let point = transform.transform_point(Offset::new(2., 0.));
+        let restored = transform
+            .inverse_transform_point(point)
+            .expect("non-singular affine transform");
+        assert!((restored.x - 2.).abs() < 0.0001);
+        assert!(restored.y.abs() < 0.0001);
+
+        let bounds = Transform::rotation(std::f32::consts::FRAC_PI_2)
+            .transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, Size::new(10., 20.)));
+        assert!((bounds.size.width - 20.).abs() < 0.0001);
+        assert!((bounds.size.height - 10.).abs() < 0.0001);
+    }
+
+    #[test]
     fn hsv_round_trip_preserves_srgb_bytes() {
         for color in [
             Color::rgba(12, 190, 73, 64),
@@ -407,5 +488,14 @@ mod tests {
         assert_eq!(hsl.saturation, 1.0);
         assert_eq!(hsl.lightness, 0.0);
         assert_eq!(hsl.alpha, 0.0);
+    }
+
+    #[test]
+    fn linear_rgba_uses_palette_srgb_transfer_function() {
+        let [red, green, blue, alpha] = Color::rgba(128, 128, 128, 128).to_linear_rgba();
+        assert!((red - 0.215_861).abs() < 0.000_01);
+        assert_eq!(red, green);
+        assert_eq!(green, blue);
+        assert!((alpha - 128.0 / 255.0).abs() < f32::EPSILON);
     }
 }

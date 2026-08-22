@@ -40,7 +40,7 @@ raw OS events.
 
 `TextEditingController` owns a UTF-8 buffer, base/extent selection and active
 IME preedit independently of a rebuilt `TextField` description. Edits use
-extended grapheme cluster boundaries (`unicode-segmentation`), while public
+extended grapheme cluster boundaries (ICU4X `icu_segmenter` compiled data), while public
 selection offsets remain valid UTF-8 byte offsets for direct Rust slicing.
 `TextField` is intentionally single-line: Enter calls `on_submit` and never
 inserts a newline. `TextArea` shares the same controller but shapes a wrapped
@@ -48,6 +48,16 @@ paragraph in a fixed viewport; Enter and Shift+Enter replace the selection with
 a hard newline, ArrowUp/Down and Home/End use shaped-line geometry, and the
 caret keeps itself vertically visible. Selection painting is line-by-line.
 Neither control implements bidi visual cursor movement yet.
+
+## Read-only selection
+
+`SelectableText` has no mutable text buffer, caret, or IME route. Wrap one or
+more labels in `SelectionArea` to select across them with pointer drag or
+Shift+Arrow and copy with Ctrl/Cmd+C. Its coordinator derives caret positions
+and selection rectangles from the cached Parley-backed layout, including
+wrapped, mixed-font, and bidirectional text; selection changes only repaint
+the highlight and never reshape or rerasterize glyphs. Keep the optional
+`SelectionAreaController` when application code needs the copied selection.
 
 ## Opt-in editor and form restoration
 
@@ -93,6 +103,20 @@ indices unmount (there is deliberately no unsafe state recycling), which drops
 their callbacks and reactive subscriptions through the runtime's normal
 generational lifetime path.
 
+## Lazy variable-extent viewports
+
+`VirtualList::variable_extent` and `ListView::variable_extent` use that same
+retained viewport for rows whose height is known only after layout. They begin
+with an estimate and update a shared `MeasuredExtentIndex` as cached rows are
+laid out. Offset/index lookup and range selection remain bounded, so jumping
+near row 900,000 of one million items does not construct the preceding rows.
+
+For mutable data, keep a `MeasuredExtentIndex` and use
+`variable_extent_with_index`. Its insertion, removal, move, and invalidation
+operations update the logical mapping while the viewport rebuilds only its
+visible cache. Measurements before the visible anchor compensate the scroll
+offset to avoid a content jump.
+
 The virtual viewport owns an outer layout layer, local clip, and inner
 `-scroll_offset` content transform, just like `ScrollView`. A scroll inside the
 same materialized range updates only that retained transform. Crossing a cache
@@ -105,6 +129,19 @@ estimated extent caches, grids, sticky headers, and keep-alive policies remain
 future work. Future semantics can expose logical child count and materialized
 item indices without creating semantic nodes for every logical row.
 
+## Retained layout closure
+
+`LimitedBox` supplies maxima only when its incoming axis is unbounded, while
+`OverflowBox` gives its child independent optional min/max constraints but
+continues reporting the parent-constrained size. `Flexible`, `Expanded`, and
+`Spacer` allocate proportional shares of a bounded `Row`/`Column` main axis;
+the child layout records remain ordinary retained children.
+
+`Positioned` resolves edge pairs or explicit dimensions against a `Stack`.
+`IndexedStack` retains and lays out every child but attaches only the selected
+layer branch, hit-test branch, and semantic branch. `LayoutBuilder` rebuilds
+and reconciles one retained child only when its incoming `Constraints` change.
+
 ## Coordinate spaces and transform composition
 
 Visual render objects cache local picture commands. Each object has an outer
@@ -114,6 +151,15 @@ widgets place a second, inner transform below that placement: it holds only
 picture reuse, clipping, and hit testing in the same coordinate model without
 turning compositor updates into repaint work.
 
+`Transform::new(AffineTransform::rotation(...), child)` applies a general
+Kurbo-backed affine transform after layout; convenience constructors cover
+translation, scale, rotation, and skew, and `.origin(...)` selects its local
+pivot. `FittedBox` measures its child naturally and applies its `ImageFit` and
+`Alignment` as the same retained affine layer. Pointer coordinates are mapped
+through the inverse affine transform and semantics use transformed bounds.
+`ScaleTransition` and `RotationTransition` are controller-driven compositor
+updates, so animation keeps child layout and picture caches warm.
+
 ## Group opacity
 
 `Opacity::new(0.5, child)` adds a retained isolation boundary. The child is
@@ -122,6 +168,20 @@ final offscreen result, so overlapping descendants do not receive alpha
 independently. Alpha is normalized to `0..=1`; non-finite values become zero.
 Opacity does not imply `IgnorePointer` or hidden semantics: a transparent
 button remains hit-testable and represented in the semantic tree.
+
+`IgnorePointer` and `AbsorbPointer` make that input policy explicit without
+changing painting or accessibility. Ignore removes its entire subtree from hit
+testing so a painted sibling behind it can receive the pointer; absorb returns
+its own retained boundary and never descends to normal child interaction.
+`WidgetTree` exposes a window-local `PointerCapture` token for active gesture
+streams. It is retained-safe when native OS capture is unavailable and is
+released on up, cancellation, or unmount; it is never a cross-window feature.
+
+`DragDropContext<T>` scopes typed local payloads for `Draggable<T>` and
+`DragTarget<T>`. The retained arena drives start, enter, leave, update, drop,
+and cancellation; `feedback()` returns an overlay-ready widget snapshot while
+a drag is active. Cross-window payload transfer and lazy-list reordering are
+intentionally not implied by this local contract.
 
 For high-frequency fades, keep an `OpacityController` outside the declarative
 builder and use `Opacity::controlled(controller, child)` (or

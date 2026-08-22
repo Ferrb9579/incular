@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use crate::{ScrollController, ScrollView, VirtualList, Widget};
+use crate::{MeasuredExtentIndex, ScrollController, ScrollView, VirtualList, Widget};
 
 /// Flutter-compatible list API backed by the lazy fixed-extent viewport.
 pub struct ListView;
@@ -37,6 +37,53 @@ impl ListView {
         W: Into<Widget> + 'static,
     {
         VirtualList::fixed_extent_with_controller(item_count, item_extent, controller, builder)
+    }
+
+    /// Lazy rows measured after layout, backed by the same retained viewport
+    /// as `fixed_extent` rather than a second list implementation.
+    #[must_use]
+    pub fn variable_extent<W>(
+        item_count: usize,
+        estimated_extent: f32,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        VirtualList::variable_extent(item_count, estimated_extent, builder)
+    }
+
+    /// Variable rows with a persistent scroll controller.
+    #[must_use]
+    pub fn variable_extent_with_controller<W>(
+        item_count: usize,
+        estimated_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        VirtualList::variable_extent_with_controller(
+            item_count,
+            estimated_extent,
+            controller,
+            builder,
+        )
+    }
+
+    /// Variable rows with an application-owned index for insert/remove/move
+    /// invalidation without rebuilding non-visible widgets.
+    #[must_use]
+    pub fn variable_extent_with_index<W>(
+        index: MeasuredExtentIndex,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        VirtualList::variable_extent_with_index(index, controller, builder)
     }
 }
 

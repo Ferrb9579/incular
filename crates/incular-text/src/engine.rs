@@ -1,21 +1,25 @@
-// Keep the existing shaping implementation in this module. The style types
-// used by it live in `style.rs` and are re-exported below.
-use super::{FontFamily, FontStyle, TextAlign, TextStyle};
-use fontdb::{Database, Family, ID, Query, Style, Weight};
+//! Parley-backed text shaping, fallback, bidi ordering, and line breaking.
+//!
+//! Incular deliberately keeps its renderer-facing glyph protocol small. Parley
+//! owns all font discovery, fallback selection and shaping; this module only
+//! translates its positioned glyph runs into `incular-rendering` commands.
+
+use super::{FontFamily, FontStyle, TextAlign, TextOverflow, TextStyle};
+use icu_segmenter::GraphemeClusterSegmenter;
 use incular_assets::FontHandle;
 pub use incular_assets::FontId;
 use incular_core::{Offset, Size};
 use incular_rendering::{GlyphPosition, GlyphRun};
-use rustybuzz::{Direction, Face, UnicodeBuffer, shape};
+use parley::{
+    Alignment, AlignmentOptions, FontContext, FontStack, FontWeight as ParleyFontWeight, Layout,
+    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+};
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     sync::Arc,
 };
-use ttf_parser::Face as TableFace;
-use unicode_bidi::BidiInfo;
-use unicode_script::{Script, UnicodeScript};
-use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextMetrics {
@@ -23,6 +27,7 @@ pub struct TextMetrics {
     pub baseline: f32,
     pub line_height: f32,
 }
+
 #[derive(Clone, Debug)]
 pub struct TextLine {
     pub runs: Arc<[Arc<GlyphRun>]>,
@@ -30,8 +35,12 @@ pub struct TextLine {
     pub width: f32,
     pub baseline: f32,
     pub start: usize,
+    /// End of selectable/caret text on this visual line. This excludes a
+    /// trailing hard line-break which has no shaped glyph of its own.
+    pub caret_end: usize,
     pub end: usize,
 }
+
 #[derive(Clone, Debug)]
 pub struct FontRunDebug {
     pub range: std::ops::Range<usize>,
@@ -40,18 +49,74 @@ pub struct FontRunDebug {
     pub script: String,
     pub direction: &'static str,
 }
+
 #[derive(Clone, Debug)]
 pub struct TextLayout {
     pub lines: Arc<[TextLine]>,
     pub metrics: TextMetrics,
     pub font_runs: Arc<[FontRunDebug]>,
+    /// Whether the source had content outside the retained layout's visible
+    /// bounds. `Visible` layouts deliberately leave this false.
+    pub overflowed: bool,
 }
+
+/// Paragraph-level layout controls. They deliberately describe behavior in
+/// Incular terms and do not expose Parley builder types.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextLayoutOptions {
+    pub max_width: Option<f32>,
+    pub align: TextAlign,
+    pub soft_wrap: bool,
+    pub max_lines: Option<usize>,
+    pub overflow: TextOverflow,
+}
+
+impl TextLayoutOptions {
+    #[must_use]
+    pub const fn new(max_width: Option<f32>, align: TextAlign) -> Self {
+        Self {
+            max_width,
+            align,
+            soft_wrap: true,
+            max_lines: None,
+            overflow: TextOverflow::Clip,
+        }
+    }
+
+    #[must_use]
+    pub const fn soft_wrap(mut self, soft_wrap: bool) -> Self {
+        self.soft_wrap = soft_wrap;
+        self
+    }
+
+    #[must_use]
+    pub const fn max_lines(mut self, max_lines: Option<usize>) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+
+    #[must_use]
+    pub const fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+}
+
+impl Default for TextLayoutOptions {
+    fn default() -> Self {
+        Self::new(None, TextAlign::Start)
+    }
+}
+
 impl TextLayout {
     #[must_use]
     pub fn glyph_count(&self) -> usize {
         self.lines.iter().map(|line| line.glyphs.len()).sum()
     }
 }
+
+/// Layout/cache counters. Legacy field names are retained for source
+/// compatibility; Parley performs fallback and coverage resolution internally.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextDiagnostics {
     pub layouts_requested: u64,
@@ -77,18 +142,18 @@ struct LayoutKey {
     style: FontStyle,
     line_height: Option<u32>,
     letter_spacing: u32,
+    font_variations: Option<Arc<str>>,
+    font_features: Option<Arc<str>>,
     width: Option<u32>,
     align: TextAlign,
+    soft_wrap: bool,
+    max_lines: Option<usize>,
+    overflow: TextOverflow,
     generation: u64,
 }
+
 impl LayoutKey {
-    fn new(
-        text: &str,
-        style: &TextStyle,
-        width: Option<f32>,
-        align: TextAlign,
-        generation: u64,
-    ) -> Self {
+    fn new(text: &str, style: &TextStyle, options: TextLayoutOptions, generation: u64) -> Self {
         Self {
             text: text.into(),
             family: style.family.clone(),
@@ -98,86 +163,70 @@ impl LayoutKey {
             style: style.style,
             line_height: style.line_height.map(f32::to_bits),
             letter_spacing: style.letter_spacing.to_bits(),
-            width: width.map(f32::to_bits),
-            align,
+            font_variations: style.font_variations.clone(),
+            font_features: style.font_features.clone(),
+            width: options.max_width.map(f32::to_bits),
+            align: options.align,
+            soft_wrap: options.soft_wrap,
+            max_lines: options.max_lines,
+            overflow: options.overflow,
             generation,
         }
     }
 }
-#[derive(Hash, PartialEq, Eq, Clone)]
-struct ResolutionKey {
-    cluster: String,
-    family: FontFamily,
-    fallbacks: Arc<[FontFamily]>,
-    weight: u16,
-    style: FontStyle,
-    generation: u64,
-}
-#[derive(Clone)]
-struct ResolvedFace {
-    handle: FontHandle,
-    family: String,
-}
-#[derive(Clone)]
-struct Cluster {
-    start: usize,
-    end: usize,
-    text: String,
-    script: Script,
-}
-#[derive(Clone)]
-struct ResolvedCluster {
-    cluster: Cluster,
-    face: Option<ResolvedFace>,
-}
 
-/// The sole owner of system and application font discovery. Font registration is immutable;
-/// adding faces advances the database generation and clears layout/resolution caches.
+/// The sole owner of font discovery and app-registered fonts. Parley owns the
+/// actual font collection and resolves scripts, bidi direction and fallback.
 pub struct TextEngine {
-    database: Database,
+    font_context: FontContext,
+    layout_context: LayoutContext<()>,
     generation: u64,
     cache: HashMap<LayoutKey, Arc<TextLayout>>,
     order: VecDeque<LayoutKey>,
-    resolution_cache: HashMap<ResolutionKey, Option<ResolvedFace>>,
-    script_candidates: HashMap<Script, Vec<ID>>,
     diagnostics: TextDiagnostics,
 }
+
 impl Default for TextEngine {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl TextEngine {
     #[must_use]
     pub fn new() -> Self {
-        let mut database = Database::new();
-        database.load_system_fonts();
         Self {
-            database,
+            font_context: FontContext::new(),
+            layout_context: LayoutContext::new(),
             generation: 1,
             cache: HashMap::new(),
             order: VecDeque::new(),
-            resolution_cache: HashMap::new(),
-            script_candidates: HashMap::new(),
             diagnostics: TextDiagnostics::default(),
         }
     }
+
     #[must_use]
     pub const fn diagnostics(&self) -> TextDiagnostics {
         self.diagnostics
     }
+
     #[must_use]
     pub const fn font_database_generation(&self) -> u64 {
         self.generation
     }
+
+    /// Registers all faces in a TrueType/OpenType byte buffer with Parley's
+    /// Fontique collection. Invalid buffers are harmless: Fontique ignores
+    /// them, while the generation still invalidates stale cached layouts.
     pub fn register_font_bytes(&mut self, bytes: impl Into<Vec<u8>>) {
-        self.database.load_font_data(bytes.into());
+        self.font_context
+            .collection
+            .register_fonts(parley::fontique::Blob::from(bytes.into()), None);
         self.generation += 1;
         self.cache.clear();
         self.order.clear();
-        self.resolution_cache.clear();
-        self.script_candidates.clear();
     }
+
     pub fn layout(
         &mut self,
         text: &str,
@@ -185,14 +234,25 @@ impl TextEngine {
         max_width: Option<f32>,
         align: TextAlign,
     ) -> Arc<TextLayout> {
+        self.layout_with_options(text, style, TextLayoutOptions::new(max_width, align))
+    }
+
+    /// Shapes a paragraph with retained wrapping and overflow policy.
+    pub fn layout_with_options(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        options: TextLayoutOptions,
+    ) -> Arc<TextLayout> {
         self.diagnostics.layouts_requested += 1;
-        let key = LayoutKey::new(text, style, max_width, align, self.generation);
+        let key = LayoutKey::new(text, style, options, self.generation);
         if let Some(layout) = self.cache.get(&key) {
             self.diagnostics.cache_hits += 1;
             return layout.clone();
         }
+
         self.diagnostics.cache_misses += 1;
-        let layout = Arc::new(self.shape_and_wrap(text, style, max_width, align));
+        let layout = Arc::new(self.shape_and_wrap(text, style, options));
         if self.order.len() == 256 {
             if let Some(old) = self.order.pop_front() {
                 self.cache.remove(&old);
@@ -202,364 +262,329 @@ impl TextEngine {
         self.cache.insert(key, layout.clone());
         layout
     }
-    fn families<'a>(&self, family: &'a FontFamily) -> Vec<Family<'a>> {
-        match family {
-            FontFamily::Named(name) => vec![Family::Name(name)],
-            FontFamily::Serif => vec![Family::Serif],
-            FontFamily::Monospace => vec![Family::Monospace],
-            FontFamily::Cursive => vec![Family::Cursive],
-            FontFamily::SansSerif => vec![
-                Family::Name("Noto Sans"),
-                Family::Name("DejaVu Sans"),
-                Family::Name("Liberation Sans"),
-                Family::SansSerif,
-            ],
-            FontFamily::SystemUi => vec![
-                Family::Name("Noto Sans"),
-                Family::Name("Cantarell"),
-                Family::Name("Inter"),
-                Family::Name("DejaVu Sans"),
-                Family::Name("Liberation Sans"),
-                Family::SansSerif,
-            ],
-        }
+
+    fn font_stack(style: &TextStyle) -> FontStack<'static> {
+        let mut names = vec![family_name(&style.family)];
+        names.extend(style.fallback_families.iter().map(family_name));
+        FontStack::Source(names.join(", ").into())
     }
-    fn query_family(&self, family: &FontFamily, style: &TextStyle) -> Option<ID> {
-        let families = self.families(family);
-        self.database.query(&Query {
-            families: &families,
-            weight: Weight(style.weight.0),
-            style: match style.style {
-                FontStyle::Normal => Style::Normal,
-                FontStyle::Italic => Style::Italic,
-            },
-            ..Query::default()
-        })
-    }
-    fn face_handle(&self, id: ID) -> Option<ResolvedFace> {
-        let info = self.database.face(id)?;
-        let family = info
-            .families
-            .first()
-            .map_or_else(|| info.post_script_name.clone(), |entry| entry.0.clone());
-        let index = info.index;
-        self.database.with_face_data(id, |bytes, _| {
-            let mut hash = DefaultHasher::new();
-            bytes.hash(&mut hash);
-            index.hash(&mut hash);
-            ResolvedFace {
-                handle: FontHandle::with_face_index(
-                    FontId(hash.finish()),
-                    Arc::<[u8]>::from(bytes.to_vec()),
-                    index,
-                ),
-                family,
-            }
-        })
-    }
-    fn supports_cluster(&mut self, id: ID, cluster: &str) -> bool {
-        self.diagnostics.coverage_queries += 1;
-        self.database
-            .with_face_data(id, |bytes, index| {
-                let Ok(face) = TableFace::parse(bytes, index) else {
-                    return false;
-                };
-                cluster
-                    .chars()
-                    .filter(|c| !is_cluster_control(*c))
-                    .all(|c| face.glyph_index(c).is_some())
-            })
-            .unwrap_or(false)
-    }
-    fn script_candidates(&mut self, script: Script, probe: char) -> Vec<ID> {
-        if let Some(ids) = self.script_candidates.get(&script) {
-            return ids.clone();
-        }
-        let ids: Vec<_> = self.database.faces().map(|face| face.id).collect();
-        let mut matches: Vec<ID> = ids
-            .into_iter()
-            .filter(|id| self.supports_cluster(*id, &probe.to_string()))
-            .collect();
-        matches.sort_by_key(|id| {
-            self.database
-                .face(*id)
-                .map_or_else(String::new, |face| face.post_script_name.clone())
-        });
-        self.script_candidates.insert(script, matches.clone());
-        matches
-    }
-    fn resolve_cluster(&mut self, cluster: Cluster, style: &TextStyle) -> Option<ResolvedFace> {
-        self.diagnostics.font_resolution_requests += 1;
-        let key = ResolutionKey {
-            cluster: cluster.text.clone(),
-            family: style.family.clone(),
-            fallbacks: style.fallback_families.clone(),
-            weight: style.weight.0,
-            style: style.style,
-            generation: self.generation,
-        };
-        if let Some(resolved) = self.resolution_cache.get(&key) {
-            self.diagnostics.font_resolution_cache_hits += 1;
-            return resolved.clone();
-        }
-        self.diagnostics.font_resolution_cache_misses += 1;
-        let primary = self.query_family(&style.family, style);
-        let mut candidates = primary.into_iter().collect::<Vec<_>>();
-        candidates.extend(
-            style
-                .fallback_families
-                .iter()
-                .filter_map(|family| self.query_family(family, style)),
-        );
-        if let Some(probe) = cluster.text.chars().find(|c| !is_cluster_control(*c)) {
-            candidates.extend(self.script_candidates(cluster.script, probe));
-        }
-        let mut ordered = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            if !ordered.contains(&candidate) {
-                ordered.push(candidate);
-            }
-        }
-        let resolved = ordered
-            .into_iter()
-            .find(|id| self.supports_cluster(*id, &cluster.text))
-            .and_then(|id| self.face_handle(id));
-        if resolved.is_none() {
-            self.diagnostics.missing_clusters += 1;
-        }
-        self.resolution_cache.insert(key, resolved.clone());
-        resolved
-    }
+
     fn shape_and_wrap(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        options: TextLayoutOptions,
+    ) -> TextLayout {
+        let wrap_width = options.soft_wrap.then_some(options.max_width).flatten();
+        let layout = self.shape_raw(text, style, wrap_width, options.align);
+        let horizontal_overflow = !options.soft_wrap
+            && options
+                .max_width
+                .is_some_and(|width| layout.metrics.size.width > width);
+        let line_limit = options
+            .max_lines
+            .or_else(|| horizontal_overflow.then_some(1));
+        let line_overflow = line_limit.is_some_and(|limit| layout.lines.len() > limit);
+        if (!horizontal_overflow && !line_overflow) || options.overflow == TextOverflow::Visible {
+            return layout;
+        }
+
+        let limit = line_limit.unwrap_or(layout.lines.len());
+        match options.overflow {
+            TextOverflow::Visible => layout,
+            TextOverflow::Clip => clipped_layout(layout, limit),
+            TextOverflow::Ellipsis => self.ellipsized_layout(text, style, options, limit),
+        }
+    }
+
+    fn ellipsized_layout(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        options: TextLayoutOptions,
+        limit: usize,
+    ) -> TextLayout {
+        if limit == 0 {
+            return clipped_layout(self.shape_raw("", style, None, options.align), 0);
+        }
+        let wrap_width = options.soft_wrap.then_some(options.max_width).flatten();
+        let initial = self.shape_raw(text, style, wrap_width, options.align);
+        let end = initial
+            .lines
+            .get(limit.saturating_sub(1))
+            .map_or(0, |line| line.caret_end.min(text.len()));
+        let mut end = grapheme_boundary_at_or_before(text, end);
+
+        loop {
+            let mut candidate = text[..end].to_owned();
+            candidate.push('\u{2026}');
+            // The ellipsis always enters Parley as source text and is shaped
+            // with the selected/fallback font stack, never appended as a raw
+            // renderer glyph or a byte-truncated source suffix.
+            let shaped = self.shape_raw(&candidate, style, wrap_width, options.align);
+            let fits_width = options.max_width.is_none_or(|width| {
+                shaped
+                    .lines
+                    .iter()
+                    .all(|line| line.width <= width + f32::EPSILON)
+            });
+            if shaped.lines.len() <= limit && fits_width {
+                return TextLayout {
+                    overflowed: true,
+                    ..shaped
+                };
+            }
+            let previous = previous_grapheme_boundary(text, end);
+            if previous == end {
+                return TextLayout {
+                    overflowed: true,
+                    ..shaped
+                };
+            }
+            end = previous;
+        }
+    }
+
+    fn shape_raw(
         &mut self,
         text: &str,
         style: &TextStyle,
         max_width: Option<f32>,
         align: TextAlign,
     ) -> TextLayout {
-        let line_height = style.line_height.unwrap_or(style.size * 1.2);
-        let baseline = style.size * 0.8;
-        let mut builds = Vec::new();
-        let mut debug = Vec::new();
-        let primary_font = self
-            .query_family(&style.family, style)
-            .and_then(|id| self.face_handle(id))
-            .map(|face| face.handle.id());
-        let mut fallback_fonts = HashSet::new();
-        let mut paragraph_start = 0;
-        for segment in text.split_inclusive('\n') {
-            let source = segment.strip_suffix('\n').unwrap_or(segment);
-            let source_start = paragraph_start;
-            let mut clusters: Vec<Cluster> = source
-                .grapheme_indices(true)
-                .map(|(offset, value)| Cluster {
-                    start: source_start + offset,
-                    end: source_start + offset + value.len(),
-                    text: value.into(),
-                    script: cluster_script(value),
-                })
-                .collect();
-            let mut previous = Script::Common;
-            for cluster in &mut clusters {
-                if is_weak_script(cluster.script) {
-                    cluster.script = previous;
-                } else {
-                    previous = cluster.script;
-                }
-            }
-            let resolved: Vec<_> = clusters
-                .into_iter()
-                .map(|cluster| {
-                    let face = self.resolve_cluster(cluster.clone(), style);
-                    ResolvedCluster { cluster, face }
-                })
-                .collect();
-            let mut logical_runs: Vec<Vec<ResolvedCluster>> = Vec::new();
-            for item in resolved {
-                if logical_runs.last().is_some_and(|last| {
-                    last.last()
-                        .and_then(|entry| entry.face.as_ref())
-                        .map(|face| face.handle.id())
-                        == item.face.as_ref().map(|face| face.handle.id())
-                }) {
-                    logical_runs.last_mut().unwrap().push(item);
-                } else {
-                    logical_runs.push(vec![item]);
-                }
-            }
-            let mut built = LineBuild::new(source_start);
-            let mut pen = 0.;
-            for entries in logical_runs {
-                let Some(face) = entries.first().and_then(|entry| entry.face.clone()) else {
+        let mut builder =
+            self.layout_context
+                .ranged_builder(&mut self.font_context, text, 1.0, true);
+        builder.push_default(StyleProperty::FontStack(Self::font_stack(style)));
+        builder.push_default(StyleProperty::FontSize(style.size.max(0.0)));
+        builder.push_default(StyleProperty::FontWeight(ParleyFontWeight::new(
+            style.weight.0 as f32,
+        )));
+        builder.push_default(StyleProperty::FontStyle(match style.style {
+            FontStyle::Normal => parley::FontStyle::Normal,
+            FontStyle::Italic => parley::FontStyle::Italic,
+        }));
+        builder.push_default(StyleProperty::LetterSpacing(style.letter_spacing));
+        if let Some(settings) = &style.font_variations {
+            builder.push_default(StyleProperty::FontVariations(parley::FontSettings::Source(
+                Cow::Owned(settings.to_string()),
+            )));
+        }
+        if let Some(settings) = &style.font_features {
+            builder.push_default(StyleProperty::FontFeatures(parley::FontSettings::Source(
+                Cow::Owned(settings.to_string()),
+            )));
+        }
+        if let Some(line_height) = style.line_height {
+            builder.push_default(StyleProperty::LineHeight(LineHeight::Absolute(line_height)));
+        }
+
+        let mut layout: Layout<()> = builder.build(text);
+        layout.break_all_lines(max_width);
+        layout.align(
+            max_width,
+            match align {
+                TextAlign::Start => Alignment::Start,
+                TextAlign::Center => Alignment::Center,
+                TextAlign::End => Alignment::End,
+            },
+            AlignmentOptions::default(),
+        );
+
+        self.translate_layout(&layout)
+    }
+
+    fn translate_layout(&mut self, layout: &Layout<()>) -> TextLayout {
+        let mut lines = Vec::new();
+        let mut font_runs = Vec::new();
+        let mut used_fonts = HashSet::new();
+        let primary = layout
+            .lines()
+            .flat_map(|line| line.runs())
+            .next()
+            .map(|run| font_id(run.font()));
+
+        for line in layout.lines() {
+            let metrics = line.metrics();
+            let range = line.text_range();
+            let mut runs = Vec::new();
+            let mut glyphs = Vec::new();
+            let mut caret_end = range.start;
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(parley_run) = item else {
                     continue;
                 };
-                if Some(face.handle.id()) != primary_font {
+                let run = parley_run.run();
+                let font = font_handle(run.font());
+                let font_id = font.id();
+                if Some(font_id) != primary {
                     self.diagnostics.fallback_runs += 1;
-                    fallback_fonts.insert(face.handle.id());
                 }
-                let range_start = entries.first().unwrap().cluster.start;
-                let range_end = entries.last().unwrap().cluster.end;
-                let contents: String = entries
-                    .iter()
-                    .map(|entry| entry.cluster.text.as_str())
-                    .collect();
-                let Some(rb_face) = Face::from_slice(face.handle.bytes(), face.handle.face_index())
-                else {
-                    continue;
-                };
-                let scale = style.size / rb_face.units_per_em() as f32;
-                let mut buffer = UnicodeBuffer::new();
-                buffer.push_str(&contents);
-                // Resolve direction before this font-specific shaping call;
-                // fallback changes the face, never the paragraph's bidi text.
-                let bidi = BidiInfo::new(&contents, None);
-                if bidi
-                    .paragraphs
-                    .first()
-                    .is_some_and(|paragraph| paragraph.level.is_rtl())
-                {
-                    buffer.set_direction(Direction::RightToLeft);
-                } else {
-                    buffer.set_direction(Direction::LeftToRight);
-                }
-                let glyph_buffer = shape(&rb_face, &[], buffer);
+                used_fonts.insert(font_id);
                 self.diagnostics.shaping_runs += 1;
-                let mut glyphs = Vec::new();
-                let mut run_width = 0.;
-                for (info, position) in glyph_buffer
-                    .glyph_infos()
+
+                // `PositionedLayoutItem::GlyphRun` is a line-local slice of
+                // the underlying shaping run. Parley's renderer-facing Glyph
+                // intentionally has no byte index, so recover each glyph's
+                // cluster from the authoritative visual-cluster sequence
+                // before translating it. This keeps caret movement and
+                // selection on shaped cluster boundaries instead of assigning
+                // every glyph to the run's first byte.
+                let visible_glyphs = parley_run.glyphs().collect::<Vec<_>>();
+                let all_clustered_glyphs = run
+                    .visual_clusters()
+                    .flat_map(|cluster| {
+                        let cluster_range = cluster.text_range();
+                        cluster
+                            .glyphs()
+                            .map(move |glyph| (glyph, cluster_range.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                let first_glyph = all_clustered_glyphs
+                    .windows(visible_glyphs.len())
+                    .position(|candidate| {
+                        candidate
+                            .iter()
+                            .zip(&visible_glyphs)
+                            .all(|((glyph, _), visible)| glyph == visible)
+                    })
+                    .unwrap_or(0);
+                let clusters = all_clustered_glyphs
                     .iter()
-                    .zip(glyph_buffer.glyph_positions())
-                {
-                    let advance = position.x_advance as f32 * scale + style.letter_spacing;
-                    glyphs.push(GlyphPosition {
-                        id: info.glyph_id as u16,
-                        offset: Offset::new(
-                            run_width + position.x_offset as f32 * scale,
-                            position.y_offset as f32 * scale,
-                        ),
-                        advance,
-                        cluster: info.cluster + range_start as u32,
-                    });
-                    run_width += advance.max(0.);
-                }
-                if max_width.is_some_and(|limit| pen > 0. && pen + run_width > limit) {
-                    builds.push(built);
-                    built = LineBuild::new(range_start);
-                    pen = 0.;
-                }
-                let origin = Offset::new(pen, 0.);
-                for glyph in &glyphs {
-                    let mut global = *glyph;
-                    global.offset.x += pen;
-                    built.glyphs.push(global);
-                }
-                built.runs.push(Arc::new(GlyphRun {
-                    font: face.handle.clone(),
-                    font_size: style.size,
-                    origin,
-                    glyphs: glyphs.into(),
-                }));
-                built.width = pen + run_width;
-                built.end = range_end;
-                pen += run_width;
-                let script = entries.first().unwrap().cluster.script;
-                debug.push(FontRunDebug {
-                    range: range_start..range_end,
-                    font: face.handle.id(),
-                    family: face.family,
-                    script: format!("{script:?}"),
-                    direction: if is_rtl(script) { "rtl" } else { "ltr" },
-                });
-            }
-            builds.push(built);
-            paragraph_start += segment.len();
-        }
-        self.diagnostics.fallback_fonts_used += fallback_fonts.len() as u64;
-        if text.is_empty() {
-            builds.push(LineBuild::new(0));
-        }
-        let max_line = builds.iter().map(|line| line.width).fold(0., f32::max);
-        let lines: Vec<_> = builds
-            .into_iter()
-            .enumerate()
-            .map(|(index, build)| {
-                let x = match align {
-                    TextAlign::Start => 0.,
-                    TextAlign::Center => (max_width.unwrap_or(max_line) - build.width).max(0.) / 2.,
-                    TextAlign::End => (max_width.unwrap_or(max_line) - build.width).max(0.),
-                };
-                let runs = build
-                    .runs
-                    .into_iter()
-                    .map(|run| {
-                        Arc::new(GlyphRun {
-                            origin: Offset::new(
-                                run.origin.x + x,
-                                index as f32 * line_height + baseline,
-                            ),
-                            ..(*run).clone()
-                        })
+                    .skip(first_glyph)
+                    .map(|(_, range)| range.clone())
+                    .take(visible_glyphs.len())
+                    .collect::<Vec<_>>();
+                caret_end = caret_end.max(
+                    clusters
+                        .iter()
+                        .map(|range| range.end)
+                        .max()
+                        .unwrap_or(range.start),
+                );
+                let positions: Vec<_> = parley_run
+                    .positioned_glyphs()
+                    .zip(
+                        clusters
+                            .iter()
+                            .map(|range| range.start as u32)
+                            .chain(std::iter::repeat(run.text_range().start as u32)),
+                    )
+                    .map(|(glyph, cluster)| GlyphPosition {
+                        id: glyph.id as u16,
+                        // Incular's renderer uses `origin.y - offset.y`; Parley
+                        // exposes glyph y from its top-left layout coordinate.
+                        offset: Offset::new(glyph.x, -glyph.y),
+                        advance: glyph.advance,
+                        cluster,
                     })
                     .collect();
-                TextLine {
-                    runs,
-                    glyphs: build.glyphs.into(),
-                    width: build.width,
-                    baseline: index as f32 * line_height + baseline,
-                    start: build.start,
-                    end: build.end,
-                }
-            })
-            .collect();
-        let count = lines.len();
+                glyphs.extend(positions.iter().copied());
+                runs.push(Arc::new(GlyphRun {
+                    font,
+                    font_size: run.font_size(),
+                    origin: Offset::ZERO,
+                    glyphs: positions.into(),
+                }));
+                font_runs.push(FontRunDebug {
+                    range: run.text_range(),
+                    font: font_id,
+                    family: "Parley/Fontique resolved face".into(),
+                    script: "Parley resolved".into(),
+                    direction: if run.is_rtl() { "rtl" } else { "ltr" },
+                });
+            }
+            lines.push(TextLine {
+                runs: runs.into(),
+                glyphs: glyphs.into(),
+                width: metrics.advance,
+                baseline: metrics.baseline,
+                start: range.start,
+                caret_end,
+                end: range.end,
+            });
+        }
+
+        if lines.is_empty() {
+            lines.push(TextLine {
+                runs: Arc::new([]),
+                glyphs: Arc::new([]),
+                width: 0.0,
+                baseline: 0.0,
+                start: 0,
+                caret_end: 0,
+                end: 0,
+            });
+        }
+        self.diagnostics.fallback_fonts_used += used_fonts.len().saturating_sub(1) as u64;
+        let baseline = lines[0].baseline;
+        let line_height = layout
+            .lines()
+            .next()
+            .map_or(0.0, |line| line.metrics().line_height);
         TextLayout {
             lines: lines.into(),
             metrics: TextMetrics {
-                size: Size::new(max_line, line_height * count as f32),
+                size: Size::new(layout.width(), layout.height()),
                 baseline,
                 line_height,
             },
-            font_runs: debug.into(),
+            font_runs: font_runs.into(),
+            overflowed: false,
         }
     }
 }
-struct LineBuild {
-    runs: Vec<Arc<GlyphRun>>,
-    glyphs: Vec<GlyphPosition>,
-    width: f32,
-    start: usize,
-    end: usize,
+
+fn clipped_layout(mut layout: TextLayout, limit: usize) -> TextLayout {
+    let lines = layout.lines.iter().take(limit).cloned().collect::<Vec<_>>();
+    let width = lines
+        .iter()
+        .fold(0.0_f32, |width, line| width.max(line.width));
+    layout.metrics.size = Size::new(width, layout.metrics.line_height * lines.len() as f32);
+    layout.metrics.baseline = lines.first().map_or(0.0, |line| line.baseline);
+    layout.lines = lines.into();
+    layout.overflowed = true;
+    layout
 }
-impl LineBuild {
-    fn new(start: usize) -> Self {
-        Self {
-            runs: Vec::new(),
-            glyphs: Vec::new(),
-            width: 0.,
-            start,
-            end: start,
-        }
+
+fn grapheme_boundary_at_or_before(text: &str, offset: usize) -> usize {
+    GraphemeClusterSegmenter::new()
+        .segment_str(text)
+        .take_while(|boundary| *boundary <= offset)
+        .last()
+        .unwrap_or(0)
+}
+
+fn previous_grapheme_boundary(text: &str, offset: usize) -> usize {
+    GraphemeClusterSegmenter::new()
+        .segment_str(text)
+        .take_while(|boundary| *boundary < offset)
+        .last()
+        .unwrap_or(0)
+}
+
+fn family_name(family: &FontFamily) -> String {
+    match family {
+        FontFamily::SansSerif => "sans-serif".into(),
+        FontFamily::Serif => "serif".into(),
+        FontFamily::Monospace => "monospace".into(),
+        FontFamily::Cursive => "cursive".into(),
+        FontFamily::SystemUi => "system-ui".into(),
+        FontFamily::Named(name) => format!("'{name}'"),
     }
 }
-fn is_cluster_control(c: char) -> bool {
-    c == '\u{200d}'
-        || ('\u{fe00}'..='\u{fe0f}').contains(&c)
-        || ('\u{e0100}'..='\u{e01ef}').contains(&c)
+
+fn font_id(font: &parley::FontData) -> FontId {
+    let mut hasher = DefaultHasher::new();
+    font.data.as_ref().hash(&mut hasher);
+    font.index.hash(&mut hasher);
+    FontId(hasher.finish())
 }
-fn cluster_script(value: &str) -> Script {
-    value
-        .chars()
-        .map(|character| character.script())
-        .find(|script| !is_weak_script(*script))
-        .unwrap_or(Script::Common)
-}
-fn is_weak_script(script: Script) -> bool {
-    matches!(script, Script::Common | Script::Inherited | Script::Unknown)
-}
-fn is_rtl(script: Script) -> bool {
-    matches!(
-        script,
-        Script::Arabic | Script::Hebrew | Script::Syriac | Script::Thaana | Script::Nko
+
+fn font_handle(font: &parley::FontData) -> FontHandle {
+    FontHandle::with_face_index(
+        font_id(font),
+        Arc::<[u8]>::from(font.data.as_ref().to_vec()),
+        font.index,
     )
 }

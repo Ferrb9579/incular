@@ -23,6 +23,9 @@ Additional visual subsystem exercises:
 
 - `gesture_gallery`: retained tap/pan input with touchscreen multi-pointer
   scale feedback.
+- `interaction_complete`: nested horizontal/vertical gesture-arena claims,
+  compatible scale, `IgnorePointer`, `AbsorbPointer`, and the automatic
+  window-local retained pointer-capture lifecycle.
 - `navigation_showcase`: navigator stack, fade/slide route presentation,
   dialogs, bottom sheets, and modal overlay layers.
 
@@ -31,13 +34,21 @@ Additional visual feature demos:
 - `cargo run -p incular --example layout_gallery` — retained wrapping,
   tables, stacks, fractional sizing, aspect ratios, baselines, constraints,
   and visibility.
+- `cargo run -p incular --example layout_complete` — LimitedBox,
+  OverflowBox, flex parent data, positioned/indexed stacks, affine fitting,
+  and constraint-driven LayoutBuilder output.
 - `cargo run -p incular --example slivers` — a pinned `SliverAppBar`, a
   second persistent header, and lazy sliver grid content.
+- `cargo run -p incular --example scrolling_complete` — nested wheel boundary
+  transfer, variable-height lazy rows, and the composable scroll-policy API.
 - `cargo run -p incular --example async_runtime` — Tokio timers,
   component-scoped cancellation, Tokio `spawn_blocking`, UI-thread signal
   completion, and direct Tokio-handle access without networking.
 - `cargo run -p incular --example environment` — typed logical viewport/DPI,
   scale, locale/direction, and runtime-resolved SafeArea padding.
+- `cargo run -p incular --example localization` — ICU4X parent-locale
+  fallback, catalog selection, script directionality, and localized number/date
+  formatting.
 - `cargo run -p incular --example multi_window` — one application with
   independently retained native windows sharing a Signal, Tokio runtime, and
   GPU device; the inspector shows its own logical metrics and DPI.

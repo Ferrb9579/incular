@@ -16,12 +16,14 @@ pub use spans::{
     InlineSpan, RichText, Text, TextSpan, TextSpanVisitor, WidgetSpan, WidgetSpanAlignment,
 };
 pub use style::{
-    FontFamily, FontStyle, FontWeight, TextAlign, TextScaler, TextScalerKind, TextStyle,
+    FontFamily, FontStyle, FontWeight, TextAlign, TextOverflow, TextScaler, TextScalerKind,
+    TextStyle,
 };
 
 mod engine;
 pub use engine::{
-    FontId, FontRunDebug, TextDiagnostics, TextEngine, TextLayout, TextLine, TextMetrics,
+    FontId, FontRunDebug, TextDiagnostics, TextEngine, TextLayout, TextLayoutOptions, TextLine,
+    TextMetrics,
 };
 #[cfg(test)]
 mod tests {
@@ -64,5 +66,59 @@ mod tests {
         assert!(engine.font_database_generation() > generation);
         let second = engine.layout("hello", &TextStyle::default(), None, TextAlign::Start);
         assert!(!Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn soft_wrapping_and_max_lines_bound_retained_layout() {
+        let mut engine = TextEngine::new();
+        let layout = engine.layout_with_options(
+            "one two three four five six seven eight",
+            &TextStyle::default().font_size(18.),
+            TextLayoutOptions::new(Some(70.), TextAlign::Start)
+                .max_lines(Some(2))
+                .overflow(TextOverflow::Clip),
+        );
+        assert_eq!(layout.lines.len(), 2);
+        assert!(layout.overflowed);
+
+        let unwrapped = engine.layout_with_options(
+            "one two three four",
+            &TextStyle::default().font_size(18.),
+            TextLayoutOptions::new(Some(20.), TextAlign::Start).soft_wrap(false),
+        );
+        assert_eq!(unwrapped.lines.len(), 1);
+        assert!(unwrapped.overflowed);
+    }
+
+    #[test]
+    fn ellipsis_is_shaped_and_never_splits_bidi_graphemes() {
+        let mut engine = TextEngine::new();
+        let source = "עברית café 👩\u{200d}💻 mixed English words";
+        let clipped = engine.layout_with_options(
+            source,
+            &TextStyle::default().font_size(20.),
+            TextLayoutOptions::new(Some(95.), TextAlign::Start)
+                .max_lines(Some(1))
+                .overflow(TextOverflow::Clip),
+        );
+        let ellipsized = engine.layout_with_options(
+            source,
+            &TextStyle::default().font_size(20.),
+            TextLayoutOptions::new(Some(95.), TextAlign::Start)
+                .max_lines(Some(1))
+                .overflow(TextOverflow::Ellipsis),
+        );
+        assert_eq!(ellipsized.lines.len(), 1);
+        assert!(ellipsized.overflowed);
+        // The final source is re-shaped with U+2026, so it has at least one
+        // renderer glyph even when the visible source prefix is empty.
+        assert!(ellipsized.glyph_count() > 0);
+        assert!(ellipsized.glyph_count() >= clipped.glyph_count());
+        assert!(
+            ellipsized
+                .font_runs
+                .iter()
+                .any(|run| run.direction == "rtl")
+        );
     }
 }

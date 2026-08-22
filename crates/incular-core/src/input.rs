@@ -2,56 +2,19 @@
 
 use crate::{Offset, Size};
 
+/// Standardized keyboard values shared by every platform adapter.
+///
+/// [`Code`] identifies the physical key position; [`Key`] is the logical key
+/// value after the operating system's layout processing.  Incular does not
+/// maintain a parallel keyboard vocabulary.
+pub use keyboard_types::{Code, Key, KeyState, KeyboardEvent, Location, Modifiers, NamedKey};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerPhase {
     Move,
     Down,
     Up,
     Cancel,
-}
-
-/// Platform-neutral modifiers sampled with a keyboard event. `command` is a
-/// semantic shortcut modifier: Control on Linux/Windows and Command on macOS.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Modifiers {
-    pub shift: bool,
-    pub control: bool,
-    pub alt: bool,
-    pub super_key: bool,
-    pub command: bool,
-}
-
-/// Physical command keys understood by the first desktop input slice. Text is
-/// deliberately absent: printable Unicode arrives through [`InputEvent::Text`]
-/// or IME commit rather than a key-to-character mapping.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum KeyCode {
-    Tab,
-    Enter,
-    Escape,
-    Backspace,
-    Delete,
-    ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    ArrowDown,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    KeyA,
-    KeyC,
-    KeyV,
-    KeyX,
-    Other,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeyEvent {
-    pub code: KeyCode,
-    pub pressed: bool,
-    pub repeat: bool,
-    pub modifiers: Modifiers,
 }
 
 /// IME composition is separate from committed text. Byte ranges always refer
@@ -84,7 +47,7 @@ pub enum InputEvent {
     Scroll {
         delta: Offset,
     },
-    Key(KeyEvent),
+    Key(KeyboardEvent),
     Text(String),
     Ime(ImeEvent),
     WindowResized {

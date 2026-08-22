@@ -1,0 +1,36 @@
+//! Scroll policy and nested-delta visual exercise.
+//!
+//! The inner list is deliberately scrollable inside an outer header/content
+//! viewport. At its top or bottom, wheel remainder transfers to the outer
+//! viewport exactly once. The variable rows use the same retained list path.
+use incular::prelude::*;
+
+fn main() {
+    let outer = ScrollController::new();
+    let inner = ScrollController::new();
+    let extents = MeasuredExtentIndex::new(2_000, 36.);
+    // Applications may drive kinetic completion from their monotonic frame
+    // callback with this policy; the retained wheel path uses clamped nested
+    // transfer by default.
+    let _touch_policy = ScrollPhysics::clamping().bouncing().page_snapping(320.);
+    let app = Application::new(move |_| {
+        let list =
+            VirtualList::variable_extent_with_index(extents.clone(), inner.clone(), |item| {
+                Widget::fixed_box(
+                    Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
+                    Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
+                )
+            });
+        let inner_view: Widget = SizedBox::new(Size::new(360., 320.), list).into();
+        ScrollView::vertical(
+            outer.clone(),
+            Widget::column(vec![
+                Widget::fixed_box(Size::new(360., 120.), Color::rgba(35, 45, 70, 255)),
+                inner_view,
+                Widget::fixed_box(Size::new(360., 700.), Color::rgba(30, 38, 55, 255)),
+            ]),
+        )
+    })
+    .expect("valid scrolling application");
+    incular::run(app).expect("native scrolling application");
+}

@@ -44,12 +44,53 @@ fn facade_exposes_the_extracted_subsystems() {
 }
 
 #[test]
+fn facade_exposes_variable_extent_lazy_lists() {
+    let index = MeasuredExtentIndex::new(10, 32.);
+    let controller = ScrollController::new();
+    let _: Widget = ListView::variable_extent_with_index(index.clone(), controller, |_| {
+        Widget::fixed_box(Size::new(20., 32.), Color::WHITE)
+    });
+    assert_eq!(index.index_at_offset(96.), Some(3));
+}
+
+#[test]
 fn facade_exposes_hsl_and_hsv_configuration_colors() {
     let hsl = HslColor::new(240.0, 1.0, 0.5, 1.0);
     assert_eq!(hsl.to_color(), Color::rgba(0, 0, 255, 255));
 
     let hsv = HsvColor::from_color(Color::rgba(255, 128, 0, 128));
     assert_eq!(hsv.to_color(), Color::rgba(255, 128, 0, 128));
+}
+
+#[test]
+fn facade_exposes_icu_localization_catalog_boundary() {
+    struct Catalog {
+        locales: Vec<Locale>,
+    }
+    impl LocalizationCatalog for Catalog {
+        fn supported_locales(&self) -> &[Locale] {
+            &self.locales
+        }
+
+        fn message(&self, locale: &Locale, key: &str) -> Option<&str> {
+            (locale.to_string() == "en" && key == "greeting").then_some("Hello")
+        }
+    }
+
+    let catalog = Catalog {
+        locales: vec!["en".parse().expect("valid ICU locale")],
+    };
+    let message = LocaleResolver::resolve_message(
+        &["en-GB".parse().expect("valid ICU locale")],
+        &catalog,
+        "greeting",
+    )
+    .expect("parent locale resolves");
+    assert_eq!(message.value, "Hello");
+    assert_eq!(
+        LocaleResolver::text_direction(&message.locale),
+        TextDirection::Ltr
+    );
 }
 
 #[test]
@@ -60,6 +101,30 @@ fn facade_exposes_colored_box_and_mouse_region() {
     assert!(mouse.is_inside());
     mouse.exit(Offset::new(2., 3.));
     assert!(!mouse.is_inside());
+}
+
+#[test]
+fn facade_exposes_retained_affine_widgets() {
+    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let _: Widget = Transform::rotation(0.25, child.clone()).into();
+    let _: Widget = FittedBox::new(child.clone()).fit(ImageFit::Contain).into();
+    let _: Widget = ScaleTransition::new(ScaleController::new(), child.clone()).into();
+    let _: Widget = RotationTransition::new(RotationController::new(), child).into();
+    let affine = AffineTransform::skew(0.1, 0.2);
+    assert!(affine.inverse().is_some());
+}
+
+#[test]
+fn facade_exposes_retained_layout_closure_widgets() {
+    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let _: Widget = LimitedBox::new(20., 20., child.clone()).into();
+    let _: Widget = OverflowBox::new(child.clone()).max_width(40.).into();
+    let _: Widget = Flexible::new(1, child.clone()).into();
+    let _: Widget = Expanded::new(child.clone()).into();
+    let _: Widget = Spacer::new().into();
+    let _: Widget = Positioned::new(child.clone()).left(2.).top(3.).into();
+    let _: Widget = IndexedStack::new([child.clone()]).index(0).into();
+    let _: Widget = LayoutBuilder::new(move |_| child.clone()).into();
 }
 
 #[test]
@@ -85,4 +150,36 @@ fn facade_exposes_opt_in_restoration_contracts() {
     fn receives_restoration_handle(_: Option<RestorationHandle>) {}
     receives_restorable_value(None);
     receives_restoration_handle(None);
+}
+
+#[test]
+fn facade_exposes_nested_navigation_contracts() {
+    let root_navigation = Navigator::new();
+    root_navigation.push_page(Page::new(
+        "home",
+        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+    ));
+    root_navigation.push_page(Page::new(
+        "settings",
+        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+    ));
+    let child_navigation = Navigator::new();
+    child_navigation.push_page(Page::new(
+        "overview",
+        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+    ));
+    child_navigation.push_page(Page::new(
+        "details",
+        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+    ));
+    let root = BackDispatcher::new(root_navigation);
+    let child = BackDispatcher::new(child_navigation);
+    root.attach_child(&child);
+    root.set_active_child(Some(&child));
+    assert_eq!(root.dispatch_back().depth, 1);
+    let observer = root.navigator().observe(|event| {
+        let _: NavigationEvent = event;
+    });
+    assert!(observer.is_active());
+    root.navigator().set_pop_guard(|_| PopDecision::Allow);
 }
