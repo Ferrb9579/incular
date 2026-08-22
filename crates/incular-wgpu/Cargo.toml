@@ -25,3 +25,5 @@ kurbo = { workspace = true }
 
 [dev-dependencies]
 incular-text = { workspace = true }
+naga = { workspace = true, features = ["wgsl-in"] }
+pollster = { workspace = true }

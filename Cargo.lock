@@ -1705,6 +1705,8 @@ dependencies = [
  "incular-text",
  "kurbo",
  "lyon_tessellation",
+ "naga",
+ "pollster",
  "raw-window-handle",
  "wgpu",
 ]

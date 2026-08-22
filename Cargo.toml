@@ -49,6 +49,8 @@ incular-widgets = { path = "crates/incular-widgets", version = "0.1.0" }
 incular-windows = { path = "crates/incular-windows", version = "0.1.0" }
 
 wgpu = "30"
+# Test/dev-only: WGSL front end for the renderer pipeline-contract tests.
+naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 winit = "0.30"
 raw-window-handle = "0.6"
 bytemuck = { version = "1.23", features = ["derive"] }

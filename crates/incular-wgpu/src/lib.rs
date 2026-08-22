@@ -806,12 +806,31 @@ pub enum RendererError {
     Adapter(wgpu::RequestAdapterError),
     Device(wgpu::RequestDeviceError),
     Surface(wgpu::CreateSurfaceError),
-    ImageTooLarge { width: u32, height: u32, limit: u32 },
-    GlyphAtlasPageTooLarge { page: u16, limit: u32 },
+    ImageTooLarge {
+        width: u32,
+        height: u32,
+        limit: u32,
+    },
+    GlyphAtlasPageTooLarge {
+        page: u16,
+        limit: u32,
+    },
     StencilDepthOverflow,
     UnbalancedClipStack,
-    OffscreenTargetTooLarge { width: u32, height: u32, limit: u32 },
+    OffscreenTargetTooLarge {
+        width: u32,
+        height: u32,
+        limit: u32,
+    },
     OutOfMemory,
+    /// A built-in render pipeline failed `wgpu` validation during renderer
+    /// initialization. Initialization fails cleanly instead of continuing with
+    /// a broken renderer; `label` names the pipeline and `reason` carries the
+    /// `wgpu` validation message.
+    PipelineCreation {
+        label: String,
+        reason: String,
+    },
 }
 impl std::fmt::Display for RendererError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -846,6 +865,10 @@ impl std::fmt::Display for RendererError {
                 "opacity group target {width}x{height} exceeds GPU texture limit {limit}"
             ),
             Self::OutOfMemory => write!(f, "GPU surface ran out of memory"),
+            Self::PipelineCreation { label, reason } => write!(
+                f,
+                "render pipeline '{label}' failed GPU validation: {reason}"
+            ),
         }
     }
 }
@@ -1087,7 +1110,7 @@ impl SharedGpuContext {
         SharedGpuDiagnostics {
             device_generation: self.inner.device_generation,
             pipeline_variants: pipelines.len(),
-            pipeline_count: pipelines.len().saturating_mul(25),
+            pipeline_count: pipelines.len().saturating_mul(pipeline_contracts().len()),
             shared_image_resources: resources.registry.image_count(),
             shared_glyph_resources: resources.registry.glyph_count(),
             shared_gradient_resources: resources.gradients.len(),
@@ -2043,359 +2066,12 @@ impl WgpuRenderer {
                 shared, handles, surface, config, size, device, queue, pipelines,
             ));
         }
-        let mesh = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("incular unit quad mesh"),
-            contents: bytemuck::cast_slice(&[
-                [0_f32, 0_f32],
-                [1., 0.],
-                [0., 1.],
-                [0., 1.],
-                [1., 0.],
-                [1., 1.],
-            ]),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let atlas_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular glyph atlas layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular glyph atlas sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            // Coverage masks can be positioned at fractional physical pixels.
-            // Bilinear filtering preserves grayscale antialiasing; each atlas
-            // allocation has a zero-coverage border to prevent glyph bleed.
-            mag_filter: GLYPH_ATLAS_FILTER,
-            min_filter: GLYPH_ATLAS_FILTER,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let image_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular image layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let composite_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular opacity composite layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular opacity composite sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let blur_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular gaussian effect layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular gaussian linear sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let color_matrix_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular color matrix layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let color_matrix_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular color matrix sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let blend_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular destination blend layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let blend_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular destination blend sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-        let gradient_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("incular gradient lookup layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let gradient_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("incular gradient lookup sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let solid_gradient = create_gradient_resource(
-            &device,
-            &queue,
-            &gradient_bind_group_layout,
-            &gradient_sampler,
-            &[[255, 255, 255, 255]; 1],
-        );
-        let mut image_samplers = HashMap::new();
-        for (sampling, filter) in [
-            (ImageSampling::Linear, wgpu::FilterMode::Linear),
-            (ImageSampling::Nearest, wgpu::FilterMode::Nearest),
-        ] {
-            image_samplers.insert(
-                sampling,
-                device.create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some("incular retained image sampler"),
-                    address_mode_u: wgpu::AddressMode::ClampToEdge,
-                    address_mode_v: wgpu::AddressMode::ClampToEdge,
-                    address_mode_w: wgpu::AddressMode::ClampToEdge,
-                    mag_filter: filter,
-                    min_filter: filter,
-                    mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                    ..Default::default()
-                }),
-            );
-        }
-        let rectangle_pipeline = create_rectangle_pipeline(&device, config.format);
-        let text_pipeline = create_text_pipeline(&device, config.format, &atlas_bind_group_layout);
-        let image_pipeline =
-            create_image_pipeline(&device, config.format, &image_bind_group_layout);
-        let rounded_rect_pipeline =
-            create_rounded_rect_pipeline(&device, config.format, &gradient_bind_group_layout);
-        let path_pipeline =
-            create_path_pipeline(&device, config.format, &gradient_bind_group_layout);
-        let composite_pipeline =
-            create_composite_pipeline(&device, config.format, &composite_bind_group_layout);
-        let fixed_blend_pipelines: Vec<_> = [
-            BlendMode::SrcOver,
-            BlendMode::Src,
-            BlendMode::DstOver,
-            BlendMode::SrcIn,
-            BlendMode::DstIn,
-            BlendMode::SrcOut,
-            BlendMode::DstOut,
-            BlendMode::SrcAtop,
-            BlendMode::DstAtop,
-            BlendMode::Xor,
-            BlendMode::Plus,
-        ]
-        .into_iter()
-        .map(|mode| {
-            create_fixed_blend_pipeline(&device, config.format, &composite_bind_group_layout, mode)
-        })
-        .collect();
-        let blur_pipeline = create_effect_pipeline(
-            &device,
-            config.format,
-            BLUR_SHADER,
-            "incular separable gaussian blur pipeline",
-            &blur_bind_group_layout,
-        );
-        let resample_pipeline = create_effect_pipeline(
-            &device,
-            config.format,
-            RESAMPLE_SHADER,
-            "incular effect resample pipeline",
-            &blur_bind_group_layout,
-        );
-        let color_matrix_pipeline = create_effect_pipeline(
-            &device,
-            config.format,
-            COLOR_MATRIX_SHADER,
-            "incular color matrix pipeline",
-            &color_matrix_bind_group_layout,
-        );
-        let blend_pipeline =
-            create_blend_pipeline(&device, config.format, &blend_bind_group_layout);
-        let stencil_rrect_increment_pipeline = create_rounded_rect_mask_pipeline(
-            &device,
-            config.format,
-            &gradient_bind_group_layout,
-            wgpu::StencilOperation::IncrementClamp,
-        );
-        let stencil_rrect_decrement_pipeline = create_rounded_rect_mask_pipeline(
-            &device,
-            config.format,
-            &gradient_bind_group_layout,
-            wgpu::StencilOperation::DecrementClamp,
-        );
-        let stencil_path_increment_pipeline = create_path_mask_pipeline(
-            &device,
-            config.format,
-            &gradient_bind_group_layout,
-            wgpu::StencilOperation::IncrementClamp,
-        );
-        let stencil_path_decrement_pipeline = create_path_mask_pipeline(
-            &device,
-            config.format,
-            &gradient_bind_group_layout,
-            wgpu::StencilOperation::DecrementClamp,
-        );
+        // Device-level resources (layouts, samplers, unit quad, gradient LUT,
+        // and every pipeline) are created once per target format and shared by
+        // all windows using that format. A contract regression fails
+        // initialization with a labeled error instead of panicking on draw.
+        let shared_pipelines =
+            create_shared_pipeline_resources(&device, &queue, config.format).await?;
         let (stencil_texture, stencil_view) =
             create_stencil_attachment(&device, config.width, config.height);
         let instances = create_instance_buffer(&device, 1);
@@ -2420,39 +2096,39 @@ impl WgpuRenderer {
         let target_height = config.height;
         let device_generation = shared.inner.device_generation;
         let format = config.format;
-        let shared_pipelines = SharedPipelineResources {
-            rectangle_pipeline: rectangle_pipeline.clone(),
-            text_pipeline: text_pipeline.clone(),
-            image_pipeline: image_pipeline.clone(),
-            rounded_rect_pipeline: rounded_rect_pipeline.clone(),
-            path_pipeline: path_pipeline.clone(),
-            composite_pipeline: composite_pipeline.clone(),
-            fixed_blend_pipelines: fixed_blend_pipelines.clone(),
-            blur_pipeline: blur_pipeline.clone(),
-            resample_pipeline: resample_pipeline.clone(),
-            color_matrix_pipeline: color_matrix_pipeline.clone(),
-            blend_pipeline: blend_pipeline.clone(),
-            stencil_rrect_increment_pipeline: stencil_rrect_increment_pipeline.clone(),
-            stencil_rrect_decrement_pipeline: stencil_rrect_decrement_pipeline.clone(),
-            stencil_path_increment_pipeline: stencil_path_increment_pipeline.clone(),
-            stencil_path_decrement_pipeline: stencil_path_decrement_pipeline.clone(),
-            mesh: mesh.clone(),
-            gradient_bind_group_layout: gradient_bind_group_layout.clone(),
-            gradient_sampler: gradient_sampler.clone(),
-            solid_gradient: solid_gradient.clone(),
-            atlas_bind_group_layout: atlas_bind_group_layout.clone(),
-            atlas_sampler: atlas_sampler.clone(),
-            image_bind_group_layout: image_bind_group_layout.clone(),
-            image_samplers: image_samplers.clone(),
-            composite_bind_group_layout: composite_bind_group_layout.clone(),
-            composite_sampler: composite_sampler.clone(),
-            blur_bind_group_layout: blur_bind_group_layout.clone(),
-            blur_sampler: blur_sampler.clone(),
-            color_matrix_bind_group_layout: color_matrix_bind_group_layout.clone(),
-            color_matrix_sampler: color_matrix_sampler.clone(),
-            blend_bind_group_layout: blend_bind_group_layout.clone(),
-            blend_sampler: blend_sampler.clone(),
-        };
+        let SharedPipelineResources {
+            mesh,
+            rectangle_pipeline,
+            text_pipeline,
+            image_pipeline,
+            rounded_rect_pipeline,
+            path_pipeline,
+            composite_pipeline,
+            fixed_blend_pipelines,
+            blur_pipeline,
+            resample_pipeline,
+            color_matrix_pipeline,
+            blend_pipeline,
+            stencil_rrect_increment_pipeline,
+            stencil_rrect_decrement_pipeline,
+            stencil_path_increment_pipeline,
+            stencil_path_decrement_pipeline,
+            gradient_bind_group_layout,
+            gradient_sampler,
+            solid_gradient,
+            atlas_bind_group_layout,
+            atlas_sampler,
+            image_bind_group_layout,
+            image_samplers,
+            composite_bind_group_layout,
+            composite_sampler,
+            blur_bind_group_layout,
+            blur_sampler,
+            color_matrix_bind_group_layout,
+            color_matrix_sampler,
+            blend_bind_group_layout,
+            blend_sampler,
+        } = shared_pipelines.clone();
         shared.register_pipeline_resources(format, shared_pipelines);
         Ok(Self {
             shared,
@@ -6670,306 +6346,755 @@ impl WgpuRenderer {
     }
 }
 
-fn create_rectangle_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    create_pipeline(
-        device,
-        format,
-        RECT_SHADER,
-        "incular rectangle pipeline",
-        None,
-        rectangle_layout(),
-        content_stencil(),
-        wgpu::ColorWrites::ALL,
-    )
+/// Direction of a clip mask's stencil write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ClipStencilDirection {
+    Increment,
+    Decrement,
 }
-fn create_text_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    atlas: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    create_pipeline(
-        device,
-        format,
-        TEXT_SHADER,
-        "incular text pipeline",
-        Some(atlas),
-        glyph_layout(),
-        content_stencil(),
-        wgpu::ColorWrites::ALL,
-    )
-}
-fn create_image_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    images: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    create_pipeline(
-        device,
-        format,
-        IMAGE_SHADER,
-        "incular image pipeline",
-        Some(images),
-        image_layout(),
-        content_stencil(),
-        wgpu::ColorWrites::ALL,
-    )
-}
-fn create_rounded_rect_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    gradients: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    create_pipeline(
-        device,
-        format,
-        RRECT_SHADER,
-        "incular analytic rounded rectangle pipeline",
-        Some(gradients),
-        rrect_layout(),
-        content_stencil(),
-        wgpu::ColorWrites::ALL,
-    )
-}
-fn create_path_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    gradients: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("incular retained path shader"),
-        source: wgpu::ShaderSource::Wgsl(PATH_SHADER.into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("incular retained path pipeline"),
-        layout: Some(
-            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("incular path gradient layout"),
-                bind_group_layouts: &[Some(gradients)],
-                immediate_size: 0,
-            }),
-        ),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(path_instance_layout())],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: content_stencil(),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-fn create_composite_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("incular opacity composite shader"),
-        source: wgpu::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("incular opacity composite layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("incular opacity composite pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(composite_layout())],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: content_stencil(),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+impl From<ClipStencilDirection> for wgpu::StencilOperation {
+    fn from(direction: ClipStencilDirection) -> Self {
+        match direction {
+            ClipStencilDirection::Increment => Self::IncrementClamp,
+            ClipStencilDirection::Decrement => Self::DecrementClamp,
+        }
+    }
 }
 
-fn create_fixed_blend_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    layout: &wgpu::BindGroupLayout,
-    mode: BlendMode,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("incular fixed-function blend shader"),
-        source: wgpu::ShaderSource::Wgsl(FIXED_BLEND_SHADER.into()),
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("incular fixed-function blend layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
-    let factor = |source: wgpu::BlendFactor, destination: wgpu::BlendFactor| wgpu::BlendComponent {
-        src_factor: source,
-        dst_factor: destination,
-        operation: wgpu::BlendOperation::Add,
+/// Identifies exactly one production render pipeline class. This enum is the
+/// single registry of what the renderer builds per target format; renderer
+/// initialization, shared-resource diagnostics, and the headless/Naga
+/// validation tests all consume [`pipeline_contracts`], so contract tests
+/// cannot drift from the pipelines that actually render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PipelineClass {
+    Rectangle,
+    Text,
+    Image,
+    RoundedRect,
+    /// Retained tessellated geometry: Kurbo paths filled/stroked through Lyon.
+    Path,
+    /// Offscreen group composite (opacity, drop shadows).
+    Composite,
+    /// Fixed-function Porter-Duff blending over offscreen groups.
+    FixedBlend(BlendMode),
+    /// Direct separable Gaussian blur pass.
+    Blur,
+    /// Multi-scale blur resampling pass (downsample/upsample).
+    Resample,
+    /// Color-matrix filter pass.
+    ColorMatrix,
+    /// Shader-based artistic blend modes reading source and destination.
+    DestinationBlend,
+    RoundedClipMask(ClipStencilDirection),
+    PathClipMask(ClipStencilDirection),
+}
+
+/// Which shared bind-group layout the pipeline binds at `@group(0)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResourceSet {
+    None,
+    GlyphAtlas,
+    Images,
+    Gradients,
+    Composite,
+    BlurUniforms,
+    ColorMatrixUniforms,
+    DestinationBlend,
+}
+
+/// Which vertex/instance streams feed the vertex stage. Every pipeline binds
+/// the unit quad at slot zero; the variant names the additional
+/// instance-stream family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VertexStreams {
+    EffectQuad,
+    RectInstances,
+    GlyphInstances,
+    ImageInstances,
+    RRectInstances,
+    PathInstances,
+    CompositeInstances,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColorBlend {
+    /// Straight-alpha source-over (`ALPHA_BLENDING`).
+    StraightAlpha,
+    /// Premultiplied-alpha source-over for offscreen groups.
+    PremultipliedAlpha,
+    /// No hardware blending; the fragment result replaces the target.
+    Replace,
+    /// Fixed-function Porter-Duff factors selected per mode.
+    FixedPorterDuff(BlendMode),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StencilRequirement {
+    /// Draw only where the clip stencil equals the current clip depth.
+    ContentEqualKeep,
+    Mask(ClipStencilDirection),
+    Disabled,
+}
+
+/// The complete declarative description of one production render pipeline.
+///
+/// Production creation ([`create_validated_contract_pipelines`]) and the
+/// GPU-independent Naga interface tests consume the same list produced by
+/// [`pipeline_contracts`], making it the one source of truth for shader
+/// entry points, vertex/instance layouts, bindings, blending, and stencil
+/// state.
+struct PipelineContract {
+    class: PipelineClass,
+    label: &'static str,
+    shader_module_label: &'static str,
+    shader: &'static str,
+    resources: ResourceSet,
+    streams: VertexStreams,
+    blend: ColorBlend,
+    stencil: StencilRequirement,
+    color_writes: wgpu::ColorWrites,
+}
+impl PipelineContract {
+    const VERTEX_ENTRY: &'static str = "vs_main";
+    const FRAGMENT_ENTRY: &'static str = "fs_main";
+}
+
+/// Porter-Duff modes implemented by fixed-function blend pipelines; artistic
+/// modes route through `BLEND_SHADER` instead.
+const PORTER_DUFF_BLEND_MODES: [BlendMode; 11] = [
+    BlendMode::SrcOver,
+    BlendMode::Src,
+    BlendMode::DstOver,
+    BlendMode::SrcIn,
+    BlendMode::DstIn,
+    BlendMode::SrcOut,
+    BlendMode::DstOut,
+    BlendMode::SrcAtop,
+    BlendMode::DstAtop,
+    BlendMode::Xor,
+    BlendMode::Plus,
+];
+
+const CLIP_STENCIL_DIRECTIONS: [ClipStencilDirection; 2] = [
+    ClipStencilDirection::Increment,
+    ClipStencilDirection::Decrement,
+];
+
+/// Every render pipeline the retained renderer creates for one target format.
+/// Completeness against `SharedPipelineResources` is asserted by tests, and
+/// creation is eager so validation failures surface at initialization rather
+/// than at first draw.
+fn pipeline_contracts() -> Vec<PipelineContract> {
+    let mut contracts = vec![
+        PipelineContract {
+            class: PipelineClass::Rectangle,
+            label: "incular rectangle pipeline",
+            shader_module_label: "incular rectangle pipeline",
+            shader: RECT_SHADER,
+            resources: ResourceSet::None,
+            streams: VertexStreams::RectInstances,
+            blend: ColorBlend::StraightAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Text,
+            label: "incular text pipeline",
+            shader_module_label: "incular text pipeline",
+            shader: TEXT_SHADER,
+            resources: ResourceSet::GlyphAtlas,
+            streams: VertexStreams::GlyphInstances,
+            blend: ColorBlend::StraightAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Image,
+            label: "incular image pipeline",
+            shader_module_label: "incular image pipeline",
+            shader: IMAGE_SHADER,
+            resources: ResourceSet::Images,
+            streams: VertexStreams::ImageInstances,
+            blend: ColorBlend::StraightAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::RoundedRect,
+            label: "incular analytic rounded rectangle pipeline",
+            shader_module_label: "incular analytic rounded rectangle pipeline",
+            shader: RRECT_SHADER,
+            resources: ResourceSet::Gradients,
+            streams: VertexStreams::RRectInstances,
+            blend: ColorBlend::StraightAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Path,
+            label: "incular retained path pipeline",
+            shader_module_label: "incular retained path shader",
+            shader: PATH_SHADER,
+            resources: ResourceSet::Gradients,
+            streams: VertexStreams::PathInstances,
+            blend: ColorBlend::StraightAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Composite,
+            label: "incular opacity composite pipeline",
+            shader_module_label: "incular opacity composite shader",
+            shader: COMPOSITE_SHADER,
+            resources: ResourceSet::Composite,
+            streams: VertexStreams::CompositeInstances,
+            blend: ColorBlend::PremultipliedAlpha,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Blur,
+            label: "incular separable gaussian blur pipeline",
+            shader_module_label: "incular separable gaussian blur pipeline",
+            shader: BLUR_SHADER,
+            resources: ResourceSet::BlurUniforms,
+            streams: VertexStreams::EffectQuad,
+            blend: ColorBlend::Replace,
+            stencil: StencilRequirement::Disabled,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::Resample,
+            label: "incular effect resample pipeline",
+            shader_module_label: "incular effect resample pipeline",
+            shader: RESAMPLE_SHADER,
+            resources: ResourceSet::BlurUniforms,
+            streams: VertexStreams::EffectQuad,
+            blend: ColorBlend::Replace,
+            stencil: StencilRequirement::Disabled,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::ColorMatrix,
+            label: "incular color matrix pipeline",
+            shader_module_label: "incular color matrix pipeline",
+            shader: COLOR_MATRIX_SHADER,
+            resources: ResourceSet::ColorMatrixUniforms,
+            streams: VertexStreams::EffectQuad,
+            blend: ColorBlend::Replace,
+            stencil: StencilRequirement::Disabled,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::DestinationBlend,
+            label: "incular destination blend pipeline",
+            shader_module_label: "incular destination blend shader",
+            shader: BLEND_SHADER,
+            resources: ResourceSet::DestinationBlend,
+            streams: VertexStreams::CompositeInstances,
+            blend: ColorBlend::Replace,
+            stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+    ];
+    contracts.extend(PORTER_DUFF_BLEND_MODES.map(|mode| PipelineContract {
+        class: PipelineClass::FixedBlend(mode),
+        label: "incular fixed-function blend pipeline",
+        shader_module_label: "incular fixed-function blend shader",
+        shader: FIXED_BLEND_SHADER,
+        resources: ResourceSet::Composite,
+        streams: VertexStreams::CompositeInstances,
+        blend: ColorBlend::FixedPorterDuff(mode),
+        stencil: StencilRequirement::ContentEqualKeep,
+        color_writes: wgpu::ColorWrites::ALL,
+    }));
+    contracts.extend(CLIP_STENCIL_DIRECTIONS.map(|direction| PipelineContract {
+        class: PipelineClass::RoundedClipMask(direction),
+        label: match direction {
+            ClipStencilDirection::Increment => "incular rounded clip mask increment",
+            ClipStencilDirection::Decrement => "incular rounded clip mask decrement",
+        },
+        shader_module_label: "incular rounded clip mask",
+        shader: RRECT_SHADER,
+        resources: ResourceSet::Gradients,
+        streams: VertexStreams::RRectInstances,
+        blend: ColorBlend::StraightAlpha,
+        stencil: StencilRequirement::Mask(direction),
+        color_writes: wgpu::ColorWrites::empty(),
+    }));
+    contracts.extend(CLIP_STENCIL_DIRECTIONS.map(|direction| PipelineContract {
+        class: PipelineClass::PathClipMask(direction),
+        label: match direction {
+            ClipStencilDirection::Increment => "incular path clip mask pipeline increment",
+            ClipStencilDirection::Decrement => "incular path clip mask pipeline decrement",
+        },
+        shader_module_label: "incular path clip mask shader",
+        shader: PATH_SHADER,
+        resources: ResourceSet::Gradients,
+        streams: VertexStreams::PathInstances,
+        blend: ColorBlend::Replace,
+        stencil: StencilRequirement::Mask(direction),
+        color_writes: wgpu::ColorWrites::empty(),
+    }));
+    contracts
+}
+
+/// Bind-group layouts every pipeline variant can reference, created once per
+/// device and reused across target formats and windows.
+struct SharedBindGroupLayouts<'a> {
+    atlas: &'a wgpu::BindGroupLayout,
+    images: &'a wgpu::BindGroupLayout,
+    gradients: &'a wgpu::BindGroupLayout,
+    composite: &'a wgpu::BindGroupLayout,
+    blur: &'a wgpu::BindGroupLayout,
+    color_matrix: &'a wgpu::BindGroupLayout,
+    destination_blend: &'a wgpu::BindGroupLayout,
+}
+
+/// Owned bind-group layouts created once per device. Extracted from renderer
+/// initialization so headless validation tests construct identical GPU
+/// resources without needing a window surface.
+#[derive(Clone)]
+struct SharedBindGroupLayoutsOwned {
+    atlas: wgpu::BindGroupLayout,
+    images: wgpu::BindGroupLayout,
+    gradients: wgpu::BindGroupLayout,
+    composite: wgpu::BindGroupLayout,
+    blur: wgpu::BindGroupLayout,
+    color_matrix: wgpu::BindGroupLayout,
+    destination_blend: wgpu::BindGroupLayout,
+}
+impl SharedBindGroupLayoutsOwned {
+    fn create(device: &wgpu::Device) -> Self {
+        let texture_float_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let sampler_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
+        let uniform_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let create = |label: &'static str, entries: &[wgpu::BindGroupLayoutEntry]| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            })
+        };
+        Self {
+            atlas: create(
+                "incular glyph atlas layout",
+                &[texture_float_entry(0), sampler_entry(1)],
+            ),
+            images: create(
+                "incular image layout",
+                &[texture_float_entry(0), sampler_entry(1)],
+            ),
+            gradients: create(
+                "incular gradient lookup layout",
+                &[texture_float_entry(0), sampler_entry(1)],
+            ),
+            composite: create(
+                "incular opacity composite layout",
+                &[texture_float_entry(0), sampler_entry(1)],
+            ),
+            blur: create(
+                "incular gaussian effect layout",
+                &[texture_float_entry(0), sampler_entry(1), uniform_entry(2)],
+            ),
+            color_matrix: create(
+                "incular color matrix layout",
+                &[texture_float_entry(0), sampler_entry(1), uniform_entry(2)],
+            ),
+            destination_blend: create(
+                "incular destination blend layout",
+                &[
+                    texture_float_entry(0),
+                    texture_float_entry(1),
+                    sampler_entry(2),
+                ],
+            ),
+        }
+    }
+    fn borrowed(&self) -> SharedBindGroupLayouts<'_> {
+        SharedBindGroupLayouts {
+            atlas: &self.atlas,
+            images: &self.images,
+            gradients: &self.gradients,
+            composite: &self.composite,
+            blur: &self.blur,
+            color_matrix: &self.color_matrix,
+            destination_blend: &self.destination_blend,
+        }
+    }
+}
+
+fn stream_layouts(streams: VertexStreams) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
+    match streams {
+        VertexStreams::EffectQuad => vec![Some(quad_layout())],
+        VertexStreams::RectInstances => {
+            vec![Some(quad_layout()), Some(rectangle_layout())]
+        }
+        VertexStreams::GlyphInstances => vec![Some(quad_layout()), Some(glyph_layout())],
+        VertexStreams::ImageInstances => vec![Some(quad_layout()), Some(image_layout())],
+        VertexStreams::RRectInstances => {
+            vec![Some(quad_layout()), Some(rrect_layout())]
+        }
+        VertexStreams::PathInstances => vec![Some(quad_layout()), Some(path_instance_layout())],
+        VertexStreams::CompositeInstances => {
+            vec![Some(quad_layout()), Some(composite_layout())]
+        }
+    }
+}
+
+fn porter_duff_factors(mode: BlendMode) -> (wgpu::BlendComponent, wgpu::BlendComponent) {
+    let component =
+        |source: wgpu::BlendFactor, destination: wgpu::BlendFactor| wgpu::BlendComponent {
+            src_factor: source,
+            dst_factor: destination,
+            operation: wgpu::BlendOperation::Add,
+        };
+    let factors = |source, destination| {
+        (
+            component(source, destination),
+            component(source, destination),
+        )
     };
-    let (source, destination) = match mode {
-        BlendMode::SrcOver => (wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrcAlpha),
-        BlendMode::Src => (wgpu::BlendFactor::One, wgpu::BlendFactor::Zero),
-        BlendMode::DstOver => (wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::One),
-        BlendMode::SrcIn => (wgpu::BlendFactor::DstAlpha, wgpu::BlendFactor::Zero),
-        BlendMode::DstIn => (wgpu::BlendFactor::Zero, wgpu::BlendFactor::SrcAlpha),
-        BlendMode::SrcOut => (wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::Zero),
-        BlendMode::DstOut => (wgpu::BlendFactor::Zero, wgpu::BlendFactor::OneMinusSrcAlpha),
-        BlendMode::SrcAtop => (
+    match mode {
+        BlendMode::SrcOver => factors(wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrcAlpha),
+        BlendMode::Src => factors(wgpu::BlendFactor::One, wgpu::BlendFactor::Zero),
+        BlendMode::DstOver => factors(wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::One),
+        BlendMode::SrcIn => factors(wgpu::BlendFactor::DstAlpha, wgpu::BlendFactor::Zero),
+        BlendMode::DstIn => factors(wgpu::BlendFactor::Zero, wgpu::BlendFactor::SrcAlpha),
+        BlendMode::SrcOut => factors(wgpu::BlendFactor::OneMinusDstAlpha, wgpu::BlendFactor::Zero),
+        BlendMode::DstOut => factors(wgpu::BlendFactor::Zero, wgpu::BlendFactor::OneMinusSrcAlpha),
+        BlendMode::SrcAtop => factors(
             wgpu::BlendFactor::DstAlpha,
             wgpu::BlendFactor::OneMinusSrcAlpha,
         ),
-        BlendMode::DstAtop => (
+        BlendMode::DstAtop => factors(
             wgpu::BlendFactor::OneMinusDstAlpha,
             wgpu::BlendFactor::SrcAlpha,
         ),
-        BlendMode::Xor => (
+        BlendMode::Xor => factors(
             wgpu::BlendFactor::OneMinusDstAlpha,
             wgpu::BlendFactor::OneMinusSrcAlpha,
         ),
-        BlendMode::Plus => (wgpu::BlendFactor::One, wgpu::BlendFactor::One),
-        _ => unreachable!("fixed blend pipeline only supports Porter-Duff modes"),
+        BlendMode::Plus => factors(wgpu::BlendFactor::One, wgpu::BlendFactor::One),
+        _ => unreachable!("fixed blend pipelines only support Porter-Duff modes"),
+    }
+}
+
+fn color_target_state(
+    format: wgpu::TextureFormat,
+    blend: ColorBlend,
+    write_mask: wgpu::ColorWrites,
+) -> wgpu::ColorTargetState {
+    let hardware_blend = match blend {
+        ColorBlend::StraightAlpha => Some(wgpu::BlendState::ALPHA_BLENDING),
+        ColorBlend::PremultipliedAlpha => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        ColorBlend::Replace => None,
+        ColorBlend::FixedPorterDuff(mode) => {
+            let (color, alpha) = porter_duff_factors(mode);
+            Some(wgpu::BlendState { color, alpha })
+        }
     };
+    wgpu::ColorTargetState {
+        format,
+        blend: hardware_blend,
+        write_mask,
+    }
+}
+
+fn depth_stencil_state(stencil: StencilRequirement) -> Option<wgpu::DepthStencilState> {
+    match stencil {
+        StencilRequirement::ContentEqualKeep => content_stencil(),
+        StencilRequirement::Mask(direction) => Some(stencil_state(direction.into())),
+        StencilRequirement::Disabled => None,
+    }
+}
+
+/// Builds one production pipeline from its contract. Pure descriptor
+/// assembly; error scopes are applied by the caller.
+fn create_contract_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    contract: &PipelineContract,
+    layouts: &SharedBindGroupLayouts<'_>,
+) -> wgpu::RenderPipeline {
+    let bind_group = match contract.resources {
+        ResourceSet::None => None,
+        ResourceSet::GlyphAtlas => Some(layouts.atlas),
+        ResourceSet::Images => Some(layouts.images),
+        ResourceSet::Gradients => Some(layouts.gradients),
+        ResourceSet::Composite => Some(layouts.composite),
+        ResourceSet::BlurUniforms => Some(layouts.blur),
+        ResourceSet::ColorMatrixUniforms => Some(layouts.color_matrix),
+        ResourceSet::DestinationBlend => Some(layouts.destination_blend),
+    };
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(contract.label),
+        bind_group_layouts: &[bind_group],
+        immediate_size: 0,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(contract.shader_module_label),
+        source: wgpu::ShaderSource::Wgsl(contract.shader.into()),
+    });
+    let buffers = stream_layouts(contract.streams);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("incular fixed-function blend pipeline"),
+        label: Some(contract.label),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
-            entry_point: Some("vs_main"),
+            entry_point: Some(PipelineContract::VERTEX_ENTRY),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(composite_layout())],
+            buffers: &buffers,
         },
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: content_stencil(),
+        depth_stencil: depth_stencil_state(contract.stencil),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: &shader,
-            entry_point: Some("fs_main"),
+            entry_point: Some(PipelineContract::FRAGMENT_ENTRY),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
+            targets: &[Some(color_target_state(
                 format,
-                blend: Some(wgpu::BlendState {
-                    color: factor(source, destination),
-                    alpha: factor(source, destination),
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+                contract.blend,
+                contract.color_writes,
+            ))],
         }),
         multiview_mask: None,
         cache: None,
     })
 }
 
-fn create_effect_pipeline(
+/// Creates every production pipeline for `format`, validating each one inside
+/// a `wgpu` validation error scope so an invalid contract becomes a typed
+/// [`RendererError::PipelineCreation`] naming the pipeline instead of an
+/// uncaptured-error panic during application startup.
+async fn create_validated_contract_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    source: &str,
-    label: &'static str,
-    layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("incular effect pipeline layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout())],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+    layouts: &SharedBindGroupLayouts<'_>,
+) -> Result<HashMap<PipelineClass, wgpu::RenderPipeline>, RendererError> {
+    let mut created = HashMap::with_capacity(pipeline_contracts().len());
+    for contract in pipeline_contracts() {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let pipeline = create_contract_pipeline(device, format, &contract, layouts);
+        if let Some(error) = scope.pop().await {
+            return Err(RendererError::PipelineCreation {
+                label: contract.label.to_owned(),
+                reason: error.to_string(),
+            });
+        }
+        created.insert(contract.class, pipeline);
+    }
+    Ok(created)
 }
-fn create_blend_pipeline(
+
+/// Creates every device-level render resource for one target format: shared
+/// bind-group layouts, samplers, the unit quad mesh, the solid-gradient LUT,
+/// and all production pipelines. This single constructor is consumed by both
+/// renderer initialization and the headless validation tests, so they can
+/// never assemble different GPU state.
+async fn create_shared_pipeline_resources(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
-    layout: &wgpu::BindGroupLayout,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("incular destination blend shader"),
-        source: wgpu::ShaderSource::Wgsl(BLEND_SHADER.into()),
+) -> Result<SharedPipelineResources, RendererError> {
+    let mesh = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("incular unit quad mesh"),
+        contents: bytemuck::cast_slice(&[
+            [0_f32, 0_f32],
+            [1., 0.],
+            [0., 1.],
+            [0., 1.],
+            [1., 0.],
+            [1., 1.],
+        ]),
+        usage: wgpu::BufferUsages::VERTEX,
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("incular destination blend pipeline layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
+    let owned_bind_group_layouts = SharedBindGroupLayoutsOwned::create(device);
+    let SharedBindGroupLayoutsOwned {
+        atlas: atlas_bind_group_layout,
+        images: image_bind_group_layout,
+        gradients: gradient_bind_group_layout,
+        composite: composite_bind_group_layout,
+        blur: blur_bind_group_layout,
+        color_matrix: color_matrix_bind_group_layout,
+        destination_blend: blend_bind_group_layout,
+    } = owned_bind_group_layouts.clone();
+    let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular glyph atlas sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        // Coverage masks can be positioned at fractional physical pixels.
+        // Bilinear filtering preserves grayscale antialiasing; each atlas
+        // allocation has a zero-coverage border to prevent glyph bleed.
+        mag_filter: GLYPH_ATLAS_FILTER,
+        min_filter: GLYPH_ATLAS_FILTER,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("incular destination blend pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(composite_layout())],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: content_stencil(),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
+    let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular opacity composite sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let blur_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular gaussian linear sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let color_matrix_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular color matrix sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let blend_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular destination blend sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    });
+    let gradient_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("incular gradient lookup sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let solid_gradient = create_gradient_resource(
+        device,
+        queue,
+        &gradient_bind_group_layout,
+        &gradient_sampler,
+        &[[255, 255, 255, 255]; 1],
+    );
+    let mut image_samplers = HashMap::new();
+    for (sampling, filter) in [
+        (ImageSampling::Linear, wgpu::FilterMode::Linear),
+        (ImageSampling::Nearest, wgpu::FilterMode::Nearest),
+    ] {
+        image_samplers.insert(
+            sampling,
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("incular retained image sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: filter,
+                min_filter: filter,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            }),
+        );
+    }
+    let bind_group_layouts = owned_bind_group_layouts.borrowed();
+    // Every pipeline is created eagerly here, once per target format, so a
+    // contract regression fails initialization with a labeled error rather
+    // than panicking on the first affected draw.
+    let mut created_pipelines =
+        create_validated_contract_pipelines(device, format, &bind_group_layouts).await?;
+    let mut take_pipeline = |class: PipelineClass| -> wgpu::RenderPipeline {
+        created_pipelines
+            .remove(&class)
+            .expect("every pipeline class is created from contracts")
+    };
+    let rectangle_pipeline = take_pipeline(PipelineClass::Rectangle);
+    let text_pipeline = take_pipeline(PipelineClass::Text);
+    let image_pipeline = take_pipeline(PipelineClass::Image);
+    let rounded_rect_pipeline = take_pipeline(PipelineClass::RoundedRect);
+    let path_pipeline = take_pipeline(PipelineClass::Path);
+    let composite_pipeline = take_pipeline(PipelineClass::Composite);
+    let fixed_blend_pipelines: Vec<_> = PORTER_DUFF_BLEND_MODES
+        .map(|mode| take_pipeline(PipelineClass::FixedBlend(mode)))
+        .into_iter()
+        .collect();
+    let blur_pipeline = take_pipeline(PipelineClass::Blur);
+    let resample_pipeline = take_pipeline(PipelineClass::Resample);
+    let color_matrix_pipeline = take_pipeline(PipelineClass::ColorMatrix);
+    let blend_pipeline = take_pipeline(PipelineClass::DestinationBlend);
+    let stencil_rrect_increment_pipeline = take_pipeline(PipelineClass::RoundedClipMask(
+        ClipStencilDirection::Increment,
+    ));
+    let stencil_rrect_decrement_pipeline = take_pipeline(PipelineClass::RoundedClipMask(
+        ClipStencilDirection::Decrement,
+    ));
+    let stencil_path_increment_pipeline =
+        take_pipeline(PipelineClass::PathClipMask(ClipStencilDirection::Increment));
+    let stencil_path_decrement_pipeline =
+        take_pipeline(PipelineClass::PathClipMask(ClipStencilDirection::Decrement));
+    Ok(SharedPipelineResources {
+        rectangle_pipeline,
+        text_pipeline,
+        image_pipeline,
+        rounded_rect_pipeline,
+        path_pipeline,
+        composite_pipeline,
+        fixed_blend_pipelines,
+        blur_pipeline,
+        resample_pipeline,
+        color_matrix_pipeline,
+        blend_pipeline,
+        stencil_rrect_increment_pipeline,
+        stencil_rrect_decrement_pipeline,
+        stencil_path_increment_pipeline,
+        stencil_path_decrement_pipeline,
+        mesh,
+        gradient_bind_group_layout,
+        gradient_sampler,
+        solid_gradient,
+        atlas_bind_group_layout,
+        atlas_sampler,
+        image_bind_group_layout,
+        image_samplers,
+        composite_bind_group_layout,
+        composite_sampler,
+        blur_bind_group_layout,
+        blur_sampler,
+        color_matrix_bind_group_layout,
+        color_matrix_sampler,
+        blend_bind_group_layout,
+        blend_sampler,
     })
 }
+
 fn stencil_state(operation: wgpu::StencilOperation) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: wgpu::TextureFormat::Depth24PlusStencil8,
@@ -7019,116 +7144,23 @@ fn create_stencil_attachment(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
 }
-fn create_rounded_rect_mask_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    gradients: &wgpu::BindGroupLayout,
-    operation: wgpu::StencilOperation,
-) -> wgpu::RenderPipeline {
-    create_pipeline(
-        device,
-        format,
-        RRECT_SHADER,
-        "incular rounded clip mask",
-        Some(gradients),
-        rrect_layout(),
-        Some(stencil_state(operation)),
-        wgpu::ColorWrites::empty(),
-    )
-}
-fn create_path_mask_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    gradients: &wgpu::BindGroupLayout,
-    operation: wgpu::StencilOperation,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("incular path clip mask shader"),
-        source: wgpu::ShaderSource::Wgsl(PATH_SHADER.into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("incular path clip mask pipeline"),
-        layout: Some(
-            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("incular path clip layout"),
-                bind_group_layouts: &[Some(gradients)],
-                immediate_size: 0,
-            }),
-        ),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(path_instance_layout())],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(stencil_state(operation)),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::empty(),
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-#[allow(clippy::too_many_arguments)] // Pipeline descriptor fields stay explicit at call sites.
-fn create_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    source: &str,
-    label: &'static str,
-    atlas: Option<&wgpu::BindGroupLayout>,
-    second: wgpu::VertexBufferLayout<'static>,
-    depth_stencil: Option<wgpu::DepthStencilState>,
-    write_mask: wgpu::ColorWrites,
-) -> wgpu::RenderPipeline {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let layout = atlas.map(|atlas| {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("incular text layout"),
-            bind_group_layouts: &[Some(atlas)],
-            immediate_size: 0,
-        })
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: layout.as_ref(),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(quad_layout()), Some(second)],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+/// One `vec4<f32>` attribute read from field `$field` of the actual
+/// `#[repr(C)]` instance struct at shader location `$location`. Deriving the
+/// byte offset from the struct keeps WGSL locations, `bytemuck` uploads, and
+/// vertex-buffer strides in lockstep; hand-written offsets have already drifted
+/// once (Task 13 sweep-gradient `options`), so they are no longer used.
+macro_rules! f32x4_attr {
+    ($instance:ty, $field:ident, $location:expr) => {
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: ::std::mem::offset_of!($instance, $field) as u64,
+            shader_location: $location,
+        }
+    };
 }
 fn quad_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
-        array_stride: 8,
+        array_stride: std::mem::size_of::<[f32; 2]>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &[wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x2,
@@ -7142,16 +7174,8 @@ fn rectangle_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GpuInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
+            f32x4_attr!(GpuInstance, rect, 1),
+            f32x4_attr!(GpuInstance, color, 2),
         ],
     }
 }
@@ -7160,36 +7184,12 @@ fn glyph_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GpuGlyphInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 32,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 48,
-                shader_location: 4,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 64,
-                shader_location: 5,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 80,
-                shader_location: 6,
-            },
+            f32x4_attr!(GpuGlyphInstance, rect, 1),
+            f32x4_attr!(GpuGlyphInstance, affine, 2),
+            f32x4_attr!(GpuGlyphInstance, translation, 3),
+            f32x4_attr!(GpuGlyphInstance, surface, 4),
+            f32x4_attr!(GpuGlyphInstance, uv, 5),
+            f32x4_attr!(GpuGlyphInstance, color, 6),
         ],
     }
 }
@@ -7198,31 +7198,11 @@ fn image_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GpuImageInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 32,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 48,
-                shader_location: 4,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 64,
-                shader_location: 5,
-            },
+            f32x4_attr!(GpuImageInstance, rect, 1),
+            f32x4_attr!(GpuImageInstance, affine, 2),
+            f32x4_attr!(GpuImageInstance, translation, 3),
+            f32x4_attr!(GpuImageInstance, surface, 4),
+            f32x4_attr!(GpuImageInstance, uv, 5),
         ],
     }
 }
@@ -7231,84 +7211,33 @@ fn rrect_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GpuRRectInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 32,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 48,
-                shader_location: 4,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 64,
-                shader_location: 5,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 80,
-                shader_location: 6,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 96,
-                shader_location: 7,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 112,
-                shader_location: 8,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 128,
-                shader_location: 9,
-            },
+            f32x4_attr!(GpuRRectInstance, rect, 1),
+            f32x4_attr!(GpuRRectInstance, affine, 2),
+            f32x4_attr!(GpuRRectInstance, translation, 3),
+            f32x4_attr!(GpuRRectInstance, surface, 4),
+            f32x4_attr!(GpuRRectInstance, radii, 5),
+            f32x4_attr!(GpuRRectInstance, color_a, 6),
+            f32x4_attr!(GpuRRectInstance, color_b, 7),
+            f32x4_attr!(GpuRRectInstance, gradient, 8),
+            f32x4_attr!(GpuRRectInstance, options, 9),
         ],
     }
 }
+/// Instance streams for [`PATH_SHADER`] must supply every brush parameter the
+/// vertex stage forwards to the fragment stage: `options.x` selects solid /
+/// linear / radial / sweep lookup, so omitting it breaks validation even when
+/// only solid fills are drawn.
 fn path_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<GpuPathInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 32,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 48,
-                shader_location: 4,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 64,
-                shader_location: 5,
-            },
+            f32x4_attr!(GpuPathInstance, affine, 1),
+            f32x4_attr!(GpuPathInstance, translation, 2),
+            f32x4_attr!(GpuPathInstance, surface, 3),
+            f32x4_attr!(GpuPathInstance, color, 4),
+            f32x4_attr!(GpuPathInstance, gradient, 5),
+            f32x4_attr!(GpuPathInstance, options, 6),
         ],
     }
 }
@@ -7317,31 +7246,11 @@ fn composite_layout() -> wgpu::VertexBufferLayout<'static> {
         array_stride: std::mem::size_of::<GpuCompositeInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 32,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 48,
-                shader_location: 4,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 64,
-                shader_location: 5,
-            },
+            f32x4_attr!(GpuCompositeInstance, rect, 1),
+            f32x4_attr!(GpuCompositeInstance, uv, 2),
+            f32x4_attr!(GpuCompositeInstance, alpha, 3),
+            f32x4_attr!(GpuCompositeInstance, color, 4),
+            f32x4_attr!(GpuCompositeInstance, options, 5),
         ],
     }
 }
@@ -9243,5 +9152,531 @@ mod tests {
         window_b.record_present();
         assert_eq!(window_b.presented_frames, 1);
         assert_eq!(window_a.presented_frames, 0);
+    }
+}
+
+/// GPU-independent pipeline contract validation plus the headless
+/// create-every-pipeline smoke test. Everything here consumes the same
+/// [`pipeline_contracts`] metadata as production pipeline creation, so a
+/// shader/interface drift (such as the Task 13 sweep-gradient `options`
+/// regression) fails `cargo test` even without a display server or adapter.
+///
+/// WGSL parsing, module validation, and interface inspection use Naga — the
+/// same front end `wgpu` itself uses — rather than any handwritten parser.
+#[cfg(test)]
+mod pipeline_contract_tests {
+    use super::*;
+
+    /// Renderable everywhere; shaders do not depend on the target format.
+    const VALIDATION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+    /// One user-defined stage-interface slot: a single `@location(N)` value
+    /// with enough information to compare WGSL declarations against Rust
+    /// vertex-buffer layouts and against the opposite shader stage.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct InterfaceSlot {
+        location: u32,
+        kind: naga::ScalarKind,
+        width: u8,
+        components: u32,
+        interpolation: Option<naga::Interpolation>,
+        sampling: Option<naga::Sampling>,
+    }
+
+    fn validated_module(shader: &str, label: &str) -> naga::Module {
+        let module = naga::front::wgsl::parse_str(shader)
+            .unwrap_or_else(|error| panic!("{label}: WGSL failed to parse: {error}"));
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("{label}: Naga rejected the module: {error}"));
+        module
+    }
+
+    fn entry_function<'m>(
+        module: &'m naga::Module,
+        stage: naga::ShaderStage,
+        name: &str,
+        label: &str,
+    ) -> &'m naga::Function {
+        module
+            .entry_points
+            .iter()
+            .find(|entry| entry.stage == stage && entry.name == name)
+            .map(|entry| &entry.function)
+            .unwrap_or_else(|| panic!("{label}: missing {stage:?} entry point '{name}'"))
+    }
+
+    fn collect_slots(
+        module: &naga::Module,
+        ty: naga::Handle<naga::Type>,
+        binding: Option<&naga::Binding>,
+        out: &mut Vec<InterfaceSlot>,
+    ) {
+        match binding {
+            Some(naga::Binding::Location {
+                location,
+                interpolation,
+                sampling,
+                ..
+            }) => {
+                let (kind, width, components) = match &module.types[ty].inner {
+                    naga::TypeInner::Scalar(scalar) => (scalar.kind, scalar.width, 1),
+                    naga::TypeInner::Vector { size, scalar } => {
+                        (scalar.kind, scalar.width, *size as u32)
+                    }
+                    other => panic!("unexpected varying type in interface: {other:?}"),
+                };
+                out.push(InterfaceSlot {
+                    location: *location,
+                    kind,
+                    width,
+                    components,
+                    interpolation: *interpolation,
+                    sampling: *sampling,
+                });
+            }
+            _ => {
+                // Entry-point arguments/results may be I/O structs whose
+                // members carry their own location bindings.
+                if let naga::TypeInner::Struct { members, .. } = &module.types[ty].inner {
+                    for member in members {
+                        collect_slots(module, member.ty, member.binding.as_ref(), out);
+                    }
+                }
+            }
+        }
+    }
+
+    fn input_slots(module: &naga::Module, function: &naga::Function) -> Vec<InterfaceSlot> {
+        let mut slots = Vec::new();
+        for argument in &function.arguments {
+            collect_slots(module, argument.ty, argument.binding.as_ref(), &mut slots);
+        }
+        slots
+    }
+
+    fn output_slots(module: &naga::Module, function: &naga::Function) -> Vec<InterfaceSlot> {
+        let mut slots = Vec::new();
+        if let Some(result) = &function.result {
+            collect_slots(module, result.ty, result.binding.as_ref(), &mut slots);
+        }
+        slots
+    }
+
+    /// The `wgpu::VertexFormat` a `VertexBufferLayout` must declare so the
+    /// GPU hands the shader exactly the type its WGSL signature requests.
+    fn required_vertex_format(slot: &InterfaceSlot) -> wgpu::VertexFormat {
+        assert_eq!(slot.width, 4, "renderer varyings must be 32-bit");
+        match (slot.kind, slot.components) {
+            (naga::ScalarKind::Float, 1) => wgpu::VertexFormat::Float32,
+            (naga::ScalarKind::Float, 2) => wgpu::VertexFormat::Float32x2,
+            (naga::ScalarKind::Float, 3) => wgpu::VertexFormat::Float32x3,
+            (naga::ScalarKind::Float, 4) => wgpu::VertexFormat::Float32x4,
+            (naga::ScalarKind::Uint, 1) => wgpu::VertexFormat::Uint32,
+            (naga::ScalarKind::Uint, 2) => wgpu::VertexFormat::Uint32x2,
+            (naga::ScalarKind::Uint, 3) => wgpu::VertexFormat::Uint32x3,
+            (naga::ScalarKind::Uint, 4) => wgpu::VertexFormat::Uint32x4,
+            (naga::ScalarKind::Sint, 1) => wgpu::VertexFormat::Sint32,
+            (naga::ScalarKind::Sint, 2) => wgpu::VertexFormat::Sint32x2,
+            (naga::ScalarKind::Sint, 3) => wgpu::VertexFormat::Sint32x3,
+            (naga::ScalarKind::Sint, 4) => wgpu::VertexFormat::Sint32x4,
+            other => panic!("unsupported varying shape {other:?}"),
+        }
+    }
+
+    fn contract_shader(contract: &PipelineContract, stage: naga::ShaderStage) -> naga::Module {
+        let name = format!("{} ({stage:?})", contract.label);
+        validated_module(contract.shader, &name)
+    }
+
+    /// `(shader_location, format, byte offset, buffer stride)` for every
+    /// declared attribute of the contract's vertex streams.
+    fn contract_attributes(
+        contract: &PipelineContract,
+    ) -> Vec<(u32, wgpu::VertexFormat, u64, u64)> {
+        stream_layouts(contract.streams)
+            .into_iter()
+            .flatten()
+            .flat_map(|layout| {
+                layout.attributes.iter().map(move |attribute| {
+                    (
+                        attribute.shader_location,
+                        attribute.format,
+                        attribute.offset,
+                        layout.array_stride,
+                    )
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn production_pipeline_inventory_matches_contracts() {
+        // The registry must stay complete and duplicate-free: every class in
+        // `SharedPipelineResources` has exactly one contract.
+        let contracts = pipeline_contracts();
+        assert_eq!(contracts.len(), 25, "renderer pipeline inventory changed");
+        let mut classes: Vec<PipelineClass> = contracts.iter().map(|c| c.class).collect();
+        classes.sort_by_key(|class| format!("{class:?}"));
+        let count = classes.len();
+        classes.dedup_by_key(|class| format!("{class:?}"));
+        assert_eq!(count, classes.len(), "duplicate pipeline classes");
+        for contract in &contracts {
+            assert!(!contract.label.is_empty());
+            assert!(contract.shader.contains("@vertex"));
+            assert!(contract.shader.contains("@fragment"));
+        }
+    }
+
+    #[test]
+    fn all_production_shaders_parse_and_validate_with_naga() {
+        let mut unique: HashMap<&'static str, &'static str> = HashMap::new();
+        for contract in pipeline_contracts() {
+            unique.insert(contract.shader_module_label, contract.shader);
+        }
+        // rect, text, image, rrect, path, composite, fixed blend, blur,
+        // resample, color matrix, destination blend.
+        assert!(
+            unique.len() >= 11,
+            "expected at least eleven distinct shader modules"
+        );
+        for (module_label, shader) in unique {
+            let module = validated_module(shader, module_label);
+            entry_function(&module, naga::ShaderStage::Vertex, "vs_main", module_label);
+            entry_function(
+                &module,
+                naga::ShaderStage::Fragment,
+                "fs_main",
+                module_label,
+            );
+        }
+    }
+
+    /// Regression test for the Task 13 sweep-gradient breakage: the retained
+    /// path vertex shader gained an `options` input (`@location(6)` selecting
+    /// solid/linear/radial/sweep brushes) but the Rust instance layout kept
+    /// only locations 1-5, so every `create_render_pipeline` call failed
+    /// validation. Asserts the exact final interface instead of merely
+    /// checking that *some* error went away.
+    #[test]
+    fn retained_path_pipeline_vertex_interface_matches_layout() {
+        let contract = pipeline_contracts()
+            .into_iter()
+            .find(|contract| contract.class == PipelineClass::Path)
+            .expect("path pipeline contract");
+        let module = contract_shader(&contract, naga::ShaderStage::Vertex);
+        let vertex = entry_function(
+            &module,
+            naga::ShaderStage::Vertex,
+            "vs_main",
+            contract.label,
+        );
+
+        let inputs = input_slots(&module, vertex);
+        let mut locations: Vec<u32> = inputs.iter().map(|slot| slot.location).collect();
+        locations.sort_unstable();
+        assert_eq!(locations, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(inputs[0].components, 2, "@location(0) is the quad xy");
+
+        let attributes = contract_attributes(&contract);
+        let mut provided: Vec<u32> = attributes.iter().map(|(location, ..)| *location).collect();
+        provided.sort_unstable();
+        assert_eq!(provided, vec![0, 1, 2, 3, 4, 5, 6]);
+
+        for slot in &inputs {
+            let expected = required_vertex_format(slot);
+            let found = attributes
+                .iter()
+                .find(|(location, ..)| *location == slot.location)
+                .map(|(_, format, ..)| *format);
+            assert_eq!(
+                found,
+                Some(expected),
+                "{}: @location({}) requires {:?} from the vertex layout",
+                contract.label,
+                slot.location,
+                expected
+            );
+        }
+
+        // The instance stride must equal the exact `#[repr(C)]` upload size,
+        // and location 6 must read the brush-kind field (`options.x`: solid,
+        // linear, radial, sweep) rather than any dummy byte range.
+        let layouts = stream_layouts(contract.streams);
+        let instance = layouts
+            .iter()
+            .flatten()
+            .find(|layout| layout.step_mode == wgpu::VertexStepMode::Instance)
+            .expect("path pipeline has an instance stream");
+        assert_eq!(
+            instance.array_stride as usize,
+            std::mem::size_of::<GpuPathInstance>()
+        );
+        let options_attribute = attributes
+            .iter()
+            .find(|(location, ..)| *location == 6)
+            .expect("location 6 is supplied");
+        assert_eq!(options_attribute.1, wgpu::VertexFormat::Float32x4);
+        assert_eq!(
+            options_attribute.2,
+            std::mem::offset_of!(GpuPathInstance, options) as u64
+        );
+        assert_eq!(
+            options_attribute.3 as usize,
+            std::mem::size_of::<GpuPathInstance>()
+        );
+    }
+
+    /// Generalizes the regression above: for every production pipeline, every
+    /// `@location(N)` input of `vs_main` must be supplied by exactly one
+    /// declared attribute whose format matches the WGSL type, and attribute
+    /// reads must stay inside their buffer stride without duplicate locations.
+    #[test]
+    fn every_contract_vertex_input_is_supplied_by_rust_layouts() {
+        for contract in pipeline_contracts() {
+            let module = contract_shader(&contract, naga::ShaderStage::Vertex);
+            let vertex = entry_function(
+                &module,
+                naga::ShaderStage::Vertex,
+                "vs_main",
+                contract.label,
+            );
+            let inputs = input_slots(&module, vertex);
+            let attributes = contract_attributes(&contract);
+
+            let mut seen_locations: Vec<u32> =
+                attributes.iter().map(|(location, ..)| *location).collect();
+            seen_locations.sort_unstable();
+            seen_locations.dedup();
+            assert_eq!(
+                seen_locations.len(),
+                attributes.len(),
+                "{}: duplicate shader_location across vertex buffers",
+                contract.label
+            );
+
+            for slot in &inputs {
+                let expected = required_vertex_format(slot);
+                let found = attributes
+                    .iter()
+                    .find(|(location, ..)| *location == slot.location)
+                    .map(|(_, format, offset, stride)| (*format, *offset, *stride));
+                let Some((format, offset, stride)) = found else {
+                    panic!(
+                        "pipeline validation failed:\n  {}:\n    vertex shader requires @location({}) {:?}\n    layout does not provide it",
+                        contract.label, slot.location, expected
+                    );
+                };
+                assert_eq!(
+                    format, expected,
+                    "{}: @location({}) is declared as {format:?} but the shader requires {expected:?}",
+                    contract.label, slot.location
+                );
+                // An attribute read must stay inside its own buffer record.
+                let format_size = match format {
+                    wgpu::VertexFormat::Float32 => 4,
+                    wgpu::VertexFormat::Float32x2 => 8,
+                    wgpu::VertexFormat::Float32x3 => 12,
+                    wgpu::VertexFormat::Float32x4 => 16,
+                    wgpu::VertexFormat::Uint32 => 4,
+                    wgpu::VertexFormat::Uint32x2 => 8,
+                    wgpu::VertexFormat::Uint32x3 => 12,
+                    wgpu::VertexFormat::Uint32x4 => 16,
+                    wgpu::VertexFormat::Sint32 => 4,
+                    wgpu::VertexFormat::Sint32x2 => 8,
+                    wgpu::VertexFormat::Sint32x3 => 12,
+                    wgpu::VertexFormat::Sint32x4 => 16,
+                    other => panic!("{}: unhandled format {other:?}", contract.label),
+                };
+                assert!(
+                    offset + format_size <= stride,
+                    "{}: @location({}) reads [{offset}, {}) beyond stride {stride}",
+                    contract.label,
+                    slot.location,
+                    offset + format_size
+                );
+            }
+        }
+    }
+
+    /// Prevents the fragment-side equivalent of the Task 13 regression: every
+    /// `@location(N)` the fragment stage reads must be written by the paired
+    /// vertex stage with a matching type and interpolation setup.
+    #[test]
+    fn vertex_outputs_satisfy_fragment_inputs_for_every_pipeline() {
+        for contract in pipeline_contracts() {
+            let module = validated_module(contract.shader, contract.label);
+            let vertex = entry_function(
+                &module,
+                naga::ShaderStage::Vertex,
+                PipelineContract::VERTEX_ENTRY,
+                contract.label,
+            );
+            let fragment = entry_function(
+                &module,
+                naga::ShaderStage::Fragment,
+                PipelineContract::FRAGMENT_ENTRY,
+                contract.label,
+            );
+            let outputs = output_slots(&module, vertex);
+            let mut outputs: Vec<InterfaceSlot> = outputs;
+            outputs.sort_by_key(|slot| slot.location);
+
+            for input in &input_slots(&module, fragment) {
+                let output = outputs
+                    .iter()
+                    .find(|slot| slot.location == input.location)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pipeline validation failed:\n  {}:\n    fragment shader requires @location({})\n    vertex stage does not provide it",
+                            contract.label, input.location
+                        )
+                    });
+                assert_eq!(
+                    (output.kind, output.components, output.width),
+                    (input.kind, input.components, input.width),
+                    "{}: @location({}) type mismatch between vertex and fragment stages",
+                    contract.label,
+                    input.location
+                );
+                assert_eq!(
+                    (output.interpolation, output.sampling),
+                    (input.interpolation, input.sampling),
+                    "{}: @location({}) interpolation mismatch between stages",
+                    contract.label,
+                    input.location
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn path_pipeline_shares_one_shader_between_paint_and_clip_masks() {
+        // Paint path and clip-mask pipelines intentionally reuse PATH_SHADER;
+        // they must therefore also share one vertex layout declaration rather
+        // than drifting into two formats.
+        let contracts = pipeline_contracts();
+        let paint = contracts
+            .iter()
+            .find(|contract| contract.class == PipelineClass::Path)
+            .expect("path contract");
+        let mask = contracts
+            .iter()
+            .find(|contract| {
+                contract.class == PipelineClass::PathClipMask(ClipStencilDirection::Increment)
+            })
+            .expect("path clip mask contract");
+        assert_eq!(paint.shader, mask.shader);
+        assert_eq!(
+            format!("{:?}", stream_layouts(paint.streams)),
+            format!("{:?}", stream_layouts(mask.streams))
+        );
+    }
+
+    /// Real GPU-backed smoke coverage: creates every production pipeline on a
+    /// headless adapter with no surface, no Winit window, and no compositor.
+    ///
+    /// Bind-group layouts, blend states, depth/stencil requirements, and
+    /// target formats are all validated by `wgpu` itself here — that class of
+    /// error is deliberately not duplicated by the Naga tests. Each pipeline
+    /// is created inside a validation error scope, so failures are reported
+    /// with the pipeline label instead of an uncaptured-error panic.
+    ///
+    /// If no headless adapter exists (some CI environments), this test prints
+    /// an explicit SKIPPED notice; absence of a GPU must never masquerade as
+    /// a passing run.
+    #[test]
+    fn headless_create_all_production_render_pipelines() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                ..Default::default()
+            }))
+        else {
+            println!("SKIPPED: no compatible headless adapter");
+            return;
+        };
+        let (device, _queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("incular headless pipeline validation"),
+                ..Default::default()
+            }))
+            .expect("headless device creation");
+
+        let layouts = SharedBindGroupLayoutsOwned::create(&device);
+        let created = pollster::block_on(create_validated_contract_pipelines(
+            &device,
+            VALIDATION_FORMAT,
+            &layouts.borrowed(),
+        ));
+        match created {
+            Ok(pipelines) => {
+                assert_eq!(pipelines.len(), 25, "every production pipeline created");
+            }
+            Err(RendererError::PipelineCreation { label, reason }) => {
+                panic!("pipeline validation failed:\n  {label}:\n    {reason}");
+            }
+            Err(error) => panic!("pipeline creation failed: {error}"),
+        }
+    }
+
+    /// The same headless context must reuse one set of pipelines per target
+    /// format across windows instead of duplicating device-level pipelines.
+    #[test]
+    fn shared_pipeline_resources_are_reused_per_format() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                ..Default::default()
+            }))
+        else {
+            println!("SKIPPED: no compatible headless adapter");
+            return;
+        };
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                .expect("headless device creation");
+
+        let make_inner = || SharedGpuContextInner {
+            instance: instance.clone(),
+            adapter: adapter.clone(),
+            device: device.clone(),
+            queue: queue.clone(),
+            device_generation: 1,
+            pipelines: Mutex::new(HashMap::new()),
+            resources: Mutex::new(SharedGpuResources {
+                registry: SharedGpuResourceRegistry::default(),
+                images: HashMap::new(),
+                gradients: HashMap::new(),
+                glyph_atlas: GlyphAtlas::new(),
+                glyph_pages: Vec::new(),
+            }),
+        };
+        // Two "windows" on one device context.
+        let context_a = SharedGpuContext {
+            inner: Arc::new(make_inner()),
+        };
+        let context_b = context_a.clone();
+
+        let resources = pollster::block_on(create_shared_pipeline_resources(
+            &device,
+            &queue,
+            VALIDATION_FORMAT,
+        ))
+        .expect("shared format pipelines");
+        context_a.register_pipeline_resources(VALIDATION_FORMAT, resources);
+        let from_window_a = context_a
+            .pipeline_resources(VALIDATION_FORMAT)
+            .expect("window A pipelines");
+        let from_window_b = context_b
+            .pipeline_resources(VALIDATION_FORMAT)
+            .expect("pipelines registered by one window are visible to another");
+        assert_eq!(Arc::as_ptr(&from_window_a), Arc::as_ptr(&from_window_b));
     }
 }

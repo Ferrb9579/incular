@@ -458,3 +458,48 @@
 - [x] Validate the extracted configuration boundary: targeted check across all
   direct consumers, configuration/layout tests, and strict configuration
   clippy pass.
+
+## Task 13.1 — renderer WGPU validation regression fix
+
+- [x] Root cause: the Task 13 sweep-gradient work added an `options` brush-kind
+  field (`GpuPathInstance.options`, `@location(6)` in `PATH_SHADER`'s vertex
+  entry) but `path_instance_layout()` still declared only locations 1-5, so
+  `create_render_pipeline` failed validation for "incular retained path
+  pipeline" (and both path clip-mask pipelines sharing its vertex format)
+  before any frame was presented. Fixed by declaring the missing
+  `Float32x4` attribute at the struct-derived offset and rewriting every
+  instance layout to derive offsets via `mem::offset_of!` on the actual
+  `#[repr(C)]` upload structs instead of hand-written byte offsets.
+- [x] Single source of truth for pipeline contracts: all 25 per-format render
+  pipelines (rectangle, text, image, analytic rounded rectangle, retained
+  path, opacity composite, 11 fixed-function Porter-Duff blends, separable
+  Gaussian blur, multi-scale resample, color matrix, destination blend,
+  rounded/path clip masks increment+decrement) are described declaratively in
+  one `pipeline_contracts()` registry consumed by both production creation
+  (`create_shared_pipeline_resources`) and tests.
+- [x] Renderer startup errors: every pipeline is created eagerly once per
+  target format inside a `wgpu` validation error scope; a contract failure now
+  returns `RendererError::PipelineCreation { label, reason }` naming the
+  pipeline instead of panicking with an uncaptured wgpu error.
+- [x] GPU-independent contract tests (Naga, no display server): WGSL
+  parse/validation of all eleven shader modules, vertex-entry inputs vs Rust
+  vertex-buffer layouts (location/type/stride bounds), vertex outputs vs
+  fragment inputs inter-stage compatibility, path paint/clip-mask layout
+  sharing, and inventory completeness.
+- [x] Regression test `retained_path_pipeline_vertex_interface_matches_layout`
+  asserts the exact final path interface (locations 0-6, `Float32x2` quad +
+  six `Float32x4` instance fields at struct offsets, stride =
+  `size_of::<GpuPathInstance>`); verified it fails when the location-6
+  attribute is removed.
+- [x] Headless GPU smoke tests: request adapter without a surface, create a
+  device, construct shared bind-group layouts, create all 25 pipelines under
+  error scopes; reports `SKIPPED: no compatible headless adapter` when no
+  adapter exists rather than passing vacuously. Multi-window reuse asserted:
+  one `Arc<SharedPipelineResources>` per format is shared across windows.
+- [x] Validation: `cargo fmt --all -- --check`, `cargo check --workspace`,
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo check -p incular --examples`, `git diff --check`; desktop runs of the
+  scroll/painting/effects/color_effects/layout_complete/scrolling_complete/
+  text/images examples complete without panics or wgpu validation errors.
+  Note: `incular-workspace-tests::parity_manifest` fails on pristine HEAD
+  before this task and remains unrelated to the renderer.
