@@ -3,7 +3,7 @@
 use incular_config::Clip;
 use incular_core::Color;
 use incular_image::ImageHandle;
-use incular_rendering::{BlendMode, CornerRadii, Path};
+use incular_rendering::{BlendMode, Brush, CornerRadii, Path};
 use std::sync::Arc;
 
 use crate::{Blur, BlurController, ClipRRect, DecoratedBox, Image, ImageFit, ImageRepeat, Widget};
@@ -439,4 +439,750 @@ impl From<GridPaper> for Widget {
             .child
             .unwrap_or_else(|| crate::layout::SizedBox::shrink().into())
     }
+}
+
+/// A 2D radius for rounded corners.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Radius {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Radius {
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+
+    #[must_use]
+    pub const fn circular(radius: f32) -> Self {
+        Self {
+            x: radius,
+            y: radius,
+        }
+    }
+
+    #[must_use]
+    pub const fn elliptical(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self::ZERO
+    }
+}
+
+impl incular_core::Lerp for Radius {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            x: self.x.lerp(&other.x, t).max(0.0),
+            y: self.y.lerp(&other.y, t).max(0.0),
+        }
+    }
+}
+
+/// An immutable set of radii for each of the four corners of a box.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BorderRadius {
+    pub top_left: Radius,
+    pub top_right: Radius,
+    pub bottom_right: Radius,
+    pub bottom_left: Radius,
+}
+
+impl BorderRadius {
+    pub const ZERO: Self = Self {
+        top_left: Radius::ZERO,
+        top_right: Radius::ZERO,
+        bottom_right: Radius::ZERO,
+        bottom_left: Radius::ZERO,
+    };
+
+    #[must_use]
+    pub const fn all(radius: Radius) -> Self {
+        Self {
+            top_left: radius,
+            top_right: radius,
+            bottom_right: radius,
+            bottom_left: radius,
+        }
+    }
+
+    #[must_use]
+    pub const fn circular(radius: f32) -> Self {
+        Self::all(Radius::circular(radius))
+    }
+
+    #[must_use]
+    pub const fn vertical(top: Radius, bottom: Radius) -> Self {
+        Self {
+            top_left: top,
+            top_right: top,
+            bottom_right: bottom,
+            bottom_left: bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn horizontal(left: Radius, right: Radius) -> Self {
+        Self {
+            top_left: left,
+            top_right: right,
+            bottom_right: right,
+            bottom_left: left,
+        }
+    }
+
+    #[must_use]
+    pub const fn only(
+        top_left: Radius,
+        top_right: Radius,
+        bottom_right: Radius,
+        bottom_left: Radius,
+    ) -> Self {
+        Self {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }
+    }
+
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self::ZERO
+    }
+
+    #[must_use]
+    pub const fn resolve(self, _direction: incular_config::TextDirection) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn to_corner_radii(self) -> CornerRadii {
+        CornerRadii {
+            top_left: self.top_left.x,
+            top_right: self.top_right.x,
+            bottom_right: self.bottom_right.x,
+            bottom_left: self.bottom_left.x,
+        }
+    }
+}
+
+impl incular_core::Lerp for BorderRadius {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            top_left: self.top_left.lerp(&other.top_left, t),
+            top_right: self.top_right.lerp(&other.top_right, t),
+            bottom_right: self.bottom_right.lerp(&other.bottom_right, t),
+            bottom_left: self.bottom_left.lerp(&other.bottom_left, t),
+        }
+    }
+}
+
+impl From<BorderRadius> for CornerRadii {
+    fn from(value: BorderRadius) -> Self {
+        value.to_corner_radii()
+    }
+}
+
+/// An immutable set of directional radii for the four corners of a box.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BorderRadiusDirectional {
+    pub top_start: Radius,
+    pub top_end: Radius,
+    pub bottom_end: Radius,
+    pub bottom_start: Radius,
+}
+
+impl BorderRadiusDirectional {
+    pub const ZERO: Self = Self {
+        top_start: Radius::ZERO,
+        top_end: Radius::ZERO,
+        bottom_end: Radius::ZERO,
+        bottom_start: Radius::ZERO,
+    };
+
+    #[must_use]
+    pub const fn all(radius: Radius) -> Self {
+        Self {
+            top_start: radius,
+            top_end: radius,
+            bottom_end: radius,
+            bottom_start: radius,
+        }
+    }
+
+    #[must_use]
+    pub const fn circular(radius: f32) -> Self {
+        Self::all(Radius::circular(radius))
+    }
+
+    #[must_use]
+    pub const fn vertical(top: Radius, bottom: Radius) -> Self {
+        Self {
+            top_start: top,
+            top_end: top,
+            bottom_end: bottom,
+            bottom_start: bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn horizontal(start: Radius, end: Radius) -> Self {
+        Self {
+            top_start: start,
+            top_end: end,
+            bottom_end: end,
+            bottom_start: start,
+        }
+    }
+
+    #[must_use]
+    pub const fn only(
+        top_start: Radius,
+        top_end: Radius,
+        bottom_end: Radius,
+        bottom_start: Radius,
+    ) -> Self {
+        Self {
+            top_start,
+            top_end,
+            bottom_end,
+            bottom_start,
+        }
+    }
+
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self::ZERO
+    }
+
+    #[must_use]
+    pub const fn resolve(self, direction: incular_config::TextDirection) -> BorderRadius {
+        match direction {
+            incular_config::TextDirection::Ltr => BorderRadius {
+                top_left: self.top_start,
+                top_right: self.top_end,
+                bottom_right: self.bottom_end,
+                bottom_left: self.bottom_start,
+            },
+            incular_config::TextDirection::Rtl => BorderRadius {
+                top_left: self.top_end,
+                top_right: self.top_start,
+                bottom_right: self.bottom_start,
+                bottom_left: self.bottom_end,
+            },
+        }
+    }
+}
+
+impl incular_core::Lerp for BorderRadiusDirectional {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            top_start: self.top_start.lerp(&other.top_start, t),
+            top_end: self.top_end.lerp(&other.top_end, t),
+            bottom_end: self.bottom_end.lerp(&other.bottom_end, t),
+            bottom_start: self.bottom_start.lerp(&other.bottom_start, t),
+        }
+    }
+}
+
+/// The style of a border stroke.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BorderStyle {
+    None,
+    #[default]
+    Solid,
+}
+
+/// One side of a border.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderSide {
+    pub color: Color,
+    pub width: f32,
+    pub style: BorderStyle,
+    pub stroke_align: f32,
+}
+
+impl Default for BorderSide {
+    fn default() -> Self {
+        Self {
+            color: Color::BLACK,
+            width: 1.0,
+            style: BorderStyle::Solid,
+            stroke_align: -1.0,
+        }
+    }
+}
+
+impl BorderSide {
+    pub const NONE: Self = Self {
+        color: Color::TRANSPARENT,
+        width: 0.0,
+        style: BorderStyle::None,
+        stroke_align: -1.0,
+    };
+
+    #[must_use]
+    pub const fn new(color: Color, width: f32, style: BorderStyle) -> Self {
+        Self {
+            color,
+            width: if width >= 0.0 { width } else { 0.0 },
+            style,
+            stroke_align: -1.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+}
+
+impl incular_core::Lerp for BorderSide {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        if self.style == BorderStyle::None && other.style == BorderStyle::None {
+            return Self::NONE;
+        }
+        Self {
+            color: self.color.lerp(&other.color, t),
+            width: self.width.lerp(&other.width, t).max(0.0),
+            style: if t < 0.5 { self.style } else { other.style },
+            stroke_align: self.stroke_align.lerp(&other.stroke_align, t),
+        }
+    }
+}
+
+/// A border of a box consisting of four sides.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Border {
+    pub top: BorderSide,
+    pub right: BorderSide,
+    pub bottom: BorderSide,
+    pub left: BorderSide,
+}
+
+/// Alias for [`Border`], matching Flutter naming.
+pub type BoxBorder = Border;
+
+impl Border {
+    #[must_use]
+    pub const fn all(side: BorderSide) -> Self {
+        Self {
+            top: side,
+            right: side,
+            bottom: side,
+            left: side,
+        }
+    }
+
+    #[must_use]
+    pub const fn symmetric(vertical: BorderSide, horizontal: BorderSide) -> Self {
+        Self {
+            top: vertical,
+            right: horizontal,
+            bottom: vertical,
+            left: horizontal,
+        }
+    }
+
+    #[must_use]
+    pub const fn only(
+        top: BorderSide,
+        right: BorderSide,
+        bottom: BorderSide,
+        left: BorderSide,
+    ) -> Self {
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_border_side(side: BorderSide) -> Self {
+        Self::all(side)
+    }
+
+    #[must_use]
+    pub const fn dimensions(self) -> incular_config::EdgeInsets {
+        incular_config::EdgeInsets::only(
+            self.left.width,
+            self.top.width,
+            self.right.width,
+            self.bottom.width,
+        )
+    }
+}
+
+impl incular_core::Lerp for Border {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            top: self.top.lerp(&other.top, t),
+            right: self.right.lerp(&other.right, t),
+            bottom: self.bottom.lerp(&other.bottom, t),
+            left: self.left.lerp(&other.left, t),
+        }
+    }
+}
+
+/// Directional border with start and end sides.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BorderDirectional {
+    pub top: BorderSide,
+    pub start: BorderSide,
+    pub end: BorderSide,
+    pub bottom: BorderSide,
+}
+
+impl BorderDirectional {
+    #[must_use]
+    pub const fn only(
+        top: BorderSide,
+        start: BorderSide,
+        end: BorderSide,
+        bottom: BorderSide,
+    ) -> Self {
+        Self {
+            top,
+            start,
+            end,
+            bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn resolve(self, direction: incular_config::TextDirection) -> Border {
+        match direction {
+            incular_config::TextDirection::Ltr => Border {
+                top: self.top,
+                right: self.end,
+                bottom: self.bottom,
+                left: self.start,
+            },
+            incular_config::TextDirection::Rtl => Border {
+                top: self.top,
+                right: self.start,
+                bottom: self.bottom,
+                left: self.end,
+            },
+        }
+    }
+}
+
+impl incular_core::Lerp for BorderDirectional {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            top: self.top.lerp(&other.top, t),
+            start: self.start.lerp(&other.start, t),
+            end: self.end.lerp(&other.end, t),
+            bottom: self.bottom.lerp(&other.bottom, t),
+        }
+    }
+}
+
+/// The geometric shape of a box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BoxShape {
+    #[default]
+    Rectangle,
+    Circle,
+}
+
+/// Blur style for shadows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BlurStyle {
+    #[default]
+    Normal,
+    Solid,
+    Outer,
+    Inner,
+}
+
+/// A shadow cast by a box.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BoxShadow {
+    pub color: Color,
+    pub offset: incular_core::Offset,
+    pub blur_radius: f32,
+    pub spread_radius: f32,
+    pub blur_style: BlurStyle,
+}
+
+impl BoxShadow {
+    #[must_use]
+    pub const fn new(
+        color: Color,
+        offset: incular_core::Offset,
+        blur_radius: f32,
+        spread_radius: f32,
+    ) -> Self {
+        Self {
+            color,
+            offset,
+            blur_radius,
+            spread_radius,
+            blur_style: BlurStyle::Normal,
+        }
+    }
+}
+
+impl incular_core::Lerp for BoxShadow {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            color: self.color.lerp(&other.color, t),
+            offset: self.offset.lerp(&other.offset, t),
+            blur_radius: self.blur_radius.lerp(&other.blur_radius, t).max(0.0),
+            spread_radius: self.spread_radius.lerp(&other.spread_radius, t),
+            blur_style: if t < 0.5 {
+                self.blur_style
+            } else {
+                other.blur_style
+            },
+        }
+    }
+}
+
+/// Gradient tiling mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TileMode {
+    #[default]
+    Clamp,
+    Repeated,
+    Mirror,
+    Decal,
+}
+
+/// An image configuration drawn inside a box decoration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecorationImage {
+    pub image: ImageHandle,
+    pub fit: ImageFit,
+    pub alignment: incular_config::Alignment,
+    pub center_slice: Option<incular_core::Rect>,
+    pub repeat: ImageRepeat,
+    pub match_text_direction: bool,
+    pub scale: f32,
+    pub opacity: f32,
+}
+
+impl DecorationImage {
+    #[must_use]
+    pub fn new(image: ImageHandle) -> Self {
+        Self {
+            image,
+            fit: ImageFit::Cover,
+            alignment: incular_config::Alignment::CENTER,
+            center_slice: None,
+            repeat: ImageRepeat::NoRepeat,
+            match_text_direction: false,
+            scale: 1.0,
+            opacity: 1.0,
+        }
+    }
+}
+
+/// An immutable description of how to paint a box.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoxDecoration {
+    pub color: Option<Color>,
+    pub image: Option<DecorationImage>,
+    pub border: Option<Border>,
+    pub border_radius: Option<BorderRadius>,
+    pub box_shadow: Vec<BoxShadow>,
+    pub gradient: Option<Brush>,
+    pub background_blend_mode: Option<BlendMode>,
+    pub shape: BoxShape,
+}
+
+impl BoxDecoration {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn image(mut self, image: DecorationImage) -> Self {
+        self.image = Some(image);
+        self
+    }
+
+    #[must_use]
+    pub fn border(mut self, border: Border) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    #[must_use]
+    pub fn border_radius(mut self, radius: BorderRadius) -> Self {
+        self.border_radius = Some(radius);
+        self
+    }
+
+    #[must_use]
+    pub fn box_shadow<I>(mut self, shadows: I) -> Self
+    where
+        I: IntoIterator<Item = BoxShadow>,
+    {
+        self.box_shadow = shadows.into_iter().collect();
+        self
+    }
+
+    #[must_use]
+    pub fn gradient(mut self, gradient: impl Into<Brush>) -> Self {
+        self.gradient = Some(gradient.into());
+        self
+    }
+
+    #[must_use]
+    pub fn background_blend_mode(mut self, mode: BlendMode) -> Self {
+        self.background_blend_mode = Some(mode);
+        self
+    }
+
+    #[must_use]
+    pub fn shape(mut self, shape: BoxShape) -> Self {
+        self.shape = shape;
+        self
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        if self.shape == BoxShape::Circle && self.border_radius.is_some() {
+            return false;
+        }
+        if self.background_blend_mode.is_some()
+            && self.color.is_none()
+            && self.gradient.is_none()
+            && self.image.is_none()
+        {
+            return false;
+        }
+        true
+    }
+
+    #[must_use]
+    pub fn change_impact(&self, other: &Self) -> incular_core::ChangeImpact {
+        if self == other {
+            return incular_core::ChangeImpact::None;
+        }
+        if self.border != other.border || self.shape != other.shape {
+            incular_core::ChangeImpact::Layout
+        } else {
+            incular_core::ChangeImpact::Paint
+        }
+    }
+
+    #[must_use]
+    pub fn invalidation(&self, other: &Self) -> incular_core::Invalidation {
+        if self == other {
+            return incular_core::Invalidation::NONE;
+        }
+        if self.border != other.border || self.shape != other.shape {
+            incular_core::Invalidation::LAYOUT | incular_core::Invalidation::PAINT
+        } else {
+            incular_core::Invalidation::PAINT
+        }
+    }
+}
+
+impl incular_core::Lerp for BoxDecoration {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        Self {
+            color: match (self.color, other.color) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            image: if t < 0.5 {
+                self.image.clone()
+            } else {
+                other.image.clone()
+            },
+            border: match (self.border, other.border) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            border_radius: match (self.border_radius, other.border_radius) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            box_shadow: if t < 0.5 {
+                self.box_shadow.clone()
+            } else {
+                other.box_shadow.clone()
+            },
+            gradient: if t < 0.5 {
+                self.gradient.clone()
+            } else {
+                other.gradient.clone()
+            },
+            background_blend_mode: if t < 0.5 {
+                self.background_blend_mode
+            } else {
+                other.background_blend_mode
+            },
+            shape: if t < 0.5 { self.shape } else { other.shape },
+        }
+    }
+}
+
+/// A delegate that produces custom display-list drawing commands.
+pub trait CustomPainter {
+    /// Draws visual content into `canvas` bounds.
+    fn paint(&self, size: incular_core::Size) -> incular_rendering::DisplayList;
+    /// Decides whether a repaint is required when compared to a previous painter instance.
+    fn should_repaint(&self, old: &Self) -> bool
+    where
+        Self: Sized;
 }

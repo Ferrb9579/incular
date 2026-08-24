@@ -1,6 +1,6 @@
 //! Typography values shared by plain and rich text.
 
-use incular_core::Color;
+use incular_core::{ChangeImpact, Color, Lerp};
 use std::sync::Arc;
 
 /// A logical font family. Named families are resolved by [`super::TextEngine`].
@@ -21,19 +21,30 @@ impl FontFamily {
     }
 }
 
+/// Font weight values (1..1000).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FontWeight(pub u16);
 
 impl FontWeight {
-    pub const THIN: Self = Self(100);
-    pub const EXTRA_LIGHT: Self = Self(200);
-    pub const LIGHT: Self = Self(300);
-    pub const NORMAL: Self = Self(400);
-    pub const MEDIUM: Self = Self(500);
-    pub const SEMI_BOLD: Self = Self(600);
-    pub const BOLD: Self = Self(700);
-    pub const EXTRA_BOLD: Self = Self(800);
-    pub const BLACK: Self = Self(900);
+    pub const W100: Self = Self(100);
+    pub const W200: Self = Self(200);
+    pub const W300: Self = Self(300);
+    pub const W400: Self = Self(400);
+    pub const W500: Self = Self(500);
+    pub const W600: Self = Self(600);
+    pub const W700: Self = Self(700);
+    pub const W800: Self = Self(800);
+    pub const W900: Self = Self(900);
+
+    pub const THIN: Self = Self::W100;
+    pub const EXTRA_LIGHT: Self = Self::W200;
+    pub const LIGHT: Self = Self::W300;
+    pub const NORMAL: Self = Self::W400;
+    pub const MEDIUM: Self = Self::W500;
+    pub const SEMI_BOLD: Self = Self::W600;
+    pub const BOLD: Self = Self::W700;
+    pub const EXTRA_BOLD: Self = Self::W800;
+    pub const BLACK: Self = Self::W900;
 
     #[must_use]
     pub const fn new(value: u16) -> Self {
@@ -44,6 +55,126 @@ impl FontWeight {
         } else {
             value
         })
+    }
+
+    #[must_use]
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+}
+
+impl Lerp for FontWeight {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let left = self.0 as f32;
+        let right = other.0 as f32;
+        Self::new((left + (right - left) * t).round() as u16)
+    }
+}
+
+/// OpenType font feature setting with a 4-byte ASCII tag and an integer value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontFeature {
+    pub tag: [u8; 4],
+    pub value: i32,
+}
+
+impl FontFeature {
+    #[must_use]
+    pub const fn new(tag: [u8; 4], value: i32) -> Self {
+        Self { tag, value }
+    }
+
+    #[must_use]
+    pub const fn enable(tag: [u8; 4]) -> Self {
+        Self::new(tag, 1)
+    }
+
+    #[must_use]
+    pub const fn disable(tag: [u8; 4]) -> Self {
+        Self::new(tag, 0)
+    }
+
+    #[must_use]
+    pub const fn alternative(value: i32) -> Self {
+        Self::new(*b"aalt", value)
+    }
+
+    #[must_use]
+    pub const fn contextual_alternates() -> Self {
+        Self::enable(*b"calt")
+    }
+
+    #[must_use]
+    pub const fn tabular_figures() -> Self {
+        Self::enable(*b"tnum")
+    }
+
+    #[must_use]
+    pub const fn proportional_figures() -> Self {
+        Self::enable(*b"pnum")
+    }
+
+    #[must_use]
+    pub const fn slashed_zero() -> Self {
+        Self::enable(*b"zero")
+    }
+
+    #[must_use]
+    pub fn to_css_setting(&self) -> String {
+        let tag_str = std::str::from_utf8(&self.tag).unwrap_or("????");
+        format!("\"{}\" {}", tag_str, self.value)
+    }
+}
+
+/// OpenType font variation axis setting with a 4-byte ASCII tag and floating-point value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontVariation {
+    pub axis: [u8; 4],
+    pub value: f32,
+}
+
+impl FontVariation {
+    #[must_use]
+    pub const fn new(axis: [u8; 4], value: f32) -> Self {
+        Self { axis, value }
+    }
+
+    #[must_use]
+    pub const fn weight(value: f32) -> Self {
+        Self::new(*b"wght", value)
+    }
+
+    #[must_use]
+    pub const fn italic(value: f32) -> Self {
+        Self::new(*b"ital", value)
+    }
+
+    #[must_use]
+    pub const fn slant(value: f32) -> Self {
+        Self::new(*b"slnt", value)
+    }
+
+    #[must_use]
+    pub const fn width(value: f32) -> Self {
+        Self::new(*b"wdth", value)
+    }
+
+    #[must_use]
+    pub const fn optical_size(value: f32) -> Self {
+        Self::new(*b"opsz", value)
+    }
+
+    #[must_use]
+    pub fn to_css_setting(&self) -> String {
+        let axis_str = std::str::from_utf8(&self.axis).unwrap_or("????");
+        format!("\"{}\" {:.1}", axis_str, self.value)
+    }
+}
+
+impl Lerp for FontVariation {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self::new(self.axis, self.value.lerp(&other.value, t))
     }
 }
 
@@ -60,27 +191,212 @@ pub enum TextAlign {
     Start,
     Center,
     End,
+    Justify,
+}
+
+/// The baseline alignment policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextBaseline {
+    #[default]
+    Alphabetic,
+    Ideographic,
+}
+
+/// The leading distribution policy between line boxes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextLeadingDistribution {
+    #[default]
+    Proportional,
+    Even,
+}
+
+/// Strategy for measuring paragraph width bounds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextWidthBasis {
+    #[default]
+    Parent,
+    LongestLine,
+}
+
+/// Controls line-box height calculations for first ascent and last descent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TextHeightBehavior {
+    pub apply_height_to_first_ascent: bool,
+    pub apply_height_to_last_descent: bool,
+    pub leading_distribution: TextLeadingDistribution,
+}
+
+impl TextHeightBehavior {
+    #[must_use]
+    pub const fn new(
+        apply_height_to_first_ascent: bool,
+        apply_height_to_last_descent: bool,
+        leading_distribution: TextLeadingDistribution,
+    ) -> Self {
+        Self {
+            apply_height_to_first_ascent,
+            apply_height_to_last_descent,
+            leading_distribution,
+        }
+    }
+}
+
+/// Visual line decorations for rendered text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TextDecoration(u8);
+
+impl TextDecoration {
+    pub const NONE: Self = Self(0);
+    pub const UNDERLINE: Self = Self(1);
+    pub const OVERLINE: Self = Self(2);
+    pub const LINE_THROUGH: Self = Self(4);
+
+    #[must_use]
+    pub const fn combine(decorations: &[Self]) -> Self {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < decorations.len() {
+            bits |= decorations[i].0;
+            i += 1;
+        }
+        Self(bits)
+    }
+
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+}
+
+impl std::ops::BitOr for TextDecoration {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitAnd for TextDecoration {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+}
+
+/// Visual stroke pattern for text decorations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextDecorationStyle {
+    #[default]
+    Solid,
+    Double,
+    Dotted,
+    Dashed,
+    Wavy,
+}
+
+/// Shadow cast by text glyphs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextShadow {
+    pub color: Color,
+    pub offset: incular_core::Offset,
+    pub blur_radius: f32,
+}
+
+impl TextShadow {
+    #[must_use]
+    pub const fn new(color: Color, offset: incular_core::Offset, blur_radius: f32) -> Self {
+        Self {
+            color,
+            offset,
+            blur_radius,
+        }
+    }
+}
+
+impl Lerp for TextShadow {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            color: self.color.lerp(&other.color, t),
+            offset: self.offset.lerp(&other.offset, t),
+            blur_radius: self.blur_radius.lerp(&other.blur_radius, t).max(0.0),
+        }
+    }
+}
+
+/// Baseline strut configuration defining minimum vertical line spacing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StrutStyle {
+    pub font_family: Option<FontFamily>,
+    pub font_family_fallback: Arc<[FontFamily]>,
+    pub font_size: Option<f32>,
+    pub font_weight: Option<FontWeight>,
+    pub font_style: Option<FontStyle>,
+    pub height: Option<f32>,
+    pub leading_distribution: Option<TextLeadingDistribution>,
+    pub force_strut_height: Option<bool>,
+}
+
+impl StrutStyle {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn font_family(mut self, family: impl Into<String>) -> Self {
+        self.font_family = Some(FontFamily::Named(family.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.font_size = Some(size.max(0.0));
+        self
+    }
+
+    #[must_use]
+    pub fn font_weight(mut self, weight: FontWeight) -> Self {
+        self.font_weight = Some(weight);
+        self
+    }
+
+    #[must_use]
+    pub fn font_style(mut self, style: FontStyle) -> Self {
+        self.font_style = Some(style);
+        self
+    }
+
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height.max(0.0));
+        self
+    }
+
+    #[must_use]
+    pub fn leading_distribution(mut self, distribution: TextLeadingDistribution) -> Self {
+        self.leading_distribution = Some(distribution);
+        self
+    }
+
+    #[must_use]
+    pub fn force_strut_height(mut self, force: bool) -> Self {
+        self.force_strut_height = Some(force);
+        self
+    }
 }
 
 /// What to do when a paragraph cannot fit its configured line or width limit.
-///
-/// `Ellipsis` is a shaped U+2026 glyph run in the paragraph's resolved font;
-/// Incular never slices the UTF-8 source string to synthesize it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextOverflow {
-    /// Keep only the visible lines. A retained parent may additionally clip
-    /// painting to its bounds.
     #[default]
     Clip,
-    /// Replace the omitted suffix with a shaped ellipsis.
     Ellipsis,
-    /// Keep the complete logical layout even if its painted bounds overflow.
     Visible,
+    Fade,
 }
 
 /// Text scaling policy applied after a style's logical font size is chosen.
-/// Keeping this separate from [`TextStyle`] lets the same style be rendered at
-/// different accessibility scales without rebuilding a span tree.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextScaler {
     kind: TextScalerKind,
@@ -101,8 +417,6 @@ impl TextScaler {
 
     #[must_use]
     pub const fn linear(factor: f32) -> Self {
-        // A const constructor cannot panic in a useful way on all supported
-        // compilers; `scale` clamps invalid values defensively at use time.
         Self {
             kind: TextScalerKind::Linear,
             factor,
@@ -146,30 +460,46 @@ impl Default for TextScaler {
     }
 }
 
-/// Font and paragraph-independent visual properties. The existing public
-/// fields intentionally remain unchanged so current widget and renderer code
-/// can continue constructing styles with struct literals.
+/// Font and paragraph-independent visual properties.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
+    pub inherit: bool,
     pub family: FontFamily,
     pub fallback_families: Arc<[FontFamily]>,
     pub size: f32,
     pub weight: FontWeight,
     pub style: FontStyle,
     pub color: Color,
+    pub background_color: Option<Color>,
     pub line_height: Option<f32>,
     pub letter_spacing: f32,
-    /// CSS-style OpenType variation settings (for example `"wght" 650`).
-    /// Parley validates and applies settings supported by the selected face.
+    pub word_spacing: Option<f32>,
+    pub text_baseline: Option<TextBaseline>,
+    pub leading_distribution: Option<TextLeadingDistribution>,
+    pub locale: Option<String>,
+    pub foreground: Option<Color>,
+    pub background: Option<Color>,
+    pub shadows: Arc<[TextShadow]>,
     pub font_variations: Option<Arc<str>>,
-    /// CSS-style OpenType feature settings (for example `"liga" 0`).
     pub font_features: Option<Arc<str>>,
+    pub decoration: Option<TextDecoration>,
+    pub decoration_color: Option<Color>,
+    pub decoration_style: Option<TextDecorationStyle>,
+    pub decoration_thickness: Option<f32>,
+    pub debug_label: Option<String>,
+    pub overflow: Option<TextOverflow>,
 }
 
 impl TextStyle {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn inherit(mut self, inherit: bool) -> Self {
+        self.inherit = inherit;
+        self
     }
 
     #[must_use]
@@ -212,6 +542,12 @@ impl TextStyle {
     }
 
     #[must_use]
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = size.max(0.0);
+        self
+    }
+
+    #[must_use]
     pub fn font_weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
@@ -224,6 +560,12 @@ impl TextStyle {
     }
 
     #[must_use]
+    pub fn font_style(mut self, style: FontStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    #[must_use]
     pub fn italic(mut self) -> Self {
         self.style = FontStyle::Italic;
         self
@@ -232,6 +574,14 @@ impl TextStyle {
     #[must_use]
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self.foreground = None;
+        self
+    }
+
+    #[must_use]
+    pub fn background_color(mut self, color: Color) -> Self {
+        self.background_color = Some(color);
+        self.background = None;
         self
     }
 
@@ -242,8 +592,68 @@ impl TextStyle {
     }
 
     #[must_use]
+    pub fn height(mut self, height: Option<f32>) -> Self {
+        self.line_height = height.map(|value| value.max(0.0));
+        self
+    }
+
+    #[must_use]
     pub fn letter_spacing(mut self, letter_spacing: f32) -> Self {
         self.letter_spacing = letter_spacing;
+        self
+    }
+
+    #[must_use]
+    pub fn word_spacing(mut self, word_spacing: Option<f32>) -> Self {
+        self.word_spacing = word_spacing;
+        self
+    }
+
+    #[must_use]
+    pub fn text_baseline(mut self, baseline: TextBaseline) -> Self {
+        self.text_baseline = Some(baseline);
+        self
+    }
+
+    #[must_use]
+    pub fn leading_distribution(mut self, distribution: TextLeadingDistribution) -> Self {
+        self.leading_distribution = Some(distribution);
+        self
+    }
+
+    #[must_use]
+    pub fn locale(mut self, locale: impl Into<String>) -> Self {
+        self.locale = Some(locale.into());
+        self
+    }
+
+    #[must_use]
+    pub fn foreground(mut self, color: Color) -> Self {
+        self.foreground = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self.background_color = None;
+        self
+    }
+
+    #[must_use]
+    pub fn shadows<I>(mut self, shadows: I) -> Self
+    where
+        I: IntoIterator<Item = TextShadow>,
+    {
+        self.shadows = shadows.into_iter().collect::<Vec<_>>().into();
+        self
+    }
+
+    #[must_use]
+    pub fn shadow(mut self, shadow: TextShadow) -> Self {
+        let mut shadows = self.shadows.to_vec();
+        shadows.push(shadow);
+        self.shadows = shadows.into();
         self
     }
 
@@ -254,17 +664,117 @@ impl TextStyle {
     }
 
     #[must_use]
+    pub fn font_variation_settings(mut self, variations: &[FontVariation]) -> Self {
+        let formatted = variations
+            .iter()
+            .map(FontVariation::to_css_setting)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.font_variations = Some(formatted.into());
+        self
+    }
+
+    #[must_use]
     pub fn font_features(mut self, settings: impl Into<Arc<str>>) -> Self {
         self.font_features = Some(settings.into());
         self
     }
 
-    /// Returns a style with values from `other` replacing this style where
-    /// `other` has a meaningful value. This is useful for inherited spans.
-    /// Since the historical `TextStyle` stores concrete values, zero/`None`
-    /// are treated as the absence of an override for metric fields.
+    #[must_use]
+    pub fn font_feature_settings(mut self, features: &[FontFeature]) -> Self {
+        let formatted = features
+            .iter()
+            .map(FontFeature::to_css_setting)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.font_features = Some(formatted.into());
+        self
+    }
+
+    #[must_use]
+    pub fn decoration(mut self, decoration: TextDecoration) -> Self {
+        self.decoration = Some(decoration);
+        self
+    }
+
+    #[must_use]
+    pub fn decoration_color(mut self, color: Color) -> Self {
+        self.decoration_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn decoration_style(mut self, style: TextDecorationStyle) -> Self {
+        self.decoration_style = Some(style);
+        self
+    }
+
+    #[must_use]
+    pub fn decoration_thickness(mut self, thickness: f32) -> Self {
+        self.decoration_thickness = Some(thickness.max(0.0));
+        self
+    }
+
+    #[must_use]
+    pub fn debug_label(mut self, label: impl Into<String>) -> Self {
+        self.debug_label = Some(label.into());
+        self
+    }
+
+    #[must_use]
+    pub fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = Some(overflow);
+        self
+    }
+
+    // Immutable derivation with_* methods
+    #[must_use]
+    pub fn with_font_size(&self, size: f32) -> Self {
+        let mut s = self.clone();
+        s.size = size.max(0.0);
+        s
+    }
+
+    #[must_use]
+    pub fn with_font_weight(&self, weight: FontWeight) -> Self {
+        let mut s = self.clone();
+        s.weight = weight;
+        s
+    }
+
+    #[must_use]
+    pub fn with_color(&self, color: Color) -> Self {
+        let mut s = self.clone();
+        s.color = color;
+        s
+    }
+
+    #[must_use]
+    pub fn with_letter_spacing(&self, letter_spacing: f32) -> Self {
+        let mut s = self.clone();
+        s.letter_spacing = letter_spacing;
+        s
+    }
+
+    #[must_use]
+    pub fn with_line_height(&self, line_height: Option<f32>) -> Self {
+        let mut s = self.clone();
+        s.line_height = line_height.map(|v| v.max(0.0));
+        s
+    }
+
+    #[must_use]
+    pub fn with_decoration(&self, decoration: Option<TextDecoration>) -> Self {
+        let mut s = self.clone();
+        s.decoration = decoration;
+        s
+    }
+
     #[must_use]
     pub fn merge(&self, other: &Self) -> Self {
+        if !other.inherit {
+            return other.clone();
+        }
         let mut merged = self.clone();
         merged.family = other.family.clone();
         if !other.fallback_families.is_empty() {
@@ -276,11 +786,35 @@ impl TextStyle {
         merged.weight = other.weight;
         merged.style = other.style;
         merged.color = other.color;
+        if other.background_color.is_some() {
+            merged.background_color = other.background_color;
+        }
         if other.line_height.is_some() {
             merged.line_height = other.line_height;
         }
         if other.letter_spacing != 0.0 {
             merged.letter_spacing = other.letter_spacing;
+        }
+        if other.word_spacing.is_some() {
+            merged.word_spacing = other.word_spacing;
+        }
+        if other.text_baseline.is_some() {
+            merged.text_baseline = other.text_baseline;
+        }
+        if other.leading_distribution.is_some() {
+            merged.leading_distribution = other.leading_distribution;
+        }
+        if other.locale.is_some() {
+            merged.locale = other.locale.clone();
+        }
+        if other.foreground.is_some() {
+            merged.foreground = other.foreground;
+        }
+        if other.background.is_some() {
+            merged.background = other.background;
+        }
+        if !other.shadows.is_empty() {
+            merged.shadows = other.shadows.clone();
         }
         if other.font_variations.is_some() {
             merged.font_variations = other.font_variations.clone();
@@ -288,7 +822,54 @@ impl TextStyle {
         if other.font_features.is_some() {
             merged.font_features = other.font_features.clone();
         }
+        if other.decoration.is_some() {
+            merged.decoration = other.decoration;
+        }
+        if other.decoration_color.is_some() {
+            merged.decoration_color = other.decoration_color;
+        }
+        if other.decoration_style.is_some() {
+            merged.decoration_style = other.decoration_style;
+        }
+        if other.decoration_thickness.is_some() {
+            merged.decoration_thickness = other.decoration_thickness;
+        }
+        if other.overflow.is_some() {
+            merged.overflow = other.overflow;
+        }
         merged
+    }
+
+    #[must_use]
+    pub fn apply(
+        &self,
+        color: Option<Color>,
+        background_color: Option<Color>,
+        font_size_factor: Option<f32>,
+        font_size_delta: Option<f32>,
+        letter_spacing_factor: Option<f32>,
+        letter_spacing_delta: Option<f32>,
+    ) -> Self {
+        let mut res = self.clone();
+        if let Some(c) = color {
+            res.color = c;
+        }
+        if let Some(bg) = background_color {
+            res.background_color = Some(bg);
+        }
+        if let Some(factor) = font_size_factor {
+            res.size = (res.size * factor).max(0.0);
+        }
+        if let Some(delta) = font_size_delta {
+            res.size = (res.size + delta).max(0.0);
+        }
+        if let Some(factor) = letter_spacing_factor {
+            res.letter_spacing *= factor;
+        }
+        if let Some(delta) = letter_spacing_delta {
+            res.letter_spacing += delta;
+        }
+        res
     }
 
     #[must_use]
@@ -299,46 +880,216 @@ impl TextStyle {
     }
 
     #[must_use]
-    pub fn lerp(a: &Self, b: &Self, t: f32) -> Self {
+    pub fn change_impact(&self, other: &Self) -> ChangeImpact {
+        if self == other {
+            return ChangeImpact::None;
+        }
+        if self.family != other.family
+            || self.fallback_families != other.fallback_families
+            || self.size != other.size
+            || self.weight != other.weight
+            || self.style != other.style
+            || self.line_height != other.line_height
+            || self.letter_spacing != other.letter_spacing
+            || self.word_spacing != other.word_spacing
+            || self.text_baseline != other.text_baseline
+            || self.leading_distribution != other.leading_distribution
+            || self.font_variations != other.font_variations
+            || self.font_features != other.font_features
+            || self.overflow != other.overflow
+        {
+            ChangeImpact::Layout
+        } else {
+            ChangeImpact::Paint
+        }
+    }
+
+    #[must_use]
+    pub fn invalidation(&self, other: &Self) -> incular_core::Invalidation {
+        if self == other {
+            return incular_core::Invalidation::NONE;
+        }
+        if self.family != other.family
+            || self.fallback_families != other.fallback_families
+            || self.size != other.size
+            || self.weight != other.weight
+            || self.style != other.style
+            || self.line_height != other.line_height
+            || self.letter_spacing != other.letter_spacing
+            || self.word_spacing != other.word_spacing
+            || self.text_baseline != other.text_baseline
+            || self.leading_distribution != other.leading_distribution
+            || self.font_variations != other.font_variations
+            || self.font_features != other.font_features
+            || self.overflow != other.overflow
+        {
+            incular_core::Invalidation::LAYOUT | incular_core::Invalidation::PAINT
+        } else {
+            incular_core::Invalidation::PAINT
+        }
+    }
+}
+
+impl Lerp for TextStyle {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         let mix = |left: f32, right: f32| left + (right - left) * t;
-        let color = Color::rgba(
-            mix(a.color.red as f32, b.color.red as f32).round() as u8,
-            mix(a.color.green as f32, b.color.green as f32).round() as u8,
-            mix(a.color.blue as f32, b.color.blue as f32).round() as u8,
-            mix(a.color.alpha as f32, b.color.alpha as f32).round() as u8,
-        );
         Self {
+            inherit: if t < 0.5 { self.inherit } else { other.inherit },
             family: if t < 0.5 {
-                a.family.clone()
+                self.family.clone()
             } else {
-                b.family.clone()
+                other.family.clone()
             },
             fallback_families: if t < 0.5 {
-                a.fallback_families.clone()
+                self.fallback_families.clone()
             } else {
-                b.fallback_families.clone()
+                other.fallback_families.clone()
             },
-            size: mix(a.size, b.size),
-            weight: if t < 0.5 { a.weight } else { b.weight },
-            style: if t < 0.5 { a.style } else { b.style },
-            color,
-            line_height: match (a.line_height, b.line_height) {
+            size: mix(self.size, other.size),
+            weight: self.weight.lerp(&other.weight, t),
+            style: if t < 0.5 { self.style } else { other.style },
+            color: self.color.lerp(&other.color, t),
+            background_color: match (self.background_color, other.background_color) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            line_height: match (self.line_height, other.line_height) {
                 (Some(left), Some(right)) => Some(mix(left, right)),
                 (Some(left), None) => Some(mix(left, 0.0)),
                 (None, Some(right)) => Some(mix(0.0, right)),
                 (None, None) => None,
             },
-            letter_spacing: mix(a.letter_spacing, b.letter_spacing),
-            font_variations: if t < 0.5 {
-                a.font_variations.clone()
+            letter_spacing: mix(self.letter_spacing, other.letter_spacing),
+            word_spacing: match (self.word_spacing, other.word_spacing) {
+                (Some(left), Some(right)) => Some(mix(left, right)),
+                (Some(left), None) => Some(mix(left, 0.0)),
+                (None, Some(right)) => Some(mix(0.0, right)),
+                (None, None) => None,
+            },
+            text_baseline: if t < 0.5 {
+                self.text_baseline
             } else {
-                b.font_variations.clone()
+                other.text_baseline
+            },
+            leading_distribution: if t < 0.5 {
+                self.leading_distribution
+            } else {
+                other.leading_distribution
+            },
+            locale: if t < 0.5 {
+                self.locale.clone()
+            } else {
+                other.locale.clone()
+            },
+            foreground: match (self.foreground, other.foreground) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            background: match (self.background, other.background) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            shadows: if t < 0.5 {
+                self.shadows.clone()
+            } else {
+                other.shadows.clone()
+            },
+            font_variations: if t < 0.5 {
+                self.font_variations.clone()
+            } else {
+                other.font_variations.clone()
             },
             font_features: if t < 0.5 {
-                a.font_features.clone()
+                self.font_features.clone()
             } else {
-                b.font_features.clone()
+                other.font_features.clone()
+            },
+            decoration: if t < 0.5 {
+                self.decoration
+            } else {
+                other.decoration
+            },
+            decoration_color: match (self.decoration_color, other.decoration_color) {
+                (Some(a), Some(b)) => Some(a.lerp(&b, t)),
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+                (None, None) => None,
+            },
+            decoration_style: if t < 0.5 {
+                self.decoration_style
+            } else {
+                other.decoration_style
+            },
+            decoration_thickness: match (self.decoration_thickness, other.decoration_thickness) {
+                (Some(a), Some(b)) => Some(mix(a, b)),
+                (Some(a), None) => Some(mix(a, 0.0)),
+                (None, Some(b)) => Some(mix(0.0, b)),
+                (None, None) => None,
+            },
+            debug_label: if t < 0.5 {
+                self.debug_label.clone()
+            } else {
+                other.debug_label.clone()
+            },
+            overflow: if t < 0.5 {
+                self.overflow
+            } else {
+                other.overflow
             },
         }
     }
@@ -347,16 +1098,31 @@ impl TextStyle {
 impl Default for TextStyle {
     fn default() -> Self {
         Self {
+            inherit: true,
             family: FontFamily::SystemUi,
             fallback_families: Arc::new([]),
             size: 16.0,
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
             color: Color::WHITE,
+            background_color: None,
             line_height: None,
             letter_spacing: 0.0,
+            word_spacing: None,
+            text_baseline: None,
+            leading_distribution: None,
+            locale: None,
+            foreground: None,
+            background: None,
+            shadows: Arc::new([]),
             font_variations: None,
             font_features: None,
+            decoration: None,
+            decoration_color: None,
+            decoration_style: None,
+            decoration_thickness: None,
+            debug_label: None,
+            overflow: None,
         }
     }
 }
@@ -376,8 +1142,17 @@ mod tests {
     fn style_lerp_interpolates_metrics_and_color() {
         let first = TextStyle::default().font_size(10.0).color(Color::BLACK);
         let second = TextStyle::default().font_size(20.0).color(Color::WHITE);
-        let middle = TextStyle::lerp(&first, &second, 0.5);
+        let middle = first.lerp(&second, 0.5);
         assert_eq!(middle.size, 15.0);
         assert_eq!(middle.color, Color::rgba(128, 128, 128, 255));
+    }
+
+    #[test]
+    fn change_impact_distinguishes_layout_from_paint() {
+        let base = TextStyle::default().font_size(16.0).color(Color::WHITE);
+        let paint_change = base.clone().color(Color::BLACK);
+        assert_eq!(base.change_impact(&paint_change), ChangeImpact::Paint);
+        let layout_change = base.clone().font_size(18.0);
+        assert_eq!(base.change_impact(&layout_change), ChangeImpact::Layout);
     }
 }

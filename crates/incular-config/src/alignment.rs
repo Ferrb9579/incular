@@ -141,6 +141,99 @@ impl Alignment {
     }
 }
 
+impl std::ops::Add for Alignment {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl std::ops::Sub for Alignment {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(self.x - rhs.x, self.y - rhs.y)
+    }
+}
+
+impl std::ops::Mul<f32> for Alignment {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self::new(self.x * rhs, self.y * rhs)
+    }
+}
+
+impl std::ops::Div<f32> for Alignment {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self::new(self.x / rhs, self.y / rhs)
+    }
+}
+
+impl std::ops::Neg for Alignment {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self::new(-self.x, -self.y)
+    }
+}
+
+impl incular_core::Lerp for Alignment {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::new(mix(self.x, other.x), mix(self.y, other.y))
+    }
+}
+
+/// An offset that's expressed as a fraction of a `[0, 1]` bounding box.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FractionalOffset {
+    pub dx: f32,
+    pub dy: f32,
+}
+
+impl FractionalOffset {
+    pub const TOP_LEFT: Self = Self { dx: 0.0, dy: 0.0 };
+    pub const TOP_CENTER: Self = Self { dx: 0.5, dy: 0.0 };
+    pub const TOP_RIGHT: Self = Self { dx: 1.0, dy: 0.0 };
+    pub const CENTER_LEFT: Self = Self { dx: 0.0, dy: 0.5 };
+    pub const CENTER: Self = Self { dx: 0.5, dy: 0.5 };
+    pub const CENTER_RIGHT: Self = Self { dx: 1.0, dy: 0.5 };
+    pub const BOTTOM_LEFT: Self = Self { dx: 0.0, dy: 1.0 };
+    pub const BOTTOM_CENTER: Self = Self { dx: 0.5, dy: 1.0 };
+    pub const BOTTOM_RIGHT: Self = Self { dx: 1.0, dy: 1.0 };
+
+    #[must_use]
+    pub const fn new(dx: f32, dy: f32) -> Self {
+        Self { dx, dy }
+    }
+
+    #[must_use]
+    pub const fn from_alignment(alignment: Alignment) -> Self {
+        Self {
+            dx: (alignment.x + 1.0) / 2.0,
+            dy: (alignment.y + 1.0) / 2.0,
+        }
+    }
+
+    #[must_use]
+    pub const fn to_alignment(self) -> Alignment {
+        Alignment::new(self.dx * 2.0 - 1.0, self.dy * 2.0 - 1.0)
+    }
+}
+
+impl incular_core::Lerp for FractionalOffset {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::new(mix(self.dx, other.dx), mix(self.dy, other.dy))
+    }
+}
+
 /// Alignment whose horizontal value is relative to text direction.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AlignmentDirectional {
@@ -188,6 +281,14 @@ impl AlignmentDirectional {
             },
             self.y,
         )
+    }
+}
+
+impl incular_core::Lerp for AlignmentDirectional {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::new(mix(self.start, other.start), mix(self.y, other.y))
     }
 }
 

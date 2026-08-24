@@ -12,13 +12,13 @@ mod localization;
 
 pub use alignment::{
     Alignment, AlignmentDirectional, Axis, AxisDirection, Clip, CrossAxisAlignment, FlexFit,
-    MainAxisAlignment, MainAxisSize, StackFit, TextDirection, VerticalDirection, WrapAlignment,
-    WrapCrossAlignment,
+    FractionalOffset, MainAxisAlignment, MainAxisSize, StackFit, TextDirection, VerticalDirection,
+    WrapAlignment, WrapCrossAlignment,
 };
 pub use constraints::{ConstraintError, Constraints};
 pub use environment::{Brightness, InputCapabilities, RuntimeEnvironment};
 pub use icu_locale::Locale;
-pub use insets::EdgeInsets;
+pub use insets::{EdgeInsets, EdgeInsetsDirectional};
 pub use localization::{
     LocaleResolver, LocalizationCatalog, LocalizationError, LocalizedMessage, PluralCategory,
     PluralForms,

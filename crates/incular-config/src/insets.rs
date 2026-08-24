@@ -197,6 +197,199 @@ impl SubAssign for EdgeInsets {
     }
 }
 
+impl std::ops::Mul<f32> for EdgeInsets {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self::only(
+            self.left * rhs,
+            self.top * rhs,
+            self.right * rhs,
+            self.bottom * rhs,
+        )
+    }
+}
+
+impl std::ops::Div<f32> for EdgeInsets {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self::only(
+            self.left / rhs,
+            self.top / rhs,
+            self.right / rhs,
+            self.bottom / rhs,
+        )
+    }
+}
+
+impl std::ops::Neg for EdgeInsets {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self::only(-self.left, -self.top, -self.right, -self.bottom)
+    }
+}
+
+impl incular_core::Lerp for EdgeInsets {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::only(
+            mix(self.left, other.left),
+            mix(self.top, other.top),
+            mix(self.right, other.right),
+            mix(self.bottom, other.bottom),
+        )
+    }
+}
+
+/// An immutable set of directional offsets in logical pixels.
+/// Resolves against a [`crate::TextDirection`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EdgeInsetsDirectional {
+    pub start: f32,
+    pub top: f32,
+    pub end: f32,
+    pub bottom: f32,
+}
+
+impl EdgeInsetsDirectional {
+    pub const ZERO: Self = Self {
+        start: 0.0,
+        top: 0.0,
+        end: 0.0,
+        bottom: 0.0,
+    };
+
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self::ZERO
+    }
+
+    #[must_use]
+    pub const fn all(value: f32) -> Self {
+        Self {
+            start: value,
+            top: value,
+            end: value,
+            bottom: value,
+        }
+    }
+
+    #[must_use]
+    pub const fn only(start: f32, top: f32, end: f32, bottom: f32) -> Self {
+        Self {
+            start,
+            top,
+            end,
+            bottom,
+        }
+    }
+
+    #[must_use]
+    pub const fn symmetric(horizontal: f32, vertical: f32) -> Self {
+        Self {
+            start: horizontal,
+            top: vertical,
+            end: horizontal,
+            bottom: vertical,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_ste_b(start: f32, top: f32, end: f32, bottom: f32) -> Self {
+        Self::only(start, top, end, bottom)
+    }
+
+    #[must_use]
+    pub const fn resolve(self, direction: crate::TextDirection) -> EdgeInsets {
+        match direction {
+            crate::TextDirection::Ltr => {
+                EdgeInsets::only(self.start, self.top, self.end, self.bottom)
+            }
+            crate::TextDirection::Rtl => {
+                EdgeInsets::only(self.end, self.top, self.start, self.bottom)
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn horizontal(self) -> f32 {
+        self.start + self.end
+    }
+
+    #[must_use]
+    pub const fn vertical(self) -> f32 {
+        self.top + self.bottom
+    }
+}
+
+impl Add for EdgeInsetsDirectional {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::only(
+            self.start + rhs.start,
+            self.top + rhs.top,
+            self.end + rhs.end,
+            self.bottom + rhs.bottom,
+        )
+    }
+}
+
+impl Sub for EdgeInsetsDirectional {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::only(
+            self.start - rhs.start,
+            self.top - rhs.top,
+            self.end - rhs.end,
+            self.bottom - rhs.bottom,
+        )
+    }
+}
+
+impl std::ops::Mul<f32> for EdgeInsetsDirectional {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self::only(
+            self.start * rhs,
+            self.top * rhs,
+            self.end * rhs,
+            self.bottom * rhs,
+        )
+    }
+}
+
+impl std::ops::Div<f32> for EdgeInsetsDirectional {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self::only(
+            self.start / rhs,
+            self.top / rhs,
+            self.end / rhs,
+            self.bottom / rhs,
+        )
+    }
+}
+
+impl incular_core::Lerp for EdgeInsetsDirectional {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::only(
+            mix(self.start, other.start),
+            mix(self.top, other.top),
+            mix(self.end, other.end),
+            mix(self.bottom, other.bottom),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

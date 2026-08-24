@@ -463,7 +463,7 @@ pub fn touch_event(touch: winit::event::Touch, metrics: WindowMetrics) -> Platfo
 }
 /// Converts wheel motion into Incular's content-offset convention. Winit's
 /// positive wheel Y denotes upward wheel motion, whereas a positive vertical
-/// [`incular_scroll::ScrollController`] offset moves content upward. Inverting
+/// `ScrollController` offset moves content upward. Inverting
 /// the raw motion makes content follow the gesture (natural scrolling) for
 /// wheel and trackpad input. A line is a documented 40 logical-pixel
 /// convenience step; pixel deltas deliberately retain their fractional value.

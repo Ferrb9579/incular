@@ -631,7 +631,7 @@ impl<T: 'static> Signal<T> {
     }
 
     /// Marks this named signal development-editable from DevTools. Only the
-    /// supported primitive kinds can round-trip an [`EditableValue`].
+    /// supported primitive kinds can round-trip an `EditableValue`.
     #[cfg(feature = "devtools")]
     pub fn devtools_editable(self) -> Self
     where

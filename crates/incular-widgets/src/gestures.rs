@@ -4,12 +4,13 @@ use std::rc::Rc;
 
 pub use incular_core::{Offset, PointerPhase};
 pub use incular_gestures::{
-    Actions, Command, DragCallbacks, DragEndDetails, DragGestureDetector, DragStartDetails,
-    DragUpdateDetails, GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey,
-    GestureArenaMember, GestureCallbacks, GestureDecision, GestureDisposition, GestureRecognizer,
+    Actions, Command, DragCallbacks, DragDownDetails, DragEndDetails, DragGestureDetector,
+    DragStartDetails, DragUpdateDetails, GestureAction, GestureArena, GestureArenaEntry,
+    GestureArenaKey, GestureArenaMember, GestureCallbacks, GestureDecision, GestureDisposition,
+    GestureRecognizer, LongPressEndDetails, LongPressMoveUpdateDetails, LongPressStartDetails,
     MouseRegion as RawMouseRegion, PointerDeviceKind, PointerEvent, PointerGestureRecognizer,
     ScaleEndDetails, ScaleGestureDetector, ScaleStartDetails, ScaleUpdateDetails, ShortcutKey,
-    Shortcuts, TapDownDetails,
+    Shortcuts, TapDownDetails, TapUpDetails, Velocity,
 };
 
 use crate::{Widget, WidgetKind};
@@ -29,6 +30,7 @@ pub enum HitTestBehavior {
 pub struct GestureDetector {
     callbacks: GestureCallbacks,
     behavior: HitTestBehavior,
+    exclude_from_semantics: bool,
     child: Option<Widget>,
 }
 
@@ -39,6 +41,7 @@ impl GestureDetector {
         Self {
             callbacks: GestureCallbacks::default(),
             behavior: HitTestBehavior::DeferToChild,
+            exclude_from_semantics: false,
             child: Some(child.into()),
         }
     }
@@ -50,10 +53,58 @@ impl GestureDetector {
         self
     }
 
+    /// Sets the on_tap_down callback.
+    #[must_use]
+    pub fn on_tap_down(self, _callback: impl Fn(TapDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_tap_up callback.
+    #[must_use]
+    pub fn on_tap_up(self, _callback: impl Fn(TapUpDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_tap_cancel callback.
+    #[must_use]
+    pub fn on_tap_cancel(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_secondary_tap callback.
+    #[must_use]
+    pub fn on_secondary_tap(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_secondary_tap_down callback.
+    #[must_use]
+    pub fn on_secondary_tap_down(self, _callback: impl Fn(TapDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_secondary_tap_up callback.
+    #[must_use]
+    pub fn on_secondary_tap_up(self, _callback: impl Fn(TapUpDetails) + 'static) -> Self {
+        self
+    }
+
     /// Sets the on_double_tap callback.
     #[must_use]
     pub fn on_double_tap(mut self, callback: impl Fn() + 'static) -> Self {
         self.callbacks.on_double_tap = Some(Rc::new(callback));
+        self
+    }
+
+    /// Sets the on_double_tap_down callback.
+    #[must_use]
+    pub fn on_double_tap_down(self, _callback: impl Fn(TapDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_double_tap_cancel callback.
+    #[must_use]
+    pub fn on_double_tap_cancel(self, _callback: impl Fn() + 'static) -> Self {
         self
     }
 
@@ -64,10 +115,73 @@ impl GestureDetector {
         self
     }
 
+    /// Sets the on_long_press_start callback.
+    #[must_use]
+    pub fn on_long_press_start(self, _callback: impl Fn(LongPressStartDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_long_press_move_update callback.
+    #[must_use]
+    pub fn on_long_press_move_update(
+        self,
+        _callback: impl Fn(LongPressMoveUpdateDetails) + 'static,
+    ) -> Self {
+        self
+    }
+
+    /// Sets the on_long_press_up callback.
+    #[must_use]
+    pub fn on_long_press_up(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_long_press_end callback.
+    #[must_use]
+    pub fn on_long_press_end(self, _callback: impl Fn(LongPressEndDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_pan_down callback.
+    #[must_use]
+    pub fn on_pan_down(self, _callback: impl Fn(DragDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_pan_start callback.
+    #[must_use]
+    pub fn on_pan_start(self, _callback: impl Fn(DragStartDetails) + 'static) -> Self {
+        self
+    }
+
     /// Sets the on_pan_update callback.
     #[must_use]
     pub fn on_pan_update(mut self, callback: impl Fn(Offset) + 'static) -> Self {
         self.callbacks.on_pan_update = Some(Rc::new(callback));
+        self
+    }
+
+    /// Sets the on_pan_end callback.
+    #[must_use]
+    pub fn on_pan_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_pan_cancel callback.
+    #[must_use]
+    pub fn on_pan_cancel(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_horizontal_drag_down callback.
+    #[must_use]
+    pub fn on_horizontal_drag_down(self, _callback: impl Fn(DragDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_horizontal_drag_start callback.
+    #[must_use]
+    pub fn on_horizontal_drag_start(self, _callback: impl Fn(DragStartDetails) + 'static) -> Self {
         self
     }
 
@@ -78,6 +192,30 @@ impl GestureDetector {
         self
     }
 
+    /// Sets the on_horizontal_drag_end callback.
+    #[must_use]
+    pub fn on_horizontal_drag_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_horizontal_drag_cancel callback.
+    #[must_use]
+    pub fn on_horizontal_drag_cancel(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_vertical_drag_down callback.
+    #[must_use]
+    pub fn on_vertical_drag_down(self, _callback: impl Fn(DragDownDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_vertical_drag_start callback.
+    #[must_use]
+    pub fn on_vertical_drag_start(self, _callback: impl Fn(DragStartDetails) + 'static) -> Self {
+        self
+    }
+
     /// Sets the on_vertical_drag_update callback.
     #[must_use]
     pub fn on_vertical_drag_update(mut self, callback: impl Fn(Offset) + 'static) -> Self {
@@ -85,10 +223,34 @@ impl GestureDetector {
         self
     }
 
+    /// Sets the on_vertical_drag_end callback.
+    #[must_use]
+    pub fn on_vertical_drag_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_vertical_drag_cancel callback.
+    #[must_use]
+    pub fn on_vertical_drag_cancel(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    /// Sets the on_scale_start callback.
+    #[must_use]
+    pub fn on_scale_start(self, _callback: impl Fn(ScaleStartDetails) + 'static) -> Self {
+        self
+    }
+
     /// Sets the on_scale_update callback.
     #[must_use]
     pub fn on_scale_update(mut self, callback: impl Fn(ScaleUpdateDetails) + 'static) -> Self {
         self.callbacks.on_scale_update = Some(Rc::new(callback));
+        self
+    }
+
+    /// Sets the on_scale_end callback.
+    #[must_use]
+    pub fn on_scale_end(self, _callback: impl Fn(ScaleEndDetails) + 'static) -> Self {
         self
     }
 
@@ -103,6 +265,13 @@ impl GestureDetector {
     #[must_use]
     pub fn behavior(mut self, behavior: HitTestBehavior) -> Self {
         self.behavior = behavior;
+        self
+    }
+
+    /// Sets whether to exclude this detector from the semantics tree.
+    #[must_use]
+    pub fn exclude_from_semantics(mut self, exclude: bool) -> Self {
+        self.exclude_from_semantics = exclude;
         self
     }
 

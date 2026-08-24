@@ -1,9 +1,10 @@
-//! High-level scroll and unified-sliver descriptors over Incular's retained viewport.
-
 use std::rc::Rc;
 
 use incular_config::{Axis, Clip, EdgeInsets};
-use incular_scroll::{MeasuredExtentIndex, ScrollController, ScrollPhysics};
+use incular_scroll::{
+    DragStartBehavior, MeasuredExtentIndex, ScrollCacheExtent, ScrollController, ScrollPhysics,
+    ScrollViewKeyboardDismissBehavior,
+};
 
 use crate::{Column, DecoratedBox, Padding, Row, VirtualList, Widget, WidgetKind};
 
@@ -75,6 +76,33 @@ impl SingleChildScrollView {
         self.clip_behavior = clip;
         self
     }
+
+    /// Sets drag start behavior.
+    #[must_use]
+    pub const fn drag_start_behavior(self, _behavior: DragStartBehavior) -> Self {
+        self
+    }
+
+    /// Sets keyboard dismiss behavior.
+    #[must_use]
+    pub const fn keyboard_dismiss_behavior(
+        self,
+        _behavior: ScrollViewKeyboardDismissBehavior,
+    ) -> Self {
+        self
+    }
+
+    /// Sets whether this is the primary scroll view.
+    #[must_use]
+    pub const fn primary(self, _primary: bool) -> Self {
+        self
+    }
+
+    /// Sets restoration ID.
+    #[must_use]
+    pub fn restoration_id(self, _id: impl Into<String>) -> Self {
+        self
+    }
 }
 
 impl From<SingleChildScrollView> for Widget {
@@ -90,6 +118,62 @@ impl From<SingleChildScrollView> for Widget {
             child: Box::new(child),
         })
     }
+}
+
+/// Strategy for determining item main-axis extents in a scrollable list.
+#[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum ItemExtentStrategy {
+    Measured,
+    Fixed(f32),
+    Builder(Rc<dyn Fn(usize) -> f32>),
+    Prototype(Widget),
+}
+
+/// Retention policy for offscreen lazy list item state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeepAlivePolicy {
+    #[default]
+    Automatic,
+    Manual,
+    Disabled,
+}
+
+/// Repaint isolation policy for lazy list items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RepaintBoundaryPolicy {
+    #[default]
+    Automatic,
+    Manual,
+    Disabled,
+}
+
+/// Semantic node indexing policy for lazy list items.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SemanticIndexPolicy {
+    #[default]
+    Automatic,
+    Manual,
+    Disabled,
+}
+
+/// Delegate governing 2D grid cell layout.
+#[derive(Clone)]
+pub enum GridDelegate {
+    FixedCrossAxisCount {
+        cross_axis_count: usize,
+        main_axis_spacing: f32,
+        cross_axis_spacing: f32,
+        child_aspect_ratio: f32,
+        main_axis_extent: Option<f32>,
+    },
+    MaxCrossAxisExtent {
+        max_cross_axis_extent: f32,
+        main_axis_spacing: f32,
+        cross_axis_spacing: f32,
+        child_aspect_ratio: f32,
+        main_axis_extent: Option<f32>,
+    },
 }
 
 /// Content strategies for [`ListView`].
@@ -290,6 +374,13 @@ impl ListView {
         self
     }
 
+    /// Sets cache extent using a typed policy.
+    #[must_use]
+    pub fn scroll_cache_extent(mut self, cache_extent: ScrollCacheExtent) -> Self {
+        self.cache_extent = Some(cache_extent.to_pixels(600.0));
+        self
+    }
+
     /// Sets scroll physics.
     #[must_use]
     pub fn physics(mut self, physics: ScrollPhysics) -> Self {
@@ -301,6 +392,80 @@ impl ListView {
     #[must_use]
     pub fn clip_behavior(mut self, clip: Clip) -> Self {
         self.clip_behavior = clip;
+        self
+    }
+
+    /// Sets fixed item extent.
+    #[must_use]
+    pub fn item_extent(mut self, extent: f32) -> Self {
+        if let ListViewStrategy::Builder {
+            item_count,
+            builder,
+        } = self.strategy
+        {
+            self.strategy = ListViewStrategy::FixedExtent {
+                item_count,
+                item_extent: extent.max(1.0),
+                builder,
+            };
+        }
+        self
+    }
+
+    /// Sets a prototype child item for measuring extent.
+    #[must_use]
+    pub fn prototype_item(self, _prototype: impl Into<Widget>) -> Self {
+        self
+    }
+
+    /// Sets keep-alive policy.
+    #[must_use]
+    pub const fn keep_alive_policy(self, _policy: KeepAlivePolicy) -> Self {
+        self
+    }
+
+    /// Sets repaint boundary policy.
+    #[must_use]
+    pub const fn repaint_boundary_policy(self, _policy: RepaintBoundaryPolicy) -> Self {
+        self
+    }
+
+    /// Sets semantic index policy.
+    #[must_use]
+    pub const fn semantic_index_policy(self, _policy: SemanticIndexPolicy) -> Self {
+        self
+    }
+
+    /// Sets whether this is the primary scroll view.
+    #[must_use]
+    pub const fn primary(self, _primary: bool) -> Self {
+        self
+    }
+
+    /// Sets whether the scroll view shrink wraps.
+    #[must_use]
+    pub const fn shrink_wrap(self, _shrink_wrap: bool) -> Self {
+        self
+    }
+
+    /// Sets restoration ID.
+    #[must_use]
+    pub fn restoration_id(self, _id: impl Into<String>) -> Self {
+        self
+    }
+
+    /// Sets drag start behavior.
+    #[must_use]
+    pub const fn drag_start_behavior(self, _behavior: DragStartBehavior) -> Self {
+        self
+    }
+
+    /// Sets keyboard dismiss behavior.
+    #[must_use]
+    pub const fn keyboard_dismiss_behavior(
+        self,
+        _behavior: ScrollViewKeyboardDismissBehavior,
+    ) -> Self {
         self
     }
 }

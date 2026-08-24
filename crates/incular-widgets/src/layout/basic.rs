@@ -828,6 +828,13 @@ impl CustomPaint {
     pub fn new(size: Size, display_list: DisplayList) -> Self {
         Self { size, display_list }
     }
+
+    /// Creates a CustomPaint widget from a custom painter.
+    #[must_use]
+    pub fn from_painter(size: Size, painter: impl crate::CustomPainter) -> Self {
+        let display_list = painter.paint(size);
+        Self { size, display_list }
+    }
 }
 
 impl From<CustomPaint> for Widget {
@@ -1141,7 +1148,7 @@ impl From<ConstraintsTransformBox> for Widget {
     }
 }
 
-/// Wraps a child subtree with an explicit [`Key`].
+/// Wraps a child subtree with an explicit [`crate::Key`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeyedSubtree {
     key: crate::Key,

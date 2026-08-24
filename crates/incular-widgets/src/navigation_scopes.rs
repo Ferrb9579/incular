@@ -103,7 +103,7 @@ impl From<BackButtonListener> for Widget {
     }
 }
 
-/// An overlay portal that renders its overlay child in an ancestor [`Overlay`].
+/// An overlay portal that renders its overlay child in an ancestor `Overlay`.
 #[derive(Clone)]
 pub struct OverlayPortal {
     show_overlay: bool,

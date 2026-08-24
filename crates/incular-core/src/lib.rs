@@ -14,7 +14,10 @@ mod widget;
 
 pub use arena::{Arena, ArenaId};
 pub use context::{BuildContext, ConsumerId, ContextGuard, DependencySnapshot, Signal};
-pub use geometry::{Color, DirtyFlags, HslColor, HsvColor, Offset, Rect, Size, Transform};
+pub use geometry::{
+    ChangeImpact, Color, DirtyFlags, HslColor, HsvColor, Invalidation, Lerp, Offset, Rect, Size,
+    Transform,
+};
 pub use input::{
     Code, ImeEvent, InputEvent, Key as KeyboardKey, KeyState, KeyboardEvent, Location, Modifiers,
     NamedKey, PointerPhase,

@@ -273,6 +273,9 @@ impl TextEditingController {
             ..TextEditingValue::default()
         });
     }
+    pub fn clear(&self) {
+        self.set_text("");
+    }
     pub fn set_selection(&self, selection: TextSelection) {
         let mut state = self.state.borrow_mut();
         let selection = valid_selection(&state.value.text, selection);
@@ -3914,16 +3917,21 @@ impl Widget {
     }
 }
 
-/// Renderer-neutral image sizing policy.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Renderer-neutral image sizing policy (maps to Flutter's `BoxFit`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ImageFit {
     Fill,
     #[default]
     Contain,
     Cover,
+    FitWidth,
+    FitHeight,
     None,
     ScaleDown,
 }
+
+/// Alias for [`ImageFit`], matching Flutter naming.
+pub type BoxFit = ImageFit;
 
 /// Repetition policy for raster image painting inside its allocated bounds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -4207,6 +4215,22 @@ impl DecoratedBox {
     #[must_use]
     pub fn radius(mut self, radius: f32) -> Self {
         self.radius = CornerRadii::uniform(radius);
+        self
+    }
+    #[must_use]
+    pub fn decoration(mut self, decoration: crate::BoxDecoration) -> Self {
+        if let Some(color) = decoration.color {
+            self.background = Some(Brush::Solid(color));
+        }
+        if let Some(border) = decoration.border {
+            self.border = Some(incular_rendering::Border::new(
+                border.top.width,
+                border.top.color,
+            ));
+        }
+        if let Some(radius) = decoration.border_radius {
+            self.radius = radius.to_corner_radii();
+        }
         self
     }
 }
@@ -11025,6 +11049,8 @@ fn fitted_transform(
             let scale = sx.max(sy);
             (scale, scale)
         }
+        ImageFit::FitWidth => (sx, sx),
+        ImageFit::FitHeight => (sy, sy),
         ImageFit::None => (1., 1.),
         ImageFit::ScaleDown => {
             let scale = sx.min(sy).min(1.);
@@ -11060,12 +11086,24 @@ pub fn image_fit_rects(
     }
     let sx = bounds.size.width / source.size.width;
     let sy = bounds.size.height / source.size.height;
-    let scale = match fit {
-        ImageFit::Cover => sx.max(sy),
-        ImageFit::None => 1.,
-        ImageFit::ScaleDown => sx.min(sy).min(1.),
-        _ => sx.min(sy),
+    let (scale_x, scale_y) = match fit {
+        ImageFit::Cover => {
+            let s = sx.max(sy);
+            (s, s)
+        }
+        ImageFit::FitWidth => (sx, sx),
+        ImageFit::FitHeight => (sy, sy),
+        ImageFit::None => (1., 1.),
+        ImageFit::ScaleDown => {
+            let s = sx.min(sy).min(1.);
+            (s, s)
+        }
+        _ => {
+            let s = sx.min(sy);
+            (s, s)
+        }
     };
+    let scale = scale_x.min(scale_y);
     let rendered = Size::new(source.size.width * scale, source.size.height * scale);
     if fit == ImageFit::Cover {
         let crop = Size::new(
@@ -13693,11 +13731,11 @@ mod tests {
 }
 
 /// Widget key marking the performance-overlay mount point. Applications place
-/// a placeholder with this key; [`Runtime::install_performance_overlay`]
+/// a placeholder with this key; `Runtime::install_performance_overlay`
 /// (runtime crate) replaces it with the live overlay.
 pub const PERFORMANCE_OVERLAY_KEY: &str = "incular-performance-overlay";
 
-/// Mount-point placeholder for [`Runtime::install_performance_overlay`]
+/// Mount-point placeholder for `Runtime::install_performance_overlay`
 /// (runtime crate). Place this anywhere in an application tree; installing
 /// swaps its contents for the live overlay while keeping the same top-level
 /// widget kind so the retained update path stays compatible.

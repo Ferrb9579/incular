@@ -427,7 +427,7 @@ impl TextEngine {
         let limit = line_limit.unwrap_or(layout.lines.len());
         match options.overflow {
             TextOverflow::Visible => layout,
-            TextOverflow::Clip => clipped_layout(layout, limit),
+            TextOverflow::Clip | TextOverflow::Fade => clipped_layout(layout, limit),
             TextOverflow::Ellipsis => self.ellipsized_layout(text, style, options, limit),
         }
     }
@@ -522,6 +522,7 @@ impl TextEngine {
                 TextAlign::Start => Alignment::Start,
                 TextAlign::Center => Alignment::Center,
                 TextAlign::End => Alignment::End,
+                TextAlign::Justify => Alignment::Justify,
             },
             AlignmentOptions::default(),
         );

@@ -63,6 +63,170 @@ impl Semantics {
         self.actions.push(action);
         self
     }
+
+    #[must_use]
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.description = Some(hint.into());
+        self
+    }
+
+    #[must_use]
+    pub fn increased_value(mut self, val: impl Into<String>) -> Self {
+        self.value = Some(val.into());
+        self
+    }
+
+    #[must_use]
+    pub fn decreased_value(mut self, val: impl Into<String>) -> Self {
+        self.value = Some(val.into());
+        self
+    }
+
+    #[must_use]
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.description = Some(tooltip.into());
+        self
+    }
+
+    #[must_use]
+    pub const fn text_direction(self, _dir: incular_config::TextDirection) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn selected(self, _selected: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn enabled(self, _enabled: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn checked(self, _checked: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn toggled(self, _toggled: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn focused(self, _focused: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn read_only(self, _read_only: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn obscured(self, _obscured: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn multiline(self, _multiline: bool) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn header(mut self, is_header: bool) -> Self {
+        if is_header {
+            self.role = Some(SemanticRole::Heading);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn button(mut self, is_button: bool) -> Self {
+        if is_button {
+            self.role = Some(SemanticRole::Button);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn slider(mut self, is_slider: bool) -> Self {
+        if is_slider {
+            self.role = Some(SemanticRole::Slider);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn link(mut self, is_link: bool) -> Self {
+        if is_link {
+            self.role = Some(SemanticRole::Link);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn image(mut self, is_image: bool) -> Self {
+        if is_image {
+            self.role = Some(SemanticRole::Image);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn on_tap(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_dismiss(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_increase(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_decrease(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_scroll_left(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_scroll_right(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_scroll_up(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_scroll_down(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_copy(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_cut(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub fn on_paste(self, _callback: impl Fn() + 'static) -> Self {
+        self
+    }
 }
 
 impl From<Semantics> for Widget {

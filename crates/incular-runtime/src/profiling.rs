@@ -419,7 +419,7 @@ pub struct AccessibilitySnapshot {
 /// only when the profiler mode is [`ProfilerMode::Diagnostic`] or higher, so
 /// production frames never build one). Overlay builders read
 /// [`PerformanceHub::version`] during their build; publishing bumps that
-/// version through a [`Signal`]-compatible counter so only overlay elements
+/// version through a `Signal`-compatible counter so only overlay elements
 /// rebuild.
 #[derive(Clone)]
 pub struct PerformanceHub {

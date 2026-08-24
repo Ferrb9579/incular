@@ -150,9 +150,34 @@ pub enum PointerDeviceKind {
     Unknown,
 }
 
+/// Physical pointer velocity in logical pixels per second.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Velocity {
+    pub pixels_per_second: Offset,
+}
+
+impl Velocity {
+    pub const ZERO: Self = Self {
+        pixels_per_second: Offset::ZERO,
+    };
+
+    #[must_use]
+    pub const fn new(pixels_per_second: Offset) -> Self {
+        Self { pixels_per_second }
+    }
+}
+
 /// Position and timing metadata for pointer tap-down events.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TapDownDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+    pub kind: PointerDeviceKind,
+}
+
+/// Position and timing metadata for pointer tap-up events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TapUpDetails {
     pub global_position: Offset,
     pub local_position: Offset,
     pub kind: PointerDeviceKind,
@@ -165,6 +190,37 @@ pub struct DragStartDetails {
     pub local_position: Offset,
 }
 
+/// Metadata for drag down events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragDownDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+}
+
+/// Metadata for long-press start events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LongPressStartDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+}
+
+/// Metadata for long-press movement update events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LongPressMoveUpdateDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+    pub offset_from_origin: Offset,
+    pub local_offset_from_origin: Offset,
+}
+
+/// Metadata for long-press end events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LongPressEndDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+    pub velocity: Velocity,
+}
+
 /// Callbacks understood by [`PointerGestureRecognizer`].
 #[derive(Clone, Default)]
 pub struct GestureCallbacks {
@@ -173,10 +229,10 @@ pub struct GestureCallbacks {
     pub on_long_press: Option<Rc<dyn Fn()>>,
     pub on_pan_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives a pan whose first slop-exceeding movement was horizontal.
-    /// It competes with vertical drags in a retained [`GestureRegion`].
+    /// It competes with vertical drags in a retained `GestureRegion`.
     pub on_horizontal_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives a pan whose first slop-exceeding movement was vertical.
-    /// It competes with horizontal drags in a retained [`GestureRegion`].
+    /// It competes with horizontal drags in a retained `GestureRegion`.
     pub on_vertical_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives the active focal point and relative distance for a retained
     /// multi-pointer region. Single-pointer recognizers ignore this callback.
@@ -373,12 +429,6 @@ impl MouseRegion {
     }
 }
 
-#[derive(Default)]
-struct FocusState {
-    focused: Cell<bool>,
-    can_request_focus: Cell<bool>,
-}
-
 /// Shared focus handle usable by controls that are rebuilt often.
 ///
 /// For exclusive traversal use a [`FocusManager`]; calling
@@ -402,12 +452,23 @@ impl std::fmt::Debug for FocusNode {
             .finish()
     }
 }
+struct FocusState {
+    focused: Cell<bool>,
+    can_request_focus: Cell<bool>,
+    skip_traversal: Cell<bool>,
+    descendants_are_focusable: Cell<bool>,
+    descendants_are_traversable: Cell<bool>,
+}
+
 impl Default for FocusNode {
     fn default() -> Self {
         Self {
             state: Rc::new(FocusState {
                 focused: Cell::new(false),
                 can_request_focus: Cell::new(true),
+                skip_traversal: Cell::new(false),
+                descendants_are_focusable: Cell::new(true),
+                descendants_are_traversable: Cell::new(true),
             }),
         }
     }
@@ -429,6 +490,10 @@ impl FocusNode {
     pub fn has_focus(&self) -> bool {
         self.state.focused.get()
     }
+    #[must_use]
+    pub fn has_primary_focus(&self) -> bool {
+        self.state.focused.get()
+    }
     /// Excludes or includes this node in manager-driven traversal.
     pub fn set_can_request_focus(&self, can_request_focus: bool) {
         self.state.can_request_focus.set(can_request_focus);
@@ -439,6 +504,128 @@ impl FocusNode {
     #[must_use]
     pub fn can_request_focus(&self) -> bool {
         self.state.can_request_focus.get()
+    }
+    pub fn set_skip_traversal(&self, skip: bool) {
+        self.state.skip_traversal.set(skip);
+    }
+    #[must_use]
+    pub fn skip_traversal(&self) -> bool {
+        self.state.skip_traversal.get()
+    }
+    pub fn set_descendants_are_focusable(&self, focusable: bool) {
+        self.state.descendants_are_focusable.set(focusable);
+    }
+    #[must_use]
+    pub fn descendants_are_focusable(&self) -> bool {
+        self.state.descendants_are_focusable.get()
+    }
+    pub fn set_descendants_are_traversable(&self, traversable: bool) {
+        self.state.descendants_are_traversable.set(traversable);
+    }
+    #[must_use]
+    pub fn descendants_are_traversable(&self) -> bool {
+        self.state.descendants_are_traversable.get()
+    }
+}
+
+/// Strategy for navigating keyboard focus through a collection of focus nodes.
+pub trait FocusTraversalPolicy {
+    fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode>;
+    fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode>;
+    fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode>;
+    fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode>;
+}
+
+/// Traversal policy following logical widget structure order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WidgetOrderTraversalPolicy;
+
+impl FocusTraversalPolicy for WidgetOrderTraversalPolicy {
+    fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        nodes
+            .iter()
+            .find(|n| n.can_request_focus() && !n.skip_traversal())
+            .cloned()
+    }
+
+    fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        nodes
+            .iter()
+            .rev()
+            .find(|n| n.can_request_focus() && !n.skip_traversal())
+            .cloned()
+    }
+
+    fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        let traversable: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.can_request_focus() && !n.skip_traversal())
+            .collect();
+        if let Some(pos) = traversable.iter().position(|n| *n == current) {
+            traversable.get(pos + 1).copied().cloned()
+        } else {
+            traversable.first().copied().cloned()
+        }
+    }
+
+    fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        let traversable: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.can_request_focus() && !n.skip_traversal())
+            .collect();
+        if let Some(pos) = traversable.iter().position(|n| *n == current) {
+            if pos > 0 {
+                traversable.get(pos - 1).copied().cloned()
+            } else {
+                None
+            }
+        } else {
+            traversable.last().copied().cloned()
+        }
+    }
+}
+
+/// Traversal policy following natural reading order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadingOrderTraversalPolicy;
+
+impl FocusTraversalPolicy for ReadingOrderTraversalPolicy {
+    fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.find_first_focus(nodes)
+    }
+
+    fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.find_last_focus(nodes)
+    }
+
+    fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.next(current, nodes)
+    }
+
+    fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.previous(current, nodes)
+    }
+}
+
+/// Traversal policy using explicit numeric ordering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrderedTraversalPolicy;
+
+impl FocusTraversalPolicy for OrderedTraversalPolicy {
+    fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.find_first_focus(nodes)
+    }
+
+    fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.find_last_focus(nodes)
+    }
+
+    fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.next(current, nodes)
+    }
+
+    fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
+        WidgetOrderTraversalPolicy.previous(current, nodes)
     }
 }
 

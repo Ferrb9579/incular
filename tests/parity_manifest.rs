@@ -485,9 +485,15 @@ fn canonical_flutter_core_widgets_inventory_has_no_silently_omitted_names() {
 }
 
 fn json_string_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    let prefix = format!("\"{field}\":\"");
-    let start = line.find(&prefix)? + prefix.len();
-    let rest = &line[start..];
+    let key = format!("\"{field}\"");
+    let key_pos = line.find(&key)?;
+    let after_key = &line[key_pos + key.len()..];
+    let colon_pos = after_key.find(':')?;
+    let after_colon = after_key[colon_pos + 1..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let rest = &after_colon[1..];
     let end = rest.find('"')?;
     Some(&rest[..end])
 }

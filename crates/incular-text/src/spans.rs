@@ -61,6 +61,7 @@ impl WidgetSpan {
 
 /// A node in a rich text tree.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum InlineSpan {
     Text(TextSpan),
     Widget(WidgetSpan),

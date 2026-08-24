@@ -3,7 +3,10 @@
 use std::rc::Rc;
 
 use incular_core::KeyboardEvent;
-pub use incular_gestures::{FocusManager, FocusNode};
+pub use incular_gestures::{
+    FocusManager, FocusNode, FocusTraversalPolicy, OrderedTraversalPolicy,
+    ReadingOrderTraversalPolicy, WidgetOrderTraversalPolicy,
+};
 
 use crate::Widget;
 

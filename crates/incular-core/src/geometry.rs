@@ -1,6 +1,6 @@
 //! Small renderer-neutral geometry and paint values.
 
-use std::ops::{Add, BitOr, Sub};
+use std::ops::{Add, Sub};
 
 use palette::{FromColor, Hsl, Hsv, Srgba, WithAlpha};
 
@@ -399,37 +399,209 @@ impl Transform {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DirtyFlags(u8);
+/// Multi-dimensional damage invalidation representation across independent retained runtime phases.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Invalidation(u16);
 
-impl DirtyFlags {
+impl Invalidation {
+    /// No invalidation required.
     pub const NONE: Self = Self(0);
-    pub const BUILD: Self = Self(1);
-    pub const LAYOUT: Self = Self(2);
-    pub const PAINT: Self = Self(4);
-    pub const COMPOSITE: Self = Self(8);
-    pub const SEMANTICS: Self = Self(16);
+    /// Subtree widget build / structural reconciliation required.
+    pub const BUILD: Self = Self(1 << 0);
+    /// Layout measurement and positioning recalculation required.
+    pub const LAYOUT: Self = Self(1 << 1);
+    /// Picture display list re-recording required.
+    pub const PAINT: Self = Self(1 << 2);
+    /// Retained compositor layer properties or transforms modified.
+    pub const COMPOSITE: Self = Self(1 << 3);
+    /// Accessibility semantics tree update required.
+    pub const SEMANTICS: Self = Self(1 << 4);
+    /// Hit-test routing / pointer target cache update required.
+    pub const HIT_TEST: Self = Self(1 << 5);
 
+    /// Checks if no invalidation bits are set.
     #[must_use]
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 
+    /// Checks whether all bits in `other` are set in `self`.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    /// Checks whether any bits in `other` are set in `self`.
+    #[must_use]
+    pub const fn intersects(self, other: Self) -> bool {
+        (self.0 & other.0) != 0
+    }
+
+    /// Adds invalidation flags.
     pub fn insert(&mut self, other: Self) {
         self.0 |= other.0;
     }
 
+    /// Removes invalidation flags.
     pub fn remove(&mut self, other: Self) {
         self.0 &= !other.0;
     }
+
+    /// Computes the union of two invalidation masks.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Computes the intersection of two invalidation masks.
+    #[must_use]
+    pub const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
 }
 
-impl BitOr for DirtyFlags {
+/// Alias for [`Invalidation`] for backwards compatibility.
+pub type DirtyFlags = Invalidation;
+
+impl std::ops::BitOr for Invalidation {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
     }
+}
+
+impl std::ops::BitOrAssign for Invalidation {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl std::ops::BitAnd for Invalidation {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl std::ops::BitAndAssign for Invalidation {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0;
+    }
+}
+
+impl std::ops::Not for Invalidation {
+    type Output = Self;
+
+    fn not(self) -> Self {
+        Self(!self.0)
+    }
+}
+
+/// A type that can be linearly interpolated between two values.
+pub trait Lerp {
+    /// Linearly interpolates between `self` and `other` with parameter `t` in `[0.0, 1.0]`.
+    #[must_use]
+    fn lerp(&self, other: &Self, t: f32) -> Self;
+}
+
+impl Lerp for f32 {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        self + (other - self) * t
+    }
+}
+
+impl Lerp for f64 {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        self + (other - self) * f64::from(t)
+    }
+}
+
+impl Lerp for Offset {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            x: self.x.lerp(&other.x, t),
+            y: self.y.lerp(&other.y, t),
+        }
+    }
+}
+
+impl Lerp for Size {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            width: self.width.lerp(&other.width, t).max(0.0),
+            height: self.height.lerp(&other.height, t).max(0.0),
+        }
+    }
+}
+
+impl Lerp for Rect {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self {
+            origin: self.origin.lerp(&other.origin, t),
+            size: self.size.lerp(&other.size, t),
+        }
+    }
+}
+
+impl Lerp for Color {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: u8, b: u8| -> u8 {
+            (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        Self::rgba(
+            mix(self.red, other.red),
+            mix(self.green, other.green),
+            mix(self.blue, other.blue),
+            mix(self.alpha, other.alpha),
+        )
+    }
+}
+
+impl Lerp for HslColor {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::new(
+            mix(self.hue, other.hue),
+            mix(self.saturation, other.saturation),
+            mix(self.lightness, other.lightness),
+            mix(self.alpha, other.alpha),
+        )
+    }
+}
+
+impl Lerp for HsvColor {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |a: f32, b: f32| a + (b - a) * t;
+        Self::new(
+            mix(self.hue, other.hue),
+            mix(self.saturation, other.saturation),
+            mix(self.value, other.value),
+            mix(self.alpha, other.alpha),
+        )
+    }
+}
+
+/// Identifies the invalidation scope required when a property changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ChangeImpact {
+    /// No visual or layout change.
+    #[default]
+    None,
+    /// Requires only compositor layer property / transform update.
+    Composite,
+    /// Requires painting display list regeneration without layout changes.
+    Paint,
+    /// Requires layout measurement and positioning recalculation.
+    Layout,
+    /// Requires rebuilding widget subtree.
+    Build,
 }
 
 #[cfg(test)]

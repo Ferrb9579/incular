@@ -1943,6 +1943,7 @@ name = "incular-scroll"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "incular-config",
  "incular-core",
  "serde_json",
 ]
@@ -2035,6 +2036,7 @@ name = "incular-workspace-tests"
 version = "0.1.0"
 dependencies = [
  "incular",
+ "serde_json",
 ]
 
 [[package]]

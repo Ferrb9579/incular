@@ -298,7 +298,7 @@ fn validate_field(field: &FieldState) -> bool {
 }
 
 /// A synchronous autocomplete model that is independent of a particular text
-/// field presentation.  Applications can render [`Self::suggestions`] with a
+/// field presentation. Applications can render suggestions with a
 /// list, popup, or inline controls and feed the selected value into any
 /// editor.
 pub struct Autocomplete<T> {
@@ -487,7 +487,11 @@ impl From<TextFormField> for Widget {
 #[allow(clippy::type_complexity)]
 pub struct GenericFormField<T: Clone + 'static> {
     initial_value: Option<T>,
+    validator: Option<Rc<dyn Fn(&T) -> Option<String>>>,
+    on_saved: Option<Rc<dyn Fn(T)>>,
     autovalidate_mode: AutovalidateMode,
+    enabled: bool,
+    restoration_id: Option<String>,
     builder: Rc<dyn Fn(Option<&T>) -> Widget>,
 }
 
@@ -499,7 +503,11 @@ impl<T: Clone + 'static> GenericFormField<T> {
     {
         Self {
             initial_value: None,
+            validator: None,
+            on_saved: None,
             autovalidate_mode: AutovalidateMode::Disabled,
+            enabled: true,
+            restoration_id: None,
             builder: Rc::new(move |val| builder(val).into()),
         }
     }
@@ -511,8 +519,32 @@ impl<T: Clone + 'static> GenericFormField<T> {
     }
 
     #[must_use]
+    pub fn validator(mut self, validator: impl Fn(&T) -> Option<String> + 'static) -> Self {
+        self.validator = Some(Rc::new(validator));
+        self
+    }
+
+    #[must_use]
+    pub fn on_saved(mut self, on_saved: impl Fn(T) + 'static) -> Self {
+        self.on_saved = Some(Rc::new(on_saved));
+        self
+    }
+
+    #[must_use]
     pub fn autovalidate_mode(mut self, mode: AutovalidateMode) -> Self {
         self.autovalidate_mode = mode;
+        self
+    }
+
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn restoration_id(mut self, id: impl Into<String>) -> Self {
+        self.restoration_id = Some(id.into());
         self
     }
 }
@@ -628,9 +660,166 @@ impl UndoHistory {
     }
 }
 
-impl From<UndoHistory> for Widget {
-    fn from(value: UndoHistory) -> Self {
-        value.child
+/// State container passed to a [`GenericFormField`] builder function.
+#[derive(Clone)]
+pub struct FormFieldState<T> {
+    value: Rc<RefCell<Option<T>>>,
+    error_text: Rc<RefCell<Option<String>>>,
+}
+
+impl<T: Clone> FormFieldState<T> {
+    #[must_use]
+    pub fn value(&self) -> Option<T> {
+        self.value.borrow().clone()
+    }
+
+    #[must_use]
+    pub fn error_text(&self) -> Option<String> {
+        self.error_text.borrow().clone()
+    }
+
+    #[must_use]
+    pub fn has_error(&self) -> bool {
+        self.error_text.borrow().is_some()
+    }
+
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.error_text.borrow().is_none()
+    }
+
+    pub fn did_change(&self, value: T) {
+        *self.value.borrow_mut() = Some(value);
+    }
+
+    pub fn reset(&self, initial: Option<T>) {
+        *self.value.borrow_mut() = initial;
+        *self.error_text.borrow_mut() = None;
+    }
+}
+
+/// A contract for formatting and validating live text edits.
+pub trait TextInputFormatter {
+    /// Formats an edit update from `old_value` to `new_value`.
+    fn format_edit_update(
+        &self,
+        old_value: &crate::TextEditingValue,
+        new_value: &crate::TextEditingValue,
+    ) -> crate::TextEditingValue;
+}
+
+/// A text input formatter that filters characters using a predicate.
+#[derive(Clone)]
+pub struct FilteringTextInputFormatter {
+    allow: bool,
+    filter: Rc<dyn Fn(char) -> bool>,
+}
+
+impl FilteringTextInputFormatter {
+    #[must_use]
+    pub fn allow(filter: impl Fn(char) -> bool + 'static) -> Self {
+        Self {
+            allow: true,
+            filter: Rc::new(filter),
+        }
+    }
+
+    #[must_use]
+    pub fn deny(filter: impl Fn(char) -> bool + 'static) -> Self {
+        Self {
+            allow: false,
+            filter: Rc::new(filter),
+        }
+    }
+
+    #[must_use]
+    pub fn digits_only() -> Self {
+        Self::allow(|c| c.is_ascii_digit())
+    }
+
+    #[must_use]
+    pub fn single_line_formatter() -> Self {
+        Self::deny(|c| c == '\n' || c == '\r')
+    }
+}
+
+impl TextInputFormatter for FilteringTextInputFormatter {
+    fn format_edit_update(
+        &self,
+        _old_value: &crate::TextEditingValue,
+        new_value: &crate::TextEditingValue,
+    ) -> crate::TextEditingValue {
+        let filtered: String = new_value
+            .text
+            .chars()
+            .filter(|&c| {
+                if self.allow {
+                    (self.filter)(c)
+                } else {
+                    !(self.filter)(c)
+                }
+            })
+            .collect();
+        crate::TextEditingValue {
+            text: filtered,
+            selection: new_value.selection,
+            preedit: new_value.preedit.clone(),
+            preedit_selection: new_value.preedit_selection,
+        }
+    }
+}
+
+/// Enforcement policy for maximum text length.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MaxLengthEnforcement {
+    None,
+    #[default]
+    Enforced,
+    TruncateAfterCompositionEnds,
+}
+
+/// A text input formatter that limits input length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LengthLimitingTextInputFormatter {
+    pub max_length: usize,
+    pub max_length_enforcement: MaxLengthEnforcement,
+}
+
+impl LengthLimitingTextInputFormatter {
+    #[must_use]
+    pub const fn new(max_length: usize) -> Self {
+        Self {
+            max_length,
+            max_length_enforcement: MaxLengthEnforcement::Enforced,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_enforcement(max_length: usize, enforcement: MaxLengthEnforcement) -> Self {
+        Self {
+            max_length,
+            max_length_enforcement: enforcement,
+        }
+    }
+}
+
+impl TextInputFormatter for LengthLimitingTextInputFormatter {
+    fn format_edit_update(
+        &self,
+        old_value: &crate::TextEditingValue,
+        new_value: &crate::TextEditingValue,
+    ) -> crate::TextEditingValue {
+        if new_value.text.chars().count() <= self.max_length {
+            new_value.clone()
+        } else {
+            let truncated: String = new_value.text.chars().take(self.max_length).collect();
+            crate::TextEditingValue {
+                text: truncated,
+                selection: old_value.selection,
+                preedit: None,
+                preedit_selection: None,
+            }
+        }
     }
 }
 

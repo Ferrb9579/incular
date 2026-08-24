@@ -36,9 +36,10 @@ pub use gestures::*;
 pub use hero::*;
 pub use implicit_animations::*;
 pub use incular_scroll::{
-    BoundaryPhysics, ClampingScrollPhysics, MeasuredExtentIndex, NestedScrollCoordinator,
-    ScrollController, ScrollDelta, ScrollPhysics, ScrollSpringStep, Scrollability,
-    ScrollbarGeometry, ScrollbarStyle, SnapPhysics,
+    BoundaryPhysics, ClampingScrollPhysics, DragStartBehavior, MeasuredExtentIndex,
+    NestedScrollCoordinator, ScrollCacheExtent, ScrollController, ScrollDelta, ScrollMetrics,
+    ScrollPhysics, ScrollSpringStep, ScrollViewConfig, ScrollViewKeyboardDismissBehavior,
+    Scrollability, ScrollbarGeometry, ScrollbarStyle, SnapPhysics,
 };
 pub use incular_text::{FontFamily, TextStyle};
 pub use layout::*;

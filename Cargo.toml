@@ -21,6 +21,7 @@ incremental = false
 
 [dev-dependencies]
 incular = { path = "crates/incular", default-features = false }
+serde_json = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"

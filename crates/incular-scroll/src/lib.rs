@@ -1072,6 +1072,166 @@ impl ScrollPhysics {
             settled,
         }
     }
+
+    #[must_use]
+    pub fn parent(mut self, parent: Self) -> Self {
+        if self.scrollability == Scrollability::WhenScrollable {
+            self.scrollability = parent.scrollability;
+        }
+        if self.boundary == BoundaryPhysics::Clamping {
+            self.boundary = parent.boundary;
+        }
+        if self.snap == SnapPhysics::None {
+            self.snap = parent.snap;
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn then(self, next: Self) -> Self {
+        next.parent(self)
+    }
+
+    #[must_use]
+    pub const fn range_maintaining(self) -> Self {
+        self
+    }
+
+    #[must_use]
+    pub const fn carousel(mut self, item_extent: f32) -> Self {
+        self.snap = SnapPhysics::FixedExtent {
+            extent: item_extent,
+        };
+        self
+    }
+
+    #[must_use]
+    pub const fn min_fling_velocity(&self) -> f32 {
+        50.0
+    }
+
+    #[must_use]
+    pub const fn max_fling_velocity(&self) -> f32 {
+        8000.0
+    }
+
+    #[must_use]
+    pub const fn drag_start_distance_motion_threshold(&self) -> f32 {
+        3.5
+    }
+}
+
+/// A read-only snapshot of current scroll geometry and extents.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollMetrics {
+    pub pixels: f32,
+    pub min_scroll_extent: f32,
+    pub max_scroll_extent: f32,
+    pub viewport_dimension: f32,
+    pub axis: incular_config::Axis,
+    pub axis_direction: incular_config::AxisDirection,
+    pub device_pixel_ratio: f32,
+}
+
+impl ScrollMetrics {
+    #[must_use]
+    pub fn extent_before(&self) -> f32 {
+        (self.pixels - self.min_scroll_extent).max(0.0)
+    }
+
+    #[must_use]
+    pub fn extent_inside(&self) -> f32 {
+        self.viewport_dimension
+    }
+
+    #[must_use]
+    pub fn extent_after(&self) -> f32 {
+        (self.max_scroll_extent - self.pixels).max(0.0)
+    }
+
+    #[must_use]
+    pub fn extent_total(&self) -> f32 {
+        self.max_scroll_extent - self.min_scroll_extent + self.viewport_dimension
+    }
+
+    #[must_use]
+    pub fn at_edge(&self) -> bool {
+        self.pixels <= self.min_scroll_extent || self.pixels >= self.max_scroll_extent
+    }
+
+    #[must_use]
+    pub fn out_of_range(&self) -> bool {
+        self.pixels < self.min_scroll_extent || self.pixels > self.max_scroll_extent
+    }
+}
+
+/// Cache extent strategy for pre-rendering lazy list items.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScrollCacheExtent {
+    Pixels(f32),
+    Viewport(f32),
+}
+
+impl ScrollCacheExtent {
+    #[must_use]
+    pub fn to_pixels(self, viewport_dimension: f32) -> f32 {
+        match self {
+            Self::Pixels(px) => px.max(0.0),
+            Self::Viewport(vp) => (vp * viewport_dimension).max(0.0),
+        }
+    }
+}
+
+/// How a scroll view dismisses the virtual keyboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ScrollViewKeyboardDismissBehavior {
+    #[default]
+    Manual,
+    OnDrag,
+}
+
+/// Determines when a drag gesture begins recognizing motion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum DragStartBehavior {
+    #[default]
+    Start,
+    Down,
+}
+
+/// Authoritative shared configuration for all scroll view widgets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScrollViewConfig {
+    pub direction: incular_config::Axis,
+    pub reverse: bool,
+    pub primary: Option<bool>,
+    pub physics: ScrollPhysics,
+    pub shrink_wrap: bool,
+    pub padding: Option<incular_config::EdgeInsets>,
+    pub scroll_cache_extent: Option<ScrollCacheExtent>,
+    pub semantic_child_count: Option<usize>,
+    pub drag_start_behavior: DragStartBehavior,
+    pub keyboard_dismiss_behavior: Option<ScrollViewKeyboardDismissBehavior>,
+    pub restoration_id: Option<String>,
+    pub clip_behavior: incular_config::Clip,
+}
+
+impl Default for ScrollViewConfig {
+    fn default() -> Self {
+        Self {
+            direction: incular_config::Axis::Vertical,
+            reverse: false,
+            primary: None,
+            physics: ScrollPhysics::clamping(),
+            shrink_wrap: false,
+            padding: None,
+            scroll_cache_extent: None,
+            semantic_child_count: None,
+            drag_start_behavior: DragStartBehavior::Start,
+            keyboard_dismiss_behavior: None,
+            restoration_id: None,
+            clip_behavior: incular_config::Clip::HardEdge,
+        }
+    }
 }
 
 /// General nested scrolling coordinator. Controllers are ordered innermost to
