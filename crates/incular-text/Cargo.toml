@@ -16,3 +16,10 @@ incular-core = { workspace = true }
 incular-rendering = { workspace = true }
 parley = { workspace = true }
 icu_segmenter = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "text_layout"
+harness = false

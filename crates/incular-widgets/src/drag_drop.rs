@@ -67,14 +67,14 @@ impl<T> DragDropContext<T> {
     }
 }
 
-pub(crate) trait RetainedDragSource {
+pub trait RetainedDragSource {
     fn context_id(&self) -> usize;
     fn start(&self, position: Offset);
     fn update(&self, position: Offset);
     fn finish(&self);
     fn cancel(&self);
 }
-pub(crate) trait RetainedDragTarget {
+pub trait RetainedDragTarget {
     fn context_id(&self) -> usize;
     fn enter(&self) -> bool;
     fn update(&self, position: Offset);

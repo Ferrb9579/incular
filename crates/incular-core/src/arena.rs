@@ -19,6 +19,12 @@ impl ArenaId {
     pub const fn index(self) -> u32 {
         self.index
     }
+
+    /// Slot generation, bumped on removal so reused slots are distinguishable.
+    #[must_use]
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 impl fmt::Debug for ArenaId {

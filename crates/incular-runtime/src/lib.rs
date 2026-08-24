@@ -1,4 +1,5 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
+mod profiling;
 mod restoration;
 mod tasks;
 
@@ -21,6 +22,8 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 use incular_widgets::{
     ActionId, ButtonState, Diagnostics, ElementId, PointerEvent, TreeError, Widget, WidgetTree,
 };
+#[cfg(feature = "devtools")]
+use std::any::{Any, TypeId};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
@@ -34,6 +37,12 @@ use std::{
 };
 
 pub use incular_accessibility::AccessibilityDiagnostics;
+pub use profiling::{
+    AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameStatistics,
+    FrameTimings, FrameWork, GpuSample, PerformanceHub, PerformanceProfiler, PerformanceSnapshot,
+    ProfilerMode, RenderFrameMetrics, SchedulerCounters, TextCacheSnapshot, WidgetWorkSnapshot,
+    WindowPerformance,
+};
 pub use restoration::{
     DEFAULT_RESTORATION_DEBOUNCE, DEFAULT_RESTORATION_SNAPSHOT_LIMIT,
     FRAMEWORK_RESTORATION_FORMAT_VERSION, FileRestorationStore, InMemoryRestorationStore,
@@ -44,6 +53,38 @@ pub use tasks::{
     AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure, TaskHandle,
     TaskScope, TokioHandle, UiDispatcher,
 };
+
+/// Process-wide scheduler/reactivity counters. Relaxed atomics on the UI
+/// thread cost a single increment per event and never allocate.
+mod scheduler_counters {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub static SIGNAL_READS: AtomicU64 = AtomicU64::new(0);
+    pub static SIGNAL_WRITES: AtomicU64 = AtomicU64::new(0);
+    pub static DEPENDENTS_ENQUEUED: AtomicU64 = AtomicU64::new(0);
+    pub static RUNTIME_WAKES: AtomicU64 = AtomicU64::new(0);
+    pub static REDRAW_REQUESTS: AtomicU64 = AtomicU64::new(0);
+    pub static FRAMES_STARTED: AtomicU64 = AtomicU64::new(0);
+    pub static FRAMES_PRESENTED: AtomicU64 = AtomicU64::new(0);
+    pub static FRAMES_SKIPPED: AtomicU64 = AtomicU64::new(0);
+    #[must_use]
+    pub fn load(counter: &AtomicU64) -> u64 {
+        counter.load(Ordering::Relaxed)
+    }
+}
+
+#[must_use]
+pub fn scheduler_counters() -> SchedulerCounters {
+    SchedulerCounters {
+        signal_reads: scheduler_counters::load(&scheduler_counters::SIGNAL_READS),
+        signal_writes: scheduler_counters::load(&scheduler_counters::SIGNAL_WRITES),
+        dependents_enqueued: scheduler_counters::load(&scheduler_counters::DEPENDENTS_ENQUEUED),
+        runtime_wakes: scheduler_counters::load(&scheduler_counters::RUNTIME_WAKES),
+        redraw_requests: scheduler_counters::load(&scheduler_counters::REDRAW_REQUESTS),
+        frames_started: scheduler_counters::load(&scheduler_counters::FRAMES_STARTED),
+        frames_presented: scheduler_counters::load(&scheduler_counters::FRAMES_PRESENTED),
+        frames_skipped: scheduler_counters::load(&scheduler_counters::FRAMES_SKIPPED),
+    }
+}
 
 /// Backend-neutral application lifecycle. Desktop adapters may only emit a
 /// subset; runtime users must therefore treat transitions as advisory rather
@@ -361,12 +402,27 @@ struct ReactiveQueue {
     queued: HashSet<ElementId>,
     order: VecDeque<ElementId>,
     dependencies: HashMap<ElementId, Vec<Weak<dyn Dependency>>>,
+    #[cfg(feature = "devtools")]
+    causes: HashMap<ElementId, Vec<incular_widgets::InvalidationCause>>,
 }
 impl ReactiveQueue {
     fn enqueue(&mut self, id: ElementId) {
         if self.queued.insert(id) {
             self.order.push_back(id);
         }
+    }
+    #[cfg(feature = "devtools")]
+    fn note_cause(&mut self, id: ElementId, cause: incular_widgets::InvalidationCause) {
+        const MAX_CAUSES: usize = 8;
+        let causes = self.causes.entry(id).or_default();
+        if causes.len() == MAX_CAUSES {
+            causes.remove(0);
+        }
+        causes.push(cause);
+    }
+    #[cfg(feature = "devtools")]
+    fn take_causes(&mut self, id: ElementId) -> Vec<incular_widgets::InvalidationCause> {
+        self.causes.remove(&id).unwrap_or_default()
     }
     fn take(&mut self) -> Option<ElementId> {
         let id = self.order.pop_front()?;
@@ -391,6 +447,8 @@ impl ReactiveQueue {
     fn forget(&mut self, id: ElementId) {
         self.refresh(id);
         self.queued.remove(&id);
+        #[cfg(feature = "devtools")]
+        self.causes.remove(&id);
     }
 
     fn clear(&mut self) {
@@ -400,6 +458,8 @@ impl ReactiveQueue {
         }
         self.queued.clear();
         self.order.clear();
+        #[cfg(feature = "devtools")]
+        self.causes.clear();
     }
 }
 struct BuildScope {
@@ -408,10 +468,24 @@ struct BuildScope {
     queue: Weak<RefCell<ReactiveQueue>>,
 }
 thread_local! { static BUILD_SCOPE: RefCell<Option<BuildScope>> = const { RefCell::new(None) }; }
+#[cfg(feature = "devtools")]
+thread_local! { static DEV_TASK_COMPLETION: Cell<bool> = const { Cell::new(false) }; }
 struct SignalInner<T> {
     value: RefCell<T>,
     dependents: RefCell<HashMap<ReactiveRootId, HashSet<ElementId>>>,
     queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
+    /// DevTools write counter; always present, only read under the feature.
+    dev_write_count: std::cell::Cell<u64>,
+    #[cfg(feature = "devtools")]
+    dev_signal_id: std::cell::Cell<Option<u64>>,
+    #[cfg(feature = "devtools")]
+    dev_name: RefCell<Option<String>>,
+    #[cfg(feature = "devtools")]
+    dev_editable_kind: std::cell::Cell<Option<EditableSignalKind>>,
+    #[cfg(feature = "devtools")]
+    dev_last_write: RefCell<(Option<String>, Option<String>)>,
+    #[cfg(feature = "devtools")]
+    dev_summarize: RefCell<Option<DevSummarizer<T>>>,
 }
 impl<T> Dependency for SignalInner<T> {
     fn remove(&self, root: ReactiveRootId, element: ElementId) {
@@ -430,6 +504,41 @@ impl<T> Dependency for SignalInner<T> {
 pub struct Signal<T> {
     inner: Rc<SignalInner<T>>,
 }
+#[cfg(feature = "devtools")]
+type DevSummarizer<T> = Box<dyn Fn(&T) -> String>;
+
+#[cfg(feature = "devtools")]
+fn editable_signal_value<T: 'static>(
+    value: &incular_devtools_protocol::EditableValue,
+) -> Option<T> {
+    fn cast<T: 'static, U: Any>(value: U) -> Option<T> {
+        let value: Box<dyn Any> = Box::new(value);
+        value.downcast::<T>().ok().map(|value| *value)
+    }
+
+    let target = TypeId::of::<T>();
+    match value {
+        incular_devtools_protocol::EditableValue::Bool(value) if target == TypeId::of::<bool>() => {
+            cast(*value)
+        }
+        incular_devtools_protocol::EditableValue::Int(value) if target == TypeId::of::<i64>() => {
+            cast(*value)
+        }
+        incular_devtools_protocol::EditableValue::Uint(value) if target == TypeId::of::<u64>() => {
+            cast(*value)
+        }
+        incular_devtools_protocol::EditableValue::Float(value) if target == TypeId::of::<f64>() => {
+            cast(*value)
+        }
+        incular_devtools_protocol::EditableValue::Str(value)
+            if target == TypeId::of::<String>() =>
+        {
+            cast(value.clone())
+        }
+        _ => None,
+    }
+}
+
 impl<T: 'static> Signal<T> {
     /// Creates single-threaded application state. It attaches to the runtime
     /// that first reads it during a build; a signal is therefore not shared
@@ -441,18 +550,132 @@ impl<T: 'static> Signal<T> {
                 value: RefCell::new(value),
                 dependents: RefCell::new(HashMap::new()),
                 queues: RefCell::new(HashMap::new()),
+                dev_write_count: std::cell::Cell::new(0),
+                #[cfg(feature = "devtools")]
+                dev_signal_id: std::cell::Cell::new(None),
+                #[cfg(feature = "devtools")]
+                dev_name: RefCell::new(None),
+                #[cfg(feature = "devtools")]
+                dev_editable_kind: std::cell::Cell::new(None),
+                #[cfg(feature = "devtools")]
+                dev_last_write: RefCell::new((None, None)),
+                #[cfg(feature = "devtools")]
+                dev_summarize: RefCell::new(None),
             }),
         }
     }
+
     #[must_use]
     pub fn with_runtime(value: T, _runtime: &Runtime) -> Self {
         Self::new(value)
     }
-    #[must_use]
+    /// Attaches a DevTools-visible debug name and registers the signal in
+    /// the DevTools registry. Requires `T: Debug` for value summaries.
+    #[cfg(feature = "devtools")]
+    pub fn devtools(self, name: &str) -> Self
+    where
+        T: std::fmt::Debug + 'static,
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        self.inner.dev_signal_id.set(Some(id));
+        *self.inner.dev_name.borrow_mut() = Some(name.to_owned());
+        *self.inner.dev_summarize.borrow_mut() = Some(Box::new(|value: &T| truncate_debug(value)));
+
+        let weak_value = Rc::downgrade(&self.inner);
+        let weak_value_count = weak_value.clone();
+        let weak_value_subscribers = weak_value.clone();
+        let weak_value_subscriber_entries = weak_value.clone();
+        let registration = crate::devtools_registry::SignalRegistration {
+            name: Some(name.to_owned()),
+            type_name: std::any::type_name::<T>(),
+            editable_kind: None,
+            write_count: Box::new(move || {
+                weak_value_count
+                    .upgrade()
+                    .map(|inner| inner.dev_write_count.get())
+                    .unwrap_or_default()
+            }),
+            subscriber_count: Box::new(move || {
+                weak_value_subscribers
+                    .upgrade()
+                    .map(|inner| inner.dependents.borrow().values().map(HashSet::len).sum())
+                    .unwrap_or_default()
+            }),
+            subscribers: Box::new(move || {
+                weak_value_subscriber_entries
+                    .upgrade()
+                    .map(|inner| {
+                        inner
+                            .dependents
+                            .borrow()
+                            .iter()
+                            .flat_map(|(root, elements)| {
+                                elements.iter().copied().map(|element| (*root, element))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }),
+            last_write: Box::new(move || {
+                weak_value.upgrade().map_or((None, None), |inner| {
+                    let guard = inner.dev_last_write.borrow();
+                    (guard.0.clone(), guard.1.clone())
+                })
+            }),
+            apply_edit: Box::new(move |_| false),
+        };
+        crate::devtools_registry::register(id, registration);
+        self
+    }
+
+    /// Marks this named signal development-editable from DevTools. Only the
+    /// supported primitive kinds can round-trip an [`EditableValue`].
+    #[cfg(feature = "devtools")]
+    pub fn devtools_editable(self) -> Self
+    where
+        T: std::fmt::Debug + PartialEq + 'static,
+    {
+        let kind = if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
+            Some(EditableSignalKind::Bool)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<i64>() {
+            Some(EditableSignalKind::Int)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<u64>() {
+            Some(EditableSignalKind::Uint)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f64>() {
+            Some(EditableSignalKind::Float)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<String>() {
+            Some(EditableSignalKind::Str)
+        } else {
+            None
+        };
+        self.inner.dev_editable_kind.set(kind);
+        let weak_value = Rc::downgrade(&self.inner);
+        // Re-register with an explicit, typed conversion closure. The closure
+        // can only create the documented primitive types, then uses Signal's
+        // ordinary UI-thread mutation path and dependency invalidation.
+        crate::devtools_registry::set_editable(
+            self.inner.dev_signal_id.get().unwrap_or_default(),
+            kind,
+            Box::new(move |value| {
+                let Some(value) = editable_signal_value::<T>(value) else {
+                    return false;
+                };
+                let Some(inner) = weak_value.upgrade() else {
+                    return false;
+                };
+                Signal { inner }.set(value)
+            }),
+        );
+        self
+    }
+
     pub fn get(&self) -> T
     where
         T: Clone,
     {
+        scheduler_counters::SIGNAL_READS.fetch_add(1, Ordering::Relaxed);
         BUILD_SCOPE.with(|scope| {
             if let Some(scope) = scope.borrow().as_ref() {
                 self.inner
@@ -482,11 +705,28 @@ impl<T: 'static> Signal<T> {
         if *self.inner.value.borrow() == value {
             return false;
         }
+        #[cfg(feature = "devtools")]
+        let old_summary = self
+            .inner
+            .dev_summarize
+            .borrow()
+            .as_ref()
+            .map(|format| format(&self.inner.value.borrow()));
+        #[cfg(feature = "devtools")]
+        let new_summary = self
+            .inner
+            .dev_summarize
+            .borrow()
+            .as_ref()
+            .map(|format| format(&value));
         *self.inner.value.borrow_mut() = value;
+        #[cfg(feature = "devtools")]
+        if old_summary.is_some() || new_summary.is_some() {
+            *self.inner.dev_last_write.borrow_mut() = (old_summary, new_summary);
+        }
         self.enqueue_dependents();
         true
     }
-    #[must_use]
     pub fn dependent_count(&self) -> usize {
         self.inner
             .dependents
@@ -497,11 +737,35 @@ impl<T: 'static> Signal<T> {
     }
     /// Mutates the value once and schedules only the Elements that read it.
     pub fn update(&self, update: impl FnOnce(&mut T)) {
+        #[cfg(feature = "devtools")]
+        let old_summary = self
+            .inner
+            .dev_summarize
+            .borrow()
+            .as_ref()
+            .map(|format| format(&self.inner.value.borrow()));
         update(&mut self.inner.value.borrow_mut());
+        #[cfg(feature = "devtools")]
+        {
+            let new_summary = self
+                .inner
+                .dev_summarize
+                .borrow()
+                .as_ref()
+                .map(|format| format(&self.inner.value.borrow()));
+            if old_summary.is_some() || new_summary.is_some() {
+                *self.inner.dev_last_write.borrow_mut() = (old_summary, new_summary);
+            }
+        }
         self.enqueue_dependents();
     }
 
     fn enqueue_dependents(&self) {
+        self.inner
+            .dev_write_count
+            .set(self.inner.dev_write_count.get() + 1);
+        scheduler_counters::SIGNAL_WRITES.fetch_add(1, Ordering::Relaxed);
+        let mut enqueued = 0_usize;
         let dependencies: Vec<_> = self
             .inner
             .dependents
@@ -510,13 +774,39 @@ impl<T: 'static> Signal<T> {
             .map(|(root, elements)| (*root, elements.iter().copied().collect::<Vec<_>>()))
             .collect();
         let queues = self.inner.queues.borrow();
+        #[cfg(feature = "devtools")]
+        let cause = self.inner.dev_signal_id.get().map(|id| {
+            let (old, new) = self.inner.dev_last_write.borrow().clone();
+            incular_widgets::InvalidationCause::Signal {
+                id,
+                name: self.inner.dev_name.borrow().clone(),
+                old,
+                new,
+            }
+        });
         for (root, elements) in dependencies {
             if let Some(queue) = queues.get(&root).and_then(Weak::upgrade) {
                 let mut queue = queue.borrow_mut();
                 for element in elements {
                     queue.enqueue(element);
+                    #[cfg(feature = "devtools")]
+                    {
+                        if DEV_TASK_COMPLETION.with(Cell::get) {
+                            queue.note_cause(
+                                element,
+                                incular_widgets::InvalidationCause::TaskCompletion,
+                            );
+                        }
+                        if let Some(cause) = &cause {
+                            queue.note_cause(element, cause.clone());
+                        }
+                    }
+                    enqueued += 1;
                 }
             }
+        }
+        if enqueued > 0 {
+            scheduler_counters::DEPENDENTS_ENQUEUED.fetch_add(enqueued as u64, Ordering::Relaxed);
         }
     }
 }
@@ -530,6 +820,8 @@ pub struct FrameStats {
     pub active_animations: u64,
     pub display_list_commands: usize,
     pub requested_another_frame: bool,
+    /// Monotonic per-phase CPU durations. Phases never nest.
+    pub timings: FrameTimings,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EventTarget {
@@ -551,9 +843,68 @@ pub struct EditingDiagnostics {
     pub text_commits: u64,
     pub ime_events: u64,
 }
-/// Platform-neutral scheduler; it owns no window or GPU resource.
+/// DevTools signal registry. Active only under the `devtools` feature.
+#[cfg(feature = "devtools")]
+pub mod devtools_registry {
+    pub use super::SignalRegistration;
+
+    use std::cell::RefCell;
+    std::thread_local! {
+        static SIGNALS: RefCell<Vec<(u64, SignalRegistration)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn register(id: u64, registration: SignalRegistration) {
+        SIGNALS.with(|signals| signals.borrow_mut().push((id, registration)));
+    }
+
+    pub fn set_editable(
+        id: u64,
+        kind: Option<super::EditableSignalKind>,
+        apply_edit: Box<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
+    ) {
+        SIGNALS.with(|signals| {
+            for (registered_id, registration) in signals.borrow_mut().iter_mut() {
+                if *registered_id == id {
+                    registration.editable_kind = kind;
+                    registration.apply_edit = apply_edit;
+                    return;
+                }
+            }
+        });
+    }
+
+    pub fn with_all<R>(visit: impl FnOnce(&[(u64, SignalRegistration)]) -> R) -> R {
+        SIGNALS.with(|signals| visit(&signals.borrow()))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditableSignalKind {
+    Bool,
+    Int,
+    Uint,
+    Float,
+    Str,
+}
+
+#[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+pub struct SignalRegistration {
+    pub name: Option<String>,
+    pub type_name: &'static str,
+    pub editable_kind: Option<EditableSignalKind>,
+    pub write_count: Box<dyn Fn() -> u64>,
+    pub subscriber_count: Box<dyn Fn() -> usize>,
+    pub subscribers: Box<dyn Fn() -> Vec<(ReactiveRootId, ElementId)>>,
+    pub last_write: Box<dyn Fn() -> (Option<String>, Option<String>)>,
+    #[cfg(feature = "devtools")]
+    pub apply_edit: Box<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
+}
+
+/// Backend-neutral scheduler; it owns no window or GPU resource.
 pub struct Runtime {
     tree: WidgetTree,
+    /// Input-dispatch time accumulated since the last frame consumed it.
+    pending_event_processing_us: u32,
     pending: HashMap<ElementId, Widget>,
     order: VecDeque<ElementId>,
     reactive: Rc<RefCell<ReactiveQueue>>,
@@ -612,6 +963,7 @@ impl Runtime {
         });
         tree.mount(root)?;
         Ok(Self {
+            pending_event_processing_us: 0,
             tree,
             pending: HashMap::new(),
             order: VecDeque::new(),
@@ -620,6 +972,8 @@ impl Runtime {
                 queued: HashSet::new(),
                 order: VecDeque::new(),
                 dependencies: HashMap::new(),
+                #[cfg(feature = "devtools")]
+                causes: HashMap::new(),
             })),
             builders: HashMap::new(),
             handlers,
@@ -792,7 +1146,15 @@ impl Runtime {
                         .borrow_mut()
                         .record_discard(pending.blocking, stale_owner);
                 } else {
+                    #[cfg(feature = "devtools")]
+                    let previous_task_context = DEV_TASK_COMPLETION.with(|context| {
+                        let previous = context.get();
+                        context.set(true);
+                        previous
+                    });
                     let failure = (pending.finish)(self);
+                    #[cfg(feature = "devtools")]
+                    DEV_TASK_COMPLETION.with(|context| context.set(previous_task_context));
                     if let Some(failure) = scheduler
                         .borrow_mut()
                         .record_completion(pending.blocking, failure)
@@ -863,6 +1225,11 @@ impl Runtime {
         self.environment_generation = self.environment_generation.wrapping_add(1);
         if self.environment_dependencies.get() & changed != 0 {
             if let Some(root) = self.application_root {
+                #[cfg(feature = "devtools")]
+                self.tree.note_invalidation(
+                    root,
+                    incular_widgets::InvalidationCause::EnvironmentChanged,
+                );
                 let _ = self.rebuild_from_builder(root);
                 self.frame_requested = true;
             }
@@ -930,9 +1297,31 @@ impl Runtime {
     pub fn tree(&self) -> &WidgetTree {
         &self.tree
     }
+
+    #[cfg(feature = "devtools")]
+    fn devtools_reactive_root(&self) -> ReactiveRootId {
+        self.reactive.borrow().root
+    }
     #[must_use]
     pub fn tree_mut(&mut self) -> &mut WidgetTree {
         &mut self.tree
+    }
+    #[cfg(feature = "devtools")]
+    fn devtools_edit_property(
+        &mut self,
+        id: incular_devtools_protocol::DevWidgetId,
+        name: &str,
+        value: &incular_devtools_protocol::DebugValue,
+    ) -> bool {
+        let edited = self.tree.devtools_edit_property(id, name, value);
+        self.frame_requested |= edited;
+        edited
+    }
+    /// Sets the animation-only time scale for this retained root. Runtime
+    /// messages, Tokio tasks and profiler wall-clock measurements remain on
+    /// the platform monotonic clock.
+    pub fn set_animation_time_scale(&mut self, scale: f32) {
+        self.tree.set_animation_time_scale(scale);
     }
     #[must_use]
     pub fn focused_element(&self) -> Option<ElementId> {
@@ -1060,6 +1449,11 @@ impl Runtime {
         if !self.tree.element_exists(id) {
             return Err(TreeError::MissingElement(id));
         }
+        #[cfg(feature = "devtools")]
+        self.tree.note_invalidation(
+            id,
+            incular_widgets::InvalidationCause::WidgetConfigurationChanged,
+        );
         self.tree.mark_build(id)?;
         let mut widget = widget;
         self.prepare_widget(&mut widget);
@@ -1075,6 +1469,14 @@ impl Runtime {
     }
     #[must_use]
     pub fn handle_input(&mut self, event: InputEvent) -> Option<EventTarget> {
+        let started = std::time::Instant::now();
+        let target = self.handle_input_inner(event);
+        self.pending_event_processing_us = self
+            .pending_event_processing_us
+            .saturating_add(us_since_instant(started));
+        target
+    }
+    fn handle_input_inner(&mut self, event: InputEvent) -> Option<EventTarget> {
         let (pointer, phase, position) = match event {
             InputEvent::Pointer { phase, position } => (0, phase, position),
             InputEvent::PointerWithId {
@@ -1153,7 +1555,7 @@ impl Runtime {
             .tree
             .hit_test(position)
             .and_then(|render| self.tree.element_for_render(render))
-            .and_then(|element| self.tree.action_ancestor(element));
+            .and_then(|element| self.tree.button_ancestor(element));
         let result = match phase {
             PointerPhase::Move => {
                 if let Some(field) = self.captured_text_field {
@@ -1176,10 +1578,7 @@ impl Runtime {
                     }
                 }
                 self.set_hover(target.map(|(element, _)| element));
-                target.map(|(element, action)| EventTarget {
-                    element,
-                    action: Some(action),
-                })
+                target.map(|(element, action)| EventTarget { element, action })
             }
             PointerPhase::Down => {
                 if let Some(label) = selectable_target {
@@ -1213,10 +1612,7 @@ impl Runtime {
                     let _ = self.tree.set_button_state(element, ButtonState::Pressed);
                     self.frame_requested = true;
                 }
-                target.map(|(element, action)| EventTarget {
-                    element,
-                    action: Some(action),
-                })
+                target.map(|(element, action)| EventTarget { element, action })
             }
             PointerPhase::Up => {
                 self.captured_text_field = None;
@@ -1237,14 +1633,13 @@ impl Runtime {
                     );
                 }
                 if let Some((element, action)) = valid {
-                    if let Some(callback) = self.handlers.get(&action).cloned() {
-                        callback();
-                        self.frame_requested = true;
+                    if let Some(action) = action {
+                        if let Some(callback) = self.handlers.get(&action).cloned() {
+                            callback();
+                            self.frame_requested = true;
+                        }
                     }
-                    Some(EventTarget {
-                        element,
-                        action: Some(action),
-                    })
+                    Some(EventTarget { element, action })
                 } else {
                     None
                 }
@@ -1449,8 +1844,16 @@ impl Runtime {
         constraints: Constraints,
         now: Instant,
     ) -> Result<(DisplayList, FrameStats), TreeError> {
+        let message_guard = tracing::info_span!("incular.messages").entered();
+        let message_span = profiling::PhaseSpan::start();
         self.process_runtime_work_at(now);
+        let runtime_messages = message_span.elapsed_us();
+        drop(message_guard);
         let before = self.tree.diagnostics();
+        let build_guard =
+            tracing::info_span!("incular.build", elements_updated = tracing::field::Empty,)
+                .entered();
+        let build_span = profiling::PhaseSpan::start();
         let mut updated = 0;
         while let Some(id) = self.order.pop_front() {
             if let Some(widget) = self.pending.remove(&id) {
@@ -1462,6 +1865,10 @@ impl Runtime {
         }
         while let Some(id) = { self.reactive.borrow_mut().take() } {
             if self.tree.element_exists(id) && self.builders.contains_key(&id) {
+                #[cfg(feature = "devtools")]
+                for cause in self.reactive.borrow_mut().take_causes(id) {
+                    self.tree.note_invalidation(id, cause);
+                }
                 self.rebuild_from_builder(id)?;
                 updated += 1;
             }
@@ -1474,7 +1881,13 @@ impl Runtime {
             }
         }
         self.prune_handlers();
+        let build = build_span.elapsed_us();
+        drop(build_guard);
+        let _layout_guard = tracing::info_span!("incular.layout").entered();
+        let layout_span = profiling::PhaseSpan::start();
         self.tree.layout(constraints);
+        let layout = layout_span.elapsed_us();
+        drop(_layout_guard);
         for (action, handler) in self.tree.take_pending_handlers() {
             self.handlers.insert(action, handler);
         }
@@ -1489,13 +1902,42 @@ impl Runtime {
             }
         }
         self.prune_handlers();
+        let _composite_guard = tracing::info_span!("incular.composite").entered();
+        let composite_span = profiling::PhaseSpan::start();
         let (composited, animations_active) = self.tree.update_compositor(now);
+        let composite = composite_span.elapsed_us();
+        drop(_composite_guard);
+        let _semantics_guard = tracing::info_span!("incular.semantics").entered();
+        let semantics_span = profiling::PhaseSpan::start();
         self.tree.update_semantics();
+        let semantics = semantics_span.elapsed_us();
+        drop(_semantics_guard);
+        let _paint_guard = tracing::info_span!("incular.paint").entered();
+        let paint_span = profiling::PhaseSpan::start();
         let display_list = self.tree.paint();
+        let paint = paint_span.elapsed_us();
+        drop(_paint_guard);
         self.frame_requested = !self.pending.is_empty()
             || !self.reactive.borrow().queued.is_empty()
             || animations_active;
         let after = self.tree.diagnostics();
+        let timings = FrameTimings {
+            event_processing: std::mem::take(&mut self.pending_event_processing_us),
+            runtime_messages,
+            build,
+            layout,
+            composite,
+            semantics,
+            paint,
+            cpu_total: runtime_messages + build + layout + composite + semantics + paint,
+        };
+        tracing::debug!(
+            target: "incular::frame",
+            cpu_total_us = timings.cpu_total,
+            build_us = timings.build,
+            layout_us = timings.layout,
+            paint_us = timings.paint,
+        );
         Ok((
             display_list.clone(),
             FrameStats {
@@ -1507,6 +1949,7 @@ impl Runtime {
                 active_animations: u64::from(animations_active),
                 display_list_commands: display_list.len(),
                 requested_another_frame: self.frame_requested,
+                timings,
             },
         ))
     }
@@ -1552,11 +1995,21 @@ impl Runtime {
         }
         if let Some(previous) = self.hovered_button {
             let _ = self.tree.set_button_state(previous, ButtonState::Normal);
+            if let Some(action) = self.tree.hover_actions_for_element(previous).1
+                && let Some(callback) = self.handlers.get(&action).cloned()
+            {
+                callback();
+            }
         }
         self.hovered_button = next;
         if let Some(current) = next {
             if self.pressed_button != Some(current) {
                 let _ = self.tree.set_button_state(current, ButtonState::Hovered);
+            }
+            if let Some(action) = self.tree.hover_actions_for_element(current).0
+                && let Some(callback) = self.handlers.get(&action).cloned()
+            {
+                callback();
             }
         }
         self.frame_requested = true;
@@ -1835,6 +2288,9 @@ pub struct ApplicationDiagnostics {
 struct WindowRecord {
     runtime: Runtime,
     scope: TaskScope,
+    last_frame: FrameRecord,
+    render_metrics: RenderFrameMetrics,
+    gpu_sample: Option<GpuSample>,
     options: WindowOptions,
     lifecycle: WindowLifecycle,
     metrics: WindowMetrics,
@@ -1935,6 +2391,15 @@ impl WindowRegistry {
         })
     }
 
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    fn get(&self, id: WindowId) -> Option<&WindowRecord> {
+        self.slots
+            .get(id.index() as usize)
+            .filter(|slot| slot.reserved && slot.generation == id.generation())?
+            .record
+            .as_ref()
+    }
+
     fn visible_count(&self) -> usize {
         self.slots
             .iter()
@@ -1992,6 +2457,9 @@ impl WindowManager {
             WindowRecord {
                 runtime,
                 scope,
+                last_frame: FrameRecord::default(),
+                render_metrics: RenderFrameMetrics::default(),
+                gpu_sample: None,
                 lifecycle: if options.visible {
                     WindowLifecycle::Visible
                 } else {
@@ -2112,6 +2580,9 @@ impl WindowManager {
             WindowRecord {
                 runtime,
                 scope: window_scope,
+                last_frame: FrameRecord::default(),
+                render_metrics: RenderFrameMetrics::default(),
+                gpu_sample: None,
                 lifecycle: if options.visible {
                     WindowLifecycle::Visible
                 } else {
@@ -2294,6 +2765,8 @@ pub struct Application {
     close_request: Option<Box<dyn FnMut(WindowId) -> bool>>,
     restoration: Option<restoration::RestorationManager>,
     restoration_window_factories: HashMap<String, (WindowOptions, RestorableWindowFactory)>,
+    profiler: PerformanceProfiler,
+    hub: PerformanceHub,
 }
 impl Application {
     pub fn new(
@@ -2388,6 +2861,8 @@ impl Application {
             close_request: None,
             restoration,
             restoration_window_factories: HashMap::new(),
+            profiler: PerformanceProfiler::new(ProfilerMode::Normal),
+            hub: PerformanceHub::new(),
         })
     }
 
@@ -2496,6 +2971,446 @@ impl Application {
     #[must_use]
     pub fn active_window_ids(&self) -> Vec<WindowId> {
         self.registry.borrow().ids()
+    }
+
+    /// Development-only, read-only view of application windows.  Keeping this
+    /// extraction here means platform runners never need to reach into the
+    /// retained-window registry.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn devtools_windows(&self) -> Vec<incular_devtools_protocol::WindowSummary> {
+        self.active_window_ids()
+            .into_iter()
+            .filter_map(|id| {
+                self.window_diagnostics(id)
+                    .map(|window| incular_devtools_protocol::WindowSummary {
+                        id: incular_devtools_protocol::DevWindowId::new(
+                            u64::from(id.index()) + 1,
+                            u64::from(id.generation()),
+                        ),
+                        title: window.title,
+                        logical_size: [window.logical_size.width, window.logical_size.height],
+                        scale_factor: window.scale_factor,
+                    })
+            })
+            .collect()
+    }
+
+    /// Extracts one window's retained widget tree for DevTools.  The method
+    /// performs no layout, paint, or allocation proportional to the entire
+    /// application beyond the explicit bounded protocol snapshot.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_widget_tree(
+        &self,
+        window: incular_devtools_protocol::DevWindowId,
+    ) -> Result<Vec<incular_devtools_protocol::TreeDelta>, incular_devtools_protocol::ErrorCode>
+    {
+        let id = WindowId::from_parts(
+            window.index().saturating_sub(1) as u32,
+            window.generation() as u32,
+        );
+        let registry = self.registry.borrow();
+        let record = registry
+            .get(id)
+            .ok_or(incular_devtools_protocol::ErrorCode::StaleId)?;
+        let root = record
+            .runtime
+            .tree()
+            .root()
+            .ok_or(incular_devtools_protocol::ErrorCode::UnknownId)?;
+        let (mut nodes, truncated) = record.runtime.tree().devtools_snapshot(root, false);
+        let root = nodes
+            .first()
+            .cloned()
+            .ok_or(incular_devtools_protocol::ErrorCode::UnknownId)?;
+        nodes.remove(0);
+        Ok(vec![incular_devtools_protocol::TreeDelta::Snapshot {
+            window,
+            root: Box::new(root),
+            nodes,
+            truncated,
+        }])
+    }
+
+    /// Returns curated details for a live DevTools element id, rejecting stale
+    /// ids before touching the retained tree.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_node_details(
+        &self,
+        id: incular_devtools_protocol::DevWidgetId,
+    ) -> Result<incular_devtools_protocol::NodeDetails, incular_devtools_protocol::ErrorCode> {
+        for window in self.active_window_ids() {
+            let registry = self.registry.borrow();
+            let Some(record) = registry.get(window) else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            if let Some(element) = tree.devtools_resolve_id(id) {
+                let mut details = tree
+                    .devtools_node_details(
+                        element,
+                        id,
+                        incular_devtools_protocol::DevWindowId::new(
+                            u64::from(window.index()) + 1,
+                            u64::from(window.generation()),
+                        ),
+                    )
+                    .ok_or(incular_devtools_protocol::ErrorCode::StaleId)?;
+                let root = record.runtime.devtools_reactive_root();
+                details.consumed_signals = crate::devtools_registry::with_all(|signals| {
+                    signals
+                        .iter()
+                        .filter(|(_, registration)| {
+                            (registration.subscribers)().into_iter().any(
+                                |(subscriber_root, subscriber)| {
+                                    subscriber_root == root && subscriber == element
+                                },
+                            )
+                        })
+                        .map(|(signal_id, _)| {
+                            incular_devtools_protocol::DevSignalId::new(*signal_id, 1)
+                        })
+                        .collect()
+                });
+                return Ok(details);
+            }
+        }
+        Err(incular_devtools_protocol::ErrorCode::StaleId)
+    }
+
+    /// Applies a supported temporary property override to one live retained
+    /// node. Generational IDs make stale edits fail closed.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_edit_property(
+        &mut self,
+        id: incular_devtools_protocol::DevWidgetId,
+        name: &str,
+        value: &incular_devtools_protocol::DebugValue,
+    ) -> bool {
+        let mut registry = self.registry.borrow_mut();
+        for slot in &mut registry.slots {
+            let Some(record) = slot.record.as_mut() else {
+                continue;
+            };
+            if record.runtime.devtools_edit_property(id, name, value) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Reads the exact world-space bounds for the selected-widget overlay.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_node_bounds(
+        &self,
+        id: incular_devtools_protocol::DevWidgetId,
+    ) -> Option<[f32; 4]> {
+        for window in self.active_window_ids() {
+            let registry = self.registry.borrow();
+            let Some(record) = registry.get(window) else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            if let Some(element) = tree.devtools_resolve_id(id) {
+                return tree.element_bounds(element).map(|bounds| {
+                    [
+                        bounds.origin.x,
+                        bounds.origin.y,
+                        bounds.size.width,
+                        bounds.size.height,
+                    ]
+                });
+            }
+        }
+        None
+    }
+
+    /// Read-only retained geometry for selected-node debug adornments.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_node_overlay_geometry(
+        &self,
+        id: incular_devtools_protocol::DevWidgetId,
+    ) -> Option<incular_widgets::devtools::DevOverlayGeometry> {
+        for window in self.active_window_ids() {
+            let registry = self.registry.borrow();
+            let Some(record) = registry.get(window) else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            if let Some(element) = tree.devtools_resolve_id(id) {
+                return tree.devtools_overlay_geometry(element);
+            }
+        }
+        None
+    }
+
+    /// Bounded exact retained layout rectangles for one target window. The
+    /// platform adapter consumes these in its compositor-only overlay pass;
+    /// no widget, layout or semantics state changes as a consequence.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_layout_bounds(&self, window: WindowId, limit: usize) -> Vec<[f32; 4]> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_layout_bounds(limit))
+            .unwrap_or_default()
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_semantics_bounds(
+        &self,
+        window: WindowId,
+        limit: usize,
+    ) -> Vec<[f32; 4]> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_semantics_bounds(limit))
+            .unwrap_or_default()
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_hit_regions(&self, window: WindowId, limit: usize) -> Vec<[f32; 4]> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_hit_regions(limit))
+            .unwrap_or_default()
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_scroll_viewports(
+        &self,
+        window: WindowId,
+        limit: usize,
+    ) -> Vec<[f32; 4]> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_scroll_viewports(limit))
+            .unwrap_or_default()
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_layer_bounds(&self, window: WindowId, limit: usize) -> Vec<[f32; 4]> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_layer_bounds(limit))
+            .unwrap_or_default()
+    }
+
+    /// Bounded existing per-node work counters for target-side phase flashes.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_window_phase_nodes(
+        &self,
+        window: WindowId,
+        limit: usize,
+    ) -> Vec<incular_widgets::devtools::DevPhaseNode> {
+        self.registry
+            .borrow()
+            .get(window)
+            .map(|record| record.runtime.tree().devtools_phase_nodes(limit))
+            .unwrap_or_default()
+    }
+
+    /// Enables one bounded per-node Deep trace for the next frame of this
+    /// window. Normal/Performance profiler modes never call this, so the hot
+    /// path has only compile-time-gated instrumentation checks.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_begin_deep_trace(&mut self, window: WindowId, max_events: usize) -> bool {
+        self.with_window_mut(window, |record| {
+            record.runtime.tree_mut().begin_deep_trace(max_events);
+        })
+        .is_some()
+    }
+
+    /// Takes the completed per-node trace without cloning its event buffer.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_take_deep_trace(
+        &mut self,
+        window: WindowId,
+        frame: u64,
+    ) -> Option<incular_devtools_protocol::DeepFrameTrace> {
+        let (events, dropped_events) = self
+            .with_window_mut(window, |record| record.runtime.tree_mut().take_deep_trace())
+            .flatten()?;
+        Some(incular_devtools_protocol::DeepFrameTrace {
+            window: incular_devtools_protocol::DevWindowId::new(
+                u64::from(window.index()) + 1,
+                u64::from(window.generation()),
+            ),
+            frame,
+            truncated: dropped_events > 0,
+            dropped_events,
+            events,
+        })
+    }
+
+    /// Exact retained subtree bounds for the selected DevTools node, together
+    /// with its owning native window. Stale IDs return no result.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_subtree_layout_bounds(
+        &self,
+        id: incular_devtools_protocol::DevWidgetId,
+        limit: usize,
+    ) -> Option<(WindowId, Vec<[f32; 4]>)> {
+        for window in self.active_window_ids() {
+            let registry = self.registry.borrow();
+            let Some(record) = registry.get(window) else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            if let Some(element) = tree.devtools_resolve_id(id) {
+                return Some((window, tree.devtools_subtree_layout_bounds(element, limit)));
+            }
+        }
+        None
+    }
+
+    /// Hit-tests a retained root for Select Widget mode without dispatching
+    /// the pointer to application widgets.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_hit_test(
+        &self,
+        window: WindowId,
+        point: incular_core::Offset,
+    ) -> Option<(incular_devtools_protocol::DevWidgetId, [f32; 4])> {
+        let registry = self.registry.borrow();
+        let record = registry.get(window)?;
+        let tree = record.runtime.tree();
+        let element = tree.devtools_deepest_at(point)?;
+        let id = tree.devtools_id_for_element(element)?;
+        let bounds = tree.element_bounds(element)?;
+        Some((
+            id,
+            [
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.size.width,
+                bounds.size.height,
+            ],
+        ))
+    }
+
+    /// Framework-owned memory/resource inventory.  This is deliberately a
+    /// count of retained Incular objects, not a misleading attempt to inspect
+    /// Rust's allocator or another crate's heap.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn devtools_resource_counts(&self) -> incular_devtools_protocol::ResourceCounts {
+        let mut counts = incular_devtools_protocol::ResourceCounts::default();
+        for window in self.active_window_ids() {
+            let registry = self.registry.borrow();
+            let Some(record) = registry.get(window) else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            counts.elements += tree.element_count();
+            counts.render_objects += tree.render_object_count();
+            counts.semantics_nodes += tree.semantics().len();
+            counts.tasks_active += record.runtime.runtime_diagnostics().active_tracked_tasks;
+        }
+        crate::devtools_registry::with_all(|signals| counts.signals = signals.len());
+        counts
+    }
+
+    /// Returns only signals which explicitly opted into DevTools visibility.
+    /// Values are already reduced to bounded summaries at write time.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn devtools_signals(&self) -> Vec<incular_devtools_protocol::SignalSummary> {
+        crate::devtools_registry::with_all(|signals| {
+            signals
+                .iter()
+                .map(|(id, registration)| {
+                    let (_, last_write) = (registration.last_write)();
+                    let writes = (registration.write_count)();
+                    incular_devtools_protocol::SignalSummary {
+                        id: incular_devtools_protocol::DevSignalId::new(*id, 1),
+                        name: registration.name.clone(),
+                        type_name: registration.type_name.to_owned(),
+                        generation: writes,
+                        write_count: writes,
+                        subscriber_count: (registration.subscriber_count)(),
+                        last_write_summary: last_write,
+                        editable: registration.editable_kind.is_some(),
+                    }
+                })
+                .collect()
+        })
+    }
+
+    /// Resolves actual live reactive dependencies for a DevTools-visible
+    /// signal.  The registry stores only weak signal state and Element ids;
+    /// this method resolves those ids against the matching live window tree,
+    /// so unmounted elements are never retained or reported.
+    #[cfg(feature = "devtools")]
+    #[must_use]
+    pub fn devtools_signal_subscribers(
+        &self,
+        signal: incular_devtools_protocol::DevSignalId,
+    ) -> Vec<incular_devtools_protocol::SignalSubscriber> {
+        let entries = crate::devtools_registry::with_all(|signals| {
+            signals
+                .iter()
+                .find(|(id, _)| *id == signal.index())
+                .and_then(|(_, registration)| {
+                    (signal.generation() == 1).then(|| (registration.subscribers)())
+                })
+                .unwrap_or_default()
+        });
+        if entries.is_empty() {
+            return Vec::new();
+        }
+
+        let windows = self.active_window_ids();
+        let registry = self.registry.borrow();
+        windows
+            .into_iter()
+            .flat_map(|window| {
+                let Some(record) = registry.get(window) else {
+                    return Vec::new();
+                };
+                let root = record.runtime.devtools_reactive_root();
+                let tree = record.runtime.tree();
+                entries
+                    .iter()
+                    .filter(|(entry_root, _)| *entry_root == root)
+                    .filter_map(|(_, element)| {
+                        tree.devtools_id_for_element(*element).map(|dev_id| {
+                            incular_devtools_protocol::SignalSubscriber {
+                                signal,
+                                element: dev_id,
+                                path: tree.devtools_element_path(*element),
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Applies an explicitly opted-in typed DevTools edit on the UI thread.
+    /// The conversion and the normal `Signal::set` invalidation both live in
+    /// the signal registration; unsupported types are rejected.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_edit_signal(
+        &self,
+        signal: incular_devtools_protocol::DevSignalId,
+        value: &incular_devtools_protocol::EditableValue,
+    ) -> bool {
+        if signal.generation() != 1 {
+            return false;
+        }
+        crate::devtools_registry::with_all(|signals| {
+            signals
+                .iter()
+                .find(|(id, registration)| {
+                    *id == signal.index() && registration.editable_kind.is_some()
+                })
+                .is_some_and(|(_, registration)| (registration.apply_edit)(value))
+        })
     }
 
     #[must_use]
@@ -2730,9 +3645,17 @@ impl Application {
     }
 
     pub fn note_frame_requested(&mut self, window_id: WindowId) {
+        scheduler_counters::REDRAW_REQUESTS.fetch_add(1, Ordering::Relaxed);
         let _ = self.with_window_mut(window_id, |record| {
             record.requested_frames = record.requested_frames.wrapping_add(1);
         });
+    }
+
+    /// Records one UI-relevant runtime wake (async completion or message).
+    /// Wakes that mutate no visible state must not produce redraws; the idle
+    /// contract test relies on these counters staying independent.
+    pub fn note_runtime_wake(&mut self) {
+        scheduler_counters::RUNTIME_WAKES.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn run_window_frame_at(
@@ -2741,15 +3664,41 @@ impl Application {
         constraints: Constraints,
         now: Instant,
     ) -> Result<Option<(DisplayList, FrameStats)>, TreeError> {
-        self.with_window_mut(window_id, |record| {
-            if record.metrics.physical_size.is_zero() {
-                record.skipped_frames = record.skipped_frames.wrapping_add(1);
-                Ok(None)
-            } else {
-                record.runtime.run_frame_at(constraints, now).map(Some)
-            }
-        })
-        .unwrap_or(Ok(None))
+        let outcome = self
+            .with_window_mut(window_id, |record| {
+                if record.metrics.physical_size.is_zero() {
+                    record.skipped_frames = record.skipped_frames.wrapping_add(1);
+                    scheduler_counters::FRAMES_SKIPPED.fetch_add(1, Ordering::Relaxed);
+                    Ok(None)
+                } else {
+                    record
+                        .runtime
+                        .run_frame_at(constraints, now)
+                        .map(|(list, stats)| {
+                            record.last_frame = FrameRecord {
+                                frame: 0,
+                                timings: stats.timings,
+                                work: FrameWork {
+                                    updated_elements: stats.updated_elements as u64,
+                                    rebuilt_elements: stats.rebuilt_elements,
+                                    laid_out_render_objects: stats.laid_out_render_objects,
+                                    repainted_render_objects: stats.repainted_render_objects,
+                                    composited_layers: stats.composited,
+                                    active_animations: stats.active_animations,
+                                    display_list_commands: stats.display_list_commands,
+                                    requested_another_frame: stats.requested_another_frame,
+                                },
+                                over_budget: false,
+                            };
+                            Some((list, stats))
+                        })
+                }
+            })
+            .unwrap_or(Ok(None));
+        if matches!(outcome, Ok(Some(_))) {
+            scheduler_counters::FRAMES_STARTED.fetch_add(1, Ordering::Relaxed);
+        }
+        outcome
     }
 
     /// Projects this window's retained semantics through its window-local
@@ -2805,7 +3754,218 @@ impl Application {
         });
     }
 
+    /// Selects how much profiling state is retained. Normal keeps only
+    /// counters and the latest frame; higher modes retain bounded history.
+    pub fn set_profiler_mode(&mut self, mode: ProfilerMode) {
+        self.profiler.set_mode(mode);
+    }
+
+    /// Applies the DevTools animation speed to every live window. This is a
+    /// retained animation-clock setting, not a scheduler or Tokio setting.
+    pub fn set_animation_time_scale(&mut self, scale: f32) {
+        for window in self.active_window_ids() {
+            let _ = self.with_window_mut(window, |record| {
+                record.runtime.set_animation_time_scale(scale);
+            });
+        }
+    }
+
+    #[must_use]
+    pub const fn profiler_mode(&self) -> ProfilerMode {
+        self.profiler.mode()
+    }
+
+    /// Derives frame budgets from an actual refresh rate (Hz). `None` clears.
+    pub fn set_refresh_rate_hz(&mut self, hz: Option<f32>) {
+        self.profiler.set_refresh_rate_hz(hz);
+    }
+
+    /// Merges renderer-reported metrics into one window's latest record and
+    /// feeds the application profiler history with a complete frame sample.
+    pub fn note_render_metrics(
+        &mut self,
+        window_id: WindowId,
+        mut render: RenderFrameMetrics,
+        gpu: Option<GpuSample>,
+    ) {
+        let frame_id = self.profiler.next_frame_id();
+        render.frame = frame_id;
+        let mut completed = None;
+        {
+            let mut registry = self.registry.borrow_mut();
+            if let Some(slot) = registry.slots.get_mut(window_id.index() as usize)
+                && slot.generation == window_id.generation()
+                && let Some(record) = slot.record.as_mut()
+            {
+                record.render_metrics = render;
+                record.gpu_sample = gpu;
+                record.last_frame.frame = frame_id;
+                // Renderer prepare/encode/submit completes the CPU picture.
+                let mut timings = record.last_frame.timings;
+                timings.cpu_total = timings
+                    .cpu_total
+                    .saturating_add(render.prepare_us)
+                    .saturating_add(render.encode_us)
+                    .saturating_add(render.submit_us);
+                record.last_frame.timings = timings;
+                completed = Some(record.last_frame);
+            }
+        }
+        if let Some(record) = completed {
+            self.profiler.record(record);
+        }
+        // Throttled publish for observers (debug overlays). Production frames
+        // with no observer and Normal mode skip the snapshot build entirely.
+        if self.hub.observed()
+            && self.profiler.mode() >= ProfilerMode::Diagnostic
+            && self.hub.publish_due(std::time::Duration::from_millis(200))
+        {
+            self.hub.publish(self.performance_snapshot());
+        }
+    }
+
+    /// Shared handle to the observable performance snapshot. Overlay builders
+    /// read [`PerformanceHub::version`] so only they rebuild on publish.
+    #[must_use]
+    pub const fn performance_hub(&self) -> &PerformanceHub {
+        &self.hub
+    }
+
+    /// Installs the debug performance overlay into `window_id`.
+    ///
+    /// The application tree must contain a widget keyed with
+    /// [`PERFORMANCE_OVERLAY_KEY`]; that placeholder element is replaced by a
+    /// repaint-contained overlay whose builder re-runs **only** when the hub
+    /// publishes, so measured widget work is unaffected. Requires a profiler
+    /// mode of [`ProfilerMode::Diagnostic`] or higher to observe data.
+    pub fn install_performance_overlay(&mut self, window_id: WindowId) -> Result<(), TreeError> {
+        let hub = self.hub.clone();
+        let installed = self.with_window_mut(window_id, |record| {
+            let tree = record.runtime.tree();
+            let Some(target) =
+                tree.element_with_key(&incular_widgets::Key::from(PERFORMANCE_OVERLAY_KEY))
+            else {
+                return Err(TreeError::MissingElement(
+                    tree.root().expect("mounted window root"),
+                ));
+            };
+            record.runtime.register_builder(target, move || {
+                hub.set_observed(true);
+                // Reading the version subscribes this element alone.
+                let _version = hub.version();
+                overlay_widget(&hub.snapshot())
+            })?;
+            Ok(())
+        });
+        match installed {
+            Some(result) => result,
+            None => Err(TreeError::WindowUnknown),
+        }
+    }
+
+    #[must_use]
+    pub fn profiler_history(&self) -> &FrameHistory {
+        self.profiler.history()
+    }
+
+    /// Builds a complete read-only performance view. This allocates and is
+    /// intended for diagnostics tooling, the debug overlay, and JSON export —
+    /// never for the per-frame hot path.
+    #[must_use]
+    pub fn performance_snapshot(&self) -> PerformanceSnapshot {
+        let mut windows = Vec::new();
+        let registry = self.registry.borrow();
+        for slot in &registry.slots {
+            let Some(record) = slot.record.as_ref() else {
+                continue;
+            };
+            windows.push(WindowPerformance {
+                requested_frames: record.requested_frames,
+                presented_frames: record.presented_frames,
+                skipped_frames: record.skipped_frames,
+                latest: Some(record.last_frame),
+                render: record.render_metrics,
+                gpu: record.gpu_sample,
+            });
+        }
+        // Widget/text totals come from the primary window's retained tree;
+        // accessibility counters merge across every live window adapter.
+        let mut widgets = WidgetWorkSnapshot::default();
+        let mut text = TextCacheSnapshot::default();
+        let mut accessibility = AccessibilitySnapshot::default();
+        for slot in &registry.slots {
+            let Some(record) = slot.record.as_ref() else {
+                continue;
+            };
+            let tree = record.runtime.tree();
+            if widgets.elements_total == 0 {
+                let diagnostics = tree.diagnostics();
+                widgets = WidgetWorkSnapshot {
+                    mounts: diagnostics.mounts,
+                    unmounts: diagnostics.unmounts,
+                    rebuilds: diagnostics.rebuilds,
+                    layouts: diagnostics.layouts,
+                    paints: diagnostics.paints,
+                    composites: diagnostics.composites,
+                    animation_ticks: diagnostics.animation_ticks,
+                    scroll_offset_updates: diagnostics.scroll_offset_updates,
+                    reconciliation_fast_paths: diagnostics.reconciliation_fast_paths,
+                    layout_cache_hits: diagnostics.layout_cache_hits,
+                    display_lists_reused: diagnostics.display_lists_reused,
+                    compositor_only_updates: diagnostics.compositor_only_updates,
+                    lazy_layouts: diagnostics.lazy_layouts,
+                    items_built: diagnostics.items_built,
+                    items_reused: diagnostics.items_reused,
+                    child_list_scans: diagnostics.child_list_scans,
+                    identical_child_bailouts: diagnostics.identical_child_bailouts,
+                    elements_created: diagnostics.elements_created,
+                    elements_removed: diagnostics.elements_removed,
+                    elements_moved: diagnostics.elements_moved,
+                    dirty_requests: diagnostics.dirty_requests,
+                    dirty_queue_deduplicated: diagnostics.dirty_queue_deduplicated,
+                    elements_total: tree.element_count(),
+                    render_objects_total: tree.render_object_count(),
+                    layers_total: usize::try_from(tree.compositor_diagnostics().layers)
+                        .unwrap_or(0),
+                };
+                let text_diagnostics = tree.text_diagnostics();
+                text = TextCacheSnapshot {
+                    layouts_requested: text_diagnostics.layouts_requested,
+                    cache_hits: text_diagnostics.cache_hits,
+                    cache_misses: text_diagnostics.cache_misses,
+                    paragraphs_reshaped: text_diagnostics.paragraphs_reshaped,
+                    parley_layouts_reused: text_diagnostics.parley_layouts_reused,
+                    documents_composed: text_diagnostics.documents_composed,
+                };
+            }
+            accessibility.nodes_published += record.accessibility.nodes_published;
+            accessibility.updates_skipped_unchanged +=
+                record.accessibility.semantic_updates_skipped_unchanged;
+        }
+        PerformanceSnapshot {
+            scheduler: scheduler_counters(),
+            budget: *self.profiler.budget(),
+            fps: self.profiler.frames_per_second(),
+            windows,
+            frame_statistics: self.profiler.history().statistics(),
+            widgets,
+            text,
+            accessibility,
+        }
+    }
+
+    #[must_use]
+    pub const fn profiler_budget(&self) -> &BudgetStatistics {
+        self.profiler.budget()
+    }
+
     pub fn note_presented(&mut self, window_id: WindowId, presented: bool) {
+        if presented {
+            scheduler_counters::FRAMES_PRESENTED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            scheduler_counters::FRAMES_SKIPPED.fetch_add(1, Ordering::Relaxed);
+        }
+        self.profiler.note_present(presented);
         let _ = self.with_window_mut(window_id, |record| {
             if presented {
                 record.presented_frames = record.presented_frames.wrapping_add(1);
@@ -3075,6 +4235,54 @@ impl Application {
         primary_record.runtime
     }
 }
+/// Widget key that marks the performance-overlay mount point.
+pub const PERFORMANCE_OVERLAY_KEY: &str = incular_widgets::PERFORMANCE_OVERLAY_KEY;
+
+/// Builds the repaint-contained overlay visual from one snapshot.
+fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
+    use incular_widgets::{DecoratedBox, Padding, Text, Widget};
+    let lines = snapshot.overlay_lines();
+    let monospace = || {
+        incular_widgets::TextStyle::default()
+            .family(incular_widgets::FontFamily::Monospace)
+            .font_size(11.)
+            .color(incular_core::Color::rgba(190, 220, 255, 255))
+    };
+    let rows: Vec<Widget> = lines
+        .into_iter()
+        .map(|line| Widget::from(Text::new(line).style(monospace())))
+        .collect();
+    Widget::repaint_boundary(Widget::align(
+        incular_config::Alignment::TOP_LEFT,
+        Widget::from(
+            DecoratedBox::new(Padding::all(6., Widget::column(rows)))
+                .background(incular_core::Color::rgba(12, 14, 18, 216))
+                .radius(4.)
+                .border(incular_rendering::Border {
+                    color: incular_core::Color::rgba(120, 170, 245, 90),
+                    width: 1.,
+                }),
+        ),
+    ))
+}
+
+/// Truncates a Debug rendering to keep DevTools payloads bounded.
+#[cfg(feature = "devtools")]
+fn truncate_debug<T: std::fmt::Debug>(value: &T) -> String {
+    let rendered = format!("{value:?}");
+    if rendered.chars().count() <= 80 {
+        rendered
+    } else {
+        let mut out: String = rendered.chars().take(77).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn us_since_instant(started: std::time::Instant) -> u32 {
+    started.elapsed().as_micros().try_into().unwrap_or(u32::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3082,7 +4290,9 @@ mod tests {
     use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
-    use incular_widgets::{Button, GestureCallbacks, GestureRegion, Text, VirtualList};
+    use incular_widgets::{
+        Button, DecoratedBox, GestureCallbacks, GestureRegion, Text, VirtualList,
+    };
     use std::time::{Duration, Instant};
     use std::{
         cell::Cell,
@@ -3130,6 +4340,37 @@ mod tests {
             .iter()
             .find_map(|(id, node)| (node.role == role).then_some(id))
             .expect("semantic node")
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn editable_signal_uses_typed_ui_thread_set_and_keeps_old_new_summary() {
+        let signal = Signal::new(3_i64)
+            .devtools("runtime-editable-signal-test")
+            .devtools_editable();
+        let (edited, writes, summaries, wrong_type) = devtools_registry::with_all(|signals| {
+            let registration = signals
+                .iter()
+                .find(|(_, registration)| {
+                    registration.name.as_deref() == Some("runtime-editable-signal-test")
+                })
+                .map(|(_, registration)| registration)
+                .expect("registered signal");
+            let edited =
+                (registration.apply_edit)(&incular_devtools_protocol::EditableValue::Int(9));
+            let writes = (registration.write_count)();
+            let summaries = (registration.last_write)();
+            let wrong_type = (registration.apply_edit)(
+                &incular_devtools_protocol::EditableValue::Str("wrong type".into()),
+            );
+            (edited, writes, summaries, wrong_type)
+        });
+
+        assert!(edited);
+        assert_eq!(signal.get(), 9);
+        assert_eq!(writes, 1);
+        assert_eq!(summaries, (Some("3".into()), Some("9".into())));
+        assert!(!wrong_type);
     }
 
     #[test]
@@ -3307,6 +4548,101 @@ mod tests {
         assert_eq!(stats.updated_elements, 1);
         assert!(!runtime.tree().is_build_dirty(children[0]));
         assert!(!signal.set(3));
+    }
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn named_signal_write_reaches_dependent_rebuild_cause() {
+        let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+            Size::new(1., 1.),
+            Color::WHITE,
+        )]))
+        .unwrap();
+        let root = runtime.tree().root().unwrap();
+        let dependent = runtime.tree().children(root).unwrap()[0];
+        let signal = Signal::with_runtime(1_u32, &runtime).devtools("counter");
+        let state = signal.clone();
+        runtime
+            .register_builder(dependent, move || {
+                Widget::box_(Size::new(state.get() as f32, 1.), Color::WHITE)
+            })
+            .unwrap();
+        assert!(signal.set(2));
+        runtime
+            .run_frame(Constraints::tight(Size::new(20., 20.)))
+            .unwrap();
+        let id = runtime
+            .tree()
+            .devtools_id_for_element(dependent)
+            .expect("devtools id");
+        let details = runtime
+            .tree()
+            .devtools_node_details(
+                dependent,
+                id,
+                incular_devtools_protocol::DevWindowId::new(1, 0),
+            )
+            .expect("details");
+        assert!(details.invalidation_causes.iter().any(|cause| matches!(
+            cause,
+            incular_devtools_protocol::InvalidationReason::SignalWrite {
+                name,
+                old: Some(old),
+                new: Some(new),
+                ..
+            } if name == "counter" && old == "1" && new == "2"
+        )));
+    }
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn tracked_task_completion_is_coalesced_with_its_signal_cause() {
+        let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+            Size::new(1., 1.),
+            Color::WHITE,
+        )]))
+        .unwrap();
+        let root = runtime.tree().root().unwrap();
+        let dependent = runtime.tree().children(root).unwrap()[0];
+        let signal = Signal::with_runtime(1_u32, &runtime).devtools("async-counter");
+        let observed = signal.clone();
+        runtime
+            .register_builder(dependent, move || {
+                Widget::box_(Size::new(observed.get() as f32, 1.), Color::WHITE)
+            })
+            .unwrap();
+        let wake = Arc::new(TestWake::default());
+        runtime.set_wake_handler(wake.clone());
+        let completion = signal.clone();
+        runtime
+            .spawner()
+            .spawn_into(async { 2_u32 }, move |result, _| {
+                completion.set(result.expect("Tokio result"));
+            });
+        wait_for_wake(&wake);
+        runtime.process_runtime_work();
+        runtime
+            .run_frame(Constraints::tight(Size::new(20., 20.)))
+            .unwrap();
+        let id = runtime
+            .tree()
+            .devtools_id_for_element(dependent)
+            .expect("id");
+        let details = runtime
+            .tree()
+            .devtools_node_details(
+                dependent,
+                id,
+                incular_devtools_protocol::DevWindowId::new(1, 0),
+            )
+            .expect("details");
+        assert!(details.invalidation_causes.iter().any(|cause| matches!(
+            cause,
+            incular_devtools_protocol::InvalidationReason::TaskCompletion
+        )));
+        assert!(details.invalidation_causes.iter().any(|cause| matches!(
+            cause,
+            incular_devtools_protocol::InvalidationReason::SignalWrite { name, .. }
+                if name == "async-counter"
+        )));
     }
     #[test]
     fn tokio_sleep_completion_wakes_the_ui_bridge() {
@@ -3697,6 +5033,40 @@ mod tests {
         );
     }
     #[test]
+    fn button_hover_callbacks_fire_once_on_enter_and_exit() {
+        let enters = Rc::new(Cell::new(0_u32));
+        let exits = Rc::new(Cell::new(0_u32));
+        let mut runtime = Runtime::new(
+            Button::new("Hover")
+                .on_hover({
+                    let enters = enters.clone();
+                    move || enters.set(enters.get() + 1)
+                })
+                .on_exit({
+                    let exits = exits.clone();
+                    move || exits.set(exits.get() + 1)
+                })
+                .into(),
+        )
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(100., 40.)))
+            .unwrap();
+        for position in [
+            Offset::new(10., 10.),
+            Offset::new(20., 10.),
+            Offset::new(150., 10.),
+            Offset::new(160., 10.),
+        ] {
+            let _ = runtime.handle_input(InputEvent::Pointer {
+                phase: PointerPhase::Move,
+                position,
+            });
+        }
+        assert_eq!(enters.get(), 1);
+        assert_eq!(exits.get(), 1);
+    }
+    #[test]
     fn wheel_updates_only_retained_scroll_transform() {
         let controller = incular_widgets::ScrollController::new();
         let child = Widget::column(
@@ -3904,6 +5274,32 @@ mod tests {
             phase: PointerPhase::Up,
             position: Offset::new(10., 10.),
         });
+        assert_eq!(hits.get(), 1);
+    }
+
+    #[test]
+    fn decorated_ancestor_binds_nested_button_callback() {
+        let hits = Rc::new(Cell::new(0));
+        let observed = hits.clone();
+        let root: Widget = DecoratedBox::new(
+            Button::new("Nested").on_press(move || observed.set(observed.get() + 1)),
+        )
+        .background(Color::BLACK)
+        .into();
+        let mut runtime = Runtime::new(root).unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(120., 60.)))
+            .unwrap();
+        let down = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(10., 10.),
+        });
+        let up = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Up,
+            position: Offset::new(10., 10.),
+        });
+        assert!(down.is_some_and(|target| target.action.is_some()));
+        assert!(up.is_some_and(|target| target.action.is_some()));
         assert_eq!(hits.get(), 1);
     }
 
@@ -4364,6 +5760,87 @@ mod tests {
                 .surface_generation,
             b_surface
         );
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn devtools_overlays_and_deep_trace_are_routed_to_one_window() {
+        let mut application =
+            Application::new(|_| Widget::box_(Size::new(80., 40.), Color::WHITE)).unwrap();
+        let a = application.primary_window();
+        let b = application
+            .open_window_with(test_window_options("B", 240., 120.), |_| {
+                Widget::box_(Size::new(30., 20.), Color::WHITE)
+            })
+            .unwrap()
+            .id();
+        for (window, size) in [(a, Size::new(100., 60.)), (b, Size::new(240., 120.))] {
+            application.handle_window_event(WindowEvent::platform(
+                window,
+                PlatformEvent::Metrics(WindowMetrics::new(
+                    incular_platform::PhysicalSize::new(size.width as u32, size.height as u32),
+                    1.,
+                )),
+            ));
+            application
+                .run_window_frame_at(window, Constraints::tight(size), Instant::now())
+                .unwrap();
+        }
+        let a_bounds = application.devtools_window_layout_bounds(a, 8);
+        let b_bounds = application.devtools_window_layout_bounds(b, 8);
+        assert_eq!(a_bounds[0][2..], [100., 60.]);
+        assert_eq!(b_bounds[0][2..], [240., 120.]);
+
+        assert!(application.devtools_begin_deep_trace(b, 128));
+        application
+            .run_window_frame_at(b, Constraints::tight(Size::new(250., 120.)), Instant::now())
+            .unwrap();
+        assert!(application.devtools_take_deep_trace(a, 1).is_none());
+        let trace = application
+            .devtools_take_deep_trace(b, 1)
+            .expect("window B trace");
+        assert_eq!(trace.window.index(), u64::from(b.index()) + 1);
+        assert!(!trace.events.is_empty());
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn devtools_property_edit_routes_to_the_live_window_and_requests_a_frame() {
+        let mut application = Application::new(|_| {
+            Widget::opacity(0.8, Widget::box_(Size::new(20., 20.), Color::WHITE))
+        })
+        .unwrap();
+        let window = application.primary_window();
+        application
+            .run_window_frame_at(
+                window,
+                Constraints::tight(Size::new(40., 40.)),
+                Instant::now(),
+            )
+            .unwrap();
+        let protocol_window = incular_devtools_protocol::DevWindowId::new(
+            u64::from(window.index()) + 1,
+            u64::from(window.generation()),
+        );
+        let snapshot = application
+            .devtools_widget_tree(protocol_window)
+            .expect("widget tree");
+        let incular_devtools_protocol::TreeDelta::Snapshot { root, .. } = &snapshot[0] else {
+            panic!("full tree snapshot");
+        };
+        assert!(application.devtools_edit_property(
+            root.id,
+            "opacity",
+            &incular_devtools_protocol::DebugValue::Float(0.3)
+        ));
+        assert!(application.frame_requested(window));
+        let details = application
+            .devtools_node_details(root.id)
+            .expect("edited details");
+        assert!(details.properties.iter().any(|property| {
+            property.name == "opacity"
+                && matches!(property.value, incular_devtools_protocol::DebugValue::Float(value) if (value - 0.3).abs() < 0.000_001)
+        }));
     }
 
     #[test]

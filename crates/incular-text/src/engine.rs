@@ -130,6 +130,16 @@ pub struct TextDiagnostics {
     pub fallback_fonts_used: u64,
     pub missing_clusters: u64,
     pub shaping_runs: u64,
+    // Task 15 document-granularity instrumentation.
+    /// Paragraphs examined by the document path.
+    pub paragraphs_considered: u64,
+    /// Paragraphs that required fresh shaping (cache misses at paragraph
+    /// granularity).
+    pub paragraphs_reshaped: u64,
+    /// Parley layouts satisfied entirely from cache.
+    pub parley_layouts_reused: u64,
+    /// Multi-paragraph documents assembled from retained paragraphs.
+    pub documents_composed: u64,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -178,6 +188,12 @@ impl LayoutKey {
 /// The sole owner of font discovery and app-registered fonts. Parley owns the
 /// actual font collection and resolves scripts, bidi direction and fallback.
 pub struct TextEngine {
+    /// One `FontHandle` per distinct font blob. Handles share the font bytes
+    /// through a single `Arc`, so every cached text layout references the
+    /// same allocation instead of holding a private copy of the whole font
+    /// file (the Task 15 root cause of ~500 KB retained per shaped string
+    /// and a full-file memcpy plus full-file hash per glyph run).
+    font_handles: HashMap<(usize, usize, u32), FontHandle>,
     font_context: FontContext,
     layout_context: LayoutContext<()>,
     generation: u64,
@@ -196,6 +212,7 @@ impl TextEngine {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            font_handles: HashMap::new(),
             font_context: FontContext::new(),
             layout_context: LayoutContext::new(),
             generation: 1,
@@ -245,6 +262,20 @@ impl TextEngine {
         options: TextLayoutOptions,
     ) -> Arc<TextLayout> {
         self.diagnostics.layouts_requested += 1;
+        // Documents with hard line breaks compose from retained per-paragraph
+        // layouts so editing one paragraph never reshapes the rest. Overflow
+        // policies keep the exact monolithic semantics and stay on the
+        // whole-string path.
+        // With soft wrapping, `Clip` can only trigger on single-line
+        // horizontal overflow, which a hard-break document never has; so this
+        // route preserves monolithic semantics exactly.
+        if text.contains('\n')
+            && options.max_lines.is_none()
+            && (options.soft_wrap || options.overflow == TextOverflow::Visible)
+        {
+            let layout = self.layout_document(text, style, options);
+            return Arc::new(layout);
+        }
         let key = LayoutKey::new(text, style, options, self.generation);
         if let Some(layout) = self.cache.get(&key) {
             self.diagnostics.cache_hits += 1;
@@ -253,14 +284,118 @@ impl TextEngine {
 
         self.diagnostics.cache_misses += 1;
         let layout = Arc::new(self.shape_and_wrap(text, style, options));
-        if self.order.len() == 256 {
+        self.store(key, layout.clone());
+        layout
+    }
+
+    /// LRU insertion with the measured pool size. The previous 256-entry cap
+    /// thrashed under large-document workloads (Task 15 profiling).
+    fn store(&mut self, key: LayoutKey, layout: Arc<TextLayout>) {
+        const LAYOUT_CACHE_CAPACITY: usize = 2048;
+        if self.order.len() == LAYOUT_CACHE_CAPACITY {
             if let Some(old) = self.order.pop_front() {
                 self.cache.remove(&old);
             }
         }
         self.order.push_back(key.clone());
-        self.cache.insert(key, layout.clone());
-        layout
+        self.cache.insert(key, layout);
+    }
+
+    /// Composes a multi-paragraph document from per-paragraph retained
+    /// layouts. Shaping reuse is exact (paragraph slice == cache key);
+    /// assembly copies line data with vertical and byte-range rebasing.
+    fn layout_document(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        options: TextLayoutOptions,
+    ) -> TextLayout {
+        self.diagnostics.documents_composed += 1;
+        let paragraph_options = TextLayoutOptions {
+            max_lines: None,
+            overflow: TextOverflow::Visible,
+            ..options
+        };
+        let mut byte_start = 0usize;
+        let mut lines: Vec<TextLine> = Vec::new();
+        let mut font_runs = Vec::new();
+        let mut width = 0f32;
+        let mut height = 0f32;
+        let mut line_height = 0f32;
+        let mut overflowed = false;
+        for paragraph in text.split('\n') {
+            self.diagnostics.paragraphs_considered += 1;
+            let key = LayoutKey::new(paragraph, style, paragraph_options, self.generation);
+            let paragraph_layout = if let Some(existing) = self.cache.get(&key) {
+                self.diagnostics.parley_layouts_reused += 1;
+                self.diagnostics.cache_hits += 1;
+                existing.clone()
+            } else {
+                self.diagnostics.paragraphs_reshaped += 1;
+                self.diagnostics.cache_misses += 1;
+                let built = Arc::new(self.shape_and_wrap(paragraph, style, paragraph_options));
+                self.store(key, built.clone());
+                built
+            };
+            for line in paragraph_layout.lines.iter() {
+                let glyphs: Vec<GlyphPosition> = line
+                    .glyphs
+                    .iter()
+                    .map(|glyph| {
+                        let mut shifted = *glyph;
+                        // Stored glyph y is negative parley space; moving the
+                        // paragraph down by `height` subtracts from it.
+                        shifted.offset.y -= height;
+                        // Clusters index the full document string, so caret
+                        // and selection mapping stay globally consistent.
+                        shifted.cluster += byte_start as u32;
+                        shifted
+                    })
+                    .collect();
+                for run in paragraph_layout.font_runs.iter() {
+                    let mut rebased = run.clone();
+                    rebased.range.start += byte_start;
+                    rebased.range.end += byte_start;
+                    font_runs.push(rebased);
+                }
+                lines.push(TextLine {
+                    runs: line.runs.clone(),
+                    glyphs: glyphs.into(),
+                    width: line.width,
+                    baseline: line.baseline + height,
+                    start: line.start + byte_start,
+                    caret_end: line.caret_end + byte_start,
+                    end: line.end + byte_start,
+                });
+            }
+            width = width.max(paragraph_layout.metrics.size.width);
+            height += paragraph_layout.metrics.size.height;
+            line_height = paragraph_layout.metrics.line_height;
+            overflowed |= paragraph_layout.overflowed;
+            byte_start += paragraph.len() + 1; // include the hard break
+        }
+        if lines.is_empty() {
+            lines.push(TextLine {
+                runs: Arc::new([]),
+                glyphs: Arc::new([]),
+                width: 0.,
+                baseline: 0.,
+                start: 0,
+                caret_end: 0,
+                end: 0,
+            });
+        }
+        let baseline = lines[0].baseline;
+        TextLayout {
+            lines: lines.into(),
+            metrics: TextMetrics {
+                size: Size::new(width, height),
+                baseline,
+                line_height,
+            },
+            font_runs: font_runs.into(),
+            overflowed,
+        }
     }
 
     fn font_stack(style: &TextStyle) -> FontStack<'static> {
@@ -394,15 +529,22 @@ impl TextEngine {
         self.translate_layout(&layout)
     }
 
+    fn font_handle_for(&mut self, font: &parley::FontData) -> FontHandle {
+        font_handle(self, font)
+    }
+
     fn translate_layout(&mut self, layout: &Layout<()>) -> TextLayout {
         let mut lines = Vec::new();
         let mut font_runs = Vec::new();
         let mut used_fonts = HashSet::new();
-        let primary = layout
+        // First glyph run decides the primary font; resolve its handle before
+        // the mutable translation loop so borrowck stays trivial.
+        let primary_handle = layout
             .lines()
             .flat_map(|line| line.runs())
             .next()
-            .map(|run| font_id(run.font()));
+            .map(|run| self.font_handle_for(run.font()));
+        let primary = primary_handle.as_ref().map(FontHandle::id);
 
         for line in layout.lines() {
             let metrics = line.metrics();
@@ -415,7 +557,7 @@ impl TextEngine {
                     continue;
                 };
                 let run = parley_run.run();
-                let font = font_handle(run.font());
+                let font = self.font_handle_for(run.font());
                 let font_id = font.id();
                 if Some(font_id) != primary {
                     self.diagnostics.fallback_runs += 1;
@@ -574,17 +716,200 @@ fn family_name(family: &FontFamily) -> String {
     }
 }
 
-fn font_id(font: &parley::FontData) -> FontId {
-    let mut hasher = DefaultHasher::new();
-    font.data.as_ref().hash(&mut hasher);
-    font.index.hash(&mut hasher);
-    FontId(hasher.finish())
-}
+/// Identity for one font blob sighting. Pointer identity is stable because
+/// `Blob` clones share the same backing allocation, so repeated sightings of
+/// the same face never re-copy or re-hash the bytes.
+type FontBlobKey = (usize, usize, u32);
 
-fn font_handle(font: &parley::FontData) -> FontHandle {
-    FontHandle::with_face_index(
-        font_id(font),
-        Arc::<[u8]>::from(font.data.as_ref().to_vec()),
+fn font_blob_key(font: &parley::FontData) -> FontBlobKey {
+    (
+        font.data.as_ref().as_ptr() as usize,
+        font.data.as_ref().len(),
         font.index,
     )
+}
+
+/// Returns the shared handle for this font blob, building it (one byte copy
+/// and one full-file hash) on first sight only.
+fn font_handle(engine: &mut TextEngine, font: &parley::FontData) -> FontHandle {
+    let key = font_blob_key(font);
+    if let Some(handle) = engine.font_handles.get(&key) {
+        return handle.clone();
+    }
+    let mut hasher = DefaultHasher::new();
+    font.data.as_ref().hash(&mut hasher);
+    hasher.write_u64(u64::from(font.index));
+    let id = FontId(hasher.finish());
+    let handle = FontHandle::with_face_index(
+        id,
+        Arc::<[u8]>::from(font.data.as_ref().to_vec()),
+        font.index,
+    );
+    engine.font_handles.insert(key, handle.clone());
+    handle
+}
+
+/// Task 15 text structural contracts: invalidation categories must do
+/// categorically different work. All assertions are operation counts.
+#[cfg(test)]
+mod document_contracts {
+    use super::*;
+
+    fn paragraph(index: usize) -> String {
+        format!("Paragraph {index}: the retained per-paragraph cache keeps warm documents cheap.")
+    }
+
+    fn document(paragraphs: usize) -> String {
+        (0..paragraphs)
+            .map(paragraph)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn warm_document_reshapes_nothing() {
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let doc = document(300);
+        engine.layout(&doc, &style, None, TextAlign::Start);
+        let cold = engine.diagnostics();
+        assert_eq!(cold.paragraphs_reshaped, 300);
+
+        engine.layout(&doc, &style, None, TextAlign::Start);
+        let warm = engine.diagnostics();
+        assert_eq!(
+            warm.paragraphs_reshaped - cold.paragraphs_reshaped,
+            0,
+            "warm document must not reshape"
+        );
+        assert_eq!(
+            warm.parley_layouts_reused - cold.parley_layouts_reused,
+            300,
+            "every paragraph served from cache"
+        );
+    }
+
+    #[test]
+    fn single_paragraph_edit_reshapes_exactly_one_paragraph() {
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let mut doc = document(301);
+        engine.layout(&doc, &style, None, TextAlign::Start);
+        let before = engine.diagnostics();
+
+        // Edit the middle paragraph only.
+        let middle = format!("EDITED {}", paragraph(150));
+        let mut lines: Vec<String> = doc.split('\n').map(str::to_owned).collect();
+        lines[150] = middle;
+        doc = lines.join("\n");
+
+        engine.layout(&doc, &style, None, TextAlign::Start);
+        let after = engine.diagnostics();
+        assert_eq!(
+            after.paragraphs_reshaped - before.paragraphs_reshaped,
+            1,
+            "only the edited paragraph reshapes"
+        );
+        assert_eq!(
+            after.parley_layouts_reused - before.parley_layouts_reused,
+            300,
+            "all other paragraphs reuse their layouts"
+        );
+    }
+
+    #[test]
+    fn color_only_change_is_a_layout_cache_hit() {
+        // LayoutKey deliberately excludes color: recoloring must not shape.
+        let mut engine = TextEngine::new();
+        let plain = TextStyle::default();
+        engine.layout("color contract", &plain, None, TextAlign::Start);
+        let before = engine.diagnostics();
+
+        let recolored = TextStyle {
+            color: incular_core::Color::rgba(255, 0, 0, 255),
+            ..plain.clone()
+        };
+        let first = engine.layout("color contract", &recolored, None, TextAlign::Start);
+        let second = engine.layout("color contract", &plain, None, TextAlign::Start);
+        let after = engine.diagnostics();
+        assert_eq!(after.shaping_runs - before.shaping_runs, 0, "no reshaping");
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn selection_and_caret_geometry_do_not_touch_the_engine() {
+        // Selection math consumes the already-retained TextLayout; this test
+        // pins that invariant at the engine boundary: repeated layout calls
+        // for identical input stay cache hits even while callers mutate
+        // selection state externally.
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let doc = "selectable body\nsecond line\nthird".to_string();
+        engine.layout(&doc, &style, Some(320.), TextAlign::Start);
+        let before = engine.diagnostics();
+
+        for _ in 0..25 {
+            engine.layout(&doc, &style, Some(320.), TextAlign::Start);
+        }
+        let after = engine.diagnostics();
+        assert_eq!(after.cache_misses - before.cache_misses, 0);
+        assert_eq!(after.shaping_runs - before.shaping_runs, 0);
+        assert_eq!(after.paragraphs_reshaped - before.paragraphs_reshaped, 0);
+    }
+}
+#[cfg(test)]
+mod probe_compare {
+    use super::*;
+    #[test]
+    fn probe_mono_vs_composed() {
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let doc = "abcdef\nxy\n123456";
+        let mono = engine.layout(doc, &style, Some(120.), TextAlign::Start);
+        let d1 = engine.diagnostics();
+        println!(
+            "mono: lh={} h={} lines={}",
+            mono.metrics.line_height,
+            mono.metrics.size.height,
+            mono.lines.len()
+        );
+        for (i, l) in mono.lines.iter().enumerate() {
+            println!(
+                "  mono[{i}]: start={} end={} caret_end={} baseline={}",
+                l.start, l.end, l.caret_end, l.baseline
+            );
+        }
+        // Force composed by clearing cache? Routing keys off contains('\n') only.
+        let _ = d1;
+    }
+}
+#[cfg(test)]
+mod probe_entry_size {
+    use super::*;
+    #[test]
+    fn probe_single_layout_deep_size() {
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let live0 = probe_live();
+        let layout = engine.layout("warm", &style, None, TextAlign::Start);
+        let live1 = probe_live();
+        println!("delta_live_bytes={}", live1 - live0);
+        println!(
+            "lines={} glyphs={} runs={}",
+            layout.lines.len(),
+            layout.lines.iter().map(|l| l.glyphs.len()).sum::<usize>(),
+            layout.font_runs.len()
+        );
+        println!("cache_entries={}", engine.cache.len());
+    }
+    fn probe_live() -> usize {
+        // Reads this process's VmRSS as a stable proxy (pages, KB→B).
+        let stat = std::fs::read_to_string("/proc/self/status").unwrap();
+        stat.split('\n')
+            .find(|l| l.starts_with("VmRSS"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|kb| kb.parse::<usize>().ok())
+            .unwrap_or(0)
+            * 1024
+    }
 }

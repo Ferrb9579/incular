@@ -503,3 +503,204 @@
   text/images examples complete without panics or wgpu validation errors.
   Note: `incular-workspace-tests::parity_manifest` fails on pristine HEAD
   before this task and remains unrelated to the renderer.
+
+## Task 14 — performance profiler, benchmarks, regression contracts
+
+- [x] Baseline repair: `specs/widget_parity.jsonl` evidence/notes fields were
+  accurate in substance but lacked the literal markers the manifest contract
+  requires (`test`, `prerequisite`). Every cited test was verified to exist,
+  then wording corrected; workspace back to 0 failures.
+- [x] Profiler core (incular-runtime `profiling` module): compact Copy
+  `FrameTimings`/`FrameWork`/`FrameRecord`, bounded `FrameHistory`
+  (300–1000 samples) with p50/p95/p99 statistics, `ProfilerMode`
+  Normal/Diagnostic/Profiling, refresh-rate-derived budgets, present-stamp FPS.
+- [x] Frame instrumentation: messages/build/layout/composite/semantics/paint
+  phase spans in `run_frame_at` plus input-dispatch accumulation in
+  `handle_input`; renderer prepare/encode/submit timings merged per window via
+  `note_render_metrics`. Phases never nest or double-count.
+- [x] Work counters: reconciliation fast paths, layout cache hits,
+  display-list reuse, compositor-only updates, items built/reused, mounts,
+  rebuilds — extending the existing widgets `Diagnostics`.
+- [x] GPU metrics: per-frame draw/instance/pass/triangle/upload-byte/
+  submission counts plus pipeline creations (steady-state invariant zero);
+  optional non-blocking timestamp queries bracketing the main compositor pass
+  with delayed two-frame resolution (`SKIPPED`-style "timing unavailable"
+  when unsupported).
+- [x] Scheduler/reactivity counters: signal reads/writes, dependents
+  enqueued, runtime wakes, redraw requests, frames started/presented/skipped.
+- [x] Scroll metrics: `ExtentIndexMetrics` on `MeasuredExtentIndex`
+  (offset↔index queries, viewport queries, extent updates), shared across
+  clones.
+- [x] Public API: `Application::performance_snapshot()` (Serde JSON),
+  `PerformanceHub` observer-gated publishing (~5 Hz max, Diagnostic+ only),
+  repaint-contained overlay installed onto a keyed placeholder
+  (`performance_overlay_placeholder()` +
+  `incular::install_performance_overlay`); overlay rebuilds alone on publish.
+- [x] Structural contracts (`tests/performance_contracts.rs`, all
+  operation-count based, no timing thresholds): tiny-signal bounded rebuilds
+  in 1k/10k trees; compositor transform animation with BUILD/LAYOUT/PAINT=0
+  and COMPOSITE>0; 1M-row deep jump bounded materialization + query counts;
+  warm text layout cache hit; bounded profiler history; hub observer gating;
+  overlay install contract; static window never requests frames while another
+  animates; idle runtime wakes produce no redraws.
+- [x] Criterion suites: reconciliation/layout/semantics (widgets), signals/
+  restoration (runtime), variable_list (scroll), text_layout (text),
+  path_tessellation (wgpu). `cargo bench --no-run` passes; representative
+  runs confirm logarithmic variable-list lookups (39 ns @10k → 246 ns @100k).
+- [x] `examples/performance_gallery.rs`: 12 selectable scenarios (100k
+  widgets, 1M fixed/variable lists, large text, images, paths, gradients,
+  effects, nested scroll, gestures, transform animation, multi-window) with
+  live overlay; auto-pilot mode cycles scenarios for hands-free validation.
+- [x] tracing spans for frame phases; `[profile.profiling]` release+debug;
+  PERFORMANCE.md documents architecture, caches, budgets, and known costs.
+
+## Task 15 — measured hot-path optimization
+
+- [x] Reconciliation root cause: per-child `Widget` deep clones (desired clone
+  + old clone per visited child), a full deep-clone of every child widget via
+  `children()`, and an O(font-file) copy+hash inside text layout that
+  dominated changed-text frames.
+- [x] Fixes: reference-based child lists (`children_refs`), borrow-compare
+  unchanged bailout (zero allocation), move-out semantics cloning only on
+  element creation, borrowed duplicate-key validation, custom `Key::hash`
+  (single `write_u64`; measured 861 µs/frame → ~0 for keyless lists),
+  guarded `sync_render_children`, O(N) keyed middle with old-position
+  tracking (`elements_moved`).
+- [x] Text root cause: `font_handle()` copied the entire font blob per glyph
+  run and `font_id()` hashed the whole file per run; every cached layout
+  pinned a private font copy (~515 KB/string). Fixed with a shared
+  per-blob handle cache; document path composes retained per-paragraph
+  layouts with byte-range/glyph-cluster rebasing.
+- [x] Measured results (quick-mode medians, release): unchanged/10k siblings
+  8.86→2.06 ms; single-child change 10.70→2.56 ms; all-texts-changed/10k
+  3454→2.47 ms; insert-front/10k 11.74→2.28 ms. Document: cold 264→16.5 ms;
+  warm 367 µs; single-paragraph edit 361 µs (structural test asserts exactly
+  one paragraph reshaped of 301); color-only change 1.07 µs cache hit.
+  Retained heap: 8k widgets 7.3 GB→54 MB; bench suite peak >4 GB→57 MB.
+- [x] Correctness: proptest reconciliation-vs-reference-model suite (256
+  randomized insert/remove/move/replace/change-key sequences asserting order,
+  key identity, retained payload identity, counts) plus four structural
+  counter contracts (unchanged 10k zero mutation work; single-change
+  locality; keyed reorder preserves state with exact move counts;
+  incompatible same-key replacement remounts fresh). The textarea
+  pointer-navigation regression test caught (and now locks) document-cluster
+  rebasing.
+- [x] Dirty queue: `dirty_requests/insertions/deduplicated` counters; contract
+  test proves 10,000 signal writes coalesce into one dependent rebuild.
+- [x] Safety rails added after the guard incident: `scripts/bench-guard.sh`
+  (RSS watchdog kills runaway benches; default 4096 MB),
+  `INCULAR_HEAVY_BENCH=1` gates the 6 GB `unchanged_100k` case out of default
+  sweeps.
+- [x] Renderer untouched this task (Task 14 data showed it was not a
+  bottleneck); Parley/Kurbo/Tokio/ICU4X/AccessKit boundaries preserved.
+
+## Task 16 — DevTools inspector, profiler, runtime diagnostics
+
+- [x] Crate split: `incular-devtools-protocol` (typed/versioned Serde wire
+  protocol; serde-only), `incular-devtools` (target-side agent: WebSocket
+  server on 127.0.0.1:<random>, random per-session token, versioned
+  handshake, discovery records under the user data dir with stale-pid
+  pruning, bounded telemetry queue with drop accounting), and
+  `tools/incular-devtools-ui` (standalone DevTools application built with
+  Incular itself; its own agent stays off to avoid recursive discovery).
+- [x] Feature gating: `devtools` features chain through runtime/widgets/
+  linux/facade. Production builds compile no DevTools code paths.
+- [x] Runtime hooks (feature-gated): per-element build/layout/paint counters,
+  content revisions, invalidation causes recorded at real invalidation sites,
+  signal registry with `.devtools("name")` / `.devtools_editable()` builders,
+  bounded Debug summaries captured at write time, tree snapshot extraction
+  with opaque generational ids (`DevWidgetId{index,generation}`) that reject
+  stale reuse.
+- [x] Protocol: Hello/TargetInfo handshake with token + version validation,
+  typed Request/Response/Event envelopes, WidgetNode snapshots plus
+  Insert/Remove/Move/Update deltas, NodeDetails, FrameRecordEvent,
+  MemorySnapshot, SignalSummary/Subscriber, DebugOption toggles, editable
+  values. Malformed frames rejected; unauthorized handshakes closed.
+- [x] Runner integration: agent lifecycle behind `INCULAR_DEVTOOLS=1`, on the
+  application's existing Tokio runtime (no second executor); frame records,
+  bounded 4 Hz subscribed-tree deltas, UI-thread command draining, and
+  Select-Widget pointer interception (hover/click never dispatch to the app).
+- [x] UI: connection status, multi-window selection, searchable virtualized
+  widget tree, node properties/counters/invalidation details, frame timeline,
+  and framework-resource/RSS snapshot. Built with Incular widgets; 100k-node
+  targets retain compact rows rather than 100k DevTools widgets.
+- [x] Tests: protocol round-trip/hello-validation/version-mismatch/token
+  rejection/malformed rejection/tree-delta round-trip/generation semantics;
+  workspace suites stay green.
+- [x] Docs: DEVTOOLS.md covers architecture, enabling, security, panels,
+  overhead model, and explicit non-goals (no source debugger, no hot reload,
+  no network interception without an integration crate).
+
+Known gaps (documented, not claimed): target-side layout/paint-phase visual
+overlays (selected-widget and Select Widget hover overlays work),
+layout-explorer visuals, render/layer/semantics tree cross-links, signal graph
+panel, deep flamegraph/ranked views, memory snapshot diffing UI, logs tab
+wiring, network integration crate, slow-animation time dilation, editable
+widget-property overrides, and export/import formats.
+
+## Task 16.1 — DevTools product completion
+
+- [x] Inspector: bounded structured built-in property diffs rendered without
+  raw `Debug`, with existing invalidation cause shown in the UI.
+- [x] Signals: live generation/write/subscriber inventory, subscriber paths,
+  selected-widget dependencies, and typed explicitly opted-in UI-thread edits.
+- [x] Memory: named A/B framework resource snapshots with explicit retained
+  inventory deltas (not claimed allocator/heap coverage).
+- [ ] Inspector: source metadata, structured property diffs, causal rebuild
+  chains, and linked retained objects.
+- [ ] Layout Explorer and non-invasive target visual diagnostics.
+- [ ] Signals graph and safe opted-in editing/temporary property overrides.
+- [ ] Performance frame detail, filtering, deep trace, flamegraph, ranked
+  aggregation, and bounded unified timeline.
+- [ ] Memory snapshots/diffs and retention explanations; renderer/cache and
+  oversized-image inspector.
+- [ ] Accessibility, runtime/tasks/navigation/restoration, and logs panels.
+- [ ] Applied slow animations; recording export/import and offline mode.
+- [ ] Multi-window/reconnect/backpressure completion, overhead measurement,
+  desktop validation, tests, and accurate documentation.
+
+## Task 16.2 — Visual debugging, Layout Explorer & deep profiler
+
+- [x] Retained Layout Explorer snapshot: constraints, resolved/local/world
+  geometry, Kurbo affine coefficients, content/padding/clip/baseline, and
+  typed Box/Flex/Stack/Positioned/Transform/Fitted/Scroll/Lazy/Text details.
+- [x] Flex child allocation inspection uses actual retained child constraints,
+  sizes, and offsets; stack/IndexedStack inspection reports actual child
+  bounds and whether a child is painted.
+- [x] Target-only layout overlays: selected subtree/whole-window retained
+  bounds with a 10,000-rectangle ceiling and 8 Hz sampling; selected baseline
+  and clip adornments remain outside widgets, hit testing, and semantics.
+- [x] Animation time dilation: 1×/0.5×/0.25×/0.1×/pause commands now alter
+  retained animation progression only, leaving Tokio and profiler wall time
+  unchanged.
+- [x] Bounded coalesced invalidation-cause representation and UI rendering.
+- [x] BUILD/LAYOUT/PAINT/COMPOSITE flashes sample actual retained per-node
+  counters only while enabled; display-list replay remains distinct from PAINT.
+- [x] Repaint Rainbow advances only for actual retained PAINT work, never
+  compositor-only updates or display-list replay.
+- [x] Bounded hit-test, semantic-tree, scroll-viewport, application-layer,
+  and selected padding/content overlays use retained subsystem geometry.
+- [x] Opt-in Deep profiler: hierarchical typed per-node spans, 4,096-event
+  frame cap with explicit drops, 300-frame auto-stop, and 200,000-event UI
+  memory cap; Basic/Performance collect no node timestamps.
+- [x] Batched `CustomPaint` flamegraph, clickable ranked current/range/all
+  aggregation, selectable frame detail, and bounded timeline zoom/pan/range
+  controls consume the same Deep trace records.
+- [x] Named Signal writes carry exact bounded old/new causes through the
+  reactive queue to dependent BUILDs; task-completion context is retained for
+  Signal writes made by tracked async completions, while unknown edges remain
+  unreported.
+- [x] Deep-only 64-entry retained layout history plus explicit last
+  layout/paint/composite work reasons powers Why Layout/Paint diagnostics.
+- [x] Protocol/model/retained subsystem tests cover Deep hierarchy and drops,
+  flamegraph geometry, range aggregation, memory bounds, Signal causality,
+  overlay isolation/bounds, animation scaling, and multi-window routing.
+- [x] Mandatory validation completed: serial whole-workspace tests, strict
+  all-target/all-feature Clippy, and benchmark compilation pass. The gallery
+  launches on native Wayland; because GNOME denies unattended Wayland window
+  capture, its final interaction/pixel pass was repeated through XWayland with
+  `xdotool` and a real GPU gradient workload.
+- [x] Performance-gallery closure: fixed/variable virtual lists receive hard
+  bounded viewports and materialize visible rows; paragraph, image, path,
+  nested-scroll, and persistent gesture examples render as usable workloads.
+  Example-level regression tests enforce bounded nonempty list materialization.

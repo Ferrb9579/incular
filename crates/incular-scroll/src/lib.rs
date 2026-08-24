@@ -14,6 +14,7 @@ use incular_core::{Color, Offset, Rect, RestorationKey, RestorationScope, Size};
 #[derive(Clone)]
 pub struct MeasuredExtentIndex {
     state: Rc<RefCell<MeasuredExtentState>>,
+    metrics: Rc<ExtentIndexCounters>,
 }
 
 impl std::fmt::Debug for MeasuredExtentIndex {
@@ -129,6 +130,42 @@ struct MeasuredExtentState {
     structure_revision: u64,
 }
 
+/// Structural operation counts for one variable-extent index. These prove
+/// lookup/materialization complexity contracts (O(visible + overscan + log N))
+/// without relying on wall-clock timings. Increments are relaxed atomics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExtentIndexMetrics {
+    /// `offset_for_index` calls (index → offset direction).
+    pub index_to_offset_queries: u64,
+    /// `index_at_offset` calls (offset → index direction).
+    pub offset_to_index_queries: u64,
+    /// Viewport range computations (no building, pure arithmetic).
+    pub viewport_queries: u64,
+    /// Exact post-layout extent updates applied to the tree.
+    pub extent_updates: u64,
+}
+
+/// Interior shared counters; `Rc`-shared across clones of the index so every
+/// handle reports the same structural history.
+#[derive(Default)]
+struct ExtentIndexCounters {
+    index_to_offset: std::cell::Cell<u64>,
+    offset_to_index: std::cell::Cell<u64>,
+    viewport_queries: std::cell::Cell<u64>,
+    extent_updates: std::cell::Cell<u64>,
+}
+impl ExtentIndexCounters {
+    #[must_use]
+    fn snapshot(&self) -> ExtentIndexMetrics {
+        ExtentIndexMetrics {
+            index_to_offset_queries: self.index_to_offset.get(),
+            offset_to_index_queries: self.offset_to_index.get(),
+            viewport_queries: self.viewport_queries.get(),
+            extent_updates: self.extent_updates.get(),
+        }
+    }
+}
+
 impl MeasuredExtentState {
     fn rebuild_trees(&mut self) {
         self.extent_tree = Fenwick::from_values(self.chunks.iter().map(|chunk| chunk.extent_sum));
@@ -169,6 +206,8 @@ impl MeasuredExtentIndex {
     /// Creates `item_count` unmeasured rows using `estimated_extent`.
     #[must_use]
     pub fn new(item_count: usize, estimated_extent: f32) -> Self {
+        let metrics = Rc::new(ExtentIndexCounters::default());
+        let _ = metrics.clone();
         assert!(
             estimated_extent.is_finite() && estimated_extent > 0.,
             "estimated extent must be positive and finite"
@@ -193,7 +232,14 @@ impl MeasuredExtentIndex {
         state.rebuild_trees();
         Self {
             state: Rc::new(RefCell::new(state)),
+            metrics,
         }
+    }
+
+    /// Structural operation counters since creation. Shared across clones.
+    #[must_use]
+    pub fn metrics(&self) -> ExtentIndexMetrics {
+        self.metrics.snapshot()
     }
 
     #[must_use]
@@ -239,6 +285,9 @@ impl MeasuredExtentIndex {
     /// Returns the estimated or measured leading offset of `index`.
     #[must_use]
     pub fn offset_for_index(&self, index: usize) -> f32 {
+        self.metrics
+            .index_to_offset
+            .set(self.metrics.index_to_offset.get() + 1);
         self.state
             .borrow()
             .offset_for_index(index)
@@ -248,6 +297,9 @@ impl MeasuredExtentIndex {
     /// Returns the row containing `offset`, clamped to the final row.
     #[must_use]
     pub fn index_at_offset(&self, offset: f32) -> Option<usize> {
+        self.metrics
+            .offset_to_index
+            .set(self.metrics.offset_to_index.get() + 1);
         let state = self.state.borrow();
         if state.len() == 0 {
             return None;
@@ -284,6 +336,9 @@ impl MeasuredExtentIndex {
         if count == 0 {
             return 0..0;
         }
+        self.metrics
+            .viewport_queries
+            .set(self.metrics.viewport_queries.get() + 1);
         let start_offset = (scroll_offset - cache_extent.max(0.)).max(0.);
         let end_offset = (scroll_offset.max(0.) + viewport_extent.max(0.) + cache_extent.max(0.))
             .max(start_offset);
@@ -317,6 +372,10 @@ impl MeasuredExtentIndex {
         chunk.extent_sum += delta;
         state.extent_tree.add(chunk_index, delta);
         state.revision += 1;
+        drop(state);
+        self.metrics
+            .extent_updates
+            .set(self.metrics.extent_updates.get() + 1);
         true
     }
 

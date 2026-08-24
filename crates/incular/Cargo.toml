@@ -96,6 +96,11 @@ name = "virtual_list"
 path = "../../examples/virtual_list.rs"
 
 [features]
+devtools = [
+    "incular-linux/devtools",
+    "incular-runtime/devtools",
+    "incular-widgets/devtools",
+]
 default = ["desktop"]
 desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux", "dep:incular-windows", "dep:incular-macos"]
 
@@ -126,3 +131,6 @@ incular-macos = { workspace = true, optional = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 tokio = { workspace = true }
+[[example]]
+name = "performance_gallery"
+path = "../../examples/performance_gallery.rs"

@@ -27,3 +27,8 @@ kurbo = { workspace = true }
 incular-text = { workspace = true }
 naga = { workspace = true, features = ["wgsl-in"] }
 pollster = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "path_tessellation"
+harness = false

@@ -4,6 +4,8 @@ use accesskit_winit::{
 };
 use incular_accessibility::AccessKitProjection;
 use incular_config::Constraints;
+#[cfg(feature = "devtools")]
+use incular_core::Offset;
 use incular_core::PointerPhase;
 use incular_platform::{
     Clipboard, PhysicalSize, PlatformEvent, WindowCommand, WindowEvent as IncularWindowEvent,
@@ -16,6 +18,8 @@ use incular_runtime::{
 use incular_wgpu::{RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::ActionId;
 use std::{collections::HashMap, sync::Arc, time::Instant};
+#[cfg(feature = "devtools")]
+use std::{path::PathBuf, process::Command};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
@@ -112,12 +116,123 @@ impl Clipboard for LinuxClipboard {
 }
 /// Runs an application built with Incular's declarative root API. Button
 /// callbacks are dispatched by `Runtime`; the legacy action callback is empty.
+#[cfg(feature = "devtools")]
+pub mod devtools_runner;
+
+#[cfg(feature = "devtools")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DevToolsLaunchMode {
+    Disabled,
+    AgentOnly,
+    OpenUi,
+}
+
+#[cfg(feature = "devtools")]
+fn devtools_launch_mode_from(
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+    environment_enabled: bool,
+) -> DevToolsLaunchMode {
+    if args.into_iter().any(|argument| {
+        matches!(
+            argument.as_ref().to_str(),
+            Some("--devtools" | "--incular-devtools")
+        )
+    }) {
+        DevToolsLaunchMode::OpenUi
+    } else if environment_enabled {
+        DevToolsLaunchMode::AgentOnly
+    } else {
+        DevToolsLaunchMode::Disabled
+    }
+}
+
+#[cfg(feature = "devtools")]
+fn devtools_launch_mode() -> DevToolsLaunchMode {
+    devtools_launch_mode_from(
+        std::env::args_os(),
+        std::env::var_os("INCULAR_DEVTOOLS").is_some(),
+    )
+}
+
+#[cfg(feature = "devtools")]
+fn devtools_ui_candidates(current_exe: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(explicit) = std::env::var_os("INCULAR_DEVTOOLS_UI") {
+        candidates.push(PathBuf::from(explicit));
+    }
+    if let Some(executable) = current_exe {
+        if let Some(directory) = executable.parent() {
+            candidates.push(directory.join("incular-devtools"));
+            // Cargo examples live under target/{profile}/examples while the
+            // DevTools binary lives one directory above them.
+            if directory.file_name().and_then(|name| name.to_str()) == Some("examples")
+                && let Some(profile_directory) = directory.parent()
+            {
+                candidates.push(profile_directory.join("incular-devtools"));
+            }
+        }
+    }
+    candidates
+}
+
+#[cfg(feature = "devtools")]
+fn launch_devtools_ui() {
+    let pid = std::process::id().to_string();
+    let candidates = devtools_ui_candidates(std::env::current_exe().ok());
+    for candidate in &candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        match Command::new(candidate)
+            .arg("--target-pid")
+            .arg(&pid)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => return,
+            Err(error) => eprintln!(
+                "Incular DevTools: could not launch {}: {error}",
+                candidate.display()
+            ),
+        }
+    }
+    match Command::new("incular-devtools")
+        .arg("--target-pid")
+        .arg(pid)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_) => {}
+        Err(error) => eprintln!(
+            "Incular DevTools: --devtools started the target agent, but the UI binary was not found ({error}). Build it with `cargo build -p incular-devtools-ui` or set INCULAR_DEVTOOLS_UI."
+        ),
+    }
+}
+
 pub fn run_application(application: Application) -> Result<(), RunError> {
     let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
         .build()
         .map_err(RunError::EventLoop)?;
     let proxy = event_loop.create_proxy();
     let wake = Arc::new(LinuxWake(proxy.clone()));
+    #[cfg(feature = "devtools")]
+    let devtools_mode = devtools_launch_mode();
+    #[cfg(feature = "devtools")]
+    let devtools_agent = if devtools_mode != DevToolsLaunchMode::Disabled {
+        let config = incular_devtools::session::SessionConfig {
+            app_name: std::env::current_exe()
+                .ok()
+                .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "incular-app".into()),
+        };
+        incular_devtools::spawn(config, application.tokio_handle())
+    } else {
+        None
+    };
+    #[cfg(feature = "devtools")]
+    if devtools_agent.is_some() && devtools_mode == DevToolsLaunchMode::OpenUi {
+        launch_devtools_ui();
+    }
     let mut app = MultiApp {
         application,
         windows: HashMap::new(),
@@ -125,6 +240,8 @@ pub fn run_application(application: Application) -> Result<(), RunError> {
         shared_gpu: None,
         frame_timestamp: Instant::now(),
         accessibility_proxy: proxy,
+        #[cfg(feature = "devtools")]
+        devtools_state: crate::devtools_runner::DevToolsState::new(devtools_agent),
     };
     app.application.set_wake_handler(wake);
     event_loop.run_app(&mut app).map_err(RunError::EventLoop)
@@ -484,6 +601,9 @@ struct MultiApp {
     shared_gpu: Option<SharedGpuContext>,
     frame_timestamp: Instant,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
+    /// Debug overlays, Select Widget mode, and the DevTools agent pump.
+    #[cfg(feature = "devtools")]
+    devtools_state: crate::devtools_runner::DevToolsState,
 }
 
 impl MultiApp {
@@ -652,6 +772,8 @@ impl MultiApp {
     }
 
     fn redraw_window(&mut self, id: IncularWindowId) {
+        #[cfg(feature = "devtools")]
+        self.devtools_state.drain(&mut self.application);
         let Some(native_id) = self.native_ids.get(&id).copied() else {
             return;
         };
@@ -659,24 +781,101 @@ impl MultiApp {
             return;
         };
         let metrics = state.metrics;
+        #[cfg(feature = "devtools")]
+        self.devtools_state
+            .begin_deep_frame(&mut self.application, id);
         let result = self.application.run_window_frame_at(
             id,
             Constraints::tight(metrics.logical_size()),
             self.frame_timestamp,
         );
         match result {
-            Ok(Some((list, _))) => match state.renderer.render(&list, metrics.scale_factor) {
-                Ok(stats) => {
-                    self.application.note_presented(id, stats.presented);
-                    if !stats.presented {
-                        state.window.request_redraw();
+            Ok(Some((list, frame))) => {
+                #[cfg(feature = "devtools")]
+                let mut list = list;
+                #[cfg(feature = "devtools")]
+                let devtools_frame = frame;
+                #[cfg(not(feature = "devtools"))]
+                let _ = frame;
+                #[cfg(feature = "devtools")]
+                self.devtools_state.paint_overlay(id, &mut list);
+                match state.renderer.render(&list, metrics.scale_factor) {
+                    Ok(stats) => {
+                        self.application.note_presented(id, stats.presented);
+                        #[cfg(feature = "devtools")]
+                        {
+                            let frame = &devtools_frame;
+                            let budget_us = state
+                                .window
+                                .current_monitor()
+                                .and_then(|monitor| monitor.refresh_rate_millihertz())
+                                .filter(|rate| *rate > 0)
+                                .map(|rate| {
+                                    u32::try_from(1_000_000_000_u64 / u64::from(rate))
+                                        .unwrap_or(u32::MAX)
+                                });
+                            let cpu_total = frame
+                                .timings
+                                .cpu_total
+                                .saturating_add(stats.prepare_us)
+                                .saturating_add(stats.encode_us)
+                                .saturating_add(stats.submit_us);
+                            let frame_id = self.devtools_state.next_frame();
+                            self.devtools_state.push_frame(
+                                incular_devtools_protocol::TargetEvent::FrameRecord(
+                                    incular_devtools_protocol::FrameRecordEvent {
+                                        window: incular_devtools_protocol::DevWindowId::new(
+                                            u64::from(id.index()) + 1,
+                                            u64::from(id.generation()),
+                                        ),
+                                        frame: frame_id,
+                                        timings: incular_devtools_protocol::FrameTimingsWire {
+                                            event_processing: frame.timings.event_processing,
+                                            runtime_messages: frame.timings.runtime_messages,
+                                            build: frame.timings.build,
+                                            layout: frame.timings.layout,
+                                            composite: frame.timings.composite,
+                                            semantics: frame.timings.semantics,
+                                            paint: frame.timings.paint,
+                                            cpu_total,
+                                            prepare: stats.prepare_us,
+                                            encode: stats.encode_us,
+                                            submit: stats.submit_us,
+                                            gpu_us: state
+                                                .renderer
+                                                .gpu_frame_timings()
+                                                .map(|timing| timing.main_pass_us),
+                                        },
+                                        budget_us,
+                                        over_budget: budget_us
+                                            .is_some_and(|budget| cpu_total > budget),
+                                        draw_calls: stats.draw_calls,
+                                        instances: stats.total_instances(),
+                                        upload_bytes: stats.upload_bytes,
+                                        pipelines_created: stats.pipelines_created,
+                                    },
+                                ),
+                            );
+                            if self.devtools_state.note_recorded_frame()
+                                && self.devtools_state.deep_recording()
+                                && let Some(trace) =
+                                    self.application.devtools_take_deep_trace(id, frame_id)
+                            {
+                                self.devtools_state.push_frame(
+                                    incular_devtools_protocol::TargetEvent::DeepTrace(trace),
+                                );
+                            }
+                        }
+                        if !stats.presented {
+                            state.window.request_redraw();
+                        }
                     }
+                    Err(RendererError::OutOfMemory) => {
+                        eprintln!("Incular renderer stopped: out of GPU memory");
+                    }
+                    Err(error) => eprintln!("Incular renderer error: {error}"),
                 }
-                Err(RendererError::OutOfMemory) => {
-                    eprintln!("Incular renderer stopped: out of GPU memory");
-                }
-                Err(error) => eprintln!("Incular renderer error: {error}"),
-            },
+            }
             Ok(None) => self.application.note_presented(id, false),
             Err(error) => eprintln!("Incular runtime error: {error:?}"),
         }
@@ -693,6 +892,8 @@ impl MultiApp {
         }
         self.application
             .set_accessibility_diagnostics(id, state.accessibility.projection.diagnostics());
+        #[cfg(feature = "devtools")]
+        self.devtools_state.stream_tree_updates(&self.application);
     }
 
     fn route_window_event(&mut self, native_id: NativeWindowId, event: IncularWindowEvent) {
@@ -794,6 +995,18 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     state.cursor = position;
                     pointer_event(PointerPhase::Move, position, state.metrics)
                 };
+                #[cfg(feature = "devtools")]
+                if self.devtools_state.inspect_pointer(
+                    &self.application,
+                    id,
+                    Offset::new(
+                        (position.x / self.windows[&native_id].metrics.scale_factor) as f32,
+                        (position.y / self.windows[&native_id].metrics.scale_factor) as f32,
+                    ),
+                    false,
+                ) {
+                    return;
+                }
                 self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
             }
             WindowEvent::MouseInput {
@@ -813,6 +1026,24 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                         state_ref.metrics,
                     )
                 };
+                #[cfg(feature = "devtools")]
+                if state == ElementState::Pressed
+                    && self.devtools_state.inspect_pointer(
+                        &self.application,
+                        id,
+                        Offset::new(
+                            (self.windows[&native_id].cursor.x
+                                / self.windows[&native_id].metrics.scale_factor)
+                                as f32,
+                            (self.windows[&native_id].cursor.y
+                                / self.windows[&native_id].metrics.scale_factor)
+                                as f32,
+                        ),
+                        true,
+                    )
+                {
+                    return;
+                }
                 self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
             }
             WindowEvent::Touch(touch) => {
@@ -934,5 +1165,44 @@ fn environment_for(metrics: WindowMetrics) -> incular_config::RuntimeEnvironment
             stylus: false,
         },
         ..incular_config::RuntimeEnvironment::default()
+    }
+}
+
+#[cfg(all(test, feature = "devtools"))]
+mod devtools_launch_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_flag_opens_the_ui() {
+        assert_eq!(
+            devtools_launch_mode_from(["app", "--devtools"], false),
+            DevToolsLaunchMode::OpenUi
+        );
+        assert_eq!(
+            devtools_launch_mode_from(["app", "--incular-devtools"], false),
+            DevToolsLaunchMode::OpenUi
+        );
+    }
+
+    #[test]
+    fn environment_preserves_agent_only_compatibility() {
+        assert_eq!(
+            devtools_launch_mode_from(["app"], true),
+            DevToolsLaunchMode::AgentOnly
+        );
+        assert_eq!(
+            devtools_launch_mode_from(["app"], false),
+            DevToolsLaunchMode::Disabled
+        );
+    }
+
+    #[test]
+    fn cargo_example_candidate_includes_profile_binary() {
+        let candidates =
+            devtools_ui_candidates(Some(PathBuf::from("/repo/target/debug/examples/gallery")));
+        assert!(
+            candidates.contains(&PathBuf::from("/repo/target/debug/incular-devtools")),
+            "{candidates:?}"
+        );
     }
 }

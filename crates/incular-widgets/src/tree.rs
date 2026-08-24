@@ -39,6 +39,9 @@ use incular_text::{
 };
 use std::sync::Arc;
 
+#[cfg(feature = "devtools")]
+use incular_devtools_protocol::{DebugValue, DevWidgetId, TraceEvent, TracePhase};
+
 use crate::SelectionAreaController;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
 use crate::gestures::{
@@ -48,9 +51,9 @@ use crate::gestures::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ElementId(ArenaId);
+pub struct ElementId(pub(crate) ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct RenderObjectId(ArenaId);
+pub struct RenderObjectId(pub(crate) ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(pub u64);
 /// A window-local retained pointer-capture token.
@@ -81,10 +84,28 @@ pub enum ButtonState {
     Focused,
     Pressed,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Key {
     Value(u64),
     String(String),
+}
+impl std::hash::Hash for Key {
+    // Discriminant is folded into the hashed payload so cross-variant
+    // collisions stay impossible while hashing becomes one `write_u64`
+    // (or one `write_str`) instead of the derived multi-write form. This
+    // was measured at ~86 ns/key via derived Hash on hot reconciliation
+    // paths (Task 15).
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Key::Value(value) => state.write_u64(*value),
+            Key::String(text) => {
+                // Strings cannot collide with values because their hashed
+                // length participates; hash str bytes plus a tagged length.
+                state.write_u64(u64::try_from(text.len()).unwrap_or(u64::MAX) | 1 << 63);
+                state.write(text.as_bytes());
+            }
+        }
+    }
 }
 impl From<u64> for Key {
     fn from(value: u64) -> Self {
@@ -633,6 +654,9 @@ impl RotationController {
         Self::default()
     }
     #[must_use]
+    pub fn angle_degrees(&self) -> f32 {
+        self.radians().to_degrees()
+    }
     pub fn radians(&self) -> f32 {
         self.radians.get()
     }
@@ -1080,8 +1104,8 @@ fn finite_non_negative(value: f32) -> f32 {
 /// The first built-in widgets. Their values contain no mutable runtime state.
 #[derive(Clone)]
 pub struct Widget {
-    key: Option<Key>,
-    kind: WidgetKind,
+    pub key: Option<Key>,
+    pub kind: WidgetKind,
     semantics: SemanticProperties,
 }
 
@@ -1152,7 +1176,7 @@ struct SemanticProperties {
     block_previous_siblings: bool,
 }
 #[derive(Clone)]
-enum WidgetKind {
+pub enum WidgetKind {
     Box {
         size: Size,
         color: Color,
@@ -1179,6 +1203,10 @@ enum WidgetKind {
         color: Color,
         action: ActionId,
         callback: Option<Rc<dyn Fn()>>,
+        hover_action: ActionId,
+        hover_callback: Option<Rc<dyn Fn()>>,
+        exit_action: ActionId,
+        exit_callback: Option<Rc<dyn Fn()>>,
         has_callback: bool,
         child: Option<Box<Widget>>,
     },
@@ -1449,12 +1477,27 @@ impl VirtualListExtent {
 }
 
 #[derive(Clone)]
-struct VirtualListConfig {
+pub struct VirtualListConfig {
     item_count: usize,
     extent: VirtualListExtent,
     cache_extent: f32,
     controller: ScrollController,
     builder: Rc<dyn Fn(usize) -> Widget>,
+}
+#[cfg(feature = "devtools")]
+impl VirtualListConfig {
+    pub fn dev_item_count(&self) -> usize {
+        self.item_count
+    }
+    pub fn dev_materialized(&self) -> usize {
+        match &self.extent {
+            VirtualListExtent::Fixed(_) => self.item_count,
+            VirtualListExtent::Variable(index) => index.measured_count(),
+        }
+    }
+    pub fn dev_cache_extent(&self) -> f32 {
+        self.cache_extent
+    }
 }
 impl std::fmt::Debug for VirtualListConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2074,24 +2117,44 @@ impl PartialEq for WidgetKind {
                     color: b,
                     action: c,
                     callback: d,
-                    has_callback: i,
-                    child: j,
+                    hover_action: i,
+                    hover_callback: j,
+                    exit_action: k,
+                    exit_callback: l,
+                    has_callback: m,
+                    child: n,
                 },
                 Self::Button {
                     size: e,
                     color: f,
                     action: g,
                     callback: h,
-                    has_callback: k,
-                    child: l,
+                    hover_action: o,
+                    hover_callback: p,
+                    exit_action: q,
+                    exit_callback: r,
+                    has_callback: s,
+                    child: t,
                 },
             ) => {
                 a == e
                     && b == f
                     && c == g
-                    && i == k
-                    && j == l
+                    && i == o
+                    && k == q
+                    && m == s
+                    && n == t
                     && match (d, h) {
+                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                    && match (j, p) {
+                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                    && match (l, r) {
                         (Some(x), Some(y)) => Rc::ptr_eq(x, y),
                         (None, None) => true,
                         _ => false,
@@ -2546,6 +2609,16 @@ enum WidgetType {
     Blend,
 }
 impl Widget {
+    /// Text content when this widget is text-like (DevTools labels only).
+    pub fn text_if_any(&self) -> Option<String> {
+        match &self.kind {
+            WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
+                Some(text.clone())
+            }
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn box_(size: Size, color: Color) -> Self {
         Self {
@@ -2615,6 +2688,10 @@ impl Widget {
                 color,
                 action,
                 callback: None,
+                hover_action: ActionId(0),
+                hover_callback: None,
+                exit_action: ActionId(0),
+                exit_callback: None,
                 has_callback: false,
                 child: None,
             },
@@ -2626,6 +2703,10 @@ impl Widget {
             WidgetKind::Button {
                 action,
                 callback,
+                hover_action,
+                hover_callback,
+                exit_action,
+                exit_callback,
                 has_callback,
                 child,
                 ..
@@ -2634,11 +2715,18 @@ impl Widget {
                     *action = allocate(callback);
                     *has_callback = true;
                 }
+                if let Some(callback) = hover_callback.take() {
+                    *hover_action = allocate(callback);
+                }
+                if let Some(callback) = exit_callback.take() {
+                    *exit_action = allocate(callback);
+                }
                 if let Some(child) = child {
                     child.bind_callbacks(allocate);
                 }
             }
             WidgetKind::Padding { child, .. }
+            | WidgetKind::Decorated { child, .. }
             | WidgetKind::Constrained { child, .. }
             | WidgetKind::Limited { child, .. }
             | WidgetKind::Overflow { child, .. }
@@ -2682,7 +2770,6 @@ impl Widget {
             WidgetKind::Box { .. }
             | WidgetKind::Shape { .. }
             | WidgetKind::CustomPaint { .. }
-            | WidgetKind::Decorated { .. }
             | WidgetKind::Text { .. }
             | WidgetKind::SelectableText { .. }
             | WidgetKind::TextField { .. }
@@ -3531,7 +3618,10 @@ impl Widget {
             WidgetKind::Blend { .. } => WidgetType::Blend,
         }
     }
-    fn children(&self) -> Vec<Widget> {
+    /// Shallow child view for reconciliation. Deep per-child clones were the
+    /// measured allocation fire on wide trees (Task 15); reconciliation only
+    /// needs references because cloning happens once per *created* element.
+    fn children_refs(&self) -> Vec<&Widget> {
         match &self.kind {
             WidgetKind::Box { .. }
             | WidgetKind::Shape { .. }
@@ -3540,9 +3630,7 @@ impl Widget {
             | WidgetKind::SelectableText { .. }
             | WidgetKind::TextField { .. }
             | WidgetKind::Image { .. } => Vec::new(),
-            WidgetKind::Button { child, .. } => {
-                child.iter().map(|child| child.as_ref().clone()).collect()
-            }
+            WidgetKind::Button { child, .. } => child.iter().map(|c| c.as_ref()).collect(),
             WidgetKind::Padding { child, .. }
             | WidgetKind::Constrained { child, .. }
             | WidgetKind::Limited { child, .. }
@@ -3573,15 +3661,13 @@ impl Widget {
             | WidgetKind::Blur { child, .. }
             | WidgetKind::DropShadow { child, .. }
             | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. } => {
-                vec![child.as_ref().clone()]
-            }
-            WidgetKind::SelectionArea { child, .. } => vec![child.as_ref().clone()],
+            | WidgetKind::Blend { child, .. } => vec![child.as_ref()],
+            WidgetKind::SelectionArea { child, .. } => vec![child.as_ref()],
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
-            | WidgetKind::Stack { children, .. } => children.clone(),
-            WidgetKind::IndexedStack { children, .. } => children.clone(),
+            | WidgetKind::Stack { children, .. }
+            | WidgetKind::IndexedStack { children, .. } => children.iter().collect(),
             WidgetKind::VirtualList { .. } | WidgetKind::LayoutBuilder { .. } => Vec::new(),
         }
     }
@@ -4987,7 +5073,13 @@ impl VirtualList {
 pub struct Button {
     label: String,
     callback: Option<Rc<dyn Fn()>>,
+    hover_callback: Option<Rc<dyn Fn()>>,
+    exit_callback: Option<Rc<dyn Fn()>>,
     color: Color,
+    size: Size,
+    label_style: TextStyle,
+    padding: EdgeInsets,
+    content: Option<Widget>,
 }
 impl Button {
     #[must_use]
@@ -4995,7 +5087,16 @@ impl Button {
         Self {
             label: label.into(),
             callback: None,
+            hover_callback: None,
+            exit_callback: None,
             color: Color::rgba(70, 120, 220, 255),
+            size: Size::new(96., 40.),
+            label_style: TextStyle {
+                color: Color::WHITE,
+                ..TextStyle::default()
+            },
+            padding: EdgeInsets::all(10.),
+            content: None,
         }
     }
     #[must_use]
@@ -5003,36 +5104,73 @@ impl Button {
         self.callback = Some(Rc::new(callback));
         self
     }
+    /// Runs once when the primary mouse pointer enters this button.
+    #[must_use]
+    pub fn on_hover(mut self, callback: impl Fn() + 'static) -> Self {
+        self.hover_callback = Some(Rc::new(callback));
+        self
+    }
+    /// Runs once when the primary mouse pointer leaves this button.
+    #[must_use]
+    pub fn on_exit(mut self, callback: impl Fn() + 'static) -> Self {
+        self.exit_callback = Some(Rc::new(callback));
+        self
+    }
     #[must_use]
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    #[must_use]
+    pub fn label_style(mut self, style: TextStyle) -> Self {
+        self.label_style = style;
+        self
+    }
+    #[must_use]
+    pub fn padding(mut self, padding: EdgeInsets) -> Self {
+        self.padding = padding;
+        self
+    }
+    /// Replaces the text label with caller-provided retained content while
+    /// preserving the button's interaction, focus, and semantic behavior.
+    #[must_use]
+    pub fn content(mut self, content: impl Into<Widget>) -> Self {
+        self.content = Some(content.into());
+        self
+    }
 }
 impl From<Button> for Widget {
     fn from(value: Button) -> Self {
-        let label = Widget::padding(
-            EdgeInsets::all(10.),
-            Widget::text_styled(
-                value.label,
-                TextStyle {
-                    color: Color::WHITE,
-                    ..TextStyle::default()
-                },
-                TextAlign::Start,
-            ),
-        );
+        let semantic_label = value.label.clone();
+        let label = value.content.unwrap_or_else(|| {
+            Widget::padding(
+                value.padding,
+                Widget::text_styled(value.label, value.label_style, TextAlign::Start),
+            )
+        });
         Self {
             key: None,
             kind: WidgetKind::Button {
-                size: Size::new(96., 40.),
+                size: value.size,
                 color: value.color,
                 action: ActionId(0),
                 callback: value.callback,
+                hover_action: ActionId(0),
+                hover_callback: value.hover_callback,
+                exit_action: ActionId(0),
+                exit_callback: value.exit_callback,
                 has_callback: false,
                 child: Some(Box::new(label)),
             },
-            semantics: SemanticProperties::default(),
+            semantics: SemanticProperties {
+                label: Some(semantic_label),
+                ..SemanticProperties::default()
+            },
         }
     }
 }
@@ -5053,19 +5191,63 @@ pub struct Diagnostics {
     pub items_mounted: u64,
     pub items_unmounted: u64,
     pub items_reused: u64,
+    /// Reconciliation prefix/suffix fast-path hits (children matched in place
+    /// without entering the keyed middle-diff).
+    pub reconciliation_fast_paths: u64,
+    // Task 15 structural breakdown. All cheap monotonic counters.
+    /// `reconcile_children` invocations that reached scanning (parent changed).
+    pub child_list_scans: u64,
+    /// Child updates skipped because the retained element already equaled the
+    /// desired widget (the unchanged-subtree bailout).
+    pub identical_child_bailouts: u64,
+    /// Widget type comparisons performed during compatibility checks.
+    pub widget_type_comparisons: u64,
+    /// Key comparisons performed during compatibility checks and lookups.
+    pub key_comparisons: u64,
+    /// Full widget configuration equality checks (deep ==).
+    pub config_comparisons: u64,
+    /// Old-key maps built for keyed middle ranges.
+    pub key_maps_built: u64,
+    /// Entries inserted into those key maps.
+    pub key_map_entries: u64,
+    /// Keyed lookups against those maps.
+    pub key_lookups: u64,
+    /// New elements mounted during reconciliation.
+    pub elements_created: u64,
+    /// Existing elements reused (compatible match) during reconciliation.
+    pub elements_reused: u64,
+    /// Elements unmounted during reconciliation.
+    pub elements_removed: u64,
+    /// Reused elements whose position changed relative to the previous list.
+    pub elements_moved: u64,
+    /// Every invalidation request (before deduplication).
+    pub dirty_requests: u64,
+    /// Requests that transitioned a retained object into a dirty state.
+    pub dirty_queue_insertions: u64,
+    /// Requests coalesced because the target was already dirty.
+    pub dirty_queue_deduplicated: u64,
+    /// LAYOUT passes skipped because constraints were unchanged.
+    pub layout_cache_hits: u64,
+    /// Retained per-render-object display lists replayed without recording.
+    pub display_lists_reused: u64,
+    /// Compositor-only mutations (transform/opacity/effect) that skipped
+    /// BUILD/LAYOUT/PAINT entirely.
+    pub compositor_only_updates: u64,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum TreeError {
     MissingElement(ElementId),
     DuplicateKey(Key),
+    /// No live window record matched the requested window identity.
+    WindowUnknown,
 }
 
-struct Element {
-    parent: Option<ElementId>,
-    children: Vec<ElementId>,
-    widget: Widget,
-    render: RenderObjectId,
-    dirty: DirtyFlags,
+pub struct Element {
+    pub parent: Option<ElementId>,
+    pub children: Vec<ElementId>,
+    pub widget: Widget,
+    pub render: RenderObjectId,
+    pub dirty: DirtyFlags,
     /// Parallel to `children` only for a virtual-list element. Item indices
     /// are identity, never reusable visible-slot numbers.
     virtual_indices: Vec<usize>,
@@ -5074,9 +5256,96 @@ struct Element {
     /// not change. Pure post-layout measurements do not disturb identity.
     virtual_structure_revision: u64,
     layout_builder_constraints: Option<Constraints>,
+    /// DevTools-only instrumentation. Zero cost in production builds.
+    #[cfg(feature = "devtools")]
+    pub dev: ElementDevData,
+}
+
+/// Per-element counters and the latest invalidation cause, captured only
+/// while the `devtools` feature is enabled.
+#[cfg(feature = "devtools")]
+#[derive(Default, Clone, Debug)]
+pub struct ElementDevData {
+    pub builds: u64,
+    pub layouts: u64,
+    pub paints: u64,
+    pub composites: u64,
+    pub semantic_updates: u64,
+    /// Monotonic per-node content revision for incremental tree deltas.
+    pub revision: u64,
+    pub last_cause: Option<InvalidationCause>,
+    /// Small ordered cause set coalesced until the next observed build. This
+    /// avoids inventing a single winner when several real invalidations land
+    /// before a frame.
+    pub invalidation_causes: Vec<InvalidationCause>,
+    /// Structured, bounded configuration change set for Why Did This Rebuild.
+    pub property_changes: Vec<incular_devtools_protocol::PropertyChange>,
+    pub layout_history: Vec<LayoutHistoryRecord>,
+    pub layout_reason: Option<String>,
+    pub paint_reason: Option<String>,
+    pub composite_reason: Option<String>,
+}
+
+#[cfg(feature = "devtools")]
+#[derive(Clone, Debug)]
+pub struct LayoutHistoryRecord {
+    pub sequence: u64,
+    pub old_constraints: Option<Constraints>,
+    pub new_constraints: Constraints,
+    pub old_size: Size,
+    pub new_size: Size,
+    pub cause: Option<String>,
+}
+
+/// Why an element last entered BUILD. Recorded by the runtime at the exact
+/// invalidation sites; retained bounded summaries only.
+#[cfg(feature = "devtools")]
+#[derive(Clone, Debug)]
+pub enum InvalidationCause {
+    Signal {
+        id: u64,
+        name: Option<String>,
+        old: Option<String>,
+        new: Option<String>,
+    },
+    ParentReconciliation,
+    WidgetConfigurationChanged,
+    EnvironmentChanged,
+    LocaleChanged,
+    WindowMetricsChanged,
+    ConstraintsChanged,
+    Animation,
+    TaskCompletion,
+    Navigation,
+    Restoration,
+    Manual,
+    Mounted,
+}
+
+#[cfg(feature = "devtools")]
+impl InvalidationCause {
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Signal { name, .. } => {
+                format!("Signal {}", name.as_deref().unwrap_or("<unnamed>"))
+            }
+            Self::ParentReconciliation => "parent reconciliation".into(),
+            Self::WidgetConfigurationChanged => "widget changed".into(),
+            Self::EnvironmentChanged => "environment".into(),
+            Self::LocaleChanged => "locale".into(),
+            Self::WindowMetricsChanged => "window metrics".into(),
+            Self::ConstraintsChanged => "constraints".into(),
+            Self::Animation => "animation".into(),
+            Self::TaskCompletion => "task completion".into(),
+            Self::Navigation => "navigation".into(),
+            Self::Restoration => "restoration".into(),
+            Self::Manual => "manual invalidation".into(),
+            Self::Mounted => "mounted".into(),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
-enum RenderKind {
+pub enum RenderKind {
     Box {
         desired: Size,
         color: Color,
@@ -5269,13 +5538,13 @@ pub struct VirtualListDiagnostics {
     pub render_object_count: usize,
     pub picture_layer_count: usize,
 }
-struct RenderObject {
-    parent: Option<RenderObjectId>,
-    children: Vec<RenderObjectId>,
+pub struct RenderObject {
+    pub parent: Option<RenderObjectId>,
+    pub children: Vec<RenderObjectId>,
     kind: RenderKind,
-    size: Size,
-    offset: Offset,
-    constraints: Option<Constraints>,
+    pub size: Size,
+    pub offset: Offset,
+    pub constraints: Option<Constraints>,
     dirty: DirtyFlags,
     cache: DisplayList,
     text_layout: Option<Arc<TextLayout>>,
@@ -5286,13 +5555,13 @@ struct RenderObject {
     scrollbar_hovered: bool,
     scrollbar_dragging: bool,
     focused: bool,
-    baseline: Option<f32>,
+    pub(crate) baseline: Option<f32>,
     button_state: ButtonState,
     /// Static parent-relative layout placement. This is never used to store a
     /// scroll or animation displacement.
     layer: LayerId,
     picture: Option<LayerId>,
-    clip_layer: Option<LayerId>,
+    pub(crate) clip_layer: Option<LayerId>,
     content_layer: Option<LayerId>,
     opacity_layer: Option<LayerId>,
     blur_layer: Option<LayerId>,
@@ -5382,6 +5651,68 @@ struct StaticSelection {
     extent: StaticSelectionPoint,
 }
 
+#[cfg(feature = "devtools")]
+struct DeepTraceCapture {
+    started: Instant,
+    events: Vec<TraceEvent>,
+    event_starts: Vec<Instant>,
+    stack: Vec<u32>,
+    max_events: usize,
+    dropped_events: u32,
+}
+
+#[cfg(feature = "devtools")]
+impl DeepTraceCapture {
+    fn new(max_events: usize) -> Self {
+        Self {
+            started: Instant::now(),
+            events: Vec::with_capacity(max_events.min(4_096)),
+            event_starts: Vec::with_capacity(max_events.min(4_096)),
+            stack: Vec::new(),
+            max_events,
+            dropped_events: 0,
+        }
+    }
+
+    fn elapsed_us(duration: Duration) -> u32 {
+        u32::try_from(duration.as_micros()).unwrap_or(u32::MAX)
+    }
+
+    fn begin(&mut self, node: DevWidgetId, phase: TracePhase) -> Option<u32> {
+        if self.events.len() >= self.max_events {
+            self.dropped_events = self.dropped_events.saturating_add(1);
+            return None;
+        }
+        let now = Instant::now();
+        let index = u32::try_from(self.events.len()).ok()?;
+        self.events.push(TraceEvent {
+            node,
+            phase,
+            parent: self.stack.last().copied(),
+            start_us: Self::elapsed_us(now.saturating_duration_since(self.started)),
+            duration_us: 0,
+        });
+        self.event_starts.push(now);
+        self.stack.push(index);
+        Some(index)
+    }
+
+    fn end(&mut self, token: Option<u32>) {
+        let Some(token) = token else { return };
+        let Some(event) = self.events.get_mut(token as usize) else {
+            return;
+        };
+        if let Some(started) = self.event_starts.get(token as usize) {
+            event.duration_us = Self::elapsed_us(started.elapsed());
+        }
+        if self.stack.last() == Some(&token) {
+            self.stack.pop();
+        } else if let Some(position) = self.stack.iter().rposition(|entry| *entry == token) {
+            self.stack.remove(position);
+        }
+    }
+}
+
 /// Persistent UI state. IDs become invalid immediately after unmount.
 pub struct WidgetTree {
     elements: Arena<Element>,
@@ -5392,6 +5723,11 @@ pub struct WidgetTree {
     text_engine: TextEngine,
     compositor: LayerTree,
     compositor_initialized: bool,
+    /// Maps the platform's monotonic frame clock onto the animation-only
+    /// clock. Tokio, input, profiler timing and all other runtime clocks keep
+    /// using real time.
+    animation_time_scale: f32,
+    animation_clock: Option<(Instant, Instant)>,
     next_action: u64,
     pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
     gesture_arena: GestureArena,
@@ -5403,6 +5739,8 @@ pub struct WidgetTree {
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selection: Option<StaticSelection>,
+    #[cfg(feature = "devtools")]
+    deep_trace: Option<DeepTraceCapture>,
 }
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -5421,6 +5759,8 @@ impl WidgetTree {
             text_engine: TextEngine::new(),
             compositor: LayerTree::new(),
             compositor_initialized: false,
+            animation_time_scale: 1.,
+            animation_clock: None,
             next_action: 1,
             pending_handlers: Vec::new(),
             gesture_arena: GestureArena::new(),
@@ -5432,6 +5772,44 @@ impl WidgetTree {
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
             static_selection: None,
+            #[cfg(feature = "devtools")]
+            deep_trace: None,
+        }
+    }
+
+    /// Starts one bounded Deep-profiler frame. Calling this again discards an
+    /// unfinished capture, which keeps stale target sessions from retaining
+    /// trace data indefinitely.
+    #[cfg(feature = "devtools")]
+    pub fn begin_deep_trace(&mut self, max_events: usize) {
+        self.deep_trace = Some(DeepTraceCapture::new(max_events));
+    }
+
+    /// Finishes a Deep-profiler frame and transfers its bounded storage.
+    #[cfg(feature = "devtools")]
+    pub fn take_deep_trace(&mut self) -> Option<(Vec<TraceEvent>, u32)> {
+        self.deep_trace
+            .take()
+            .map(|capture| (capture.events, capture.dropped_events))
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_trace_begin_element(
+        &mut self,
+        id: ElementId,
+        phase: TracePhase,
+    ) -> Option<u32> {
+        let raw = id.0;
+        self.deep_trace.as_mut()?.begin(
+            DevWidgetId::new(u64::from(raw.index()), u64::from(raw.generation())),
+            phase,
+        )
+    }
+
+    #[cfg(feature = "devtools")]
+    pub fn devtools_trace_end(&mut self, token: Option<u32>) {
+        if let Some(capture) = &mut self.deep_trace {
+            capture.end(token);
         }
     }
     pub fn mount(&mut self, widget: Widget) -> Result<ElementId, TreeError> {
@@ -5445,6 +5823,13 @@ impl WidgetTree {
     #[must_use]
     pub fn root(&self) -> Option<ElementId> {
         self.root
+    }
+    /// Finds the first mounted element whose widget carries exactly `key`.
+    #[must_use]
+    pub fn element_with_key(&self, key: &Key) -> Option<ElementId> {
+        self.elements.iter().find_map(|(raw, element)| {
+            (element.widget.key() == Some(key)).then_some(ElementId(raw))
+        })
     }
     #[must_use]
     pub fn element_count(&self) -> usize {
@@ -5522,12 +5907,32 @@ impl WidgetTree {
     pub fn parent(&self, id: ElementId) -> Option<ElementId> {
         self.elements.get(id.0).and_then(|e| e.parent)
     }
+    /// Records why an element is about to rebuild (DevTools builds only).
+    #[cfg(feature = "devtools")]
+    pub fn note_invalidation(&mut self, id: ElementId, cause: InvalidationCause) {
+        if let Some(element) = self.elements.get_mut(id.0) {
+            const MAX_CAUSES: usize = 8;
+            if element.dev.invalidation_causes.len() == MAX_CAUSES {
+                element.dev.invalidation_causes.remove(0);
+            }
+            element.dev.invalidation_causes.push(cause.clone());
+            element.dev.last_cause = Some(cause);
+        }
+    }
+
     pub fn mark_build(&mut self, id: ElementId) -> Result<(), TreeError> {
         let element = self
             .elements
             .get_mut(id.0)
             .ok_or(TreeError::MissingElement(id))?;
+        self.diagnostics.dirty_requests += 1;
+        let was_dirty = element.dirty.contains(DirtyFlags::BUILD);
         element.dirty.insert(DirtyFlags::BUILD);
+        if was_dirty {
+            self.diagnostics.dirty_queue_deduplicated += 1;
+        } else {
+            self.diagnostics.dirty_queue_insertions += 1;
+        }
         Ok(())
     }
     #[must_use]
@@ -5552,6 +5957,168 @@ impl WidgetTree {
         )
     }
     #[must_use]
+    #[cfg(feature = "devtools")]
+    pub(crate) fn dev_elements(&self) -> &Arena<Element> {
+        &self.elements
+    }
+
+    /// Exact retained transforms for a live element, exposed only to the
+    /// read-only DevTools snapshot adapter. Kurbo remains the geometry
+    /// authority; this does not re-run layout or compositor work.
+    #[must_use]
+    #[cfg(feature = "devtools")]
+    pub(crate) fn devtools_layout_transforms(
+        &self,
+        id: ElementId,
+    ) -> Option<(CoreTransform, CoreTransform, CoreTransform)> {
+        let render = self.render_id(id)?;
+        let node = self.renders.get(render.0)?;
+        Some((
+            CoreTransform::translation(node.offset),
+            self.render_world_transform(render),
+            self.content_transform(render)
+                .unwrap_or(CoreTransform::IDENTITY),
+        ))
+    }
+
+    /// Line count from the existing Parley-backed retained result. It is
+    /// intentionally an observation only: DevTools never asks the text
+    /// engine to shape content for inspection.
+    #[must_use]
+    #[cfg(feature = "devtools")]
+    pub(crate) fn devtools_text_line_count(&self, id: ElementId) -> Option<usize> {
+        let render = self.render_id(id)?;
+        Some(
+            self.renders
+                .get(render.0)?
+                .text_layout
+                .as_ref()?
+                .lines
+                .len(),
+        )
+    }
+
+    #[must_use]
+    #[cfg(feature = "devtools")]
+    pub(crate) fn devtools_is_layer_boundary(&self, id: ElementId) -> bool {
+        self.render_id(id)
+            .and_then(|render| self.renders.get(render.0))
+            .is_some_and(|render| {
+                render.picture.is_some()
+                    || render.clip_layer.is_some()
+                    || render.opacity_layer.is_some()
+                    || render.blur_layer.is_some()
+                    || render.shadow_layer.is_some()
+                    || render.color_filter_layer.is_some()
+                    || render.blend_layer.is_some()
+            })
+    }
+
+    /// Per-viewport variant of [`Self::virtual_list_diagnostics`], used by
+    /// the selected-node Layout Explorer rather than a global first-match
+    /// query. Values are retained by the live virtual viewport.
+    #[must_use]
+    #[cfg(feature = "devtools")]
+    pub(crate) fn devtools_virtual_list_diagnostics(
+        &self,
+        id: ElementId,
+    ) -> Option<VirtualListDiagnostics> {
+        let element = self.elements.get(id.0)?;
+        let WidgetKind::VirtualList { config } = &element.widget.kind else {
+            return None;
+        };
+        let render = self.renders.get(element.render.0)?;
+        let range = element.virtual_indices.first().copied().unwrap_or(0)
+            ..element.virtual_indices.last().map_or(0, |index| index + 1);
+        Some(VirtualListDiagnostics {
+            logical_item_count: config.extent.item_count(config.item_count),
+            materialized_item_count: element.virtual_indices.len(),
+            materialized_range: range,
+            scroll_offset: config.controller.offset(),
+            viewport_extent: render.size.height,
+            cache_extent: config.cache_extent,
+            element_count: self.elements.len(),
+            render_object_count: self.renders.len(),
+            picture_layer_count: self.compositor.diagnostics().layers as usize,
+        })
+    }
+    #[cfg(feature = "devtools")]
+    pub(crate) fn dev_renders(&self) -> &Arena<RenderObject> {
+        &self.renders
+    }
+
+    /// Applies a narrowly typed, temporary DevTools property override to a
+    /// live retained element. Unsupported properties and stale IDs are
+    /// rejected without mutating the tree.
+    #[cfg(feature = "devtools")]
+    pub fn devtools_edit_property(
+        &mut self,
+        target: DevWidgetId,
+        name: &str,
+        value: &DebugValue,
+    ) -> bool {
+        let Some(id) = self.devtools_resolve_id(target) else {
+            return false;
+        };
+        let Some(value) = (match value {
+            DebugValue::Float(value) if value.is_finite() => Some((*value as f32).clamp(0., 1.)),
+            _ => None,
+        }) else {
+            return false;
+        };
+        let render = {
+            let Some(element) = self.elements.get_mut(id.0) else {
+                return false;
+            };
+            match (&mut element.widget.kind, name) {
+                (
+                    WidgetKind::Opacity {
+                        alpha,
+                        controller: None,
+                        ..
+                    },
+                    "opacity",
+                ) => {
+                    if *alpha == value {
+                        return true;
+                    }
+                    *alpha = value;
+                }
+                _ => return false,
+            }
+            element.dev.revision = element.dev.revision.wrapping_add(1);
+            element.dev.composite_reason = Some("DevTools opacity override".into());
+            element.render
+        };
+        let opacity_layer = {
+            let Some(render_node) = self.renders.get_mut(render.0) else {
+                return false;
+            };
+            let RenderKind::Opacity {
+                alpha,
+                controller: None,
+            } = &mut render_node.kind
+            else {
+                return false;
+            };
+            *alpha = value;
+            render_node.opacity_layer
+        };
+        if let Some(layer) = opacity_layer {
+            let _ = self.compositor.update_opacity(layer, value);
+        }
+        self.diagnostics.compositor_only_updates =
+            self.diagnostics.compositor_only_updates.wrapping_add(1);
+        true
+    }
+    #[cfg(feature = "devtools")]
+    pub(crate) fn dev_semantic_ids(&self) -> &HashMap<ElementId, SemanticNodeId> {
+        &self.semantic_ids
+    }
+    #[cfg(feature = "devtools")]
+    pub fn arena_index(&self, id: ElementId) -> u32 {
+        id.0.index()
+    }
     pub fn element_for_render(&self, render: RenderObjectId) -> Option<ElementId> {
         // Render IDs are opaque; a linear reverse lookup is only on input paths,
         // never layout/paint hot paths. A reverse arena index can be added when
@@ -5571,11 +6138,32 @@ impl WidgetTree {
     pub fn action_ids(&self) -> HashSet<ActionId> {
         self.elements
             .iter()
-            .filter_map(|(_, element)| match element.widget.kind {
-                WidgetKind::Button { action, .. } if action.0 != 0 => Some(action),
-                _ => None,
+            .flat_map(|(_, element)| match element.widget.kind {
+                WidgetKind::Button {
+                    action,
+                    hover_action,
+                    exit_action,
+                    ..
+                } => [action, hover_action, exit_action]
+                    .map(|action| (action.0 != 0).then_some(action)),
+                _ => [None; 3],
             })
+            .flatten()
             .collect()
+    }
+    #[must_use]
+    pub fn hover_actions_for_element(&self, id: ElementId) -> (Option<ActionId>, Option<ActionId>) {
+        match &self.elements.get(id.0).map(|element| &element.widget.kind) {
+            Some(WidgetKind::Button {
+                hover_action,
+                exit_action,
+                ..
+            }) => (
+                (hover_action.0 != 0).then_some(*hover_action),
+                (exit_action.0 != 0).then_some(*exit_action),
+            ),
+            _ => (None, None),
+        }
     }
     /// Allocates an opaque callback action. The runtime owns dispatch, while
     /// the tree uses this shared sequence for lazy children mounted during
@@ -5593,6 +6181,15 @@ impl WidgetTree {
         loop {
             if let Some(action) = self.action_for_element(id) {
                 return (action.0 != 0).then_some((id, action));
+            }
+            id = self.parent(id)?;
+        }
+    }
+    #[must_use]
+    pub fn button_ancestor(&self, mut id: ElementId) -> Option<(ElementId, Option<ActionId>)> {
+        loop {
+            if let Some(action) = self.action_for_element(id) {
+                return Some((id, (action.0 != 0).then_some(action)));
             }
             id = self.parent(id)?;
         }
@@ -6065,9 +6662,36 @@ impl WidgetTree {
         }
         Ok(())
     }
+    /// Changes only retained animation progression. The accumulated logical
+    /// timestamp is preserved, so pausing or slowing an already-running
+    /// controller never jumps it forward to wall-clock time.
+    pub fn set_animation_time_scale(&mut self, scale: f32) {
+        self.animation_time_scale = if scale.is_finite() {
+            scale.clamp(0., 1.)
+        } else {
+            1.
+        };
+    }
+    #[must_use]
+    pub const fn animation_time_scale(&self) -> f32 {
+        self.animation_time_scale
+    }
+    fn animation_now(&mut self, real_now: Instant) -> Instant {
+        let (last_real, last_animation) = self.animation_clock.unwrap_or((real_now, real_now));
+        let elapsed = real_now.saturating_duration_since(last_real);
+        let scaled = elapsed.mul_f32(self.animation_time_scale);
+        let animation_now = last_animation.checked_add(scaled).unwrap_or(last_animation);
+        self.animation_clock = Some((real_now, animation_now));
+        animation_now
+    }
     /// Applies only retained compositor properties. It never marks a render
     /// object for build, layout, or paint.
     pub fn update_compositor(&mut self, now: Instant) -> (bool, bool) {
+        #[cfg(feature = "devtools")]
+        let trace = self
+            .root
+            .and_then(|root| self.devtools_trace_begin_element(root, TracePhase::Composite));
+        let now = self.animation_now(now);
         let nodes = self
             .renders
             .iter()
@@ -6097,6 +6721,8 @@ impl WidgetTree {
             blend_layer,
         ) in nodes
         {
+            #[cfg(feature = "devtools")]
+            let changed_before_node = changed;
             match kind {
                 RenderKind::Scroll { controller } => {
                     if let Some(content) = content_layer
@@ -6106,6 +6732,7 @@ impl WidgetTree {
                         )
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                         self.diagnostics.scroll_offset_updates += 1;
                         // Only this viewport's overlay picture changes; the
                         // retained content subtree remains compositor-only.
@@ -6127,6 +6754,7 @@ impl WidgetTree {
                         )
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                         self.diagnostics.scroll_offset_updates += 1;
                         self.renders
                             .get_mut(_render.0)
@@ -6143,6 +6771,7 @@ impl WidgetTree {
                             .update_transform(content, CoreTransform::translation(offset))
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                         self.diagnostics.scroll_offset_updates += 1;
                     }
                 }
@@ -6160,6 +6789,7 @@ impl WidgetTree {
                         )
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 RenderKind::Transform { transform, origin } => {
@@ -6170,6 +6800,7 @@ impl WidgetTree {
                             .update_transform(content, transform_around(transform, origin, size))
                         {
                             changed = true;
+                            self.diagnostics.compositor_only_updates += 1;
                         }
                     }
                 }
@@ -6189,6 +6820,7 @@ impl WidgetTree {
                             ),
                         ) {
                             changed = true;
+                            self.diagnostics.compositor_only_updates += 1;
                         }
                     }
                 }
@@ -6208,6 +6840,7 @@ impl WidgetTree {
                             ),
                         ) {
                             changed = true;
+                            self.diagnostics.compositor_only_updates += 1;
                         }
                     }
                 }
@@ -6223,6 +6856,7 @@ impl WidgetTree {
                             fitted_transform(child_size, size, fit, alignment),
                         ) {
                             changed = true;
+                            self.diagnostics.compositor_only_updates += 1;
                         }
                     }
                 }
@@ -6238,11 +6872,13 @@ impl WidgetTree {
                                 .update_opacity(opacity, controller.opacity())
                         {
                             changed = true;
+                            self.diagnostics.compositor_only_updates += 1;
                         }
                     } else if let Some(opacity) = opacity_layer
                         && self.compositor.update_opacity(opacity, alpha)
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 RenderKind::Blur {
@@ -6266,6 +6902,7 @@ impl WidgetTree {
                             .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y))
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 RenderKind::DropShadow {
@@ -6291,6 +6928,7 @@ impl WidgetTree {
                         && self.compositor.update_drop_shadow(layer, shadow)
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 RenderKind::ColorFiltered { filter, controller } => {
@@ -6306,6 +6944,7 @@ impl WidgetTree {
                         && self.compositor.update_color_filter(layer, filter)
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 RenderKind::Blend { mode } => {
@@ -6313,18 +6952,31 @@ impl WidgetTree {
                         && self.compositor.update_blend(layer, mode)
                     {
                         changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
                     }
                 }
                 _ => {}
             }
+            #[cfg(feature = "devtools")]
+            if changed != changed_before_node
+                && let Some(element) = self.element_for_render(_render)
+                && let Some(element) = self.elements.get_mut(element.0)
+            {
+                element.dev.composites += 1;
+                element.dev.composite_reason =
+                    Some("retained compositor property changed; paint reused".into());
+            }
         }
         if !self.compositor_initialized {
             changed = true;
+            self.diagnostics.compositor_only_updates += 1;
             self.compositor_initialized = true;
         }
         if changed {
             self.diagnostics.composites += 1;
         }
+        #[cfg(feature = "devtools")]
+        self.devtools_trace_end(trace);
         (changed, active)
     }
     pub fn scroll_at(&mut self, point: Offset, delta: Offset) -> bool {
@@ -6502,7 +7154,7 @@ impl WidgetTree {
         if !self.elements.contains(id.0) {
             return Err(TreeError::MissingElement(id));
         }
-        self.update_existing(id, widget)
+        self.update_existing(id, &widget)
     }
     pub fn mark_paint(&mut self, id: ElementId) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
@@ -6520,6 +7172,10 @@ impl WidgetTree {
     /// is valid. Non-semantic layout widgets merge their descendants into the
     /// closest meaningful semantic ancestor.
     pub fn update_semantics(&mut self) {
+        #[cfg(feature = "devtools")]
+        let trace = self
+            .root
+            .and_then(|root| self.devtools_trace_begin_element(root, TracePhase::Semantics));
         let mut built = Vec::new();
         if let Some(root) = self.root {
             self.collect_semantics(root, None, &mut built);
@@ -6535,6 +7191,8 @@ impl WidgetTree {
             let _ = self.semantics.remove(node);
         }
         for build in &built {
+            #[cfg(feature = "devtools")]
+            let semantic_revision_before = self.semantics.revision();
             let id = *self.semantic_ids.entry(build.element).or_insert_with(|| {
                 self.semantics.insert(SemanticNode {
                     id: SemanticNodeId(ArenaId::from_parts(0, 0)),
@@ -6567,6 +7225,12 @@ impl WidgetTree {
                     children,
                 },
             );
+            #[cfg(feature = "devtools")]
+            if self.semantics.revision() != semantic_revision_before
+                && let Some(element) = self.elements.get_mut(build.element.0)
+            {
+                element.dev.semantic_updates = element.dev.semantic_updates.saturating_add(1);
+            }
         }
         self.semantics.set_root(
             built
@@ -6574,6 +7238,8 @@ impl WidgetTree {
                 .find(|node| node.parent.is_none())
                 .and_then(|node| self.semantic_ids.get(&node.element).copied()),
         );
+        #[cfg(feature = "devtools")]
+        self.devtools_trace_end(trace);
     }
     fn collect_semantics(
         &self,
@@ -7282,7 +7948,7 @@ impl WidgetTree {
         parent: Option<ElementId>,
         widget: Widget,
     ) -> Result<ElementId, TreeError> {
-        self.check_keys(&widget.children())?;
+        self.check_keys_borrowed(widget.children_refs())?;
         let layer = self
             .compositor
             .create_transform(CoreTransform::translation(Offset::ZERO));
@@ -7439,10 +8105,13 @@ impl WidgetTree {
             virtual_indices: Vec::new(),
             virtual_structure_revision: 0,
             layout_builder_constraints: None,
+            #[cfg(feature = "devtools")]
+            dev: ElementDevData::default(),
         }));
-        let mut children = Vec::with_capacity(widget.children().len());
-        for child in widget.children() {
-            children.push(self.mount_element(Some(id), child)?);
+        let desired_children = widget.children_refs();
+        let mut children = Vec::with_capacity(desired_children.len());
+        for child in desired_children {
+            children.push(self.mount_element(Some(id), child.clone())?);
         }
         self.elements.get_mut(id.0).expect("fresh element").children = children;
         self.sync_render_children(id);
@@ -7452,31 +8121,51 @@ impl WidgetTree {
         self.diagnostics.mounts += 1;
         Ok(id)
     }
-    fn update_existing(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
+    fn update_existing(&mut self, id: ElementId, widget: &Widget) -> Result<(), TreeError> {
+        // Borrow-compare first: the unchanged-subtree bailout must not clone
+        // either widget. This is the dominant hot path for wide static trees
+        // under a rebuilding parent (Task 15 measured bottleneck).
+        if self
+            .elements
+            .get(id.0)
+            .ok_or(TreeError::MissingElement(id))?
+            .widget
+            == *widget
+        {
+            self.diagnostics.identical_child_bailouts += 1;
+            return Ok(());
+        }
+        #[cfg(feature = "devtools")]
+        let trace = self.devtools_trace_begin_element(id, TracePhase::Build);
         let old = self
             .elements
             .get(id.0)
             .ok_or(TreeError::MissingElement(id))?
             .widget
             .clone();
-        if old == widget {
-            return Ok(());
-        }
+        #[cfg(feature = "devtools")]
+        let property_changes = crate::devtools_props::diff_properties(&old.kind, &widget.kind);
         debug_assert_eq!(
             old.type_(),
             widget.type_(),
             "only compatible elements may update"
         );
-        self.check_keys(&widget.children())?;
+        self.check_keys_borrowed(widget.children_refs())?;
         let render = self.elements.get(id.0).expect("present").render;
         let old_kind = render_kind(&old);
-        let new_kind = render_kind(&widget);
+        let new_kind = render_kind(widget);
+        #[cfg(feature = "devtools")]
+        let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
         if old_kind != new_kind {
             let opacity_only = opacity_composite_only_change(&old_kind, &new_kind);
             let effect_only = effect_composite_only_change(&old_kind, &new_kind);
             let affine_only = affine_composite_only_change(&old_kind, &new_kind);
             self.renders.get_mut(render.0).expect("present").kind = new_kind.clone();
             if opacity_only {
+                #[cfg(feature = "devtools")]
+                {
+                    work_reasons.2 = Some("retained opacity property changed".into());
+                }
                 // Alpha is consumed by the retained compositor layer. Keep
                 // paint/layout caches warm for opacity-only rebuilds.
                 if let RenderKind::Opacity { alpha, .. } = new_kind {
@@ -7485,6 +8174,10 @@ impl WidgetTree {
                     }
                 }
             } else if effect_only {
+                #[cfg(feature = "devtools")]
+                {
+                    work_reasons.2 = Some("retained effect property changed".into());
+                }
                 match new_kind {
                     RenderKind::Blur {
                         sigma_x, sigma_y, ..
@@ -7528,6 +8221,10 @@ impl WidgetTree {
                     _ => {}
                 }
             } else if affine_only {
+                #[cfg(feature = "devtools")]
+                {
+                    work_reasons.2 = Some("retained affine transform changed".into());
+                }
                 if let (Some(layer), Some(transform)) = (
                     self.renders
                         .get(render.0)
@@ -7539,8 +8236,17 @@ impl WidgetTree {
             } else if text_paint_only_change(&old_kind, &new_kind)
                 || custom_paint_only_change(&old_kind, &new_kind)
             {
+                #[cfg(feature = "devtools")]
+                {
+                    work_reasons.1 = Some("paint-only configuration changed".into());
+                }
                 self.mark_render_dirty(render, DirtyFlags::PAINT, false);
             } else {
+                #[cfg(feature = "devtools")]
+                {
+                    work_reasons.0 = Some("layout-affecting configuration changed".into());
+                    work_reasons.1 = Some("layout result invalidated paint".into());
+                }
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
             }
         }
@@ -7551,101 +8257,146 @@ impl WidgetTree {
             .dirty
             .remove(DirtyFlags::BUILD);
         self.diagnostics.rebuilds += 1;
+        #[cfg(feature = "devtools")]
+        {
+            let element = self.elements.get_mut(id.0).expect("present");
+            element.dev.builds += 1;
+            element.dev.revision += 1;
+            element.dev.property_changes = property_changes;
+            element.dev.layout_reason = work_reasons.0;
+            element.dev.paint_reason = work_reasons.1;
+            element.dev.composite_reason = work_reasons.2;
+        }
         // Lazy children are owned by the viewport's indexed materialization
         // map, not by `Widget::children()`. Recreating a VirtualList
         // description must preserve every still-valid mounted row; the next
         // layout pass will add/drop only indices required by the new config.
         if matches!(widget.kind, WidgetKind::VirtualList { .. }) {
+            #[cfg(feature = "devtools")]
+            self.devtools_trace_end(trace);
             return Ok(());
         }
         let previous = self.elements.get(id.0).expect("present").children.clone();
-        let desired = widget.children();
-        let reconciled = self.reconcile_children(id, previous, desired)?;
-        self.elements.get_mut(id.0).expect("present").children = reconciled;
-        self.sync_render_children(id);
+        let desired = widget.children_refs();
+        let reconciled = self.reconcile_children(id, previous.clone(), &desired)?;
+        if reconciled != previous {
+            self.elements.get_mut(id.0).expect("present").children = reconciled;
+            self.sync_render_children(id);
+        }
+        #[cfg(feature = "devtools")]
+        self.devtools_trace_end(trace);
         Ok(())
     }
-    fn compatible(&self, id: ElementId, widget: &Widget) -> bool {
-        self.elements
-            .get(id.0)
-            .is_some_and(|e| e.widget.type_() == widget.type_() && e.widget.key == widget.key)
+    fn compatible(&mut self, id: ElementId, widget: &Widget) -> bool {
+        match self.elements.get(id.0) {
+            Some(element) => {
+                self.diagnostics.widget_type_comparisons += 1;
+                element.widget.type_() == widget.type_() && {
+                    self.diagnostics.key_comparisons += 1;
+                    element.widget.key == widget.key
+                }
+            }
+            None => false,
+        }
     }
     fn reconcile_children(
         &mut self,
         parent: ElementId,
         previous: Vec<ElementId>,
-        desired: Vec<Widget>,
+        desired: &[&Widget],
     ) -> Result<Vec<ElementId>, TreeError> {
-        self.check_keys(&desired)?;
+        self.check_keys_borrowed(desired.iter().copied())?;
+        self.diagnostics.child_list_scans += 1;
         let mut start = 0;
         let mut old_end = previous.len();
         let mut new_end = desired.len();
-        let mut next = Vec::with_capacity(desired.len());
-        while start < old_end
-            && start < new_end
-            && self.compatible(previous[start], &desired[start])
+        let mut next = Vec::with_capacity(new_end);
+        while start < old_end && start < new_end && self.compatible(previous[start], desired[start])
         {
             let id = previous[start];
-            self.update_existing(id, desired[start].clone())?;
+            self.update_existing(id, desired[start])?;
             next.push(id);
             start += 1;
+            self.diagnostics.reconciliation_fast_paths += 1;
+            self.diagnostics.elements_reused += 1;
         }
         while start < old_end
             && start < new_end
-            && self.compatible(previous[old_end - 1], &desired[new_end - 1])
+            && self.compatible(previous[old_end - 1], desired[new_end - 1])
         {
             old_end -= 1;
             new_end -= 1;
+            self.diagnostics.reconciliation_fast_paths += 1;
+            self.diagnostics.elements_reused += 1;
         }
         let old_middle = &previous[start..old_end];
-        let use_keys = old_middle.iter().any(|id| {
+        let desired_middle = &desired[start..new_end];
+        // Track original positions to detect genuine moves (Task 15 counter).
+        let mut keyed: HashMap<Key, (ElementId, usize)> = HashMap::new();
+        let mut unkeyed_ids: Vec<(ElementId, usize)> = Vec::new();
+        let any_keys = old_middle.iter().any(|id| {
             self.elements
                 .get(id.0)
                 .is_some_and(|e| e.widget.key.is_some())
-        }) || desired[start..new_end].iter().any(|w| w.key.is_some());
-        let mut keyed = HashMap::new();
-        if use_keys {
-            for &id in old_middle {
+        }) || desired_middle.iter().any(|w| w.key.is_some());
+        if any_keys {
+            self.diagnostics.key_maps_built += 1;
+            for (position, id) in old_middle.iter().enumerate() {
                 if let Some(key) = self.elements.get(id.0).and_then(|e| e.widget.key.clone()) {
-                    keyed.insert(key, id);
+                    keyed.insert(key, (*id, position));
+                    self.diagnostics.key_map_entries += 1;
+                } else {
+                    unkeyed_ids.push((*id, position));
                 }
             }
+        } else {
+            for (position, id) in old_middle.iter().enumerate() {
+                unkeyed_ids.push((*id, position));
+            }
         }
-        let mut used = HashSet::new();
-        let unkeyed_ids: Vec<_> = old_middle
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.elements
-                    .get(id.0)
-                    .is_some_and(|e| e.widget.key.is_none())
-            })
-            .collect();
         let mut unkeyed = unkeyed_ids.into_iter();
-        for widget in &desired[start..new_end] {
+        let mut used = std::collections::HashSet::new();
+        for widget in desired_middle {
             let candidate = if let Some(key) = widget.key() {
+                self.diagnostics.key_lookups += 1;
                 keyed.get(key).copied()
             } else {
                 unkeyed.next()
             };
-            if let Some(id) = candidate.filter(|id| self.compatible(*id, widget)) {
-                self.update_existing(id, widget.clone())?;
+            self.diagnostics.widget_type_comparisons += 1;
+            if let Some((id, old_position)) = candidate.filter(|(id, _)| {
+                self.elements
+                    .get(id.0)
+                    .is_some_and(|e| e.widget.type_() == widget.type_())
+            }) {
+                self.update_existing(id, widget)?;
                 used.insert(id);
+                // A reused child is "moved" when its previous middle position
+                // differs from the position it is emitted at now.
+                let emitted_index = next.len();
+                let expected_index = start + old_position;
+                if emitted_index != expected_index {
+                    self.diagnostics.elements_moved += 1;
+                }
                 next.push(id);
+                self.diagnostics.elements_reused += 1;
             } else {
-                next.push(self.mount_element(Some(parent), widget.clone())?);
+                self.diagnostics.elements_created += 1;
+                next.push(self.mount_element(Some(parent), (*widget).clone())?);
             }
         }
         for id in old_middle {
             if !used.contains(id) {
                 self.unmount_element(*id);
+                self.diagnostics.elements_removed += 1;
             }
         }
         let mut suffix = Vec::new();
         for index in new_end..desired.len() {
             let id = previous[old_end + (index - new_end)];
-            self.update_existing(id, desired[index].clone())?;
+            self.update_existing(id, desired[index])?;
             suffix.push(id);
+            self.diagnostics.elements_reused += 1;
         }
         next.extend(suffix);
         Ok(next)
@@ -7767,7 +8518,7 @@ impl WidgetTree {
             action
         });
         let children = self
-            .reconcile_children(element_id, previous_children, vec![child])
+            .reconcile_children(element_id, previous_children, &[&child])
             .expect("layout builder child must have unique sibling keys");
         let element = self
             .elements
@@ -8089,10 +8840,13 @@ impl WidgetTree {
         self.unmounted.push(id);
         self.diagnostics.unmounts += 1;
     }
-    fn check_keys(&self, widgets: &[Widget]) -> Result<(), TreeError> {
-        let mut keys = HashSet::new();
-        for key in widgets.iter().filter_map(Widget::key) {
-            if !keys.insert(key.clone()) {
+    fn check_keys_borrowed<'a>(
+        &self,
+        widgets: impl IntoIterator<Item = &'a Widget>,
+    ) -> Result<(), TreeError> {
+        let mut keys: HashSet<&Key> = HashSet::new();
+        for key in widgets.into_iter().filter_map(Widget::key) {
+            if !keys.insert(key) {
                 return Err(TreeError::DuplicateKey(key.clone()));
             }
         }
@@ -8178,6 +8932,16 @@ impl WidgetTree {
         }
     }
     fn mark_render_dirty(&mut self, id: RenderObjectId, flags: DirtyFlags, propagate_layout: bool) {
+        let already_dirty = self
+            .renders
+            .get(id.0)
+            .is_some_and(|node| node.dirty.contains(flags));
+        self.diagnostics.dirty_requests += 1;
+        if already_dirty {
+            self.diagnostics.dirty_queue_deduplicated += 1;
+        } else {
+            self.diagnostics.dirty_queue_insertions += 1;
+        }
         let mut current = Some(id);
         while let Some(render) = current {
             let node = self.renders.get_mut(render.0).expect("live render");
@@ -8198,8 +8962,18 @@ impl WidgetTree {
             .contains(DirtyFlags::LAYOUT)
             || self.renders.get(id.0).expect("live").constraints != Some(constraints);
         if !needs {
+            self.diagnostics.layout_cache_hits += 1;
             return;
         }
+        #[cfg(feature = "devtools")]
+        let trace = self
+            .element_for_render(id)
+            .and_then(|element| self.devtools_trace_begin_element(element, TracePhase::Layout));
+        #[cfg(feature = "devtools")]
+        let old_layout = self.deep_trace.as_ref().map(|_| {
+            let render = self.renders.get(id.0).expect("live");
+            (render.constraints, render.size)
+        });
         if matches!(
             self.renders.get(id.0).expect("live").kind,
             RenderKind::LayoutBuilder
@@ -8983,6 +9757,44 @@ impl WidgetTree {
             self.compositor.update_transform(content, transform);
         }
         self.diagnostics.layouts += 1;
+        #[cfg(feature = "devtools")]
+        if let Some(element) = self.element_for_render(id) {
+            if let Some(element) = self.elements.get_mut(element.0) {
+                element.dev.layouts += 1;
+                if let Some((old_constraints, old_size)) = old_layout
+                    && (old_constraints != Some(constraints) || old_size != size)
+                {
+                    if old_constraints != Some(constraints) {
+                        element
+                            .dev
+                            .layout_reason
+                            .get_or_insert_with(|| "incoming constraints changed".into());
+                    }
+                    element
+                        .dev
+                        .paint_reason
+                        .get_or_insert_with(|| "layout result invalidated paint".into());
+                    const MAX_LAYOUT_HISTORY: usize = 64;
+                    if element.dev.layout_history.len() == MAX_LAYOUT_HISTORY {
+                        element.dev.layout_history.remove(0);
+                    }
+                    element.dev.layout_history.push(LayoutHistoryRecord {
+                        sequence: element.dev.layouts,
+                        old_constraints,
+                        new_constraints: constraints,
+                        old_size,
+                        new_size: size,
+                        cause: element
+                            .dev
+                            .last_cause
+                            .as_ref()
+                            .map(InvalidationCause::summary),
+                    });
+                }
+            }
+        }
+        #[cfg(feature = "devtools")]
+        self.devtools_trace_end(trace);
     }
     fn paint_render(&mut self, id: RenderObjectId, output: &mut DisplayList) {
         if matches!(
@@ -9009,6 +9821,11 @@ impl WidgetTree {
             .expect("live")
             .dirty
             .contains(DirtyFlags::PAINT);
+        #[cfg(feature = "devtools")]
+        let trace = dirty
+            .then(|| self.element_for_render(id))
+            .flatten()
+            .and_then(|element| self.devtools_trace_begin_element(element, TracePhase::Paint));
         if dirty {
             let kind = self.renders.get(id.0).expect("live").kind.clone();
             let size = self.renders.get(id.0).expect("live").size;
@@ -9305,18 +10122,27 @@ impl WidgetTree {
                 );
             }
             self.diagnostics.paints += 1;
+            #[cfg(feature = "devtools")]
+            if let Some(element) = self.element_for_render(id) {
+                if let Some(element) = self.elements.get_mut(element.0) {
+                    element.dev.paints += 1;
+                }
+            }
         }
         output.push(PaintCommand::PushTransform {
             transform: CoreTransform::translation(offset),
         });
-        output.extend_from(if dirty {
-            &self.renders.get(id.0).expect("live").cache
+        if dirty {
+            output.extend_from(&self.renders.get(id.0).expect("live").cache);
         } else {
-            &cache
-        });
+            self.diagnostics.display_lists_reused += 1;
+            output.extend_from(&cache);
+        }
         for child in children {
             self.paint_render(child, output);
         }
+        #[cfg(feature = "devtools")]
+        self.devtools_trace_end(trace);
         output.push(PaintCommand::PopTransform);
     }
     fn paint_scrollbar(
@@ -9540,6 +10366,74 @@ fn widget_text(widget: &Widget) -> Option<String> {
         _ => None,
     }
 }
+#[cfg(feature = "devtools")]
+impl WidgetKind {
+    pub fn dev_type_name_widget(&self) -> String {
+        crate::devtools_props::kind_display_name(self)
+    }
+}
+
+#[cfg(feature = "devtools")]
+impl RenderKind {
+    pub fn dev_type_name_render(&self) -> String {
+        crate::devtools_props::kind_display_name_render(self)
+    }
+
+    pub fn dev_type_name(&self) -> String {
+        let name = match self {
+            RenderKind::Box { .. } => "Box",
+            RenderKind::Shape { .. } => "Shape",
+            RenderKind::CustomPaint { .. } => "CustomPaint",
+            RenderKind::Decorated { .. } => "DecoratedBox",
+            RenderKind::Button { .. } => "Button",
+            RenderKind::Text { .. } => "Text",
+            RenderKind::SelectableText { .. } => "SelectableText",
+            RenderKind::SelectionArea => "SelectionArea",
+            RenderKind::TextField { .. } => "TextField",
+            RenderKind::Image { .. } => "Image",
+            RenderKind::Padding { .. } => "Padding",
+            RenderKind::Constrained { .. } => "ConstrainedBox",
+            RenderKind::Limited { .. } => "LimitedBox",
+            RenderKind::Overflow { .. } => "OverflowBox",
+            RenderKind::Unconstrained { .. } => "UnconstrainedBox",
+            RenderKind::Fractional { .. } => "FractionallySizedBox",
+            RenderKind::Baseline { .. } => "Baseline",
+            RenderKind::RepaintBoundary => "RepaintBoundary",
+            RenderKind::Gesture => "GestureRegion",
+            RenderKind::Align { .. } => "Align",
+            RenderKind::Flex { axis, .. } => {
+                return match axis {
+                    incular_config::Axis::Vertical => "Column".into(),
+                    incular_config::Axis::Horizontal => "Row".into(),
+                };
+            }
+            RenderKind::Wrap { .. } => "Wrap",
+            RenderKind::Table { .. } => "Table",
+            RenderKind::Stack { .. } => "Stack",
+            RenderKind::IndexedStack { .. } => "IndexedStack",
+            RenderKind::Positioned { .. } => "Positioned",
+            RenderKind::Visibility { .. } => "Visibility",
+            RenderKind::AspectRatio { .. } => "AspectRatio",
+            RenderKind::Scroll { .. } => "ScrollView",
+            RenderKind::PersistentHeader { .. } => "PersistentHeader",
+            RenderKind::VirtualList { .. } => "VirtualList",
+            RenderKind::LayoutBuilder => "LayoutBuilder",
+            RenderKind::Translate { .. } => "Translate",
+            RenderKind::Transform { .. } => "Transform",
+            RenderKind::Scale { .. } => "Scale",
+            RenderKind::Rotation { .. } => "Rotation",
+            RenderKind::FittedBox { .. } => "FittedBox",
+            RenderKind::Opacity { .. } => "Opacity",
+            RenderKind::Blur { .. } => "Blur",
+            RenderKind::DropShadow { .. } => "DropShadow",
+            RenderKind::ColorFiltered { .. } => "ColorFiltered",
+            RenderKind::Blend { .. } => "Blend",
+            RenderKind::Flexible { .. } => "Flexible",
+        };
+        name.to_owned()
+    }
+}
+
 fn render_kind(widget: &Widget) -> RenderKind {
     match &widget.kind {
         WidgetKind::Box { size, color } => RenderKind::Box {
@@ -11075,6 +11969,35 @@ mod tests {
         assert!(label_origin.y >= button_origin.y);
     }
     #[test]
+    fn compositional_button_keeps_configured_size_and_content_semantics() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                Button::new("Inspector row")
+                    .size(Size::new(180., 34.))
+                    .content(Widget::row([
+                        Widget::text("Inspector"),
+                        Widget::text("row"),
+                    ]))
+                    .into(),
+            )
+            .unwrap();
+
+        tree.layout(Constraints::new(0., 300., 0., 100.));
+        assert_eq!(
+            tree.render_size(tree.render_id(root).unwrap()),
+            Some(Size::new(180., 34.))
+        );
+
+        tree.update_semantics();
+        let semantic = tree
+            .semantic_node_for_element(root)
+            .and_then(|id| tree.semantics().node(id))
+            .expect("button semantics");
+        assert_eq!(semantic.role, SemanticRole::Button);
+        assert_eq!(semantic.label.as_deref(), Some("Inspector row"));
+    }
+    #[test]
     fn scroll_and_animation_compose_with_static_layout_placement() {
         let scroll = ScrollController::new();
         let translation = TranslationController::new();
@@ -12463,5 +13386,391 @@ mod tests {
             .collect();
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].1.label.as_deref(), Some("Incular logo"));
+    }
+}
+
+/// Widget key marking the performance-overlay mount point. Applications place
+/// a placeholder with this key; [`Runtime::install_performance_overlay`]
+/// (runtime crate) replaces it with the live overlay.
+pub const PERFORMANCE_OVERLAY_KEY: &str = "incular-performance-overlay";
+
+/// Mount-point placeholder for [`Runtime::install_performance_overlay`]
+/// (runtime crate). Place this anywhere in an application tree; installing
+/// swaps its contents for the live overlay while keeping the same top-level
+/// widget kind so the retained update path stays compatible.
+#[must_use]
+pub fn performance_overlay_placeholder() -> Widget {
+    Widget::repaint_boundary(Widget::box_(Size::ZERO, incular_core::Color::TRANSPARENT))
+        .with_key(Key::String(PERFORMANCE_OVERLAY_KEY.to_owned()))
+}
+
+/// Property tests for retained child reconciliation: random operation
+/// sequences applied to both the real reconciliation path and a trivial
+/// reference model must agree on logical order, key identity, and retained
+/// state after every step.
+#[cfg(test)]
+mod reconciliation_property {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct ModelChild {
+        key: Option<u64>,
+        payload: String,
+    }
+    type Model = Vec<ModelChild>;
+
+    fn frame() -> Constraints {
+        Constraints::tight(Size::new(400., 4000.))
+    }
+
+    fn widget_for(child: &ModelChild) -> Widget {
+        let mut widget = Widget::from(Text::new(format!(
+            "{}|{}",
+            child.payload,
+            child.key.unwrap_or(u64::MAX)
+        )));
+        if let Some(key) = child.key {
+            widget = widget.with_key(Key::Value(key));
+        }
+        widget
+    }
+
+    fn observed_keys(tree: &WidgetTree, parent: ElementId) -> Vec<Option<Key>> {
+        tree.children(parent)
+            .expect("children")
+            .iter()
+            .map(|&child| {
+                tree.elements
+                    .get(child.0)
+                    .map(|e| e.widget.key.clone())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    fn model_keys(model: &Model) -> Vec<Option<Key>> {
+        model
+            .iter()
+            .map(|child| child.key.map(Key::Value))
+            .collect()
+    }
+
+    /// Retained-state surrogate: payload travels with identity across moves.
+    fn observed_payloads(tree: &WidgetTree, parent: ElementId) -> Vec<String> {
+        tree.children(parent)
+            .expect("children")
+            .iter()
+            .map(
+                |&child| match &tree.elements.get(child.0).expect("live").widget.kind {
+                    WidgetKind::Text { text, .. } => text.clone(),
+                    _ => String::new(),
+                },
+            )
+            .collect()
+    }
+
+    fn model_payloads(model: &Model) -> Vec<String> {
+        model
+            .iter()
+            .map(|child| match widget_for(child).kind {
+                WidgetKind::Text { text, .. } => text,
+                _ => String::new(),
+            })
+            .collect()
+    }
+
+    #[derive(Clone, Debug)]
+    enum TestOp {
+        Insert(usize, Option<u64>, u64),
+        Remove(usize),
+        Move(usize, usize),
+        Replace(usize, u64),
+        ChangeKey(usize, Option<u64>),
+    }
+
+    fn apply(model: &mut Model, op: &TestOp) {
+        match op {
+            TestOp::Insert(position, key, payload) => {
+                if key.is_some_and(|key| model.iter().any(|c| c.key == Some(key))) {
+                    return;
+                }
+                model.insert(
+                    (*position).min(model.len()),
+                    ModelChild {
+                        key: *key,
+                        payload: format!("p{payload}"),
+                    },
+                );
+            }
+            TestOp::Remove(position) => {
+                if !model.is_empty() {
+                    model.remove((*position).min(model.len() - 1));
+                }
+            }
+            TestOp::Move(from, to) => {
+                if !model.is_empty() && from != to {
+                    let from = *from % model.len();
+                    let child = model.remove(from);
+                    model.insert((*to).min(model.len()), child);
+                }
+            }
+            TestOp::Replace(position, payload) => {
+                if !model.is_empty() {
+                    let position = (*position).min(model.len() - 1);
+                    model[position].payload = format!("r{payload}");
+                }
+            }
+            TestOp::ChangeKey(position, key) => {
+                if !model.is_empty() {
+                    let position = (*position).min(model.len() - 1);
+                    let free = key.is_none_or(|key| {
+                        !model
+                            .iter()
+                            .enumerate()
+                            .any(|(index, c)| index != position && c.key == Some(key))
+                    });
+                    if free {
+                        model[position].key = *key;
+                    }
+                }
+            }
+        }
+    }
+
+    fn reconcile(tree: &mut WidgetTree, parent: ElementId, model: &Model) {
+        let desired: Vec<Widget> = model.iter().map(widget_for).collect();
+        let mut parent_widget = tree.elements.get(parent.0).expect("parent").widget.clone();
+        match &mut parent_widget.kind {
+            WidgetKind::Flex { children, .. } => *children = desired,
+            other => panic!("test parent is a column, found {other:?}"),
+        }
+        tree.update(parent, parent_widget).expect("reconcile");
+        tree.layout(frame());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn reconciliation_matches_reference_model(
+            ops in proptest::collection::vec(
+                prop_oneof![
+                    (0usize..8, proptest::option::of(0u64..4u64), 0u64..1_000u64)
+                        .prop_map(|(position, key, payload)| TestOp::Insert(position, key, payload)),
+                    (0usize..8usize).prop_map(TestOp::Remove),
+                    (0usize..8usize, 0usize..8usize).prop_map(|(from, to)| TestOp::Move(from, to)),
+                    (0usize..8usize, 0u64..1_000u64)
+                        .prop_map(|(position, payload)| TestOp::Replace(position, payload)),
+                    (0usize..8usize, proptest::option::of(0u64..4u64))
+                        .prop_map(|(position, key)| TestOp::ChangeKey(position, key)),
+                ],
+                0..40,
+            )
+        ) {
+            let mut model: Model = Vec::new();
+            let mut tree = WidgetTree::default();
+            let parent = tree.mount(Widget::column(Vec::new())).expect("mount");
+            tree.layout(frame());
+
+            for op in &ops {
+                apply(&mut model, op);
+                reconcile(&mut tree, parent, &model);
+
+                prop_assert_eq!(observed_keys(&tree, parent), model_keys(&model));
+                prop_assert_eq!(observed_payloads(&tree, parent), model_payloads(&model));
+                prop_assert_eq!(tree.children(parent).unwrap().len(), model.len());
+            }
+        }
+    }
+}
+
+/// Task 15 structural reconciliation contracts: operation-count based, no
+/// timing thresholds.
+#[cfg(test)]
+mod reconciliation_structural_contracts {
+
+    use super::*;
+
+    fn frame() -> Constraints {
+        Constraints::tight(Size::new(600., 6000.))
+    }
+
+    fn keyed_row(items: usize, generation: u64) -> Widget {
+        let children = (0..items)
+            .map(|index| {
+                let label = if index == items / 2 && generation > 0 {
+                    format!("changed {generation}")
+                } else {
+                    format!("row {index}")
+                };
+                Widget::from(Text::new(label)).with_key(Key::Value(index as u64))
+            })
+            .collect::<Vec<_>>();
+        Widget::column(children)
+    }
+
+    fn prepared(root: Widget) -> (WidgetTree, ElementId) {
+        let mut tree = WidgetTree::default();
+        let root_id = tree.mount(root).expect("mount");
+        tree.layout(frame());
+        (tree, root_id)
+    }
+
+    #[test]
+    fn ten_thousand_unchanged_children_perform_no_mutation_work() {
+        // The PARENT differs (spacing), so its child list is rescanned; every
+        // child is byte-identical and must cost nothing but a comparison.
+        let build = |spacing: f32| {
+            Widget::wrap(
+                incular_config::Axis::Vertical,
+                spacing,
+                spacing,
+                (0..10_000)
+                    .map(|index| {
+                        Widget::from(Text::new(format!("row {index}")))
+                            .with_key(Key::Value(index as u64))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let (mut tree, root) = prepared(build(8.));
+        let before = tree.diagnostics();
+
+        tree.update(root, build(9.)).expect("update");
+        tree.layout(frame());
+        let _ = tree.paint();
+
+        let after = tree.diagnostics();
+        assert_eq!(
+            after.elements_created - before.elements_created,
+            0,
+            "created"
+        );
+        assert_eq!(
+            after.elements_removed - before.elements_removed,
+            0,
+            "removed"
+        );
+        assert_eq!(
+            after.rebuilds - before.rebuilds,
+            1,
+            "only the parent itself rebuilds"
+        );
+        assert_eq!(
+            after.identical_child_bailouts - before.identical_child_bailouts,
+            10_000,
+            "every child must hit the identical-widget bailout"
+        );
+    }
+
+    #[test]
+    fn single_changed_child_touches_only_that_child() {
+        let (mut tree, root) = prepared(keyed_row(10_000, 0));
+        let before = tree.diagnostics();
+
+        tree.update(root, keyed_row(10_000, 1)).expect("update");
+        tree.layout(frame());
+        let _ = tree.paint();
+
+        let after = tree.diagnostics();
+        assert_eq!(after.elements_created - before.elements_created, 0);
+        assert_eq!(after.elements_removed - before.elements_removed, 0);
+        // Root + the one changed descendant; nothing else rebuilds.
+        assert_eq!(after.rebuilds - before.rebuilds, 2);
+        assert_eq!(
+            after.identical_child_bailouts - before.identical_child_bailouts,
+            9_999
+        );
+        // Only the changed text and its column re-resolve layout.
+        assert_eq!(after.layouts - before.layouts, 2);
+        assert!(after.paints - before.paints >= 1, "changed text repaints");
+    }
+
+    #[test]
+    fn key_reorder_preserves_state_and_counts_moves() {
+        let build = |order: &[usize]| {
+            Widget::column(
+                order
+                    .iter()
+                    .map(|&index| {
+                        Widget::from(Text::new(format!("state {index}")))
+                            .with_key(Key::Value(index as u64))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let (mut tree, root) = prepared(build(&[0, 1, 2, 3, 4]));
+        let before = tree.diagnostics();
+
+        // Pure reorder: [4,3,2,1,0].
+        tree.update(root, build(&[4, 3, 2, 1, 0])).expect("reorder");
+        tree.layout(frame());
+
+        let after = tree.diagnostics();
+        assert_eq!(
+            after.elements_created - before.elements_created,
+            0,
+            "no remounts"
+        );
+        assert_eq!(
+            after.elements_removed - before.elements_removed,
+            0,
+            "no unmounts"
+        );
+        assert_eq!(
+            after.elements_moved - before.elements_moved,
+            4,
+            "four positions moved"
+        );
+
+        // Retained state identity: each moved child keeps its payload.
+        let payloads: Vec<String> = tree
+            .children(root)
+            .expect("children")
+            .iter()
+            .map(
+                |&child| match &tree.elements.get(child.0).expect("live").widget.kind {
+                    WidgetKind::Text { text, .. } => text.clone(),
+                    _ => String::new(),
+                },
+            )
+            .collect();
+        assert_eq!(
+            payloads,
+            ["state 4", "state 3", "state 2", "state 1", "state 0"]
+        );
+    }
+
+    #[test]
+    fn incompatible_key_replacement_does_not_inherit_state() {
+        let build = |kind: u8| {
+            let child = if kind == 0 {
+                Widget::from(Text::new("text 0"))
+            } else {
+                Widget::box_(Size::new(20., 20.), Color::WHITE)
+            };
+            Widget::column(vec![child.with_key(Key::Value(7))])
+        };
+        let (mut tree, root) = prepared(build(0));
+        let before = tree.diagnostics();
+
+        // Same key, different widget type: incompatible, must remount fresh.
+        tree.update(root, build(1)).expect("replace");
+
+        let after = tree.diagnostics();
+        assert_eq!(
+            after.mounts - before.mounts,
+            1,
+            "replacement mounts a new element"
+        );
+        assert_eq!(after.unmounts - before.unmounts, 1, "old element unmounts");
+        // The retained element is genuinely new: a Box, not the old Text.
+        for &child in tree.children(root).expect("children") {
+            assert!(matches!(
+                tree.elements.get(child.0).expect("live").widget.kind,
+                WidgetKind::Box { .. }
+            ));
+        }
     }
 }

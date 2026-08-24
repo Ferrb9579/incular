@@ -233,6 +233,18 @@ impl BatchPlan {
     }
 }
 
+impl GpuCounters {
+    /// Total render pipelines created across every family.
+    #[must_use]
+    pub const fn total_pipeline_creations(&self) -> u64 {
+        self.text_pipeline_creations
+            + self.rectangle_pipeline_creations
+            + self.image_pipeline_creations
+            + self.path_pipeline_creations
+            + self.composite_pipeline_creations
+            + self.stencil_pipeline_creations
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GpuCounters {
     pub frames: u64,
@@ -366,6 +378,13 @@ pub struct GpuCounters {
     /// at zero; sparse scenes use a tight retained scene scope instead of the
     /// complete presentation surface.
     pub full_frame_intermediate_passes: u64,
+    // Task 14 profiler additions: steady-state invariants rely on these being
+    // zero between initialization and genuine target-format changes.
+    pub render_passes: u64,
+    pub queue_submissions: u64,
+    pub buffer_uploads: u64,
+    pub buffer_upload_bytes: u64,
+    pub texture_upload_bytes: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GlyphCacheKey {
@@ -800,7 +819,141 @@ pub struct RenderStats {
     pub glyph_buffer_reallocated: bool,
     pub image_buffer_reallocated: bool,
     pub presented: bool,
+    /// Rounded rects plus stencil-mask draws issued this frame.
+    pub rounded_rect_instances: u32,
+    /// Path draws (fills and strokes) issued this frame.
+    pub path_draws: u32,
+    /// Total render passes recorded, including offscreen effect passes.
+    pub render_passes: u32,
+    /// Path triangles submitted this frame (3 vertices each).
+    pub path_triangles: u32,
+    /// Instance-buffer bytes written this frame.
+    pub upload_bytes: u64,
+    /// Texture pixel bytes written this frame (glyph atlas, images, LUTs).
+    pub texture_upload_bytes: u64,
+    /// Queue submissions this frame (main pass plus any offscreen effects).
+    pub queue_submissions: u32,
+    /// Batching/lowering duration in microseconds.
+    pub prepare_us: u32,
+    /// Main-pass recording duration in microseconds.
+    pub encode_us: u32,
+    /// Final submit+present call duration in microseconds.
+    pub submit_us: u32,
+    /// Render pipelines created during this frame. Initialization and
+    /// target-format changes aside, this must remain zero.
+    pub pipelines_created: u32,
 }
+impl RenderStats {
+    /// Total instances across every instance-driven pipeline family.
+    #[must_use]
+    pub const fn total_instances(&self) -> u32 {
+        self.rectangle_instances
+            + self.glyph_instances
+            + self.image_instances
+            + self.rounded_rect_instances
+    }
+}
+/// Latest resolved GPU timing sample for one window.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GpuFrameTimings {
+    pub frame: u64,
+    /// GPU duration of the main ordered UI render pass, in microseconds.
+    pub main_pass_us: f64,
+}
+
+/// Optional timestamp-query ring. Four in-flight slots keep resolution
+/// asynchronous; a busy slot simply skips sampling that frame. Reading
+/// results never blocks the CPU and never calls `poll(Wait)`.
+struct GpuTimeline {
+    query_set: wgpu::QuerySet,
+    slots: [GpuTimelineSlot; 4],
+    period_ns: f32,
+    next: usize,
+    frame: u64,
+    latest: Option<GpuFrameTimings>,
+    /// Shared with the `map_async` callback of whichever slot is in flight.
+    latest_result: std::sync::Arc<Mutex<Option<GpuFrameTimings>>>,
+}
+#[derive(Debug)]
+struct GpuTimelineSlot {
+    resolve: wgpu::Buffer,
+    staging: wgpu::Buffer,
+    in_flight: bool,
+}
+impl GpuTimelineSlot {
+    const SLOT_BYTES: wgpu::BufferAddress = 16;
+}
+impl GpuTimeline {
+    #[must_use]
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("incular gpu timeline"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let mut slots: Vec<GpuTimelineSlot> = Vec::with_capacity(4);
+        for index in 0..4 {
+            let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("incular gpu timeline resolve {index}")),
+                size: GpuTimelineSlot::SLOT_BYTES,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("incular gpu timeline staging {index}")),
+                size: GpuTimelineSlot::SLOT_BYTES,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            slots.push(GpuTimelineSlot {
+                resolve,
+                staging,
+                in_flight: false,
+            });
+        }
+        Self {
+            query_set,
+            slots: slots.try_into().expect("four slots"),
+            period_ns: queue.get_timestamp_period(),
+            next: 0,
+            frame: 0,
+            latest: None,
+            latest_result: std::sync::Arc::new(Mutex::new(None)),
+        }
+    }
+
+    #[must_use]
+    fn supported(device: &wgpu::Device) -> bool {
+        device.features().contains(
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+        )
+    }
+
+    /// Returns the query index pair base (slot * 2) when a slot is free.
+    fn acquire_slot(&mut self) -> Option<(u32, f32)> {
+        for offset in 0..self.slots.len() {
+            let index = (self.next + offset) % self.slots.len();
+            if !self.slots[index].in_flight {
+                self.slots[index].in_flight = true;
+                self.next = (index + 1) % self.slots.len();
+                return Some((index as u32, self.period_ns));
+            }
+        }
+        None
+    }
+
+    fn release_slot_if_idle(&mut self, index: usize) {
+        if self.slots[index].in_flight
+            && let Ok(guard) = self.latest_result.lock()
+            && guard.is_some()
+        {
+            // The shared result cell holds only the newest completed sample,
+            // so every awaiting slot can retire once any sample landed.
+            self.slots[index].in_flight = false;
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum RendererError {
     Adapter(wgpu::RequestAdapterError),
@@ -1023,6 +1176,9 @@ struct SharedGpuContextInner {
     device_generation: u64,
     pipelines: Mutex<HashMap<wgpu::TextureFormat, Arc<SharedPipelineResources>>>,
     resources: Mutex<SharedGpuResources>,
+    /// Bytes written for retained device-level textures (images, gradient
+    /// LUTs). These uploads happen once per resource rather than per frame.
+    texture_upload_bytes: std::sync::atomic::AtomicU64,
 }
 struct SharedGpuResources {
     registry: SharedGpuResourceRegistry,
@@ -1071,8 +1227,22 @@ impl SharedGpuContext {
             })
             .await
             .map_err(RendererError::Adapter)?;
+        // Timestamp support is additive and optional: adapters that expose it
+        // get non-blocking GPU frame timing, everyone else reports
+        // `GPU timing unavailable` instead of failing initialization.
+        let adapter_features = adapter.features();
+        let mut required_features = wgpu::Features::default();
+        let timestamp_features =
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+        if adapter_features.contains(timestamp_features) {
+            required_features |= timestamp_features;
+        }
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("incular shared device"),
+                required_features,
+                ..Default::default()
+            })
             .await
             .map_err(RendererError::Device)?;
         drop(surface);
@@ -1091,6 +1261,7 @@ impl SharedGpuContext {
                     glyph_atlas: GlyphAtlas::new(),
                     glyph_pages: Vec::new(),
                 }),
+                texture_upload_bytes: std::sync::atomic::AtomicU64::new(0),
             }),
         })
     }
@@ -1208,6 +1379,10 @@ impl SharedGpuContext {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
+        self.inner.texture_upload_bytes.fetch_add(
+            decoded.pixels().len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.inner.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
@@ -1276,6 +1451,10 @@ impl SharedGpuContext {
         if let Some(resource) = resources.gradients.get(&key) {
             return (Arc::clone(resource), false);
         }
+        self.inner.texture_upload_bytes.fetch_add(
+            (pixels.len().max(1) * 4) as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let resource = Arc::new(SharedGpuGradient {
             resource: create_gradient_resource(
                 &self.inner.device,
@@ -1955,6 +2134,10 @@ pub struct WgpuRenderer {
     window_gpu: WindowGpuState,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    gpu_timeline: Option<GpuTimeline>,
+    /// Armed by `render_composited`; consumed by the next top-level pass.
+    timestamp_next_pass: bool,
+    active_timeline_slot: Option<usize>,
     rectangle_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     image_pipeline: wgpu::RenderPipeline,
@@ -2130,6 +2313,8 @@ impl WgpuRenderer {
             blend_sampler,
         } = shared_pipelines.clone();
         shared.register_pipeline_resources(format, shared_pipelines);
+        let gpu_timeline =
+            GpuTimeline::supported(&device).then(|| GpuTimeline::new(&device, &queue));
         Ok(Self {
             shared,
             window_gpu: WindowGpuState {
@@ -2142,6 +2327,9 @@ impl WgpuRenderer {
             },
             device,
             queue,
+            gpu_timeline,
+            timestamp_next_pass: false,
+            active_timeline_slot: None,
             rectangle_pipeline,
             text_pipeline,
             image_pipeline,
@@ -2251,6 +2439,8 @@ impl WgpuRenderer {
         let target_width = config.width;
         let target_height = config.height;
         let device_generation = shared.inner.device_generation;
+        let gpu_timeline =
+            GpuTimeline::supported(&device).then(|| GpuTimeline::new(&device, &queue));
         Self {
             shared,
             window_gpu: WindowGpuState {
@@ -2261,8 +2451,11 @@ impl WgpuRenderer {
                 stencil_view,
                 presentation: WindowGpuPresentation::new(size),
             },
-            device,
+            device: device.clone(),
             queue,
+            gpu_timeline,
+            timestamp_next_pass: false,
+            active_timeline_slot: None,
             rectangle_pipeline: pipelines.rectangle_pipeline.clone(),
             text_pipeline: pipelines.text_pipeline.clone(),
             image_pipeline: pipelines.image_pipeline.clone(),
@@ -2333,6 +2526,15 @@ impl WgpuRenderer {
     }
     #[must_use]
     pub fn counters(&self) -> GpuCounters {
+        let mut counters = self.counters_snapshot();
+        counters.texture_upload_bytes += self
+            .shared
+            .inner
+            .texture_upload_bytes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        counters
+    }
+    fn counters_snapshot(&self) -> GpuCounters {
         let mut counters = self.counters;
         let atlas = self.shared.glyph_counters();
         counters.glyph_cache_hits = atlas.glyph_cache_hits;
@@ -3199,6 +3401,17 @@ impl WgpuRenderer {
             glyph_buffer_reallocated: glyph_reallocated,
             image_buffer_reallocated: image_reallocated,
             presented: true,
+            rounded_rect_instances: rounded as u32,
+            path_draws: paths as u32,
+            render_passes: 1,
+            path_triangles: 0,
+            upload_bytes: 0,
+            texture_upload_bytes: 0,
+            queue_submissions: 1,
+            prepare_us: 0,
+            encode_us: 0,
+            submit_us: 0,
+            pipelines_created: 0,
         })
     }
     fn render_composited(
@@ -3209,6 +3422,9 @@ impl WgpuRenderer {
         if !self.window_gpu.presentation.configured {
             return Ok(RenderStats::default());
         }
+        // Profiling deltas: every counter touched between these snapshots is
+        // attributable to this frame without touching individual call sites.
+        let before = self.counters;
         let scale = normalized_scale(scale_factor);
         let promote_destination = commands_have_destination_blend(list.commands());
         let (target_origin, target_width, target_height) = if promote_destination {
@@ -3219,6 +3435,7 @@ impl WgpuRenderer {
         self.target_width = target_width;
         self.target_height = target_height;
         self.target_origin = target_origin;
+        let prepare_started = std::time::Instant::now();
         let batches = self.lower_commands(
             list.commands(),
             scale,
@@ -3273,6 +3490,17 @@ impl WgpuRenderer {
                 _ => 0,
             })
             .sum::<usize>();
+        let stencil_masks = batches
+            .iter()
+            .filter(|batch| {
+                matches!(
+                    batch,
+                    DrawBatch::StencilPath { clip, .. } | DrawBatch::StencilRRect { clip, .. }
+                        if *clip != ClipState::Empty
+                )
+            })
+            .count();
+        let path_draws_this_frame = paths;
         let composites = batches
             .iter()
             .filter(|batch| {
@@ -3302,6 +3530,9 @@ impl WgpuRenderer {
         }
         self.upload_instance_data(&batches, scale, self.target_width, self.target_height);
         self.prepare_image_bind_groups(&batches);
+        let prepare_us = us_since(prepare_started);
+        let encode_started = std::time::Instant::now();
+        self.timestamp_next_pass = self.gpu_timeline.is_some();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -3340,7 +3571,7 @@ impl WgpuRenderer {
                 } if mode.requires_destination_read()
             )
         });
-        let (draw_calls, text_draw_calls) = if has_destination_blend {
+        let (draw_calls, _text_draw_calls) = if has_destination_blend {
             // A destination-read blend promotes only this composition scope;
             // ordinary SrcOver frames continue through the direct surface
             // path above.
@@ -3400,17 +3631,20 @@ impl WgpuRenderer {
             result
         };
         self.queue.present(frame);
+        if self.active_timeline_slot.is_some() {
+            self.begin_timestamp_readback();
+        }
+        if self.gpu_timeline.is_some() {
+            self.pump_gpu_timeline();
+        }
+        let submit_us = us_since(encode_started);
+        let encode_us = submit_us;
         self.counters.frames += 1;
         self.evict_unused_images();
         self.evict_unused_path_meshes();
         self.evict_unused_gradients();
         self.evict_offscreen_cache();
-        self.counters.draw_calls += u64::from(draw_calls);
-        self.counters.text_draw_calls += u64::from(text_draw_calls);
-        self.counters.rectangle_instances += rectangles as u64;
-        self.counters.glyph_instances += glyphs as u64;
-        self.counters.image_instances += images as u64;
-        self.counters.rounded_rect_instances += rounded as u64;
+        let after = self.counters;
         Ok(RenderStats {
             draw_calls,
             rectangle_instances: rectangles as u32,
@@ -3420,6 +3654,19 @@ impl WgpuRenderer {
             glyph_buffer_reallocated: glyph_reallocated,
             image_buffer_reallocated: image_reallocated,
             presented: true,
+            rounded_rect_instances: rounded as u32 + stencil_masks as u32,
+            path_draws: path_draws_this_frame as u32,
+            render_passes: 1
+                + (after.offscreen_render_passes - before.offscreen_render_passes) as u32,
+            path_triangles: (after.path_triangles - before.path_triangles) as u32,
+            upload_bytes: after.buffer_upload_bytes - before.buffer_upload_bytes,
+            texture_upload_bytes: after.texture_upload_bytes - before.texture_upload_bytes,
+            queue_submissions: (after.queue_submissions - before.queue_submissions) as u32,
+            prepare_us,
+            encode_us,
+            submit_us,
+            pipelines_created: (after.total_pipeline_creations()
+                - before.total_pipeline_creations()) as u32,
         })
     }
     fn ensure_rectangle_capacity(&mut self, required: usize) -> bool {
@@ -3457,7 +3704,13 @@ impl WgpuRenderer {
             create_composite_buffer(&self.device, self.composite_instance_capacity);
         true
     }
-    fn upload_instance_data(&self, batches: &[DrawBatch], scale: f32, width: u32, height: u32) {
+    /// One counted queue write for per-frame instance data.
+    fn write_counted(&mut self, buffer: wgpu::Buffer, offset: u64, data: &[u8]) {
+        self.counters.buffer_uploads += 1;
+        self.counters.buffer_upload_bytes += data.len() as u64;
+        self.queue.write_buffer(&buffer, offset, data);
+    }
+    fn upload_instance_data(&mut self, batches: &[DrawBatch], scale: f32, width: u32, height: u32) {
         let mut rectangle_offset = 0_u64;
         let mut glyph_offset = 0_u64;
         let mut image_offset = 0_u64;
@@ -3475,8 +3728,8 @@ impl WgpuRenderer {
                             logical_instance(*instance, width as f32, height as f32, scale)
                         })
                         .collect();
-                    self.queue.write_buffer(
-                        &self.instances,
+                    self.write_counted(
+                        self.instances.clone(),
                         rectangle_offset,
                         bytemuck::cast_slice(&gpu),
                     );
@@ -3485,8 +3738,8 @@ impl WgpuRenderer {
                 DrawBatch::Glyphs {
                     clip, instances, ..
                 } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.queue.write_buffer(
-                        &self.glyph_instances,
+                    self.write_counted(
+                        self.glyph_instances.clone(),
                         glyph_offset,
                         bytemuck::cast_slice(instances),
                     );
@@ -3496,8 +3749,8 @@ impl WgpuRenderer {
                 DrawBatch::Images {
                     clip, instances, ..
                 } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.queue.write_buffer(
-                        &self.image_instances,
+                    self.write_counted(
+                        self.image_instances.clone(),
                         image_offset,
                         bytemuck::cast_slice(instances),
                     );
@@ -3507,8 +3760,8 @@ impl WgpuRenderer {
                 DrawBatch::RoundedRects {
                     clip, instances, ..
                 } if *clip != ClipState::Empty && !instances.is_empty() => {
-                    self.queue.write_buffer(
-                        &self.rounded_rect_instances,
+                    self.write_counted(
+                        self.rounded_rect_instances.clone(),
                         rounded_offset,
                         bytemuck::cast_slice(instances),
                     );
@@ -3516,32 +3769,32 @@ impl WgpuRenderer {
                         (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
                 }
                 DrawBatch::Path { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.queue.write_buffer(
-                        &self.path_instances,
+                    self.write_counted(
+                        self.path_instances.clone(),
                         path_offset,
                         bytemuck::bytes_of(instance),
                     );
                     path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
                 }
                 DrawBatch::StencilRRect { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.queue.write_buffer(
-                        &self.rounded_rect_instances,
+                    self.write_counted(
+                        self.rounded_rect_instances.clone(),
                         rounded_offset,
                         bytemuck::bytes_of(instance),
                     );
                     rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
                 }
                 DrawBatch::StencilPath { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.queue.write_buffer(
-                        &self.path_instances,
+                    self.write_counted(
+                        self.path_instances.clone(),
                         path_offset,
                         bytemuck::bytes_of(instance),
                     );
                     path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
                 }
                 DrawBatch::Offscreen { clip, instance, .. } if *clip != ClipState::Empty => {
-                    self.queue.write_buffer(
-                        &self.composite_instances,
+                    self.write_counted(
+                        self.composite_instances.clone(),
                         composite_offset,
                         bytemuck::bytes_of(instance),
                     );
@@ -3552,8 +3805,8 @@ impl WgpuRenderer {
                 | DrawBatch::Blend { clip, instance, .. }
                     if *clip != ClipState::Empty =>
                 {
-                    self.queue.write_buffer(
-                        &self.composite_instances,
+                    self.write_counted(
+                        self.composite_instances.clone(),
                         composite_offset,
                         bytemuck::bytes_of(instance),
                     );
@@ -3585,6 +3838,27 @@ impl WgpuRenderer {
         let mut rounded_offset = 0_u64;
         let mut path_offset = 0_u64;
         let mut composite_offset = 0_u64;
+        // GPU timeline sampling is armed only for the main frame's top-level
+        // pass; offscreen effect passes stay attributable through their own
+        // counters instead of consuming timestamp slots.
+        let mut timeline_slot = None;
+        if self.timestamp_next_pass
+            && let Some(timeline) = self.gpu_timeline.as_mut()
+            && let Some((index, period)) = timeline.acquire_slot()
+        {
+            self.active_timeline_slot = Some(index as usize);
+            self.timestamp_next_pass = false;
+            timeline_slot = Some(index);
+            let _ = period;
+        }
+        let timestamp_writes = timeline_slot.map(|_| {
+            let timeline = self.gpu_timeline.as_ref().expect("armed timeline");
+            wgpu::RenderPassTimestampWrites {
+                query_set: &timeline.query_set,
+                beginning_of_pass_write_index: Some(0),
+                end_of_pass_write_index: Some(1),
+            }
+        });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("incular retained compositor pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3608,7 +3882,7 @@ impl WgpuRenderer {
                     store: wgpu::StoreOp::Store,
                 }),
             }),
-            timestamp_writes: None,
+            timestamp_writes,
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -3954,8 +4228,102 @@ impl WgpuRenderer {
             }
         }
         drop(pass);
+        if let (Some(timeline), Some(slot)) = (self.gpu_timeline.as_ref(), timeline_slot) {
+            let slot_state = &timeline.slots[slot as usize];
+            encoder.resolve_query_set(&timeline.query_set, 0..2, &slot_state.resolve, 0);
+            encoder.copy_buffer_to_buffer(
+                &slot_state.resolve,
+                0,
+                &slot_state.staging,
+                0,
+                GpuTimelineSlot::SLOT_BYTES,
+            );
+        }
         (draw_calls, text_draw_calls)
     }
+
+    /// Requests a non-blocking map of one resolved timestamp slot. The
+    /// callback completes on a later `device.poll(Maintain::Poll)`; nothing in
+    /// this path ever waits on the GPU.
+    fn begin_timestamp_readback(&mut self) {
+        let Some(index) = self.active_timeline_slot.take() else {
+            return;
+        };
+        let Some(timeline) = self.gpu_timeline.as_ref() else {
+            return;
+        };
+        let staging = timeline.slots[index].staging.clone();
+        let period_ns = timeline.period_ns;
+        let frame = timeline.frame;
+        let latest = Arc::clone(&timeline.latest_result);
+        let callback_buffer = staging.clone();
+        staging.slice(0..GpuTimelineSlot::SLOT_BYTES).map_async(
+            wgpu::MapMode::Read,
+            move |mapping| {
+                let staging = callback_buffer;
+                let sample = match mapping {
+                    Ok(()) => {
+                        let view = staging
+                            .get_mapped_range(0..GpuTimelineSlot::SLOT_BYTES)
+                            .expect("mapped staging is readable");
+                        let start =
+                            u64::from_le_bytes(view[0..8].try_into().expect("timestamp bytes"));
+                        let end =
+                            u64::from_le_bytes(view[8..16].try_into().expect("timestamp bytes"));
+                        drop(view);
+                        staging.unmap();
+                        let nanoseconds = end.saturating_sub(start) as f64 * f64::from(period_ns);
+                        Some(nanoseconds / 1000.)
+                    }
+                    Err(_) => None,
+                };
+                if let Ok(mut guard) = latest.lock() {
+                    *guard = Some(GpuFrameTimings {
+                        frame,
+                        main_pass_us: sample.unwrap_or(f64::NAN),
+                    });
+                }
+            },
+        );
+    }
+
+    /// Drives pending timestamp callbacks without blocking. Cheap when no
+    /// sampling is active; called at most once per rendered frame.
+    fn pump_gpu_timeline(&mut self) {
+        let Some(timeline) = self.gpu_timeline.as_mut() else {
+            return;
+        };
+        timeline.frame += 1;
+        if let Ok(guard) = timeline.latest_result.lock()
+            && let Some(sample) = *guard
+            && timeline
+                .latest
+                .is_none_or(|previous| previous.frame != sample.frame)
+        {
+            timeline.latest = Some(sample);
+        }
+        for index in 0..timeline.slots.len() {
+            timeline.release_slot_if_idle(index);
+        }
+        // Non-blocking poll drives timestamp callbacks; errors are surfaced
+        // through ordinary uncaptured-error handling, not this path.
+        let _ = self.device.poll(wgpu::PollType::Poll);
+    }
+
+    #[must_use]
+    pub const fn gpu_timing_supported(&self) -> bool {
+        self.gpu_timeline.is_some()
+    }
+
+    /// Latest asynchronously-resolved GPU timing, when supported.
+    #[must_use]
+    pub const fn gpu_frame_timings(&self) -> Option<GpuFrameTimings> {
+        match &self.gpu_timeline {
+            Some(timeline) => timeline.latest,
+            None => None,
+        }
+    }
+
     fn lower_draw_batches(
         &mut self,
         list: &DisplayList,
@@ -6293,6 +6661,7 @@ impl WgpuRenderer {
             padded[destination_start..destination_start + usize::from(entry.width)]
                 .copy_from_slice(&bitmap[source_start..source_start + usize::from(entry.width)]);
         }
+        self.counters.texture_upload_bytes += padded.len() as u64;
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &page.texture,
@@ -8303,6 +8672,9 @@ fn physical_debug_size(bounds: Rect, scale: f32) -> (u32, u32) {
         (bounds.size.height.max(0.) * scale).ceil() as u32,
     )
 }
+fn us_since(started: std::time::Instant) -> u32 {
+    started.elapsed().as_micros().try_into().unwrap_or(u32::MAX)
+}
 fn clamp_i16(value: i32) -> i16 {
     value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
@@ -9657,6 +10029,7 @@ mod pipeline_contract_tests {
                 glyph_atlas: GlyphAtlas::new(),
                 glyph_pages: Vec::new(),
             }),
+            texture_upload_bytes: std::sync::atomic::AtomicU64::new(0),
         };
         // Two "windows" on one device context.
         let context_a = SharedGpuContext {

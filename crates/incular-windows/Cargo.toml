@@ -19,7 +19,14 @@ incular-runtime = { workspace = true }
 incular-wgpu = { workspace = true }
 incular-layout = { workspace = true }
 incular-widgets = { workspace = true }
+incular-devtools = { workspace = true, optional = true }
+incular-devtools-protocol = { workspace = true, optional = true }
+incular-rendering = { workspace = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 arboard = { workspace = true }
 accesskit_winit = { workspace = true }
+
+[features]
+default = []
+devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools"]

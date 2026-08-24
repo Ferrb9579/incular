@@ -60,11 +60,13 @@ pub mod prelude {
     };
     pub use incular_runtime::{
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
-        AsyncValue, BuildContext, EditingDiagnostics, FileRestorationStore, FocusDiagnostics,
-        InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, Restorable,
-        RestorableWindowFactory, RestorationConfig, RestorationDiagnostics, RestorationHandle,
-        RestorationMigration, RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics,
-        RuntimeErrorReport, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
+        AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics, FileRestorationStore,
+        FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics, GpuSample,
+        InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, PerformanceHub,
+        PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory,
+        RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
+        RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics, RuntimeErrorReport,
+        SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
         UiDispatcher, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
         WindowRestorationId,
     };
@@ -129,4 +131,24 @@ pub fn run(application: incular_runtime::Application) -> Result<(), incular_wind
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 pub fn run(application: incular_runtime::Application) -> Result<(), incular_macos::RunError> {
     incular_macos::run_application(application)
+}
+
+pub use incular_runtime::PERFORMANCE_OVERLAY_KEY;
+
+/// Formats a snapshot into standard overlay lines (thin wrapper over
+/// [`incular_runtime::PerformanceSnapshot::overlay_lines`]).
+#[must_use]
+pub fn overlay_lines(snapshot: &runtime::PerformanceSnapshot) -> Vec<String> {
+    snapshot.overlay_lines()
+}
+
+/// Installs the repaint-contained debug performance overlay into `window`.
+/// The tree must contain a placeholder keyed with
+/// [`PERFORMANCE_OVERLAY_KEY`]; publishing rebuilds only that element.
+#[cfg(feature = "desktop")]
+pub fn install_performance_overlay(
+    application: &mut runtime::Application,
+    window: platform::WindowId,
+) -> Result<(), widgets::TreeError> {
+    application.install_performance_overlay(window)
 }

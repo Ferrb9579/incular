@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "tools/*"]
 resolver = "3"
 
 [package]
@@ -12,6 +12,12 @@ autoexamples = false
 
 [lib]
 path = "src/lib.rs"
+
+[profile.dev]
+incremental = false
+
+[profile.release]
+incremental = false
 
 [dev-dependencies]
 incular = { path = "crates/incular", default-features = false }
@@ -46,6 +52,9 @@ incular-runtime = { path = "crates/incular-runtime", version = "0.1.0" }
 incular-text = { path = "crates/incular-text", version = "0.1.0" }
 incular-wgpu = { path = "crates/incular-wgpu", version = "0.1.0" }
 incular-widgets = { path = "crates/incular-widgets", version = "0.1.0" }
+incular-devtools-protocol = { path = "crates/incular-devtools-protocol", version = "0.1.0" }
+incular-devtools = { path = "crates/incular-devtools", version = "0.1.0" }
+incular-devtools-ui = { path = "tools/incular-devtools", version = "0.1.0" }
 incular-windows = { path = "crates/incular-windows", version = "0.1.0" }
 
 wgpu = "30"
@@ -55,6 +64,16 @@ winit = "0.30"
 raw-window-handle = "0.6"
 bytemuck = { version = "1.23", features = ["derive"] }
 pollster = "0.4"
+# CPU benchmarking (dev-only, per-crate benches).
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+# Optional structured logging/spans; zero-cost without a subscriber.
+tracing = "0.1"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
+# Property testing for correctness-sensitive reconciliation (dev-only).
+proptest = "1"
+
 parley = "0.7"
 arboard = "3.6"
 fontdue = "0.9"
@@ -79,3 +98,14 @@ icu_datetime = { version = "2.2.0", features = ["compiled_data"] }
 icu_plurals = { version = "2.2.0", features = ["compiled_data"] }
 icu_segmenter = { version = "2.2.0", features = ["compiled_data"] }
 keyboard-types = "0.8.3"
+
+# Optimized build with symbols for external profilers (`perf`,samply).
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[profile.test]
+incremental = false
+
+[profile.bench]
+incremental = false

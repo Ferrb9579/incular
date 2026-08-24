@@ -19,8 +19,35 @@ incular-layout = { workspace = true }
 incular-scroll = { workspace = true }
 incular-rendering = { workspace = true }
 incular-text = { workspace = true }
+incular-devtools-protocol = { workspace = true, optional = true }
 icu_segmenter = { workspace = true }
 incular-animation = { workspace = true }
 incular-assets = { workspace = true }
 incular-image = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+default = []
+# Exposes DevTools introspection APIs (per-element counters, invalidation
+# reasons, tree snapshots). Production builds leave this off.
+devtools = ["dep:incular-devtools-protocol"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "reconciliation"
+harness = false
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "semantics"
+harness = false
+
+[[bench]]
+name = "widget_eq_probe"
+harness = false

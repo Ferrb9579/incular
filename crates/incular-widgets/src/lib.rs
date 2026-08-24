@@ -21,8 +21,13 @@ pub use incular_scroll::{
     ScrollController, ScrollDelta, ScrollPhysics, ScrollSpringStep, Scrollability,
     ScrollbarGeometry, ScrollbarStyle, SnapPhysics,
 };
+pub use incular_text::{FontFamily, TextStyle};
 pub use parity::*;
 pub use safe_area::*;
 pub use scrolling::*;
 pub use selection::*;
+#[cfg(feature = "devtools")]
+pub mod devtools;
+#[cfg(feature = "devtools")]
+pub mod devtools_props;
 pub use tree::*;

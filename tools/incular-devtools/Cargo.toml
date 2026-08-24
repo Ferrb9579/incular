@@ -1,0 +1,20 @@
+[package]
+name = "incular-devtools-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Standalone Incular DevTools application (built with Incular)"
+publish = false
+
+[[bin]]
+name = "incular-devtools"
+path = "src/main.rs"
+
+[dependencies]
+incular = { workspace = true, features = ["devtools"] }
+incular-devtools-protocol = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+directories = { workspace = true }

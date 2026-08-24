@@ -25,6 +25,24 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+tracing = { workspace = true }
+incular-devtools-protocol = { workspace = true, optional = true }
+
+[features]
+default = []
+devtools = ["incular-widgets/devtools", "dep:incular-devtools-protocol"]
 
 [dev-dependencies]
 accesskit = { workspace = true }
+incular-scroll = { workspace = true }
+incular-text = { workspace = true }
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "signals"
+harness = false
+
+[[bench]]
+name = "restoration"
+harness = false
