@@ -21,7 +21,9 @@ fn main() {
                     Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
                 )
             });
-        let inner_view: Widget = SizedBox::new(Size::new(360., 320.), list).into();
+        let inner_view: Widget = SizedBox::from_size(Size::new(360., 320.))
+            .child(list)
+            .into();
         ScrollView::vertical(
             outer.clone(),
             Widget::column(vec![

@@ -13,7 +13,11 @@ use std::{
 
 use icu_segmenter::GraphemeClusterSegmenter;
 use incular_animation::AnimationController;
-use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
+use incular_config::{
+    Alignment, Axis, Clip, Constraints, CrossAxisAlignment, EdgeInsets, FlexFit, MainAxisAlignment,
+    MainAxisSize, RuntimeEnvironment, StackFit, TextDirection, VerticalDirection, WrapAlignment,
+    WrapCrossAlignment,
+};
 use incular_core::{
     Arena, ArenaId, Color, DirtyFlags, Offset, Rect, RestorationKey, RestorationScope, Size,
     Transform as CoreTransform,
@@ -46,7 +50,7 @@ use crate::SelectionAreaController;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
 use crate::gestures::{
     GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
-    GestureCallbacks, GestureDecision, GestureDetector, GestureDisposition, PointerEvent,
+    GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
     ScaleGestureDetector,
 };
 
@@ -1113,7 +1117,7 @@ pub struct Widget {
 /// have a more specific built-in semantic role. Incular keeps this data in its
 /// retained `SemanticsTree`; native adapters only project that tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Semantics {
+pub struct ExplicitSemantics {
     pub role: SemanticRole,
     pub label: Option<String>,
     pub value: Option<String>,
@@ -1122,7 +1126,7 @@ pub struct Semantics {
     pub actions: Vec<SemanticActionKind>,
 }
 
-impl Semantics {
+impl ExplicitSemantics {
     #[must_use]
     pub fn new(role: SemanticRole) -> Self {
         Self {
@@ -1171,7 +1175,7 @@ struct SemanticProperties {
     label: Option<String>,
     description: Option<String>,
     hidden: bool,
-    explicit: Option<Semantics>,
+    explicit: Option<ExplicitSemantics>,
     merge_descendants: bool,
     block_previous_siblings: bool,
 }
@@ -1302,10 +1306,18 @@ pub enum WidgetKind {
     },
     Align {
         alignment: Alignment,
+        width_factor: Option<f32>,
+        height_factor: Option<f32>,
         child: Box<Widget>,
     },
     Flex {
         axis: Axis,
+        main_axis_alignment: MainAxisAlignment,
+        main_axis_size: MainAxisSize,
+        cross_axis_alignment: CrossAxisAlignment,
+        text_direction: TextDirection,
+        vertical_direction: VerticalDirection,
+        spacing: f32,
         children: Vec<Widget>,
     },
     Flexible {
@@ -1315,8 +1327,13 @@ pub enum WidgetKind {
     },
     Wrap {
         axis: Axis,
+        alignment: WrapAlignment,
         spacing: f32,
+        run_alignment: WrapAlignment,
         run_spacing: f32,
+        cross_axis_alignment: WrapCrossAlignment,
+        text_direction: TextDirection,
+        vertical_direction: VerticalDirection,
         children: Vec<Widget>,
     },
     Table {
@@ -1327,6 +1344,9 @@ pub enum WidgetKind {
     },
     Stack {
         alignment: Alignment,
+        text_direction: TextDirection,
+        fit: StackFit,
+        clip_behavior: Clip,
         children: Vec<Widget>,
     },
     Positioned {
@@ -1342,6 +1362,33 @@ pub enum WidgetKind {
         alignment: Alignment,
         index: usize,
         children: Vec<Widget>,
+    },
+    SafeArea {
+        minimum: EdgeInsets,
+        left: bool,
+        top: bool,
+        right: bool,
+        bottom: bool,
+        maintain_bottom_view_padding: bool,
+        child: Box<Widget>,
+    },
+    ClipRect {
+        clip_behavior: Clip,
+        child: Box<Widget>,
+    },
+    ClipRRect {
+        radius: CornerRadii,
+        clip_behavior: Clip,
+        child: Box<Widget>,
+    },
+    ClipOval {
+        clip_behavior: Clip,
+        child: Box<Widget>,
+    },
+    ClipPath {
+        path: Arc<Path>,
+        clip_behavior: Clip,
+        child: Box<Widget>,
     },
     LayoutBuilder {
         builder: Rc<dyn Fn(Constraints) -> Widget>,
@@ -1776,14 +1823,36 @@ impl std::fmt::Debug for WidgetKind {
                 .field("absorbing", absorbing)
                 .field("child", child)
                 .finish(),
-            Self::Align { alignment, child } => f
+            Self::Align {
+                alignment,
+                width_factor,
+                height_factor,
+                child,
+            } => f
                 .debug_struct("Align")
                 .field("alignment", alignment)
+                .field("width_factor", width_factor)
+                .field("height_factor", height_factor)
                 .field("child", child)
                 .finish(),
-            Self::Flex { axis, children } => f
+            Self::Flex {
+                axis,
+                main_axis_alignment,
+                main_axis_size,
+                cross_axis_alignment,
+                text_direction,
+                vertical_direction,
+                spacing,
+                children,
+            } => f
                 .debug_struct("Flex")
                 .field("axis", axis)
+                .field("main_axis_alignment", main_axis_alignment)
+                .field("main_axis_size", main_axis_size)
+                .field("cross_axis_alignment", cross_axis_alignment)
+                .field("text_direction", text_direction)
+                .field("vertical_direction", vertical_direction)
+                .field("spacing", spacing)
                 .field("children", children)
                 .finish(),
             Self::Flexible { flex, fit, child } => f
@@ -1794,14 +1863,24 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Wrap {
                 axis,
+                alignment,
                 spacing,
+                run_alignment,
                 run_spacing,
+                cross_axis_alignment,
+                text_direction,
+                vertical_direction,
                 children,
             } => f
                 .debug_struct("Wrap")
                 .field("axis", axis)
+                .field("alignment", alignment)
                 .field("spacing", spacing)
+                .field("run_alignment", run_alignment)
                 .field("run_spacing", run_spacing)
+                .field("cross_axis_alignment", cross_axis_alignment)
+                .field("text_direction", text_direction)
+                .field("vertical_direction", vertical_direction)
                 .field("children", children)
                 .finish(),
             Self::Table {
@@ -1818,11 +1897,71 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Stack {
                 alignment,
+                text_direction,
+                fit,
+                clip_behavior,
                 children,
             } => f
                 .debug_struct("Stack")
                 .field("alignment", alignment)
+                .field("text_direction", text_direction)
+                .field("fit", fit)
+                .field("clip_behavior", clip_behavior)
                 .field("children", children)
+                .finish(),
+            Self::SafeArea {
+                minimum,
+                left,
+                top,
+                right,
+                bottom,
+                maintain_bottom_view_padding,
+                child,
+            } => f
+                .debug_struct("SafeArea")
+                .field("minimum", minimum)
+                .field("left", left)
+                .field("top", top)
+                .field("right", right)
+                .field("bottom", bottom)
+                .field("maintain_bottom_view_padding", maintain_bottom_view_padding)
+                .field("child", child)
+                .finish(),
+            Self::ClipRect {
+                clip_behavior,
+                child,
+            } => f
+                .debug_struct("ClipRect")
+                .field("clip_behavior", clip_behavior)
+                .field("child", child)
+                .finish(),
+            Self::ClipRRect {
+                radius,
+                clip_behavior,
+                child,
+            } => f
+                .debug_struct("ClipRRect")
+                .field("radius", radius)
+                .field("clip_behavior", clip_behavior)
+                .field("child", child)
+                .finish(),
+            Self::ClipOval {
+                clip_behavior,
+                child,
+            } => f
+                .debug_struct("ClipOval")
+                .field("clip_behavior", clip_behavior)
+                .field("child", child)
+                .finish(),
+            Self::ClipPath {
+                path,
+                clip_behavior,
+                child,
+            } => f
+                .debug_struct("ClipPath")
+                .field("path", path)
+                .field("clip_behavior", clip_behavior)
+                .field("child", child)
                 .finish(),
             Self::Positioned {
                 left,
@@ -2262,17 +2401,37 @@ impl PartialEq for WidgetKind {
             (
                 Self::Wrap {
                     axis: a,
-                    spacing: b,
-                    run_spacing: c,
-                    children: d,
+                    alignment: b,
+                    spacing: c,
+                    run_alignment: d,
+                    run_spacing: e,
+                    cross_axis_alignment: f,
+                    text_direction: g,
+                    vertical_direction: h,
+                    children: i,
                 },
                 Self::Wrap {
-                    axis: e,
-                    spacing: f,
-                    run_spacing: g,
-                    children: h,
+                    axis: j,
+                    alignment: k,
+                    spacing: l,
+                    run_alignment: m,
+                    run_spacing: n,
+                    cross_axis_alignment: o,
+                    text_direction: p,
+                    vertical_direction: q,
+                    children: r,
                 },
-            ) => a == e && b == f && c == g && d == h,
+            ) => {
+                a == j
+                    && b == k
+                    && c == l
+                    && d == m
+                    && e == n
+                    && f == o
+                    && g == p
+                    && h == q
+                    && i == r
+            }
             (
                 Self::Constrained {
                     constraints: a,
@@ -2440,23 +2599,39 @@ impl PartialEq for WidgetKind {
             (
                 Self::Align {
                     alignment: a,
-                    child: b,
-                },
-                Self::Align {
-                    alignment: c,
+                    width_factor: b,
+                    height_factor: c,
                     child: d,
                 },
-            ) => a == c && b == d,
+                Self::Align {
+                    alignment: e,
+                    width_factor: f,
+                    height_factor: g,
+                    child: h,
+                },
+            ) => a == e && b == f && c == g && d == h,
             (
                 Self::Flex {
                     axis: a,
-                    children: b,
+                    main_axis_alignment: b,
+                    main_axis_size: c,
+                    cross_axis_alignment: d,
+                    text_direction: e,
+                    vertical_direction: f,
+                    spacing: g,
+                    children: h,
                 },
                 Self::Flex {
-                    axis: c,
-                    children: d,
+                    axis: i,
+                    main_axis_alignment: j,
+                    main_axis_size: k,
+                    cross_axis_alignment: l,
+                    text_direction: m,
+                    vertical_direction: n,
+                    spacing: o,
+                    children: p,
                 },
-            ) => a == c && b == d,
+            ) => a == i && b == j && c == k && d == l && e == m && f == n && g == o && h == p,
             (
                 Self::Flexible {
                     flex: a,
@@ -2469,16 +2644,23 @@ impl PartialEq for WidgetKind {
                     child: f,
                 },
             ) => a == d && b == e && c == f,
+
             (
                 Self::Stack {
                     alignment: a,
-                    children: b,
+                    text_direction: b,
+                    fit: c,
+                    clip_behavior: d,
+                    children: e,
                 },
                 Self::Stack {
-                    alignment: c,
-                    children: d,
+                    alignment: f,
+                    text_direction: g,
+                    fit: h,
+                    clip_behavior: i,
+                    children: j,
                 },
-            ) => a == c && b == d,
+            ) => a == f && b == g && c == h && d == i && e == j,
             (
                 Self::Positioned {
                     left: a,
@@ -2509,6 +2691,70 @@ impl PartialEq for WidgetKind {
                     alignment: d,
                     index: e,
                     children: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::SafeArea {
+                    minimum: a,
+                    left: b,
+                    top: c,
+                    right: d,
+                    bottom: e,
+                    maintain_bottom_view_padding: f,
+                    child: g,
+                },
+                Self::SafeArea {
+                    minimum: h,
+                    left: i,
+                    top: j,
+                    right: k,
+                    bottom: l,
+                    maintain_bottom_view_padding: m,
+                    child: n,
+                },
+            ) => a == h && b == i && c == j && d == k && e == l && f == m && g == n,
+            (
+                Self::ClipRect {
+                    clip_behavior: a,
+                    child: b,
+                },
+                Self::ClipRect {
+                    clip_behavior: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::ClipRRect {
+                    radius: a,
+                    clip_behavior: b,
+                    child: c,
+                },
+                Self::ClipRRect {
+                    radius: d,
+                    clip_behavior: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::ClipOval {
+                    clip_behavior: a,
+                    child: b,
+                },
+                Self::ClipOval {
+                    clip_behavior: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::ClipPath {
+                    path: a,
+                    clip_behavior: b,
+                    child: c,
+                },
+                Self::ClipPath {
+                    path: d,
+                    clip_behavior: e,
+                    child: f,
                 },
             ) => a == d && b == e && c == f,
             (Self::LayoutBuilder { builder: a }, Self::LayoutBuilder { builder: b }) => {
@@ -2591,6 +2837,11 @@ enum WidgetType {
     Stack,
     Positioned,
     IndexedStack,
+    SafeArea,
+    ClipRect,
+    ClipRRect,
+    ClipOval,
+    ClipPath,
     LayoutBuilder,
     Visibility,
     AspectRatio,
@@ -2609,6 +2860,16 @@ enum WidgetType {
     Blend,
 }
 impl Widget {
+    /// Creates a widget from a internal kind descriptor.
+    #[must_use]
+    pub fn from_kind(kind: WidgetKind) -> Self {
+        Self {
+            key: None,
+            kind,
+            semantics: SemanticProperties::default(),
+        }
+    }
+
     /// Text content when this widget is text-like (DevTools labels only).
     pub fn text_if_any(&self) -> Option<String> {
         match &self.kind {
@@ -2742,6 +3003,11 @@ impl Widget {
             | WidgetKind::Align { child, .. }
             | WidgetKind::Flexible { child, .. }
             | WidgetKind::Positioned { child, .. }
+            | WidgetKind::SafeArea { child, .. }
+            | WidgetKind::ClipRect { child, .. }
+            | WidgetKind::ClipRRect { child, .. }
+            | WidgetKind::ClipOval { child, .. }
+            | WidgetKind::ClipPath { child, .. }
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
@@ -3085,36 +3351,25 @@ impl Widget {
     }
     #[must_use]
     pub fn align(alignment: Alignment, child: Self) -> Self {
-        Self {
-            key: None,
-            kind: WidgetKind::Align {
-                alignment,
-                child: Box::new(child),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Align::new(alignment, child).into()
     }
     #[must_use]
     pub fn row(children: impl Into<Vec<Self>>) -> Self {
-        Self {
-            key: None,
-            kind: WidgetKind::Flex {
-                axis: Axis::Horizontal,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Row::new(children.into())
+            .main_axis_size(incular_config::MainAxisSize::Min)
+            .cross_axis_alignment(incular_config::CrossAxisAlignment::Start)
+            .into()
     }
     #[must_use]
     pub fn column(children: impl Into<Vec<Self>>) -> Self {
-        Self {
-            key: None,
-            kind: WidgetKind::Flex {
-                axis: Axis::Vertical,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Column::new(children.into())
+            .main_axis_size(incular_config::MainAxisSize::Min)
+            .cross_axis_alignment(incular_config::CrossAxisAlignment::Start)
+            .into()
+    }
+    #[must_use]
+    pub fn flex(direction: Axis, children: impl Into<Vec<Self>>) -> Self {
+        crate::layout::Flex::new(direction, children.into()).into()
     }
     #[must_use]
     pub fn flexible(flex: u32, fit: incular_config::FlexFit, child: Self) -> Self {
@@ -3137,20 +3392,11 @@ impl Widget {
         run_spacing: f32,
         children: impl Into<Vec<Self>>,
     ) -> Self {
-        assert!(
-            spacing.is_finite() && spacing >= 0. && run_spacing.is_finite() && run_spacing >= 0.,
-            "wrap spacing must be finite and non-negative"
-        );
-        Self {
-            key: None,
-            kind: WidgetKind::Wrap {
-                axis,
-                spacing,
-                run_spacing,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Wrap::new(children.into())
+            .direction(axis)
+            .spacing(spacing)
+            .run_spacing(run_spacing)
+            .into()
     }
     /// Places row-major children in max-content columns.
     #[must_use]
@@ -3160,36 +3406,18 @@ impl Widget {
         row_spacing: f32,
         children: impl Into<Vec<Self>>,
     ) -> Self {
-        assert!(
-            column_spacing.is_finite()
-                && column_spacing >= 0.
-                && row_spacing.is_finite()
-                && row_spacing >= 0.,
-            "table spacing must be finite and non-negative"
-        );
-        Self {
-            key: None,
-            kind: WidgetKind::Table {
-                columns: columns.max(1),
-                column_spacing,
-                row_spacing,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Table::new(columns, children.into())
+            .column_spacing(column_spacing)
+            .row_spacing(row_spacing)
+            .into()
     }
     /// Paints children in order at the same origin. The last child is the
     /// front-most hit-test target, matching Flutter's stack semantics.
     #[must_use]
     pub fn stack(alignment: Alignment, children: impl Into<Vec<Self>>) -> Self {
-        Self {
-            key: None,
-            kind: WidgetKind::Stack {
-                alignment,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        }
+        crate::layout::Stack::new(children.into())
+            .alignment(alignment)
+            .into()
     }
     #[must_use]
     pub fn positioned(
@@ -3537,7 +3765,7 @@ impl Widget {
     /// dialogs, and custom-painted controls; it never exposes native adapter
     /// types to application code.
     #[must_use]
-    pub fn semantics(mut self, semantics: Semantics) -> Self {
+    pub fn semantics(mut self, semantics: ExplicitSemantics) -> Self {
         self.semantics.explicit = Some(semantics);
         self
     }
@@ -3600,6 +3828,11 @@ impl Widget {
             WidgetKind::Stack { .. } => WidgetType::Stack,
             WidgetKind::Positioned { .. } => WidgetType::Positioned,
             WidgetKind::IndexedStack { .. } => WidgetType::IndexedStack,
+            WidgetKind::SafeArea { .. } => WidgetType::SafeArea,
+            WidgetKind::ClipRect { .. } => WidgetType::ClipRect,
+            WidgetKind::ClipRRect { .. } => WidgetType::ClipRRect,
+            WidgetKind::ClipOval { .. } => WidgetType::ClipOval,
+            WidgetKind::ClipPath { .. } => WidgetType::ClipPath,
             WidgetKind::LayoutBuilder { .. } => WidgetType::LayoutBuilder,
             WidgetKind::Visibility { .. } => WidgetType::Visibility,
             WidgetKind::AspectRatio { .. } => WidgetType::AspectRatio,
@@ -3647,6 +3880,11 @@ impl Widget {
             | WidgetKind::Align { child, .. }
             | WidgetKind::Flexible { child, .. }
             | WidgetKind::Positioned { child, .. }
+            | WidgetKind::SafeArea { child, .. }
+            | WidgetKind::ClipRect { child, .. }
+            | WidgetKind::ClipRRect { child, .. }
+            | WidgetKind::ClipOval { child, .. }
+            | WidgetKind::ClipPath { child, .. }
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
@@ -3759,119 +3997,6 @@ impl From<Image> for Widget {
             value.alignment,
             value.sampling,
         )
-    }
-}
-
-/// A fixed-size leaf that replays a renderer-neutral [`DisplayList`].
-#[derive(Clone, Debug, PartialEq)]
-pub struct CustomPaint {
-    size: Size,
-    display_list: DisplayList,
-}
-impl CustomPaint {
-    #[must_use]
-    pub fn new(size: Size, display_list: DisplayList) -> Self {
-        Self { size, display_list }
-    }
-}
-impl From<CustomPaint> for Widget {
-    fn from(value: CustomPaint) -> Self {
-        Widget::custom_paint(value.size, value.display_list)
-    }
-}
-
-/// An explicit retained paint isolation boundary around one child.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RepaintBoundary {
-    child: Widget,
-}
-impl RepaintBoundary {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-impl From<RepaintBoundary> for Widget {
-    fn from(value: RepaintBoundary) -> Self {
-        Widget::repaint_boundary(value.child)
-    }
-}
-
-/// A retained input region that owns a [`GestureCallbacks`] set for one child.
-#[derive(Clone)]
-pub struct GestureRegion {
-    callbacks: GestureCallbacks,
-    child: Widget,
-}
-impl GestureRegion {
-    #[must_use]
-    pub fn new(callbacks: GestureCallbacks, child: impl Into<Widget>) -> Self {
-        Self {
-            callbacks,
-            child: child.into(),
-        }
-    }
-}
-impl From<GestureRegion> for Widget {
-    fn from(value: GestureRegion) -> Self {
-        Widget::gesture(value.callbacks, value.child)
-    }
-}
-
-/// A retained boundary that makes its child subtree transparent to pointer
-/// hit testing. It does not hide the subtree from painting or accessibility.
-#[derive(Clone, Debug, PartialEq)]
-pub struct IgnorePointer {
-    ignoring: bool,
-    child: Widget,
-}
-impl IgnorePointer {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            ignoring: true,
-            child: child.into(),
-        }
-    }
-    #[must_use]
-    pub fn ignoring(mut self, ignoring: bool) -> Self {
-        self.ignoring = ignoring;
-        self
-    }
-}
-impl From<IgnorePointer> for Widget {
-    fn from(value: IgnorePointer) -> Self {
-        Widget::ignore_pointer(value.ignoring, value.child)
-    }
-}
-
-/// A retained boundary that consumes pointer hit tests at its own bounds.
-/// Descendants remain visible and semantic but do not receive normal pointer
-/// interaction while absorption is enabled.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AbsorbPointer {
-    absorbing: bool,
-    child: Widget,
-}
-impl AbsorbPointer {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            absorbing: true,
-            child: child.into(),
-        }
-    }
-    #[must_use]
-    pub fn absorbing(mut self, absorbing: bool) -> Self {
-        self.absorbing = absorbing;
-        self
-    }
-}
-impl From<AbsorbPointer> for Widget {
-    fn from(value: AbsorbPointer) -> Self {
-        Widget::absorb_pointer(value.absorbing, value.child)
     }
 }
 
@@ -4494,41 +4619,6 @@ impl From<Transform> for Widget {
             Some(origin) => Widget::transform_around(value.transform, origin, value.child),
             None => Widget::transform(value.transform, value.child),
         }
-    }
-}
-
-/// Fits a naturally laid-out child into this widget's constrained box using a
-/// retained affine scale and alignment. Unlike `ImageFit`, it works for any
-/// widget subtree and leaves its child picture/layout cache intact.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FittedBox {
-    fit: ImageFit,
-    alignment: Alignment,
-    child: Widget,
-}
-impl FittedBox {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            fit: ImageFit::Contain,
-            alignment: Alignment::CENTER,
-            child: child.into(),
-        }
-    }
-    #[must_use]
-    pub fn fit(mut self, fit: ImageFit) -> Self {
-        self.fit = fit;
-        self
-    }
-    #[must_use]
-    pub fn alignment(mut self, alignment: Alignment) -> Self {
-        self.alignment = alignment;
-        self
-    }
-}
-impl From<FittedBox> for Widget {
-    fn from(value: FittedBox) -> Self {
-        Widget::fitted_box(value.fit, value.alignment, value.child)
     }
 }
 
@@ -5400,18 +5490,18 @@ pub enum RenderKind {
     Gesture,
     Align {
         alignment: Alignment,
+        width_factor: Option<f32>,
+        height_factor: Option<f32>,
     },
     Flex {
-        axis: Axis,
+        flex: incular_layout::Flex,
     },
     Flexible {
         flex: u32,
         fit: incular_config::FlexFit,
     },
     Wrap {
-        axis: Axis,
-        spacing: f32,
-        run_spacing: f32,
+        wrap: incular_layout::Wrap,
     },
     Table {
         columns: usize,
@@ -5419,7 +5509,7 @@ pub enum RenderKind {
         row_spacing: f32,
     },
     Stack {
-        alignment: Alignment,
+        stack: incular_layout::Stack,
     },
     Positioned {
         left: Option<f32>,
@@ -5432,6 +5522,28 @@ pub enum RenderKind {
     IndexedStack {
         alignment: Alignment,
         index: usize,
+    },
+    SafeArea {
+        minimum: EdgeInsets,
+        left: bool,
+        top: bool,
+        right: bool,
+        bottom: bool,
+        maintain_bottom_view_padding: bool,
+    },
+    ClipRect {
+        clip_behavior: Clip,
+    },
+    ClipRRect {
+        radius: CornerRadii,
+        clip_behavior: Clip,
+    },
+    ClipOval {
+        clip_behavior: Clip,
+    },
+    ClipPath {
+        path: Arc<Path>,
+        clip_behavior: Clip,
     },
     LayoutBuilder,
     Visibility {
@@ -5611,7 +5723,7 @@ struct ActiveGestureMember {
     element: ElementId,
     member: GestureArenaMember,
     kind: RetainedGestureKind,
-    recognizer: Option<GestureDetector>,
+    recognizer: Option<PointerGestureRecognizer>,
     on_cancel: Option<Rc<dyn Fn()>>,
 }
 
@@ -5739,6 +5851,7 @@ pub struct WidgetTree {
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selection: Option<StaticSelection>,
+    environment: RuntimeEnvironment,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,
 }
@@ -5772,9 +5885,29 @@ impl WidgetTree {
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
             static_selection: None,
+            environment: RuntimeEnvironment::default(),
             #[cfg(feature = "devtools")]
             deep_trace: None,
         }
+    }
+
+    /// Sets the ambient runtime environment (safe insets, scaling, etc.) and invalidates layout if needed.
+    pub fn set_environment(&mut self, environment: RuntimeEnvironment) {
+        let dirty_safe_area = self.environment.safe_insets != environment.safe_insets;
+        self.environment = environment;
+        if dirty_safe_area {
+            for (_, render) in self.renders.iter_mut() {
+                if matches!(render.kind, RenderKind::SafeArea { .. }) {
+                    render.dirty.insert(DirtyFlags::LAYOUT);
+                }
+            }
+        }
+    }
+
+    /// Returns a reference to the ambient runtime environment.
+    #[must_use]
+    pub fn environment(&self) -> &RuntimeEnvironment {
+        &self.environment
     }
 
     /// Starts one bounded Deep-profiler frame. Calling this again discards an
@@ -6267,7 +6400,7 @@ impl WidgetTree {
                 };
                 if callbacks.has_pointer_recognizer() {
                     let member = self.gesture_arena.add(key, false);
-                    let mut recognizer = GestureDetector::new(callbacks.clone());
+                    let mut recognizer = PointerGestureRecognizer::new(callbacks.clone());
                     let _ = recognizer.observe(event);
                     active.members.push(ActiveGestureMember {
                         element: candidate,
@@ -9165,103 +9298,113 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::Align { alignment } => {
+            RenderKind::Align {
+                alignment,
+                width_factor,
+                height_factor,
+            } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
                     let child_size = self.renders.get(child.0).expect("live").size;
-                    let size = constraints.constrain(child_size);
-                    let x = (size.width - child_size.width) * (alignment.x + 1.0) / 2.0;
-                    let y = (size.height - child_size.height) * (alignment.y + 1.0) / 2.0;
-                    (size, vec![Offset::new(x, y)])
+                    let result = incular_layout::layout_align(
+                        constraints,
+                        child_size.into(),
+                        incular_layout::Align {
+                            alignment,
+                            width_factor,
+                            height_factor,
+                        },
+                    );
+                    (
+                        result.size,
+                        result.children.into_iter().map(|c| c.offset).collect(),
+                    )
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::Flex { axis } => {
-                let cross_max = match axis {
+            RenderKind::Flex { flex } => {
+                let cross_max = match flex.direction {
                     Axis::Horizontal => constraints.max_height,
                     Axis::Vertical => constraints.max_width,
                 };
-                let main_max = match axis {
+                let main_max = match flex.direction {
                     Axis::Horizontal => constraints.max_width,
                     Axis::Vertical => constraints.max_height,
                 };
-                let loose = match axis {
+                let loose = match flex.direction {
                     Axis::Horizontal => Constraints::new(0., f32::INFINITY, 0., cross_max),
                     Axis::Vertical => Constraints::new(0., cross_max, 0., f32::INFINITY),
                 };
-                let flexes = children
+                let flex_meta = children
                     .iter()
-                    .map(
-                        |child| match &self.renders.get(child.0).expect("live").kind {
-                            RenderKind::Flexible { flex, fit } => Some((*flex, *fit)),
-                            _ => None,
-                        },
-                    )
+                    .map(|child| {
+                        let render_node = self.renders.get(child.0).expect("live");
+                        match &render_node.kind {
+                            RenderKind::Flexible { flex: f, fit } => (*f, *fit),
+                            _ => (0, FlexFit::Loose),
+                        }
+                    })
                     .collect::<Vec<_>>();
-                let mut occupied = 0.;
-                let mut cross: f32 = 0.;
-                for (child, flex) in children.iter().zip(&flexes) {
-                    if flex.is_none() || !main_max.is_finite() {
+
+                let mut flex_children = Vec::with_capacity(children.len());
+                let mut occupied_non_flex = 0.0;
+                for (child, (f, fit)) in children.iter().zip(&flex_meta) {
+                    if *f == 0 || !main_max.is_finite() {
                         self.layout_render(*child, loose);
                         let size = self.renders.get(child.0).expect("live").size;
-                        occupied += axis.main_extent(size);
-                        cross = cross.max(axis.cross_extent(size));
+                        occupied_non_flex += flex.direction.main_extent(size);
+                        flex_children.push(incular_layout::FlexChild::new(size));
+                    } else {
+                        flex_children.push(incular_layout::FlexChild::flexible(
+                            Size::ZERO,
+                            *f,
+                            *fit,
+                        ));
                     }
                 }
-                let total_flex: u32 = flexes.iter().flatten().map(|(flex, _)| *flex).sum();
+
+                let total_flex: u32 = flex_meta.iter().map(|(f, _)| *f).sum();
+                let spacing = flex.spacing.max(0.0) * children.len().saturating_sub(1) as f32;
                 if main_max.is_finite() && total_flex > 0 {
-                    let remaining = (main_max - occupied).max(0.);
-                    for (child, flex) in children.iter().zip(&flexes) {
-                        let Some((flex, fit)) = flex else {
-                            continue;
-                        };
-                        let allocation = remaining * *flex as f32 / total_flex as f32;
-                        let child_constraints = match axis {
-                            Axis::Horizontal => Constraints::new(
-                                if *fit == incular_config::FlexFit::Tight {
-                                    allocation
-                                } else {
-                                    0.
-                                },
-                                allocation,
-                                0.,
-                                cross_max,
-                            ),
-                            Axis::Vertical => Constraints::new(
-                                0.,
-                                cross_max,
-                                if *fit == incular_config::FlexFit::Tight {
-                                    allocation
-                                } else {
-                                    0.
-                                },
-                                allocation,
-                            ),
-                        };
-                        self.layout_render(*child, child_constraints);
-                        let size = self.renders.get(child.0).expect("live").size;
-                        cross = cross.max(axis.cross_extent(size));
+                    let available_for_flex = (main_max - occupied_non_flex - spacing).max(0.0);
+                    for (i, (child, (f, fit))) in children.iter().zip(&flex_meta).enumerate() {
+                        if *f > 0 {
+                            let allocation = available_for_flex * *f as f32 / total_flex as f32;
+                            let child_constraints = match flex.direction {
+                                Axis::Horizontal => Constraints::new(
+                                    if *fit == FlexFit::Tight {
+                                        allocation
+                                    } else {
+                                        0.0
+                                    },
+                                    allocation,
+                                    0.0,
+                                    cross_max,
+                                ),
+                                Axis::Vertical => Constraints::new(
+                                    0.0,
+                                    cross_max,
+                                    if *fit == FlexFit::Tight {
+                                        allocation
+                                    } else {
+                                        0.0
+                                    },
+                                    allocation,
+                                ),
+                            };
+                            self.layout_render(*child, child_constraints);
+                            let size = self.renders.get(child.0).expect("live").size;
+                            flex_children[i] = incular_layout::FlexChild::flexible(size, *f, *fit);
+                        }
                     }
                 }
-                let mut main = 0.0;
-                let mut offsets = Vec::with_capacity(children.len());
-                for child in &children {
-                    let s = self.renders.get(child.0).expect("live").size;
-                    offsets.push(match axis {
-                        Axis::Horizontal => Offset::new(main, 0.0),
-                        Axis::Vertical => Offset::new(0.0, main),
-                    });
-                    main += match axis {
-                        Axis::Horizontal => s.width,
-                        Axis::Vertical => s.height,
-                    };
-                }
-                let natural = match axis {
-                    Axis::Horizontal => Size::new(main, cross),
-                    Axis::Vertical => Size::new(cross, main),
-                };
-                (constraints.constrain(natural), offsets)
+
+                let result = incular_layout::layout_flex(constraints, &flex_children, flex);
+                (
+                    result.size,
+                    result.children.into_iter().map(|c| c.offset).collect(),
+                )
             }
             RenderKind::Flexible { .. } | RenderKind::Positioned { .. } => {
                 if let Some(&child) = children.first() {
@@ -9272,41 +9415,25 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::Wrap {
-                axis,
-                spacing,
-                run_spacing,
-            } => {
+            RenderKind::Wrap { wrap } => {
                 let child_constraints = constraints.loosen();
-                let main_limit = match axis {
-                    Axis::Horizontal => constraints.max_width,
-                    Axis::Vertical => constraints.max_height,
-                };
-                let mut offsets = Vec::with_capacity(children.len());
-                let mut main = 0.0;
-                let mut cross = 0.0;
-                let mut run_cross = 0.0;
-                let mut max_main: f32 = 0.0;
                 for child in &children {
                     self.layout_render(*child, child_constraints);
-                    let child_size = self.renders.get(child.0).expect("live").size;
-                    let child_main = axis.main_extent(child_size);
-                    let child_cross = axis.cross_extent(child_size);
-                    let gap = if main == 0.0 { 0.0 } else { spacing };
-                    if main > 0.0 && main + gap + child_main > main_limit {
-                        max_main = max_main.max(main);
-                        cross += run_cross + run_spacing;
-                        main = 0.0;
-                        run_cross = 0.0;
-                    }
-                    let gap = if main == 0.0 { 0.0 } else { spacing };
-                    main += gap;
-                    offsets.push(axis.offset(main, cross));
-                    main += child_main;
-                    run_cross = run_cross.max(child_cross);
                 }
-                let natural = axis.size(max_main.max(main), cross + run_cross);
-                (constraints.constrain(natural), offsets)
+                let wrap_children = children
+                    .iter()
+                    .map(|child| {
+                        incular_layout::WrapChild::new(
+                            self.renders.get(child.0).expect("live").size,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                let result = incular_layout::layout_wrap(constraints, &wrap_children, wrap);
+                (
+                    result.size,
+                    result.children.into_iter().map(|c| c.offset).collect(),
+                )
             }
             RenderKind::Table {
                 columns,
@@ -9340,26 +9467,32 @@ impl WidgetTree {
                         .collect(),
                 )
             }
-            RenderKind::Stack { alignment } => {
-                let mut natural = Size::ZERO;
+            RenderKind::Stack { stack } => {
+                let non_positioned_constraints = match stack.fit {
+                    StackFit::Loose => constraints.loosen(),
+                    StackFit::Expand => Constraints::tight(constraints.biggest()),
+                    StackFit::Passthrough => constraints,
+                };
+                let mut max_non_pos_w: f32 = 0.0;
+                let mut max_non_pos_h: f32 = 0.0;
                 for child in &children {
-                    if matches!(
-                        self.renders.get(child.0).expect("live").kind,
-                        RenderKind::Positioned { .. }
-                    ) {
-                        continue;
+                    let render_node = self.renders.get(child.0).expect("live");
+                    if !matches!(render_node.kind, RenderKind::Positioned { .. }) {
+                        self.layout_render(*child, non_positioned_constraints);
+                        let size = self.renders.get(child.0).expect("live").size;
+                        max_non_pos_w = max_non_pos_w.max(size.width);
+                        max_non_pos_h = max_non_pos_h.max(size.height);
                     }
-                    self.layout_render(*child, constraints.loosen());
-                    let child_size = self.renders.get(child.0).expect("live").size;
-                    natural = Size::new(
-                        natural.width.max(child_size.width),
-                        natural.height.max(child_size.height),
-                    );
                 }
-                let size = constraints.constrain(natural);
-                let mut offsets = Vec::with_capacity(children.len());
+                let stack_size = constraints.constrain(if matches!(stack.fit, StackFit::Expand) {
+                    constraints.biggest()
+                } else {
+                    Size::new(max_non_pos_w, max_non_pos_h)
+                });
+
+                let mut stack_children = Vec::with_capacity(children.len());
                 for child in &children {
-                    let kind = self.renders.get(child.0).expect("live").kind.clone();
+                    let render_node = self.renders.get(child.0).expect("live");
                     if let RenderKind::Positioned {
                         left,
                         top,
@@ -9367,44 +9500,44 @@ impl WidgetTree {
                         bottom,
                         width,
                         height,
-                    } = kind
+                    } = render_node.kind
                     {
-                        let width = width.or_else(|| {
+                        let pos = incular_layout::Positioned {
+                            left,
+                            top,
+                            right,
+                            bottom,
+                            width,
+                            height,
+                        };
+                        let child_w = width.or_else(|| {
                             left.zip(right)
-                                .map(|(left, right)| (size.width - left - right).max(0.))
+                                .map(|(l, r)| (stack_size.width - l - r).max(0.0))
                         });
-                        let height = height.or_else(|| {
+                        let child_h = height.or_else(|| {
                             top.zip(bottom)
-                                .map(|(top, bottom)| (size.height - top - bottom).max(0.))
+                                .map(|(t, b)| (stack_size.height - t - b).max(0.0))
                         });
-                        self.layout_render(
-                            *child,
-                            Constraints::new(
-                                0.,
-                                width.unwrap_or(size.width),
-                                0.,
-                                height.unwrap_or(size.height),
-                            ),
+                        let child_constraints = Constraints::new(
+                            0.0,
+                            child_w.unwrap_or(stack_size.width),
+                            0.0,
+                            child_h.unwrap_or(stack_size.height),
                         );
-                        let child_size = self.renders.get(child.0).expect("live").size;
-                        offsets.push(Offset::new(
-                            left.unwrap_or_else(|| {
-                                right.map_or(0., |right| {
-                                    (size.width - right - child_size.width).max(0.)
-                                })
-                            }),
-                            top.unwrap_or_else(|| {
-                                bottom.map_or(0., |bottom| {
-                                    (size.height - bottom - child_size.height).max(0.)
-                                })
-                            }),
-                        ));
+                        self.layout_render(*child, child_constraints);
+                        let size = self.renders.get(child.0).expect("live").size;
+                        stack_children.push(incular_layout::StackChild::positioned(size, pos));
                     } else {
-                        let child_size = self.renders.get(child.0).expect("live").size;
-                        offsets.push(alignment.within(size, child_size));
+                        let size = self.renders.get(child.0).expect("live").size;
+                        stack_children.push(incular_layout::StackChild::new(size));
                     }
                 }
-                (size, offsets)
+
+                let result = incular_layout::layout_stack(constraints, &stack_children, stack);
+                (
+                    result.size,
+                    result.children.into_iter().map(|c| c.offset).collect(),
+                )
             }
             RenderKind::IndexedStack { alignment, .. } => {
                 let mut natural = Size::ZERO;
@@ -9424,6 +9557,64 @@ impl WidgetTree {
                     })
                     .collect();
                 (size, offsets)
+            }
+            RenderKind::SafeArea {
+                minimum,
+                left,
+                top,
+                right,
+                bottom,
+                maintain_bottom_view_padding: _,
+            } => {
+                let ambient = self.environment.safe_insets.normalized();
+                let insets = EdgeInsets::only(
+                    if left {
+                        ambient.left.max(minimum.left)
+                    } else {
+                        minimum.left
+                    },
+                    if top {
+                        ambient.top.max(minimum.top)
+                    } else {
+                        minimum.top
+                    },
+                    if right {
+                        ambient.right.max(minimum.right)
+                    } else {
+                        minimum.right
+                    },
+                    if bottom {
+                        ambient.bottom.max(minimum.bottom)
+                    } else {
+                        minimum.bottom
+                    },
+                );
+                let child_constraints = constraints.deflate(insets.horizontal(), insets.vertical());
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, child_constraints);
+                    let child_size = self.renders.get(child.0).expect("live").size;
+                    let size = constraints.constrain(Size::new(
+                        child_size.width + insets.horizontal(),
+                        child_size.height + insets.vertical(),
+                    ));
+                    (size, vec![Offset::new(insets.left, insets.top)])
+                } else {
+                    let size =
+                        constraints.constrain(Size::new(insets.horizontal(), insets.vertical()));
+                    (size, Vec::new())
+                }
+            }
+            RenderKind::ClipRect { .. }
+            | RenderKind::ClipRRect { .. }
+            | RenderKind::ClipOval { .. }
+            | RenderKind::ClipPath { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints);
+                    let size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
             }
             RenderKind::LayoutBuilder => {
                 if let Some(&child) = children.first() {
@@ -9812,8 +10003,8 @@ impl WidgetTree {
                 node.kind.clone(),
             )
         };
-        if let RenderKind::PersistentHeader { controller } = kind {
-            offset = offset + self.persistent_header_translation(id, &controller);
+        if let RenderKind::PersistentHeader { ref controller } = kind {
+            offset = offset + self.persistent_header_translation(id, controller);
         }
         let dirty = self
             .renders
@@ -10138,8 +10329,24 @@ impl WidgetTree {
             self.diagnostics.display_lists_reused += 1;
             output.extend_from(&cache);
         }
+        let pushed_clip = match &kind {
+            RenderKind::ClipRect { .. }
+            | RenderKind::ClipRRect { .. }
+            | RenderKind::ClipOval { .. }
+            | RenderKind::ClipPath { .. } => {
+                let node_size = self.renders.get(id.0).expect("live").size;
+                output.push(PaintCommand::PushClip {
+                    rect: Rect::from_origin_size(Offset::ZERO, node_size),
+                });
+                true
+            }
+            _ => false,
+        };
         for child in children {
             self.paint_render(child, output);
+        }
+        if pushed_clip {
+            output.push(PaintCommand::PopClip);
         }
         #[cfg(feature = "devtools")]
         self.devtools_trace_end(trace);
@@ -10401,8 +10608,8 @@ impl RenderKind {
             RenderKind::RepaintBoundary => "RepaintBoundary",
             RenderKind::Gesture => "GestureRegion",
             RenderKind::Align { .. } => "Align",
-            RenderKind::Flex { axis, .. } => {
-                return match axis {
+            RenderKind::Flex { flex, .. } => {
+                return match flex.direction {
                     incular_config::Axis::Vertical => "Column".into(),
                     incular_config::Axis::Horizontal => "Row".into(),
                 };
@@ -10412,6 +10619,11 @@ impl RenderKind {
             RenderKind::Stack { .. } => "Stack",
             RenderKind::IndexedStack { .. } => "IndexedStack",
             RenderKind::Positioned { .. } => "Positioned",
+            RenderKind::SafeArea { .. } => "SafeArea",
+            RenderKind::ClipRect { .. } => "ClipRect",
+            RenderKind::ClipRRect { .. } => "ClipRRect",
+            RenderKind::ClipOval { .. } => "ClipOval",
+            RenderKind::ClipPath { .. } => "ClipPath",
             RenderKind::Visibility { .. } => "Visibility",
             RenderKind::AspectRatio { .. } => "AspectRatio",
             RenderKind::Scroll { .. } => "ScrollView",
@@ -10567,23 +10779,61 @@ fn render_kind(widget: &Widget) -> RenderKind {
         WidgetKind::Gesture { .. } => RenderKind::Gesture,
         WidgetKind::Draggable { .. } | WidgetKind::DragTarget { .. } => RenderKind::Gesture,
         WidgetKind::IgnorePointer { .. } | WidgetKind::AbsorbPointer { .. } => RenderKind::Gesture,
-        WidgetKind::Align { alignment, .. } => RenderKind::Align {
+        WidgetKind::Align {
+            alignment,
+            width_factor,
+            height_factor,
+            ..
+        } => RenderKind::Align {
             alignment: *alignment,
+            width_factor: *width_factor,
+            height_factor: *height_factor,
         },
-        WidgetKind::Flex { axis, .. } => RenderKind::Flex { axis: *axis },
+        WidgetKind::Flex {
+            axis,
+            main_axis_alignment,
+            main_axis_size,
+            cross_axis_alignment,
+            text_direction,
+            vertical_direction,
+            spacing,
+            ..
+        } => RenderKind::Flex {
+            flex: incular_layout::Flex {
+                direction: *axis,
+                main_axis_alignment: *main_axis_alignment,
+                main_axis_size: *main_axis_size,
+                cross_axis_alignment: *cross_axis_alignment,
+                text_direction: *text_direction,
+                vertical_direction: *vertical_direction,
+                spacing: *spacing,
+            },
+        },
         WidgetKind::Flexible { flex, fit, .. } => RenderKind::Flexible {
             flex: *flex,
             fit: *fit,
         },
         WidgetKind::Wrap {
             axis,
+            alignment,
             spacing,
+            run_alignment,
             run_spacing,
+            cross_axis_alignment,
+            text_direction,
+            vertical_direction,
             ..
         } => RenderKind::Wrap {
-            axis: *axis,
-            spacing: *spacing,
-            run_spacing: *run_spacing,
+            wrap: incular_layout::Wrap {
+                direction: *axis,
+                alignment: *alignment,
+                spacing: *spacing,
+                run_alignment: *run_alignment,
+                run_spacing: *run_spacing,
+                cross_axis_alignment: *cross_axis_alignment,
+                text_direction: *text_direction,
+                vertical_direction: *vertical_direction,
+            },
         },
         WidgetKind::Table {
             columns,
@@ -10595,8 +10845,57 @@ fn render_kind(widget: &Widget) -> RenderKind {
             column_spacing: *column_spacing,
             row_spacing: *row_spacing,
         },
-        WidgetKind::Stack { alignment, .. } => RenderKind::Stack {
-            alignment: *alignment,
+        WidgetKind::Stack {
+            alignment,
+            text_direction,
+            fit,
+            clip_behavior,
+            ..
+        } => RenderKind::Stack {
+            stack: incular_layout::Stack {
+                alignment: *alignment,
+                text_direction: *text_direction,
+                fit: *fit,
+                clip_behavior: *clip_behavior,
+            },
+        },
+        WidgetKind::SafeArea {
+            minimum,
+            left,
+            top,
+            right,
+            bottom,
+            maintain_bottom_view_padding,
+            ..
+        } => RenderKind::SafeArea {
+            minimum: *minimum,
+            left: *left,
+            top: *top,
+            right: *right,
+            bottom: *bottom,
+            maintain_bottom_view_padding: *maintain_bottom_view_padding,
+        },
+        WidgetKind::ClipRect { clip_behavior, .. } => RenderKind::ClipRect {
+            clip_behavior: *clip_behavior,
+        },
+        WidgetKind::ClipRRect {
+            radius,
+            clip_behavior,
+            ..
+        } => RenderKind::ClipRRect {
+            radius: *radius,
+            clip_behavior: *clip_behavior,
+        },
+        WidgetKind::ClipOval { clip_behavior, .. } => RenderKind::ClipOval {
+            clip_behavior: *clip_behavior,
+        },
+        WidgetKind::ClipPath {
+            path,
+            clip_behavior,
+            ..
+        } => RenderKind::ClipPath {
+            path: path.clone(),
+            clip_behavior: *clip_behavior,
         },
         WidgetKind::Positioned {
             left,
@@ -11116,8 +11415,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable, Expanded, Flexible,
-        IndexedStack, Positioned, SizedBox, Spacer,
+        AbsorbPointer, DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable,
+        Expanded, ExplicitSemantics, Flexible, IgnorePointer, IndexedStack, Positioned, SizedBox,
+        Spacer,
     };
 
     #[derive(Default)]
@@ -11292,7 +11592,9 @@ mod tests {
                 Expanded::new(Widget::fixed_box(Size::new(1., 10.), Color::WHITE))
                     .flex(2)
                     .into(),
-                Flexible::new(1, Widget::fixed_box(Size::new(15., 10.), Color::WHITE)).into(),
+                Flexible::new(Widget::fixed_box(Size::new(15., 10.), Color::WHITE))
+                    .flex(1)
+                    .into(),
                 Spacer::new().flex(1).into(),
             ]))
             .unwrap();
@@ -12687,14 +12989,12 @@ mod tests {
     fn wheel_at_nested_scroll_transfers_child_boundary_remainder_to_parent_once() {
         let outer = ScrollController::new();
         let inner = ScrollController::new();
-        let nested: Widget = SizedBox::new(
-            Size::new(100., 100.),
-            Widget::scroll_view(
+        let nested: Widget = SizedBox::from_size(Size::new(100., 100.))
+            .child(Widget::scroll_view(
                 inner.clone(),
                 Widget::fixed_box(Size::new(100., 300.), Color::WHITE),
-            ),
-        )
-        .into();
+            ))
+            .into();
         let content = Widget::column(vec![
             Widget::fixed_box(Size::new(100., 10.), Color::BLACK),
             nested,
@@ -12995,7 +13295,7 @@ mod tests {
             pointer: 3,
             position: Offset::new(40., 10.),
             phase: incular_core::PointerPhase::Up,
-            time: now + GestureDetector::LONG_PRESS_TIMEOUT + Duration::from_millis(1),
+            time: now + PointerGestureRecognizer::LONG_PRESS_TIMEOUT + Duration::from_millis(1),
         });
         assert_eq!(pans.get(), 1);
         assert_eq!(long_presses.get(), 0);
@@ -13344,7 +13644,7 @@ mod tests {
     fn explicit_merge_exclude_and_block_semantics_transform_the_retained_tree() {
         let dialog = Widget::box_(Size::new(80., 40.), Color::WHITE)
             .semantics(
-                Semantics::new(SemanticRole::Dialog)
+                ExplicitSemantics::new(SemanticRole::Dialog)
                     .label("Delete document")
                     .actions([SemanticActionKind::Focus]),
             )

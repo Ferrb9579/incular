@@ -77,6 +77,7 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             spacing,
             run_spacing,
             children,
+            ..
         } => {
             out.push(prop("direction", DebugValue::Enum(format!("{axis:?}"))));
             out.push(prop("spacing", DebugValue::Float(f64::from(*spacing))));
@@ -89,6 +90,7 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
         WidgetKind::Stack {
             alignment,
             children,
+            ..
         } => {
             out.push(prop(
                 "alignment",
@@ -103,7 +105,9 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             ));
             summarize_child(&mut out, child);
         }
-        WidgetKind::Align { alignment, child } => {
+        WidgetKind::Align {
+            alignment, child, ..
+        } => {
             out.push(prop(
                 "alignment",
                 DebugValue::Enum(format!("{alignment:?}")),
@@ -377,6 +381,11 @@ pub fn kind_display_name(kind: &WidgetKind) -> String {
         WidgetKind::DropShadow { .. } => "DropShadow",
         WidgetKind::ColorFiltered { .. } => "ColorFiltered",
         WidgetKind::Blend { .. } => "Blend",
+        WidgetKind::SafeArea { .. } => "SafeArea",
+        WidgetKind::ClipRect { .. } => "ClipRect",
+        WidgetKind::ClipRRect { .. } => "ClipRRect",
+        WidgetKind::ClipOval { .. } => "ClipOval",
+        WidgetKind::ClipPath { .. } => "ClipPath",
     };
     name.to_owned()
 }
@@ -426,13 +435,18 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
         RenderKind::Stack { .. } => "Stack",
         RenderKind::Wrap { .. } => "Wrap",
         RenderKind::Table { .. } => "Table",
-        RenderKind::Flex { axis, .. } => {
-            return match axis {
+        RenderKind::Flex { flex, .. } => {
+            return match flex.direction {
                 incular_config::Axis::Vertical => "Column".to_owned(),
                 incular_config::Axis::Horizontal => "Row".to_owned(),
             };
         }
         RenderKind::IndexedStack { .. } => "IndexedStack",
+        RenderKind::SafeArea { .. } => "SafeArea",
+        RenderKind::ClipRect { .. } => "ClipRect",
+        RenderKind::ClipRRect { .. } => "ClipRRect",
+        RenderKind::ClipOval { .. } => "ClipOval",
+        RenderKind::ClipPath { .. } => "ClipPath",
     };
     name.to_owned()
 }

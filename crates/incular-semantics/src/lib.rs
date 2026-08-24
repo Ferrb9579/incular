@@ -30,6 +30,8 @@ pub enum Role {
     Link,
 }
 
+pub type SemanticRole = Role;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SemanticActionKind {
     Focus,

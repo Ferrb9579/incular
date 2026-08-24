@@ -5,8 +5,6 @@
 //! reveals a target behind it while AbsorbPointer blocks both its child and
 //! the target behind it. Every active gesture stream receives automatic,
 //! window-local retained `PointerCapture` until up or cancellation.
-use std::rc::Rc;
-
 use incular::prelude::*;
 
 fn text(value: impl Into<String>) -> Widget {
@@ -55,54 +53,41 @@ fn main() {
         let horizontal_status = app_status.clone();
         let scale_signal = app_scale.clone();
         let scale_status = app_status.clone();
-        let nested_surface = GestureRegion::new(
-            GestureCallbacks {
-                on_vertical_drag_update: Some(Rc::new(move |_| {
-                    vertical_signal.update(|value| *value += 1);
-                    vertical_status.set("vertical parent won; retained pointer capture is active".into());
-                })),
-                ..GestureCallbacks::default()
-            },
-            GestureRegion::new(
-                GestureCallbacks {
-                    on_horizontal_drag_update: Some(Rc::new(move |_| {
-                        horizontal_signal.update(|value| *value += 1);
-                        horizontal_status.set(
-                            "horizontal child won; retained pointer capture is active".into(),
-                        );
-                    })),
-                    on_scale_update: Some(Rc::new(move |details| {
-                        scale_signal.set(details.scale);
-                        scale_status.set(
-                            "scale won compatibly across two contacts; capture is window-local".into(),
-                        );
-                    })),
-                    ..GestureCallbacks::default()
-                },
-                card(
-                    Color::rgba(40, 91, 171, 255),
-                    Padding::all(
-                        16.,
-                        text("Nested arena: drag horizontally here, vertically in the parent, or pinch."),
-                    ),
-                ),
+        let inner_surface = GestureDetector::new(card(
+            Color::rgba(40, 91, 171, 255),
+            Padding::all(
+                16.,
+                text("Nested arena: drag horizontally here, vertically in the parent, or pinch."),
             ),
-        );
+        ))
+        .on_horizontal_drag_update(move |_| {
+            horizontal_signal.update(|value| *value += 1);
+            horizontal_status.set(
+                "horizontal child won; retained pointer capture is active".into(),
+            );
+        })
+        .on_scale_update(move |details| {
+            scale_signal.set(details.scale);
+            scale_status.set(
+                "scale won compatibly across two contacts; capture is window-local".into(),
+            );
+        });
+
+        let nested_surface = GestureDetector::new(inner_surface)
+            .on_vertical_drag_update(move |_| {
+                vertical_signal.update(|value| *value += 1);
+                vertical_status.set("vertical parent won; retained pointer capture is active".into());
+            });
 
         let behind_signal = app_behind_ignore.clone();
         let ignore_demo = Widget::stack(
             Alignment::CENTER,
             vec![
-                GestureRegion::new(
-                    GestureCallbacks {
-                        on_tap: Some(Rc::new(move || behind_signal.update(|value| *value += 1))),
-                        ..GestureCallbacks::default()
-                    },
-                    card(
-                        Color::rgba(55, 138, 100, 255),
-                        Padding::all(16., text("Tap target behind IgnorePointer")),
-                    ),
-                )
+                GestureDetector::new(card(
+                    Color::rgba(55, 138, 100, 255),
+                    Padding::all(16., text("Tap target behind IgnorePointer")),
+                ))
+                .on_tap(move || behind_signal.update(|value| *value += 1))
                 .into(),
                 IgnorePointer::new(card(
                     Color::rgba(120, 125, 142, 210),
@@ -116,16 +101,11 @@ fn main() {
         let absorb_demo = Widget::stack(
             Alignment::CENTER,
             vec![
-                GestureRegion::new(
-                    GestureCallbacks {
-                        on_tap: Some(Rc::new(move || blocked_signal.update(|value| *value += 1))),
-                        ..GestureCallbacks::default()
-                    },
-                    card(
-                        Color::rgba(124, 71, 90, 255),
-                        Padding::all(16., text("This target is behind AbsorbPointer and cannot be tapped.")),
-                    ),
-                )
+                GestureDetector::new(card(
+                    Color::rgba(124, 71, 90, 255),
+                    Padding::all(16., text("This target is behind AbsorbPointer and cannot be tapped.")),
+                ))
+                .on_tap(move || blocked_signal.update(|value| *value += 1))
                 .into(),
                 AbsorbPointer::new(card(
                     Color::rgba(155, 80, 67, 255),

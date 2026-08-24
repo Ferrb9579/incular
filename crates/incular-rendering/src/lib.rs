@@ -24,6 +24,8 @@ pub struct CornerRadii {
     pub bottom_left: f32,
 }
 impl CornerRadii {
+    pub const ZERO: Self = Self::uniform(0.0);
+
     #[must_use]
     pub const fn uniform(radius: f32) -> Self {
         Self {
@@ -33,6 +35,15 @@ impl CornerRadii {
             bottom_left: radius,
         }
     }
+
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.top_left <= 0.0
+            && self.top_right <= 0.0
+            && self.bottom_right <= 0.0
+            && self.bottom_left <= 0.0
+    }
+
     /// CSS-compatible normalization: invalid values become zero and all four
     /// radii scale together when an opposing pair exceeds an edge.
     #[must_use]
@@ -66,6 +77,13 @@ impl CornerRadii {
         }
     }
 }
+
+impl From<f32> for CornerRadii {
+    fn from(v: f32) -> Self {
+        Self::uniform(v)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RRect {
     pub rect: Rect,

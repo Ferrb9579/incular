@@ -70,33 +70,31 @@ fn tile(index: usize) -> Widget {
 fn main() {
     let controller = ScrollController::new();
     let app = Application::new(move |_| {
-        CustomScrollView::build(
-            controller.clone(),
-            vec![
-                Box::new(SliverAppBar::new(64., app_bar()).pinned(true)) as Box<dyn Sliver>,
-                Box::new(SliverBox::new(Padding::all(
-                    20.,
-                    Column::new([
-                        label("Unified slivers", BLUE, 30.),
-                        label(
-                            "The content below is lazy. Wheel-scroll to exercise retained viewport updates.",
-                            Color::rgba(215, 220, 230, 255),
-                            16.,
-                        ),
-                        SizedBox::new(
-                            Size::new(1., 18.),
-                            Widget::box_(Size::new(1., 1.), Color::TRANSPARENT),
-                        )
+        CustomScrollView::new(vec![
+            Box::new(SliverAppBar::new(app_bar()).expanded_height(64.).pinned(true))
+                as Box<dyn Sliver>,
+            Box::new(SliverBox::new(Padding::all(
+                20.,
+                Column::new([
+                    label("Unified slivers", BLUE, 30.),
+                    label(
+                        "The content below is lazy. Wheel-scroll to exercise retained viewport updates.",
+                        Color::rgba(215, 220, 230, 255),
+                        16.,
+                    ),
+                    SizedBox::from_size(Size::new(1., 18.))
+                        .child(Widget::box_(Size::new(1., 1.), Color::TRANSPARENT))
                         .into(),
-                    ]),
-                ))),
-                Box::new(SliverPersistentHeader::new(48., pinned_header())),
-                Box::new(SliverPadding::new(
-                    EdgeInsets::all(12.),
-                    SliverGrid::builder(80, 4, 76., tile).build(&controller),
-                )),
-            ],
-        )
+                ]),
+            ))),
+            Box::new(SliverPersistentHeader::new(48., pinned_header())),
+            Box::new(SliverPadding::new(
+                EdgeInsets::all(12.),
+                SliverGrid::builder(80, 4, 76., tile),
+            )),
+        ])
+        .controller(controller.clone())
+        .into()
     })
     .expect("valid sliver application");
     incular::run(app).expect("native sliver application");

@@ -13,7 +13,7 @@ use std::{
 
 use incular_core::{RestorationKey, RestorationScope};
 
-use crate::TextEditingController;
+use crate::{TextEditingController, Widget};
 
 /// Stable identity for a field registered with a [`Form`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -55,12 +55,31 @@ struct FormState {
 #[derive(Clone, Default)]
 pub struct Form {
     state: Rc<RefCell<FormState>>,
+    child: Option<Widget>,
+    autovalidate_mode: AutovalidateMode,
 }
 
 impl Form {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a declarative Form wrapping a child widget.
+    #[must_use]
+    pub fn of_child(child: impl Into<Widget>) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(FormState::default())),
+            child: Some(child.into()),
+            autovalidate_mode: AutovalidateMode::Disabled,
+        }
+    }
+
+    /// Sets the autovalidate mode for the form.
+    #[must_use]
+    pub fn autovalidate_mode(mut self, mode: AutovalidateMode) -> Self {
+        self.autovalidate_mode = mode;
+        self
     }
 
     /// Registers an editor with this form.  Keep the returned handle alive for
@@ -347,10 +366,119 @@ impl<T> Autocomplete<T> {
 }
 
 impl Autocomplete<String> {
-    /// Convenience constructor for the common string option case.
     #[must_use]
     pub fn strings(options: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self::new(options.into_iter().map(Into::into), Clone::clone)
+        Self::new(options.into_iter().map(Into::into), |s| s.clone())
+    }
+}
+
+impl From<Form> for Widget {
+    fn from(value: Form) -> Self {
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+    }
+}
+
+pub type FormFieldValidator = Rc<dyn Fn(&str) -> Option<String>>;
+pub type FormFieldChangedCallback = Rc<dyn Fn(&str)>;
+
+/// A declarative form field integrating text editing and validation.
+#[derive(Clone)]
+pub struct TextFormField {
+    controller: Option<TextEditingController>,
+    validator: Option<FormFieldValidator>,
+    on_submit: Option<Rc<dyn Fn(String)>>,
+    on_changed: Option<FormFieldChangedCallback>,
+    autovalidate_mode: AutovalidateMode,
+    placeholder: String,
+    style: Option<incular_text::TextStyle>,
+    size: incular_core::Size,
+}
+
+impl Default for TextFormField {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TextFormField {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            controller: None,
+            validator: None,
+            on_submit: None,
+            on_changed: None,
+            autovalidate_mode: AutovalidateMode::Disabled,
+            placeholder: String::new(),
+            style: None,
+            size: incular_core::Size::new(200.0, 36.0),
+        }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: TextEditingController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    #[must_use]
+    pub fn validator(mut self, validator: impl Fn(&str) -> Option<String> + 'static) -> Self {
+        self.validator = Some(Rc::new(validator));
+        self
+    }
+
+    #[must_use]
+    pub fn on_submit(mut self, on_submit: impl Fn(String) + 'static) -> Self {
+        self.on_submit = Some(Rc::new(on_submit));
+        self
+    }
+
+    #[must_use]
+    pub fn on_changed(mut self, on_changed: impl Fn(&str) + 'static) -> Self {
+        self.on_changed = Some(Rc::new(on_changed));
+        self
+    }
+
+    #[must_use]
+    pub fn autovalidate_mode(mut self, mode: AutovalidateMode) -> Self {
+        self.autovalidate_mode = mode;
+        self
+    }
+
+    #[must_use]
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    #[must_use]
+    pub fn style(mut self, style: incular_text::TextStyle) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    #[must_use]
+    pub fn size(mut self, size: incular_core::Size) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl From<TextFormField> for Widget {
+    fn from(value: TextFormField) -> Self {
+        let controller = value.controller.unwrap_or_default();
+        let mut tf = crate::TextField::new(controller)
+            .placeholder(value.placeholder)
+            .size(value.size);
+        if let Some(sub) = value.on_submit {
+            tf = tf.on_submit(move |s| sub(s));
+        }
+        if let Some(style) = value.style {
+            tf = tf.style(style);
+        }
+        tf.into()
     }
 }
 

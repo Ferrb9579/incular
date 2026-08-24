@@ -84,11 +84,9 @@ fn main() {
                         .row_spacing(10.),
                     ),
                     heading("Stack · overlay paint order"),
-                    card(SizedBox::new(
-                        Size::new(360., 150.),
-                        Stack::aligned(
-                            Alignment::CENTER,
-                            [
+                    card(
+                        SizedBox::from_size(Size::new(360., 150.)).child(
+                            Stack::new([
                                 DecoratedBox::new(Widget::box_(
                                     Size::new(300., 112.),
                                     Color::TRANSPARENT,
@@ -107,21 +105,23 @@ fn main() {
                                 )
                                 .into(),
                                 text("Stack", 30., Color::WHITE),
-                            ],
+                            ])
+                            .alignment(Alignment::CENTER),
                         ),
-                    )),
+                    ),
                     heading("Fractional sizing + AspectRatio"),
-                    card(SizedBox::new(
-                        Size::new(400., 140.),
-                        FractionallySizedBox::new(AspectRatio::new(
-                            16. / 9.,
-                            DecoratedBox::new(Center::new(text("16 : 9", 28., Color::WHITE)))
-                                .background(Color::rgba(120, 74, 185, 255))
-                                .radius(12.),
-                        ))
-                        .width_factor(0.70)
-                        .height_factor(0.90),
-                    )),
+                    card(
+                        SizedBox::from_size(Size::new(400., 140.)).child(
+                            FractionallySizedBox::new(AspectRatio::new(
+                                16. / 9.,
+                                DecoratedBox::new(Center::new(text("16 : 9", 28., Color::WHITE)))
+                                    .background(Color::rgba(120, 74, 185, 255))
+                                    .radius(12.),
+                            ))
+                            .width_factor(0.70)
+                            .height_factor(0.90),
+                        ),
+                    ),
                     heading("Baseline + constraints"),
                     card(Row::new(vec![
                         Widget::from(Baseline::new(
@@ -143,10 +143,10 @@ fn main() {
                                 .background(Color::rgba(191, 79, 117, 255))
                                 .radius(8.),
                         )),
-                        Widget::from(Visibility::new(
-                            false,
-                            text("This stays hidden", 16., Color::WHITE),
-                        )),
+                        Widget::from(
+                            Visibility::new(text("This stays hidden", 16., Color::WHITE))
+                                .visible(false),
+                        ),
                         text("Hidden sibling omitted", 16., MUTED),
                     ])),
                 ]),

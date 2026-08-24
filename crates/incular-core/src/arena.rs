@@ -129,4 +129,16 @@ impl<T> Arena<T> {
                 .map(|value| (ArenaId::from_parts(index as u32, slot.generation), value))
         })
     }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (ArenaId, &mut T)> {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let generation = slot.generation;
+                slot.value
+                    .as_mut()
+                    .map(|value| (ArenaId::from_parts(index as u32, generation), value))
+            })
+    }
 }

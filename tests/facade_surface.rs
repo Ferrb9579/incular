@@ -5,16 +5,14 @@ use incular::prelude::*;
 #[test]
 fn public_facade_composes_scroll_gesture_and_navigation_features() {
     let controller = ScrollController::new();
-    let header = SliverAppBar::new(32., Widget::fixed_box(Size::new(120., 32.), Color::WHITE));
-    assert!(header.is_pinned());
+    let header = SliverAppBar::new(Widget::fixed_box(Size::new(120., 32.), Color::WHITE))
+        .expanded_height(32.)
+        .pinned(true);
 
     let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(header)];
-    let view = CustomScrollView::build(controller, slivers);
-    let gestures = GestureRegion::new(
-        GestureCallbacks::default(),
-        Widget::fixed_box(Size::new(120., 80.), Color::BLACK),
-    );
-    let _: Widget = Widget::column(vec![view, gestures.into()]);
+    let view = CustomScrollView::new(slivers).controller(controller);
+    let gestures = GestureDetector::new(Widget::fixed_box(Size::new(120., 80.), Color::BLACK));
+    let _: Widget = Column::new([Widget::from(view), Widget::from(gestures)]).into();
 
     let registry = RouteRegistry::new();
     registry.register("settings/", || {
@@ -47,9 +45,11 @@ fn facade_exposes_the_extracted_subsystems() {
 fn facade_exposes_variable_extent_lazy_lists() {
     let index = MeasuredExtentIndex::new(10, 32.);
     let controller = ScrollController::new();
-    let _: Widget = ListView::variable_extent_with_index(index.clone(), controller, |_| {
+    let _: Widget = ListView::variable_extent(10, 32., |_| {
         Widget::fixed_box(Size::new(20., 32.), Color::WHITE)
-    });
+    })
+    .controller(controller)
+    .into();
     assert_eq!(index.index_at_offset(96.), Some(3));
 }
 
@@ -95,12 +95,9 @@ fn facade_exposes_icu_localization_catalog_boundary() {
 
 #[test]
 fn facade_exposes_colored_box_and_mouse_region() {
-    let _: Widget = ColoredBox::new(Size::new(8., 8.), Color::BLACK).into();
-    let mouse = MouseRegion::new();
-    mouse.enter(Offset::new(2., 3.));
-    assert!(mouse.is_inside());
-    mouse.exit(Offset::new(2., 3.));
-    assert!(!mouse.is_inside());
+    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let _: Widget = ColoredBox::new(Color::BLACK, child.clone()).into();
+    let _: Widget = MouseRegion::new(child).into();
 }
 
 #[test]
@@ -117,9 +114,12 @@ fn facade_exposes_retained_affine_widgets() {
 #[test]
 fn facade_exposes_retained_layout_closure_widgets() {
     let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
-    let _: Widget = LimitedBox::new(20., 20., child.clone()).into();
+    let _: Widget = LimitedBox::new(child.clone())
+        .max_width(20.)
+        .max_height(20.)
+        .into();
     let _: Widget = OverflowBox::new(child.clone()).max_width(40.).into();
-    let _: Widget = Flexible::new(1, child.clone()).into();
+    let _: Widget = Flexible::new(child.clone()).flex(1).into();
     let _: Widget = Expanded::new(child.clone()).into();
     let _: Widget = Spacer::new().into();
     let _: Widget = Positioned::new(child.clone()).left(2.).top(3.).into();

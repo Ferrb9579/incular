@@ -11,8 +11,8 @@ mod insets;
 mod localization;
 
 pub use alignment::{
-    Alignment, AlignmentDirectional, Axis, AxisDirection, CrossAxisAlignment, FlexFit,
-    MainAxisAlignment, MainAxisSize, TextDirection, VerticalDirection, WrapAlignment,
+    Alignment, AlignmentDirectional, Axis, AxisDirection, Clip, CrossAxisAlignment, FlexFit,
+    MainAxisAlignment, MainAxisSize, StackFit, TextDirection, VerticalDirection, WrapAlignment,
     WrapCrossAlignment,
 };
 pub use constraints::{ConstraintError, Constraints};

@@ -4291,7 +4291,7 @@ mod tests {
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
     use incular_widgets::{
-        Button, DecoratedBox, GestureCallbacks, GestureRegion, Text, VirtualList,
+        Button, DecoratedBox, GestureCallbacks, GestureDetector, Text, VirtualList,
     };
     use std::time::{Duration, Instant};
     use std::{
@@ -5609,14 +5609,12 @@ mod tests {
         let taps = Rc::new(Cell::new(0));
         let observed = taps.clone();
         let mut runtime = Runtime::new(
-            GestureRegion::new(
-                GestureCallbacks {
+            GestureDetector::new(Widget::box_(Size::new(80., 40.), Color::WHITE))
+                .callbacks(GestureCallbacks {
                     on_tap: Some(Rc::new(move || observed.set(observed.get() + 1))),
                     ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(80., 40.), Color::WHITE),
-            )
-            .into(),
+                })
+                .into(),
         )
         .unwrap();
         runtime
@@ -5640,14 +5638,12 @@ mod tests {
         let scale = Rc::new(Cell::new(0.));
         let observed = scale.clone();
         let mut runtime = Runtime::new(
-            GestureRegion::new(
-                GestureCallbacks {
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE))
+                .callbacks(GestureCallbacks {
                     on_scale_update: Some(Rc::new(move |details| observed.set(details.scale))),
                     ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(100., 100.), Color::WHITE),
-            )
-            .into(),
+                })
+                .into(),
         )
         .unwrap();
         runtime

@@ -283,11 +283,9 @@ fn main() {
                             .on_press(move || restoration.flush())
                             .into(),
                     ]),
-                    SizedBox::new(
-                        Size::new(720., 220.),
-                        ScrollView::vertical(scroll, Widget::column(items)),
-                    )
-                    .into(),
+                    SizedBox::from_size(Size::new(720., 220.))
+                        .child(ScrollView::vertical(scroll, Widget::column(items)))
+                        .into(),
                 ]),
             )
             .into()

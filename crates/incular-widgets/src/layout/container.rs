@@ -1,0 +1,236 @@
+//! Flutter-style Container composition widget.
+//!
+//! [`Container`] is a convenience composition widget that combines common
+//! painting, positioning, sizing, padding, margins, and transforms into a single
+//! ergonomic descriptor. It lowers to existing primitive widgets without introducing
+//! a duplicate layout or rendering engine.
+
+use incular_config::{Alignment, Clip, Constraints, EdgeInsets};
+use incular_core::{Color, Transform as CoreTransform};
+use incular_rendering::{Border, Brush, CornerRadii};
+
+use crate::layout::basic::{Align, ClipRRect, ClipRect, ConstrainedBox, Padding, SizedBox};
+use crate::{DecoratedBox, Transform, Widget};
+
+/// A convenience composition widget combining sizing, constraints, margin,
+/// padding, background color/decoration, alignment, transforms, and clipping.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Container {
+    child: Option<Widget>,
+    alignment: Option<Alignment>,
+    padding: Option<EdgeInsets>,
+    margin: Option<EdgeInsets>,
+    color: Option<Color>,
+    background: Option<Brush>,
+    border: Option<Border>,
+    radius: CornerRadii,
+    constraints: Option<Constraints>,
+    width: Option<f32>,
+    height: Option<f32>,
+    transform: Option<CoreTransform>,
+    clip_behavior: Clip,
+}
+
+impl Container {
+    /// Creates a new Container wrapping an optional child.
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+            alignment: None,
+            padding: None,
+            margin: None,
+            color: None,
+            background: None,
+            border: None,
+            radius: CornerRadii::ZERO,
+            constraints: None,
+            width: None,
+            height: None,
+            transform: None,
+            clip_behavior: Clip::None,
+        }
+    }
+
+    /// Creates an empty Container.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Sets the child widget.
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self
+    }
+
+    /// Sets inner alignment of the child within container bounds.
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = Some(alignment);
+        self
+    }
+
+    /// Sets inner padding.
+    #[must_use]
+    pub fn padding(mut self, padding: EdgeInsets) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    /// Sets outer margin.
+    #[must_use]
+    pub fn margin(mut self, margin: EdgeInsets) -> Self {
+        self.margin = Some(margin);
+        self
+    }
+
+    /// Sets background solid color.
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Sets background brush (color, gradient, etc.).
+    #[must_use]
+    pub fn background(mut self, brush: impl Into<Brush>) -> Self {
+        self.background = Some(brush.into());
+        self
+    }
+
+    /// Sets container border.
+    #[must_use]
+    pub fn border(mut self, border: Border) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    /// Sets container corner radii.
+    #[must_use]
+    pub fn radius(mut self, radius: impl Into<CornerRadii>) -> Self {
+        self.radius = radius.into();
+        self
+    }
+
+    /// Sets explicit fixed width.
+    #[must_use]
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// Sets explicit fixed height.
+    #[must_use]
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    /// Sets additional layout constraints.
+    #[must_use]
+    pub fn constraints(mut self, constraints: Constraints) -> Self {
+        self.constraints = Some(constraints);
+        self
+    }
+
+    /// Sets transform matrix applied to the container.
+    #[must_use]
+    pub fn transform(mut self, transform: CoreTransform) -> Self {
+        self.transform = Some(transform);
+        self
+    }
+
+    /// Sets clipping behavior.
+    #[must_use]
+    pub fn clip_behavior(mut self, clip: Clip) -> Self {
+        self.clip_behavior = clip;
+        self
+    }
+}
+
+impl From<Container> for Widget {
+    fn from(value: Container) -> Self {
+        let mut current = value.child.unwrap_or_else(|| SizedBox::shrink().into());
+
+        // 1. Inner Alignment
+        if let Some(alignment) = value.alignment {
+            current = Align::new(alignment, current).into();
+        }
+
+        // 2. Padding
+        if let Some(padding) = value.padding {
+            if !padding.is_zero() {
+                current = Padding::new(padding, current).into();
+            }
+        }
+
+        // 3. Decoration (Color, Brush, Border, Radius)
+        let has_decoration = value.color.is_some()
+            || value.background.is_some()
+            || value.border.is_some()
+            || !value.radius.is_zero();
+        if has_decoration {
+            let mut decorated = DecoratedBox::new(current).radius(value.radius.top_left);
+            if let Some(color) = value.color {
+                decorated = decorated.background(color);
+            } else if let Some(bg) = value.background {
+                decorated = decorated.background(bg);
+            }
+            if let Some(border) = value.border {
+                decorated = decorated.border(border);
+            }
+            current = decorated.into();
+        }
+
+        // 4. Sizing / Constraints
+        let mut explicit_constraints = value.constraints.unwrap_or_else(Constraints::unbounded);
+        if let Some(w) = value.width {
+            explicit_constraints = Constraints::new(
+                w,
+                w,
+                explicit_constraints.min_height,
+                explicit_constraints.max_height,
+            );
+        }
+        if let Some(h) = value.height {
+            explicit_constraints = Constraints::new(
+                explicit_constraints.min_width,
+                explicit_constraints.max_width,
+                h,
+                h,
+            );
+        }
+        if explicit_constraints != Constraints::unbounded() {
+            current = ConstrainedBox::new(explicit_constraints, current).into();
+        }
+
+        // 5. Margin (outer padding)
+        if let Some(margin) = value.margin {
+            if !margin.is_zero() {
+                current = Padding::new(margin, current).into();
+            }
+        }
+
+        // 6. Transform
+        if let Some(transform) = value.transform {
+            current = Transform::new(transform, current).into();
+        }
+
+        // 7. Clipping
+        if value.clip_behavior != Clip::None {
+            if !value.radius.is_zero() {
+                current = ClipRRect::new(value.radius, current)
+                    .clip_behavior(value.clip_behavior)
+                    .into();
+            } else {
+                current = ClipRect::new(current)
+                    .clip_behavior(value.clip_behavior)
+                    .into();
+            }
+        }
+
+        current
+    }
+}

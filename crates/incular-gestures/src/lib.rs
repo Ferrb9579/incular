@@ -138,7 +138,34 @@ pub struct PointerEvent {
     pub time: Instant,
 }
 
-/// Callbacks understood by [`GestureDetector`].
+/// The physical device category generating pointer events.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PointerDeviceKind {
+    #[default]
+    Mouse,
+    Touch,
+    Stylus,
+    InvertedStylus,
+    Trackpad,
+    Unknown,
+}
+
+/// Position and timing metadata for pointer tap-down events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TapDownDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+    pub kind: PointerDeviceKind,
+}
+
+/// Metadata for drag start events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragStartDetails {
+    pub global_position: Offset,
+    pub local_position: Offset,
+}
+
+/// Callbacks understood by [`PointerGestureRecognizer`].
 #[derive(Clone, Default)]
 pub struct GestureCallbacks {
     pub on_tap: Option<Rc<dyn Fn()>>,
@@ -158,6 +185,7 @@ pub struct GestureCallbacks {
     /// arena claim or the platform cancels the sequence.
     pub on_cancel: Option<Rc<dyn Fn()>>,
 }
+
 impl GestureCallbacks {
     /// Whether this callback set contributes an exclusive single-pointer
     /// recognizer to a gesture arena. Scale is intentionally separate so a
@@ -195,11 +223,36 @@ pub enum GestureDecision {
     Cancelled,
 }
 
+/// Metadata for scale start events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScaleStartDetails {
+    pub focal_point: Offset,
+    pub pointer_count: usize,
+}
+
 /// The current geometry of a two-pointer scale interaction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScaleUpdateDetails {
     pub focal_point: Offset,
     pub scale: f32,
+    pub pointer_count: usize,
+}
+
+/// Metadata for scale end events.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScaleEndDetails {
+    pub pointer_count: usize,
+}
+
+impl ScaleUpdateDetails {
+    #[must_use]
+    pub const fn new(focal_point: Offset, scale: f32) -> Self {
+        Self {
+            focal_point,
+            scale,
+            pointer_count: 2,
+        }
+    }
 }
 
 /// A platform-neutral two-pointer scale recognizer.
@@ -246,13 +299,10 @@ impl ScaleGestureDetector {
                 let initial = self
                     .initial_distance
                     .get_or_insert(distance.max(f32::EPSILON));
-                Some(ScaleUpdateDetails {
-                    focal_point: Offset::new(
-                        (first.x + second.x) * 0.5,
-                        (first.y + second.y) * 0.5,
-                    ),
-                    scale: distance / *initial,
-                })
+                Some(ScaleUpdateDetails::new(
+                    Offset::new((first.x + second.x) * 0.5, (first.y + second.y) * 0.5),
+                    distance / *initial,
+                ))
             }
             PointerPhase::Up | PointerPhase::Cancel => {
                 self.pointers.remove(&event.pointer);
@@ -586,7 +636,7 @@ impl Shortcuts {
 }
 
 /// A reusable recognizer for tap, double-tap, long-press, and pan.
-pub struct GestureDetector {
+pub struct PointerGestureRecognizer {
     callbacks: GestureCallbacks,
     down: Option<PointerEvent>,
     last_tap: Option<Instant>,
@@ -594,13 +644,18 @@ pub struct GestureDetector {
     pan_action: Option<PanAction>,
 }
 
+/// Type alias for [`PointerGestureRecognizer`].
+pub type GestureRecognizer = PointerGestureRecognizer;
+/// Legacy compatibility alias for [`PointerGestureRecognizer`].
+pub type GestureDetector = PointerGestureRecognizer;
+
 #[derive(Clone, Copy)]
 enum PanAction {
     Pan,
     Horizontal,
     Vertical,
 }
-impl GestureDetector {
+impl PointerGestureRecognizer {
     pub const DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(300);
     pub const LONG_PRESS_TIMEOUT: Duration = Duration::from_millis(500);
     pub const PAN_SLOP: f32 = 18.;
@@ -766,9 +821,11 @@ impl GestureDetector {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DragUpdateDetails {
     pub global_position: Offset,
+    pub local_position: Offset,
     pub delta: Offset,
     pub total_delta: Offset,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DragEndDetails {
     pub total_delta: Offset,
@@ -823,6 +880,7 @@ impl DragGestureDetector {
                     if let Some(callback) = &self.callbacks.on_update {
                         callback(DragUpdateDetails {
                             global_position: event.position,
+                            local_position: event.position,
                             delta: event.position - previous.position,
                             total_delta,
                         });

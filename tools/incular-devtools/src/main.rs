@@ -2152,25 +2152,26 @@ fn main() {
                     )
                     .into()
                 };
-                SizedBox::new(
-                    Size::new(width, height),
-                    DecoratedBox::new(Padding::all(
-                        16.,
-                        Column::new([
-                            header_widget.clone().into(),
-                            gap(1., 10.),
-                            Wrap::new(tabs.clone()).spacing(8.).run_spacing(8.).into(),
-                            gap(1., 12.),
-                            ConstrainedBox::new(
-                                Constraints::tight(Size::new(width - 32., body_height)),
-                                body,
-                            )
-                            .into(),
-                        ]),
-                    ))
-                    .background(APP_BACKGROUND),
-                )
-                .into()
+                SizedBox::from_size(Size::new(width, height))
+                    .child(
+                        DecoratedBox::new(Padding::all(
+                            16.,
+                            Column::new([
+                                header_widget.clone().into(),
+                                gap(1., 10.),
+                                Wrap::new(tabs.clone()).spacing(8.).run_spacing(8.).into(),
+                                gap(1., 12.),
+                                ConstrainedBox::new(
+                                    Constraints::tight(Size::new(width - 32., body_height)),
+                                    body,
+                                )
+                                .into(),
+                            ])
+                            .cross_axis_alignment(CrossAxisAlignment::Start),
+                        ))
+                        .background(APP_BACKGROUND),
+                    )
+                    .into()
             })
             .into()
         },
@@ -2808,25 +2809,26 @@ mod tests {
             .border(Border::new(1., BORDER))
             .radius(10.)
             .into();
-            SizedBox::new(
-                Size::new(width, height),
-                DecoratedBox::new(Padding::all(
-                    16.,
-                    Column::new([
-                        ui_text("Incular DevTools", 20., TEXT_PRIMARY),
-                        gap(1., 10.),
-                        Wrap::new(tabs).spacing(8.).run_spacing(8.).into(),
-                        gap(1., 12.),
-                        ConstrainedBox::new(
-                            Constraints::tight(Size::new(width - 32., body_height)),
-                            body,
-                        )
-                        .into(),
-                    ]),
-                ))
-                .background(APP_BACKGROUND),
-            )
-            .into()
+            SizedBox::from_size(Size::new(width, height))
+                .child(
+                    DecoratedBox::new(Padding::all(
+                        16.,
+                        Column::new([
+                            ui_text("Incular DevTools", 20., TEXT_PRIMARY),
+                            gap(1., 10.),
+                            Wrap::new(tabs).spacing(8.).run_spacing(8.).into(),
+                            gap(1., 12.),
+                            ConstrainedBox::new(
+                                Constraints::tight(Size::new(width - 32., body_height)),
+                                body,
+                            )
+                            .into(),
+                        ])
+                        .cross_axis_alignment(CrossAxisAlignment::Start),
+                    ))
+                    .background(APP_BACKGROUND),
+                )
+                .into()
         })
         .into();
         let mut runtime = Runtime::new(root).unwrap();

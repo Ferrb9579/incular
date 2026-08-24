@@ -629,16 +629,16 @@ where
     let natural_main = runs.iter().map(|run| run.main).fold(0.0, f32::max);
     let natural_cross = runs.iter().map(|run| run.cross).sum::<f32>()
         + run_spacing * runs.len().saturating_sub(1) as f32;
-    let line_main = if available_main.is_finite() {
-        available_main
+    let line_main = if main_min(constraints, direction) == main_max(constraints, direction) {
+        main_max(constraints, direction)
     } else {
-        main_min(constraints, direction).max(natural_main)
+        main_min(constraints, direction).max(natural_main.min(main_max(constraints, direction)))
     };
     let cross_maximum = cross_max(constraints, direction);
-    let line_cross = if cross_maximum.is_finite() {
+    let line_cross = if cross_min(constraints, direction) == cross_maximum {
         cross_maximum
     } else {
-        cross_min(constraints, direction).max(natural_cross)
+        cross_min(constraints, direction).max(natural_cross.min(cross_maximum))
     };
     let mut output = vec![ChildLayout::default(); children.len()];
     let cross_remaining = (line_cross - natural_cross).max(0.0);

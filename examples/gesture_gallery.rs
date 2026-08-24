@@ -59,8 +59,7 @@ fn main() {
                 "taps: {tap_value}  pan: ({:.0}, {:.0})  scale: {scale_value:.2}×",
                 pan_value.x, pan_value.y
             )),
-            GestureRegion::new(
-                callbacks,
+            GestureDetector::new(
                 DecoratedBox::new(Widget::stack(
                     Alignment::CENTER,
                     vec![
@@ -86,6 +85,7 @@ fn main() {
                 .background(Color::rgba(27, 42, 72, 255))
                 .radius(18.),
             )
+            .callbacks(callbacks)
             .into(),
             Button::new("Reset interaction")
                 .on_press(move || {

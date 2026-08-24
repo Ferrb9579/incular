@@ -92,25 +92,20 @@ fn scenario_tile(
     let active = index == selected;
     let background = if active { PRIMARY } else { SURFACE_RAISED };
     let border = if active { PRIMARY } else { BORDER };
-    GestureRegion::new(
-        GestureCallbacks {
-            on_tap: Some(std::rc::Rc::new(move || {
-                scenario.set(index);
-            })),
-            ..GestureCallbacks::default()
-        },
-        Stack::aligned(
-            Alignment::CENTER,
-            [
-                DecoratedBox::new(Widget::box_(Size::new(148., 58.), Color::TRANSPARENT))
-                    .background(background)
-                    .border(Border::new(1., border))
-                    .radius(12.)
-                    .into(),
-                gallery_text(label, 15., TEXT_PRIMARY),
-            ],
-        ),
+    GestureDetector::new(
+        Stack::new([
+            DecoratedBox::new(Widget::box_(Size::new(148., 58.), Color::TRANSPARENT))
+                .background(background)
+                .border(Border::new(1., border))
+                .radius(12.)
+                .into(),
+            gallery_text(label, 15., TEXT_PRIMARY),
+        ])
+        .alignment(Alignment::CENTER),
     )
+    .on_tap(move || {
+        scenario.set(index);
+    })
     .into()
 }
 
@@ -299,31 +294,31 @@ fn main() {
                     .into()
                 };
 
-                SizedBox::new(
-                    Size::new(width, height),
-                    DecoratedBox::new(ScrollView::vertical(
-                        scroll.clone(),
-                        Padding::all(
-                            24.,
-                            Column::new([
-                                ConstrainedBox::new(
-                                    Constraints::new(
-                                        content_width,
-                                        content_width,
-                                        0.,
-                                        f32::INFINITY,
-                                    ),
-                                    header.clone(),
-                                )
-                                .into(),
-                                gap(1., 16.),
-                                body,
-                            ]),
-                        ),
-                    ))
-                    .background(CANVAS),
-                )
-                .into()
+                SizedBox::from_size(Size::new(width, height))
+                    .child(
+                        DecoratedBox::new(ScrollView::vertical(
+                            scroll.clone(),
+                            Padding::all(
+                                24.,
+                                Column::new([
+                                    ConstrainedBox::new(
+                                        Constraints::new(
+                                            content_width,
+                                            content_width,
+                                            0.,
+                                            f32::INFINITY,
+                                        ),
+                                        header.clone(),
+                                    )
+                                    .into(),
+                                    gap(1., 16.),
+                                    body,
+                                ]),
+                            ),
+                        ))
+                        .background(CANVAS),
+                    )
+                    .into()
             })
             .into();
 
@@ -508,25 +503,20 @@ fn million_fixed_list() -> Widget {
     labeled(
         "1,000,000 fixed rows",
         VirtualList::fixed_extent_with_controller(1_000_000, 40., controller.clone(), |index| {
-            GestureRegion::new(
-                GestureCallbacks {
-                    on_tap: Some(std::rc::Rc::new(move || {
-                        if index % 100_000 == 0 {
-                            eprintln!("clicked Item {index}");
-                        }
-                    })),
-                    ..GestureCallbacks::default()
+            GestureDetector::new(stress_row(
+                format!("Item {index}"),
+                40.,
+                if index % 2 == 0 {
+                    Color::rgba(42, 67, 112, 255)
+                } else {
+                    Color::rgba(35, 56, 94, 255)
                 },
-                stress_row(
-                    format!("Item {index}"),
-                    40.,
-                    if index % 2 == 0 {
-                        Color::rgba(42, 67, 112, 255)
-                    } else {
-                        Color::rgba(35, 56, 94, 255)
-                    },
-                ),
-            )
+            ))
+            .on_tap(move || {
+                if index % 100_000 == 0 {
+                    eprintln!("clicked Item {index}");
+                }
+            })
         }),
     )
 }
@@ -745,18 +735,13 @@ fn gesture_stress(hits: &Signal<u32>) -> Widget {
     for index in 0..300 {
         let counter = hits.clone();
         cells.push(
-            GestureRegion::new(
-                GestureCallbacks {
-                    on_tap: Some(std::rc::Rc::new(move || {
-                        counter.update(|count| *count += 1);
-                    })),
-                    ..GestureCallbacks::default()
-                },
-                Widget::fixed_box(
-                    Size::new(72., 72.),
-                    Color::rgba(120, 60 + ((index * 13) % 150) as u8, 90, 255),
-                ),
-            )
+            GestureDetector::new(Widget::fixed_box(
+                Size::new(72., 72.),
+                Color::rgba(120, 60 + ((index * 13) % 150) as u8, 90, 255),
+            ))
+            .on_tap(move || {
+                counter.update(|count| *count += 1);
+            })
             .into(),
         );
     }

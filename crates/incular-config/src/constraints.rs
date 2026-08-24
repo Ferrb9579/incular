@@ -75,4 +75,23 @@ impl Constraints {
     pub fn is_height_bounded(self) -> bool {
         self.max_height.is_finite()
     }
+    #[must_use]
+    pub fn biggest(self) -> Size {
+        Size::new(
+            if self.max_width.is_finite() {
+                self.max_width
+            } else {
+                self.min_width
+            },
+            if self.max_height.is_finite() {
+                self.max_height
+            } else {
+                self.min_height
+            },
+        )
+    }
+    #[must_use]
+    pub fn smallest(self) -> Size {
+        Size::new(self.min_width, self.min_height)
+    }
 }

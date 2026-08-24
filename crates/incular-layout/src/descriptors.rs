@@ -206,21 +206,7 @@ impl Stack {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum StackFit {
-    #[default]
-    Loose,
-    Expand,
-    Passthrough,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Clip {
-    None,
-    #[default]
-    HardEdge,
-    AntiAlias,
-}
+pub use incular_config::{Clip, StackFit};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wrap {

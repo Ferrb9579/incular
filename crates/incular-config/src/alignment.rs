@@ -255,6 +255,23 @@ pub enum WrapCrossAlignment {
     Center,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Clip {
+    None,
+    #[default]
+    HardEdge,
+    AntiAlias,
+    AntiAliasWithSaveLayer,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StackFit {
+    #[default]
+    Loose,
+    Expand,
+    Passthrough,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

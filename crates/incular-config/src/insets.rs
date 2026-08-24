@@ -23,6 +23,11 @@ impl EdgeInsets {
     };
 
     #[must_use]
+    pub const fn zero() -> Self {
+        Self::ZERO
+    }
+
+    #[must_use]
     pub const fn all(value: f32) -> Self {
         Self {
             left: value,
@@ -40,6 +45,16 @@ impl EdgeInsets {
             right: horizontal,
             bottom: vertical,
         }
+    }
+
+    #[must_use]
+    pub const fn horizontal_insets(horizontal: f32) -> Self {
+        Self::symmetric(horizontal, 0.0)
+    }
+
+    #[must_use]
+    pub const fn vertical_insets(vertical: f32) -> Self {
+        Self::symmetric(0.0, vertical)
     }
 
     #[must_use]
