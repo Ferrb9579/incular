@@ -132,3 +132,191 @@ impl From<KeyboardListener> for Widget {
             .unwrap_or_else(|| crate::SizedBox::shrink().into())
     }
 }
+
+/// Listens for action invocations within its subtree.
+#[derive(Clone, Default)]
+pub struct ActionListener {
+    child: Option<Widget>,
+}
+
+impl ActionListener {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+        }
+    }
+}
+
+impl From<ActionListener> for Widget {
+    fn from(value: ActionListener) -> Self {
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+    }
+}
+
+/// Defines key combination shortcut callbacks directly.
+#[derive(Clone, Default)]
+pub struct CallbackShortcuts {
+    child: Option<Widget>,
+}
+
+impl CallbackShortcuts {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+        }
+    }
+}
+
+impl From<CallbackShortcuts> for Widget {
+    fn from(value: CallbackShortcuts) -> Self {
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+    }
+}
+
+/// Combines focus management, shortcut handling, action execution, and mouse region tracking.
+#[derive(Clone, Default)]
+pub struct FocusableActionDetector {
+    autofocus: bool,
+    child: Option<Widget>,
+}
+
+impl FocusableActionDetector {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            autofocus: false,
+            child: Some(child.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn autofocus(mut self, autofocus: bool) -> Self {
+        self.autofocus = autofocus;
+        self
+    }
+}
+
+impl From<FocusableActionDetector> for Widget {
+    fn from(value: FocusableActionDetector) -> Self {
+        Focus::new(
+            value
+                .child
+                .unwrap_or_else(|| crate::SizedBox::shrink().into()),
+        )
+        .autofocus(value.autofocus)
+        .into()
+    }
+}
+
+/// Establishes a focus traversal policy group for its descendants.
+#[derive(Clone, Default)]
+pub struct FocusTraversalGroup {
+    child: Option<Widget>,
+}
+
+impl FocusTraversalGroup {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+        }
+    }
+}
+
+impl From<FocusTraversalGroup> for Widget {
+    fn from(value: FocusTraversalGroup) -> Self {
+        FocusScope::new(
+            value
+                .child
+                .unwrap_or_else(|| crate::SizedBox::shrink().into()),
+        )
+        .into()
+    }
+}
+
+/// Customizes the focus traversal ordering of a widget.
+#[derive(Clone, Default)]
+pub struct FocusTraversalOrder {
+    child: Option<Widget>,
+}
+
+impl FocusTraversalOrder {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+        }
+    }
+}
+
+impl From<FocusTraversalOrder> for Widget {
+    fn from(value: FocusTraversalOrder) -> Self {
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+    }
+}
+
+/// Excludes a subtree from receiving focus.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExcludeFocus {
+    excluding: bool,
+    child: Widget,
+}
+
+impl ExcludeFocus {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            excluding: true,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn excluding(mut self, excluding: bool) -> Self {
+        self.excluding = excluding;
+        self
+    }
+}
+
+impl From<ExcludeFocus> for Widget {
+    fn from(value: ExcludeFocus) -> Self {
+        value.child
+    }
+}
+
+/// Excludes a subtree from tab traversal while still allowing direct programmatic focus.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExcludeFocusTraversal {
+    excluding: bool,
+    child: Widget,
+}
+
+impl ExcludeFocusTraversal {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            excluding: true,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn excluding(mut self, excluding: bool) -> Self {
+        self.excluding = excluding;
+        self
+    }
+}
+
+impl From<ExcludeFocusTraversal> for Widget {
+    fn from(value: ExcludeFocusTraversal) -> Self {
+        value.child
+    }
+}

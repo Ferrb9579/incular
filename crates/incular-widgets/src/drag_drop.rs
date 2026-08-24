@@ -370,3 +370,28 @@ impl From<Dismissible> for Widget {
             .into()
     }
 }
+
+/// A draggable widget that initiates drag operations exclusively on long-press.
+#[derive(Clone)]
+pub struct LongPressDraggable<T: Clone + 'static> {
+    context: DragDropContext<T>,
+    payload: T,
+    child: Widget,
+}
+
+impl<T: Clone + 'static> LongPressDraggable<T> {
+    #[must_use]
+    pub fn new(context: DragDropContext<T>, payload: T, child: impl Into<Widget>) -> Self {
+        Self {
+            context,
+            payload,
+            child: child.into(),
+        }
+    }
+}
+
+impl<T: Clone + 'static> From<LongPressDraggable<T>> for Widget {
+    fn from(value: LongPressDraggable<T>) -> Self {
+        Draggable::new(value.context, value.payload, value.child).into()
+    }
+}

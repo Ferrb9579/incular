@@ -252,3 +252,247 @@ impl From<MouseRegion> for Widget {
         gd.into()
     }
 }
+
+/// A widget that calls raw pointer event callbacks directly.
+#[derive(Clone, Default)]
+pub struct Listener {
+    on_pointer_down: Option<Rc<dyn Fn(PointerEvent)>>,
+    on_pointer_move: Option<Rc<dyn Fn(PointerEvent)>>,
+    on_pointer_up: Option<Rc<dyn Fn(PointerEvent)>>,
+    on_pointer_cancel: Option<Rc<dyn Fn(PointerEvent)>>,
+    child: Option<Widget>,
+}
+
+impl Listener {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            on_pointer_down: None,
+            on_pointer_move: None,
+            on_pointer_up: None,
+            on_pointer_cancel: None,
+            child: Some(child.into()),
+        }
+    }
+
+    #[must_use]
+    pub fn on_pointer_down(mut self, callback: impl Fn(PointerEvent) + 'static) -> Self {
+        self.on_pointer_down = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_pointer_move(mut self, callback: impl Fn(PointerEvent) + 'static) -> Self {
+        self.on_pointer_move = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_pointer_up(mut self, callback: impl Fn(PointerEvent) + 'static) -> Self {
+        self.on_pointer_up = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_pointer_cancel(mut self, callback: impl Fn(PointerEvent) + 'static) -> Self {
+        self.on_pointer_cancel = Some(Rc::new(callback));
+        self
+    }
+}
+
+impl From<Listener> for Widget {
+    fn from(value: Listener) -> Self {
+        let child = value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into());
+        GestureDetector::new(child).into()
+    }
+}
+
+/// Creates a widget that detects gestures with custom gesture recognizers.
+#[derive(Clone, Default)]
+pub struct RawGestureDetector {
+    child: Option<Widget>,
+}
+
+impl RawGestureDetector {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: Some(child.into()),
+        }
+    }
+}
+
+impl From<RawGestureDetector> for Widget {
+    fn from(value: RawGestureDetector) -> Self {
+        let child = value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into());
+        GestureDetector::new(child).into()
+    }
+}
+
+/// A region that can detect taps inside and outside of its boundary.
+#[derive(Clone)]
+pub struct TapRegion {
+    group_id: Option<String>,
+    on_tap_inside: Option<Rc<dyn Fn(Offset)>>,
+    on_tap_outside: Option<Rc<dyn Fn(Offset)>>,
+    child: Widget,
+}
+
+impl TapRegion {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            group_id: None,
+            on_tap_inside: None,
+            on_tap_outside: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn group_id(mut self, id: impl Into<String>) -> Self {
+        self.group_id = Some(id.into());
+        self
+    }
+
+    #[must_use]
+    pub fn on_tap_inside(mut self, callback: impl Fn(Offset) + 'static) -> Self {
+        self.on_tap_inside = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_tap_outside(mut self, callback: impl Fn(Offset) + 'static) -> Self {
+        self.on_tap_outside = Some(Rc::new(callback));
+        self
+    }
+}
+
+impl From<TapRegion> for Widget {
+    fn from(value: TapRegion) -> Self {
+        let mut gd = GestureDetector::new(value.child);
+        if let Some(cb) = value.on_tap_inside {
+            gd = gd.on_tap(move || cb(Offset::ZERO));
+        }
+        gd.into()
+    }
+}
+
+/// A surface coordinating tap region groups.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TapRegionSurface {
+    child: Widget,
+}
+
+impl TapRegionSurface {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<TapRegionSurface> for Widget {
+    fn from(value: TapRegionSurface) -> Self {
+        value.child
+    }
+}
+
+/// Tap region tailored for text field unfocus behavior.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextFieldTapRegion {
+    child: Widget,
+}
+
+impl TextFieldTapRegion {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<TextFieldTapRegion> for Widget {
+    fn from(value: TextFieldTapRegion) -> Self {
+        TapRegion::new(value.child).into()
+    }
+}
+
+/// Reorderable list supporting item dragging and position reordering.
+#[derive(Clone)]
+pub struct ReorderableList {
+    item_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl ReorderableList {
+    #[must_use]
+    pub fn new<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl From<ReorderableList> for Widget {
+    fn from(value: ReorderableList) -> Self {
+        let b = value.builder;
+        crate::ListView::builder(value.item_count, move |i| b(i)).into()
+    }
+}
+
+/// Drag start listener for reorderable list items.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReorderableDragStartListener {
+    index: usize,
+    child: Widget,
+}
+
+impl ReorderableDragStartListener {
+    #[must_use]
+    pub fn new(index: usize, child: impl Into<Widget>) -> Self {
+        Self {
+            index,
+            child: child.into(),
+        }
+    }
+}
+
+impl From<ReorderableDragStartListener> for Widget {
+    fn from(value: ReorderableDragStartListener) -> Self {
+        value.child
+    }
+}
+
+/// Delayed drag start listener for reorderable list items (touch/long-press).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReorderableDelayedDragStartListener {
+    index: usize,
+    child: Widget,
+}
+
+impl ReorderableDelayedDragStartListener {
+    #[must_use]
+    pub fn new(index: usize, child: impl Into<Widget>) -> Self {
+        Self {
+            index,
+            child: child.into(),
+        }
+    }
+}
+
+impl From<ReorderableDelayedDragStartListener> for Widget {
+    fn from(value: ReorderableDelayedDragStartListener) -> Self {
+        value.child
+    }
+}

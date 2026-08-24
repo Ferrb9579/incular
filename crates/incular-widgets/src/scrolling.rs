@@ -5,7 +5,7 @@ use std::rc::Rc;
 use incular_config::{Axis, Clip, EdgeInsets};
 use incular_scroll::{MeasuredExtentIndex, ScrollController, ScrollPhysics};
 
-use crate::{Column, Padding, Row, VirtualList, Widget, WidgetKind};
+use crate::{Column, DecoratedBox, Padding, Row, VirtualList, Widget, WidgetKind};
 
 /// A first-class scrollable box that scrolls a single child.
 #[derive(Clone)]
@@ -946,6 +946,1189 @@ impl From<CustomScrollView> for Widget {
         SingleChildScrollView::new(Column::new(built_children))
             .scroll_direction(value.scroll_direction)
             .controller(controller)
+            .into()
+    }
+}
+
+/// Underlying scroll gesture and viewport coordinator.
+#[derive(Clone)]
+pub struct Scrollable {
+    controller: Option<ScrollController>,
+    axis_direction: Axis,
+    viewport_builder: Rc<dyn Fn(&ScrollController) -> Widget>,
+}
+
+impl Scrollable {
+    #[must_use]
+    pub fn new<W>(viewport_builder: impl Fn(&ScrollController) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            controller: None,
+            axis_direction: Axis::Vertical,
+            viewport_builder: Rc::new(move |c| viewport_builder(c).into()),
+        }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: ScrollController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    #[must_use]
+    pub fn axis_direction(mut self, axis: Axis) -> Self {
+        self.axis_direction = axis;
+        self
+    }
+}
+
+impl From<Scrollable> for Widget {
+    fn from(value: Scrollable) -> Self {
+        let controller = value.controller.unwrap_or_default();
+        (value.viewport_builder)(&controller)
+    }
+}
+
+/// Coordinates outer and inner scroll views with sliver headers.
+pub struct NestedScrollView {
+    controller: Option<ScrollController>,
+    header_slivers: Vec<Box<dyn Sliver>>,
+    body: Widget,
+}
+
+impl NestedScrollView {
+    #[must_use]
+    pub fn new(
+        header_slivers: impl IntoIterator<Item = Box<dyn Sliver>>,
+        body: impl Into<Widget>,
+    ) -> Self {
+        Self {
+            controller: None,
+            header_slivers: header_slivers.into_iter().collect(),
+            body: body.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: ScrollController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+}
+
+impl From<NestedScrollView> for Widget {
+    fn from(value: NestedScrollView) -> Self {
+        let controller = value.controller.unwrap_or_default();
+        let mut slivers: Vec<Widget> = value
+            .header_slivers
+            .into_iter()
+            .map(|s| s.build(&controller))
+            .collect();
+        slivers.push(value.body);
+        SingleChildScrollView::new(Column::new(slivers))
+            .controller(controller)
+            .into()
+    }
+}
+
+/// A viewport bounding visible slivers.
+pub struct Viewport {
+    slivers: Vec<Box<dyn Sliver>>,
+    controller: Option<ScrollController>,
+    axis_direction: Axis,
+}
+
+impl Viewport {
+    #[must_use]
+    pub fn new(slivers: impl IntoIterator<Item = Box<dyn Sliver>>) -> Self {
+        Self {
+            slivers: slivers.into_iter().collect(),
+            controller: None,
+            axis_direction: Axis::Vertical,
+        }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: ScrollController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    #[must_use]
+    pub fn axis_direction(mut self, axis: Axis) -> Self {
+        self.axis_direction = axis;
+        self
+    }
+
+    #[must_use]
+    pub fn get_axis_direction(&self) -> Axis {
+        self.axis_direction
+    }
+}
+
+impl From<Viewport> for Widget {
+    fn from(value: Viewport) -> Self {
+        CustomScrollView::new(value.slivers).into()
+    }
+}
+
+/// A shrink-wrapping viewport.
+pub struct ShrinkWrappingViewport {
+    slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl ShrinkWrappingViewport {
+    #[must_use]
+    pub fn new(slivers: impl IntoIterator<Item = Box<dyn Sliver>>) -> Self {
+        Self {
+            slivers: slivers.into_iter().collect(),
+        }
+    }
+}
+
+impl From<ShrinkWrappingViewport> for Widget {
+    fn from(value: ShrinkWrappingViewport) -> Self {
+        CustomScrollView::new(value.slivers).into()
+    }
+}
+
+/// A configurable scrollbar widget.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawScrollbar {
+    controller: Option<ScrollController>,
+    thumb_visibility: bool,
+    child: Widget,
+}
+
+impl RawScrollbar {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            controller: None,
+            thumb_visibility: false,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: ScrollController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    #[must_use]
+    pub fn thumb_visibility(mut self, visibility: bool) -> Self {
+        self.thumb_visibility = visibility;
+        self
+    }
+}
+
+impl From<RawScrollbar> for Widget {
+    fn from(value: RawScrollbar) -> Self {
+        value.child
+    }
+}
+
+/// A simple sequential layout along the main axis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListBody {
+    main_axis: Axis,
+    children: Vec<Widget>,
+}
+
+impl ListBody {
+    #[must_use]
+    pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
+        Self {
+            main_axis: Axis::Vertical,
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn main_axis(mut self, axis: Axis) -> Self {
+        self.main_axis = axis;
+        self
+    }
+}
+
+impl From<ListBody> for Widget {
+    fn from(value: ListBody) -> Self {
+        match value.main_axis {
+            Axis::Horizontal => Row::new(value.children).into(),
+            Axis::Vertical => Column::new(value.children).into(),
+        }
+    }
+}
+
+/// A 3D cylindrical rotating wheel scroll list.
+#[derive(Clone)]
+pub struct ListWheelScrollView {
+    item_extent: f32,
+    children: Vec<Widget>,
+}
+
+impl ListWheelScrollView {
+    #[must_use]
+    pub fn new(item_extent: f32, children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
+        Self {
+            item_extent: item_extent.max(1.0),
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ListWheelScrollView> for Widget {
+    fn from(value: ListWheelScrollView) -> Self {
+        let count = value.children.len();
+        let items = Rc::new(value.children);
+        ListView::fixed_extent(count, value.item_extent, move |i| items[i].clone()).into()
+    }
+}
+
+/// Draggable scrollable bottom sheet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DraggableScrollableSheet {
+    initial_child_size: f32,
+    min_child_size: f32,
+    max_child_size: f32,
+    child: Widget,
+}
+
+impl DraggableScrollableSheet {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            initial_child_size: 0.5,
+            min_child_size: 0.25,
+            max_child_size: 1.0,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn initial_child_size(mut self, size: f32) -> Self {
+        self.initial_child_size = size.clamp(0.0, 1.0);
+        self
+    }
+
+    #[must_use]
+    pub fn min_child_size(mut self, size: f32) -> Self {
+        self.min_child_size = size.clamp(0.0, 1.0);
+        self
+    }
+
+    #[must_use]
+    pub fn max_child_size(mut self, size: f32) -> Self {
+        self.max_child_size = size.clamp(0.0, 1.0);
+        self
+    }
+}
+
+impl From<DraggableScrollableSheet> for Widget {
+    fn from(value: DraggableScrollableSheet) -> Self {
+        crate::layout::FractionallySizedBox::new(value.child)
+            .height_factor(value.initial_child_size)
+            .into()
+    }
+}
+
+/// Notifies and controls the sheet extent of an ancestor [`DraggableScrollableSheet`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct DraggableScrollableActuator {
+    child: Widget,
+}
+
+impl DraggableScrollableActuator {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<DraggableScrollableActuator> for Widget {
+    fn from(value: DraggableScrollableActuator) -> Self {
+        value.child
+    }
+}
+
+/// Listens for notifications bubbling up the widget tree.
+#[derive(Clone)]
+pub struct NotificationListener {
+    child: Widget,
+}
+
+impl NotificationListener {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<NotificationListener> for Widget {
+    fn from(value: NotificationListener) -> Self {
+        value.child
+    }
+}
+
+/// Observes scroll notifications.
+#[derive(Clone)]
+pub struct ScrollNotificationObserver {
+    child: Widget,
+}
+
+impl ScrollNotificationObserver {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<ScrollNotificationObserver> for Widget {
+    fn from(value: ScrollNotificationObserver) -> Self {
+        value.child
+    }
+}
+
+/// Bidirectional (2D) scrollable coordinator.
+#[derive(Clone)]
+pub struct TwoDimensionalScrollable {
+    horizontal_controller: Option<ScrollController>,
+    vertical_controller: Option<ScrollController>,
+    child: Widget,
+}
+
+impl TwoDimensionalScrollable {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            horizontal_controller: None,
+            vertical_controller: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn horizontal_controller(mut self, controller: ScrollController) -> Self {
+        self.horizontal_controller = Some(controller);
+        self
+    }
+
+    #[must_use]
+    pub fn vertical_controller(mut self, controller: ScrollController) -> Self {
+        self.vertical_controller = Some(controller);
+        self
+    }
+}
+
+impl From<TwoDimensionalScrollable> for Widget {
+    fn from(value: TwoDimensionalScrollable) -> Self {
+        let h = SingleChildScrollView::new(value.child).scroll_direction(Axis::Horizontal);
+        let h = if let Some(c) = value.horizontal_controller {
+            h.controller(c)
+        } else {
+            h
+        };
+        let v = SingleChildScrollView::new(h).scroll_direction(Axis::Vertical);
+        if let Some(c) = value.vertical_controller {
+            v.controller(c).into()
+        } else {
+            v.into()
+        }
+    }
+}
+
+/// Bidirectional (2D) scrolling view.
+#[derive(Clone)]
+pub struct TwoDimensionalScrollView {
+    child: Widget,
+}
+
+impl TwoDimensionalScrollView {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<TwoDimensionalScrollView> for Widget {
+    fn from(value: TwoDimensionalScrollView) -> Self {
+        TwoDimensionalScrollable::new(value.child).into()
+    }
+}
+
+/// Bidirectional (2D) viewport.
+#[derive(Clone)]
+pub struct TwoDimensionalViewport {
+    child: Widget,
+}
+
+impl TwoDimensionalViewport {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<TwoDimensionalViewport> for Widget {
+    fn from(value: TwoDimensionalViewport) -> Self {
+        TwoDimensionalScrollable::new(value.child).into()
+    }
+}
+
+/// Sliver list with fixed item extents.
+pub struct SliverFixedExtentList {
+    item_count: usize,
+    item_extent: f32,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverFixedExtentList {
+    #[must_use]
+    pub fn new<W>(
+        item_count: usize,
+        item_extent: f32,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            item_extent: item_extent.max(1.0),
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl Sliver for SliverFixedExtentList {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let builder = self.builder.clone();
+        VirtualList::fixed_extent_with_controller(
+            self.item_count,
+            self.item_extent,
+            controller.clone(),
+            move |i| builder(i),
+        )
+    }
+}
+
+/// Sliver list with variable item extents.
+pub struct SliverVariedExtentList {
+    item_count: usize,
+    extent_builder: Rc<dyn Fn(usize) -> f32>,
+    item_builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverVariedExtentList {
+    #[must_use]
+    pub fn new<W>(
+        item_count: usize,
+        extent_builder: impl Fn(usize) -> f32 + 'static,
+        item_builder: impl Fn(usize) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            extent_builder: Rc::new(extent_builder),
+            item_builder: Rc::new(move |i| item_builder(i).into()),
+        }
+    }
+
+    #[must_use]
+    pub fn extent_builder(&self) -> &Rc<dyn Fn(usize) -> f32> {
+        &self.extent_builder
+    }
+}
+
+impl Sliver for SliverVariedExtentList {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let ib = self.item_builder.clone();
+        VirtualList::variable_extent_with_controller(
+            self.item_count,
+            48.0,
+            controller.clone(),
+            move |i| ib(i),
+        )
+    }
+}
+
+/// Sliver list taking extent from a prototype widget.
+pub struct SliverPrototypeExtentList {
+    item_count: usize,
+    prototype_item: Widget,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverPrototypeExtentList {
+    #[must_use]
+    pub fn new<W>(
+        item_count: usize,
+        prototype_item: impl Into<Widget>,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            prototype_item: prototype_item.into(),
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+
+    #[must_use]
+    pub fn prototype_item(&self) -> &Widget {
+        &self.prototype_item
+    }
+}
+
+impl Sliver for SliverPrototypeExtentList {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let builder = self.builder.clone();
+        VirtualList::fixed_extent_with_controller(
+            self.item_count,
+            48.0,
+            controller.clone(),
+            move |i| builder(i),
+        )
+    }
+}
+
+/// Sliver filling remaining viewport space.
+pub struct SliverFillRemaining {
+    child: Widget,
+    has_scroll_body: bool,
+}
+
+impl SliverFillRemaining {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+            has_scroll_body: true,
+        }
+    }
+
+    #[must_use]
+    pub fn has_scroll_body(mut self, has_scroll_body: bool) -> Self {
+        self.has_scroll_body = has_scroll_body;
+        self
+    }
+
+    #[must_use]
+    pub fn is_scroll_body(&self) -> bool {
+        self.has_scroll_body
+    }
+}
+
+impl Sliver for SliverFillRemaining {
+    fn build(&self, _controller: &ScrollController) -> Widget {
+        self.child.clone()
+    }
+}
+
+/// Sliver with children each filling the entire viewport.
+pub struct SliverFillViewport {
+    children: Vec<Widget>,
+}
+
+impl SliverFillViewport {
+    #[must_use]
+    pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
+        Self {
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl Sliver for SliverFillViewport {
+    fn build(&self, _controller: &ScrollController) -> Widget {
+        Column::new(self.children.clone()).into()
+    }
+}
+
+/// Sliver builder receiving constraints.
+pub struct SliverLayoutBuilder {
+    builder: Rc<dyn Fn(&ScrollController) -> Widget>,
+}
+
+impl SliverLayoutBuilder {
+    #[must_use]
+    pub fn new<W>(builder: impl Fn(&ScrollController) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            builder: Rc::new(move |c| builder(c).into()),
+        }
+    }
+}
+
+impl Sliver for SliverLayoutBuilder {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        (self.builder)(controller)
+    }
+}
+
+/// Groups multiple slivers along the main axis.
+pub struct SliverMainAxisGroup {
+    slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl SliverMainAxisGroup {
+    #[must_use]
+    pub fn new(slivers: impl IntoIterator<Item = Box<dyn Sliver>>) -> Self {
+        Self {
+            slivers: slivers.into_iter().collect(),
+        }
+    }
+}
+
+impl Sliver for SliverMainAxisGroup {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let built = self
+            .slivers
+            .iter()
+            .map(|s| s.build(controller))
+            .collect::<Vec<_>>();
+        Column::new(built).into()
+    }
+}
+
+/// Groups multiple slivers across the cross axis.
+pub struct SliverCrossAxisGroup {
+    slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl SliverCrossAxisGroup {
+    #[must_use]
+    pub fn new(slivers: impl IntoIterator<Item = Box<dyn Sliver>>) -> Self {
+        Self {
+            slivers: slivers.into_iter().collect(),
+        }
+    }
+}
+
+impl Sliver for SliverCrossAxisGroup {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let built = self
+            .slivers
+            .iter()
+            .map(|s| s.build(controller))
+            .collect::<Vec<_>>();
+        Row::new(built).into()
+    }
+}
+
+/// Expands a sliver across cross-axis group space.
+pub struct SliverCrossAxisExpanded {
+    flex: usize,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverCrossAxisExpanded {
+    #[must_use]
+    pub fn new(flex: usize, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            flex: flex.max(1),
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverCrossAxisExpanded {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::layout::Expanded::new(self.sliver.build(controller))
+            .flex(self.flex as u32)
+            .into()
+    }
+}
+
+/// Constrains the cross-axis dimension of a sliver.
+pub struct SliverConstrainedCrossAxis {
+    max_extent: f32,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverConstrainedCrossAxis {
+    #[must_use]
+    pub fn new(max_extent: f32, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            max_extent: max_extent.max(0.0),
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverConstrainedCrossAxis {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::layout::ConstrainedBox::new(
+            incular_config::Constraints::loose(incular_core::Size::new(
+                self.max_extent,
+                f32::INFINITY,
+            )),
+            self.sliver.build(controller),
+        )
+        .into()
+    }
+}
+
+/// Paints decoration behind a sliver.
+pub struct DecoratedSliver {
+    decoration: incular_rendering::Decoration,
+    sliver: Box<dyn Sliver>,
+}
+
+impl DecoratedSliver {
+    #[must_use]
+    pub fn new(decoration: incular_rendering::Decoration, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            decoration,
+            sliver: Box::new(sliver),
+        }
+    }
+
+    #[must_use]
+    pub fn decoration(&self) -> &incular_rendering::Decoration {
+        &self.decoration
+    }
+}
+
+impl Sliver for DecoratedSliver {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let child = self.sliver.build(controller);
+        DecoratedBox::new(child).into()
+    }
+}
+
+/// Sliver opacity wrapper.
+pub struct SliverOpacity {
+    opacity: f32,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverOpacity {
+    #[must_use]
+    pub fn new(opacity: f32, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            opacity: opacity.clamp(0.0, 1.0),
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverOpacity {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::Opacity::new(self.opacity, self.sliver.build(controller)).into()
+    }
+}
+
+/// Sliver offstage wrapper.
+pub struct SliverOffstage {
+    offstage: bool,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverOffstage {
+    #[must_use]
+    pub fn new(offstage: bool, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            offstage,
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverOffstage {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::layout::Offstage::new(self.sliver.build(controller))
+            .offstage(self.offstage)
+            .into()
+    }
+}
+
+/// Sliver ignore pointer wrapper.
+pub struct SliverIgnorePointer {
+    ignoring: bool,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverIgnorePointer {
+    #[must_use]
+    pub fn new(ignoring: bool, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            ignoring,
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverIgnorePointer {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::IgnorePointer::new(self.sliver.build(controller))
+            .ignoring(self.ignoring)
+            .into()
+    }
+}
+
+/// Sliver safe area insets wrapper.
+pub struct SliverSafeArea {
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverSafeArea {
+    #[must_use]
+    pub fn new(sliver: impl Sliver + 'static) -> Self {
+        Self {
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverSafeArea {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::SafeArea::new(self.sliver.build(controller)).into()
+    }
+}
+
+/// Sliver visibility wrapper.
+pub struct SliverVisibility {
+    visible: bool,
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverVisibility {
+    #[must_use]
+    pub fn new(visible: bool, sliver: impl Sliver + 'static) -> Self {
+        Self {
+            visible,
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverVisibility {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        crate::layout::Visibility::new(self.sliver.build(controller))
+            .visible(self.visible)
+            .into()
+    }
+}
+
+/// Pinned leading header sliver.
+pub struct PinnedHeaderSliver {
+    child: Widget,
+}
+
+impl PinnedHeaderSliver {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl Sliver for PinnedHeaderSliver {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        SliverPersistentHeader::new(48.0, self.child.clone()).build(controller)
+    }
+}
+
+/// Floating header sliver.
+pub struct SliverFloatingHeader {
+    child: Widget,
+}
+
+impl SliverFloatingHeader {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl Sliver for SliverFloatingHeader {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        SliverPersistentHeader::new(48.0, self.child.clone())
+            .pinned(false)
+            .build(controller)
+    }
+}
+
+/// Resizing header sliver.
+pub struct SliverResizingHeader {
+    min_extent: f32,
+    max_extent: f32,
+    child: Widget,
+}
+
+impl SliverResizingHeader {
+    #[must_use]
+    pub fn new(min_extent: f32, max_extent: f32, child: impl Into<Widget>) -> Self {
+        Self {
+            min_extent,
+            max_extent: max_extent.max(min_extent),
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn min_extent(&self) -> f32 {
+        self.min_extent
+    }
+
+    #[must_use]
+    pub fn max_extent(&self) -> f32 {
+        self.max_extent
+    }
+}
+
+impl Sliver for SliverResizingHeader {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        SliverPersistentHeader::new(self.max_extent, self.child.clone()).build(controller)
+    }
+}
+
+/// Sliver overlap absorber for nested scroll view coordinators.
+pub struct SliverOverlapAbsorber {
+    sliver: Box<dyn Sliver>,
+}
+
+impl SliverOverlapAbsorber {
+    #[must_use]
+    pub fn new(sliver: impl Sliver + 'static) -> Self {
+        Self {
+            sliver: Box::new(sliver),
+        }
+    }
+}
+
+impl Sliver for SliverOverlapAbsorber {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        self.sliver.build(controller)
+    }
+}
+
+/// Sliver overlap injector for nested scroll view coordinators.
+pub struct SliverOverlapInjector {
+    handle: (),
+}
+
+impl Default for SliverOverlapInjector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SliverOverlapInjector {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { handle: () }
+    }
+
+    pub fn handle(&self) {
+        let () = self.handle;
+    }
+}
+
+impl Sliver for SliverOverlapInjector {
+    fn build(&self, _controller: &ScrollController) -> Widget {
+        crate::layout::SizedBox::shrink().into()
+    }
+}
+
+/// Reorderable sliver list.
+pub struct SliverReorderableList {
+    item_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverReorderableList {
+    #[must_use]
+    pub fn new<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl Sliver for SliverReorderableList {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let b = self.builder.clone();
+        VirtualList::fixed_extent_with_controller(
+            self.item_count,
+            48.0,
+            controller.clone(),
+            move |i| b(i),
+        )
+    }
+}
+
+/// Hierarchical tree sliver.
+pub struct TreeSliver {
+    child: Widget,
+}
+
+impl TreeSliver {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl Sliver for TreeSliver {
+    fn build(&self, _controller: &ScrollController) -> Widget {
+        self.child.clone()
+    }
+}
+
+/// Animated list container.
+#[derive(Clone)]
+pub struct AnimatedList {
+    item_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl AnimatedList {
+    #[must_use]
+    pub fn new<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl From<AnimatedList> for Widget {
+    fn from(value: AnimatedList) -> Self {
+        let b = value.builder;
+        ListView::builder(value.item_count, move |i| b(i)).into()
+    }
+}
+
+/// Animated grid container.
+#[derive(Clone)]
+pub struct AnimatedGrid {
+    item_count: usize,
+    cross_axis_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl AnimatedGrid {
+    #[must_use]
+    pub fn new<W>(
+        item_count: usize,
+        cross_axis_count: usize,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            cross_axis_count: cross_axis_count.max(1),
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl From<AnimatedGrid> for Widget {
+    fn from(value: AnimatedGrid) -> Self {
+        let b = value.builder;
+        GridView::builder(value.item_count, value.cross_axis_count, 80.0, move |i| {
+            b(i)
+        })
+        .into()
+    }
+}
+
+/// Animated list sliver.
+pub struct SliverAnimatedList {
+    item_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverAnimatedList {
+    #[must_use]
+    pub fn new<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl Sliver for SliverAnimatedList {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let b = self.builder.clone();
+        VirtualList::fixed_extent_with_controller(
+            self.item_count,
+            48.0,
+            controller.clone(),
+            move |i| b(i),
+        )
+    }
+}
+
+/// Animated grid sliver.
+pub struct SliverAnimatedGrid {
+    item_count: usize,
+    cross_axis_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+}
+
+impl SliverAnimatedGrid {
+    #[must_use]
+    pub fn new<W>(
+        item_count: usize,
+        cross_axis_count: usize,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            item_count,
+            cross_axis_count: cross_axis_count.max(1),
+            builder: Rc::new(move |i| builder(i).into()),
+        }
+    }
+}
+
+impl Sliver for SliverAnimatedGrid {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let b = self.builder.clone();
+        GridView::builder(self.item_count, self.cross_axis_count, 80.0, move |i| b(i))
+            .controller(controller.clone())
             .into()
     }
 }

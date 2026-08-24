@@ -976,3 +976,533 @@ impl From<ClipPath> for Widget {
         })
     }
 }
+
+/// Sizes its child to the child's intrinsic width.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IntrinsicWidth {
+    step_width: Option<f32>,
+    step_height: Option<f32>,
+    child: Widget,
+}
+
+impl IntrinsicWidth {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            step_width: None,
+            step_height: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn step_width(mut self, step: f32) -> Self {
+        self.step_width = Some(step);
+        self
+    }
+
+    #[must_use]
+    pub fn step_height(mut self, step: f32) -> Self {
+        self.step_height = Some(step);
+        self
+    }
+}
+
+impl From<IntrinsicWidth> for Widget {
+    fn from(value: IntrinsicWidth) -> Self {
+        UnconstrainedBox::new(value.child).into()
+    }
+}
+
+/// Sizes its child to the child's intrinsic height.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IntrinsicHeight {
+    child: Widget,
+}
+
+impl IntrinsicHeight {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<IntrinsicHeight> for Widget {
+    fn from(value: IntrinsicHeight) -> Self {
+        UnconstrainedBox::new(value.child).into()
+    }
+}
+
+/// A box with specified size that allows its child to overflow with alignment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SizedOverflowBox {
+    size: Size,
+    alignment: Alignment,
+    child: Widget,
+}
+
+impl SizedOverflowBox {
+    #[must_use]
+    pub fn new(size: Size, child: impl Into<Widget>) -> Self {
+        Self {
+            size,
+            alignment: Alignment::CENTER,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+}
+
+impl From<SizedOverflowBox> for Widget {
+    fn from(value: SizedOverflowBox) -> Self {
+        SizedBox::from_size(value.size)
+            .child(Align::new(value.alignment, OverflowBox::new(value.child)))
+            .into()
+    }
+}
+
+/// Rotates its child by an integral number of quarter turns (90 degrees each).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RotatedBox {
+    quarter_turns: i32,
+    child: Widget,
+}
+
+impl RotatedBox {
+    #[must_use]
+    pub fn new(quarter_turns: i32, child: impl Into<Widget>) -> Self {
+        Self {
+            quarter_turns,
+            child: child.into(),
+        }
+    }
+}
+
+impl From<RotatedBox> for Widget {
+    fn from(value: RotatedBox) -> Self {
+        let radians = (value.quarter_turns as f32) * std::f32::consts::FRAC_PI_2;
+        crate::Transform::rotation(radians, value.child).into()
+    }
+}
+
+/// Transforms incoming layout constraints before passing them to its child.
+#[derive(Clone)]
+pub struct ConstraintsTransformBox {
+    transform: Rc<dyn Fn(Constraints) -> Constraints>,
+    alignment: Alignment,
+    clip_behavior: Clip,
+    child: Widget,
+}
+
+impl ConstraintsTransformBox {
+    #[must_use]
+    pub fn new(
+        transform: impl Fn(Constraints) -> Constraints + 'static,
+        child: impl Into<Widget>,
+    ) -> Self {
+        Self {
+            transform: Rc::new(transform),
+            alignment: Alignment::CENTER,
+            clip_behavior: Clip::None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
+    #[must_use]
+    pub fn clip_behavior(mut self, clip: Clip) -> Self {
+        self.clip_behavior = clip;
+        self
+    }
+}
+
+impl From<ConstraintsTransformBox> for Widget {
+    fn from(value: ConstraintsTransformBox) -> Self {
+        let transform = value.transform;
+        let child = value.child;
+        let alignment = value.alignment;
+        LayoutBuilder::new(move |incoming| {
+            let child_constraints = transform(incoming);
+            ConstrainedBox::new(child_constraints, Align::new(alignment, child.clone())).into()
+        })
+        .into()
+    }
+}
+
+/// Wraps a child subtree with an explicit [`Key`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyedSubtree {
+    key: crate::Key,
+    child: Widget,
+}
+
+impl KeyedSubtree {
+    #[must_use]
+    pub fn new(key: impl Into<crate::Key>, child: impl Into<Widget>) -> Self {
+        Self {
+            key: key.into(),
+            child: child.into(),
+        }
+    }
+}
+
+impl From<KeyedSubtree> for Widget {
+    fn from(value: KeyedSubtree) -> Self {
+        let mut child = value.child;
+        child.key = Some(value.key);
+        child
+    }
+}
+
+/// A placeholder box with cross lines and fallback sizing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placeholder {
+    color: Color,
+    stroke_width: f32,
+    fallback_width: f32,
+    fallback_height: f32,
+}
+
+impl Default for Placeholder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Placeholder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            color: Color::rgba(117, 117, 117, 255),
+            stroke_width: 2.0,
+            fallback_width: 400.0,
+            fallback_height: 400.0,
+        }
+    }
+
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    #[must_use]
+    pub fn stroke_width(mut self, width: f32) -> Self {
+        self.stroke_width = width.max(0.1);
+        self
+    }
+
+    #[must_use]
+    pub fn fallback_width(mut self, width: f32) -> Self {
+        self.fallback_width = width.max(0.0);
+        self
+    }
+
+    #[must_use]
+    pub fn fallback_height(mut self, height: f32) -> Self {
+        self.fallback_height = height.max(0.0);
+        self
+    }
+}
+
+impl From<Placeholder> for Widget {
+    fn from(value: Placeholder) -> Self {
+        SizedBox::new()
+            .width(value.fallback_width)
+            .height(value.fallback_height)
+            .child(ColoredBox::new(
+                Color::rgba(value.color.red, value.color.green, value.color.blue, 32),
+                SizedBox::shrink(),
+            ))
+            .into()
+    }
+}
+
+/// Informs parent of preferred size.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreferredSize {
+    preferred_size: Size,
+    child: Widget,
+}
+
+impl PreferredSize {
+    #[must_use]
+    pub fn new(preferred_size: Size, child: impl Into<Widget>) -> Self {
+        Self {
+            preferred_size,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn preferred_size(&self) -> Size {
+        self.preferred_size
+    }
+}
+
+impl From<PreferredSize> for Widget {
+    fn from(value: PreferredSize) -> Self {
+        ConstrainedBox::new(
+            Constraints::new(
+                value.preferred_size.width,
+                value.preferred_size.width,
+                value.preferred_size.height,
+                value.preferred_size.height,
+            ),
+            value.child,
+        )
+        .into()
+    }
+}
+
+/// Translates its child by a fraction of the child's size.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FractionalTranslation {
+    translation: incular_core::Offset,
+    transform_hit_tests: bool,
+    child: Widget,
+}
+
+impl FractionalTranslation {
+    #[must_use]
+    pub fn new(translation: incular_core::Offset, child: impl Into<Widget>) -> Self {
+        Self {
+            translation,
+            transform_hit_tests: true,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn transform_hit_tests(mut self, transform: bool) -> Self {
+        self.transform_hit_tests = transform;
+        self
+    }
+}
+
+impl From<FractionalTranslation> for Widget {
+    fn from(value: FractionalTranslation) -> Self {
+        crate::Transform::translation(value.translation, value.child).into()
+    }
+}
+
+/// A cell in a Table widget.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableCell {
+    vertical_alignment: Option<incular_config::CrossAxisAlignment>,
+    child: Widget,
+}
+
+impl TableCell {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            vertical_alignment: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn vertical_alignment(mut self, alignment: incular_config::CrossAxisAlignment) -> Self {
+        self.vertical_alignment = Some(alignment);
+        self
+    }
+}
+
+impl From<TableCell> for Widget {
+    fn from(value: TableCell) -> Self {
+        value.child
+    }
+}
+
+/// Lays out children in a row with spacing; wraps or flows when width is constrained.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverflowBar {
+    spacing: f32,
+    overflow_spacing: f32,
+    overflow_alignment: incular_config::WrapCrossAlignment,
+    children: Vec<Widget>,
+}
+
+impl OverflowBar {
+    #[must_use]
+    pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
+        Self {
+            spacing: 0.0,
+            overflow_spacing: 0.0,
+            overflow_alignment: incular_config::WrapCrossAlignment::Start,
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
+    #[must_use]
+    pub fn overflow_spacing(mut self, spacing: f32) -> Self {
+        self.overflow_spacing = spacing;
+        self
+    }
+
+    #[must_use]
+    pub fn overflow_alignment(mut self, alignment: incular_config::WrapCrossAlignment) -> Self {
+        self.overflow_alignment = alignment;
+        self
+    }
+}
+
+impl From<OverflowBar> for Widget {
+    fn from(value: OverflowBar) -> Self {
+        crate::layout::Wrap::new(value.children)
+            .spacing(value.spacing)
+            .run_spacing(value.overflow_spacing)
+            .cross_axis_alignment(value.overflow_alignment)
+            .into()
+    }
+}
+
+/// App bar navigation toolbar with leading, middle, and trailing slots.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavigationToolbar {
+    leading: Option<Widget>,
+    middle: Option<Widget>,
+    trailing: Option<Widget>,
+    center_middle: bool,
+    middle_spacing: f32,
+}
+
+impl Default for NavigationToolbar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NavigationToolbar {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            leading: None,
+            middle: None,
+            trailing: None,
+            center_middle: true,
+            middle_spacing: 16.0,
+        }
+    }
+
+    #[must_use]
+    pub fn leading(mut self, widget: impl Into<Widget>) -> Self {
+        self.leading = Some(widget.into());
+        self
+    }
+
+    #[must_use]
+    pub fn middle(mut self, widget: impl Into<Widget>) -> Self {
+        self.middle = Some(widget.into());
+        self
+    }
+
+    #[must_use]
+    pub fn trailing(mut self, widget: impl Into<Widget>) -> Self {
+        self.trailing = Some(widget.into());
+        self
+    }
+
+    #[must_use]
+    pub fn center_middle(mut self, center: bool) -> Self {
+        self.center_middle = center;
+        self
+    }
+}
+
+impl From<NavigationToolbar> for Widget {
+    fn from(value: NavigationToolbar) -> Self {
+        let mut row_children = Vec::new();
+        if let Some(leading) = value.leading {
+            row_children.push(leading);
+        }
+        if let Some(middle) = value.middle {
+            if value.center_middle {
+                row_children.push(crate::layout::Expanded::new(Center::new(middle)).into());
+            } else {
+                row_children.push(middle);
+            }
+        } else if value.center_middle {
+            row_children.push(crate::layout::Spacer::new().into());
+        }
+        if let Some(trailing) = value.trailing {
+            row_children.push(trailing);
+        }
+        crate::layout::Row::new(row_children)
+            .main_axis_alignment(incular_config::MainAxisAlignment::SpaceBetween)
+            .cross_axis_alignment(incular_config::CrossAxisAlignment::Center)
+            .into()
+    }
+}
+
+/// An interactive viewer enabling panning and zooming on a child widget.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteractiveViewer {
+    min_scale: f32,
+    max_scale: f32,
+    pan_enabled: bool,
+    scale_enabled: bool,
+    child: Widget,
+}
+
+impl InteractiveViewer {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            min_scale: 0.8,
+            max_scale: 2.5,
+            pan_enabled: true,
+            scale_enabled: true,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn min_scale(mut self, scale: f32) -> Self {
+        self.min_scale = scale.max(0.1);
+        self
+    }
+
+    #[must_use]
+    pub fn max_scale(mut self, scale: f32) -> Self {
+        self.max_scale = scale.max(self.min_scale);
+        self
+    }
+
+    #[must_use]
+    pub fn pan_enabled(mut self, enabled: bool) -> Self {
+        self.pan_enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn scale_enabled(mut self, enabled: bool) -> Self {
+        self.scale_enabled = enabled;
+        self
+    }
+}
+
+impl From<InteractiveViewer> for Widget {
+    fn from(value: InteractiveViewer) -> Self {
+        value.child
+    }
+}

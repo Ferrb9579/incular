@@ -482,6 +482,158 @@ impl From<TextFormField> for Widget {
     }
 }
 
+/// Generic FormField widget managing arbitrary typed form state and validation.
+#[derive(Clone)]
+#[allow(clippy::type_complexity)]
+pub struct GenericFormField<T: Clone + 'static> {
+    initial_value: Option<T>,
+    autovalidate_mode: AutovalidateMode,
+    builder: Rc<dyn Fn(Option<&T>) -> Widget>,
+}
+
+impl<T: Clone + 'static> GenericFormField<T> {
+    #[must_use]
+    pub fn new<W>(builder: impl Fn(Option<&T>) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            initial_value: None,
+            autovalidate_mode: AutovalidateMode::Disabled,
+            builder: Rc::new(move |val| builder(val).into()),
+        }
+    }
+
+    #[must_use]
+    pub fn initial_value(mut self, value: T) -> Self {
+        self.initial_value = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn autovalidate_mode(mut self, mode: AutovalidateMode) -> Self {
+        self.autovalidate_mode = mode;
+        self
+    }
+}
+
+impl<T: Clone + 'static> From<GenericFormField<T>> for Widget {
+    fn from(value: GenericFormField<T>) -> Self {
+        (value.builder)(value.initial_value.as_ref())
+    }
+}
+
+/// A core autocomplete widget coordinating text input with an options view.
+#[derive(Clone)]
+pub struct RawAutocomplete<T: Clone + 'static> {
+    options: Vec<T>,
+    display_string_for_option: Rc<dyn Fn(&T) -> String>,
+    child: Option<Widget>,
+}
+
+impl<T: Clone + 'static> RawAutocomplete<T> {
+    #[must_use]
+    pub fn new(
+        options: impl IntoIterator<Item = T>,
+        display_string_for_option: impl Fn(&T) -> String + 'static,
+    ) -> Self {
+        Self {
+            options: options.into_iter().collect(),
+            display_string_for_option: Rc::new(display_string_for_option),
+            child: None,
+        }
+    }
+
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self
+    }
+
+    #[must_use]
+    pub fn options(&self) -> &[T] {
+        &self.options
+    }
+
+    #[must_use]
+    pub fn display_string(&self, option: &T) -> String {
+        (self.display_string_for_option)(option)
+    }
+}
+
+impl<T: Clone + 'static> From<RawAutocomplete<T>> for Widget {
+    fn from(value: RawAutocomplete<T>) -> Self {
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+    }
+}
+
+/// Highlights the currently focused option in an autocomplete view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutocompleteHighlightedOption {
+    highlighted: bool,
+    child: Widget,
+}
+
+impl AutocompleteHighlightedOption {
+    #[must_use]
+    pub fn new(highlighted: bool, child: impl Into<Widget>) -> Self {
+        Self {
+            highlighted,
+            child: child.into(),
+        }
+    }
+}
+
+impl From<AutocompleteHighlightedOption> for Widget {
+    fn from(value: AutocompleteHighlightedOption) -> Self {
+        value.child
+    }
+}
+
+/// Coordinates autofill context across text input descendants.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutofillGroup {
+    child: Widget,
+}
+
+impl AutofillGroup {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<AutofillGroup> for Widget {
+    fn from(value: AutofillGroup) -> Self {
+        value.child
+    }
+}
+
+/// Manages undo and redo history for editable text input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UndoHistory {
+    child: Widget,
+}
+
+impl UndoHistory {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+}
+
+impl From<UndoHistory> for Widget {
+    fn from(value: UndoHistory) -> Self {
+        value.child
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

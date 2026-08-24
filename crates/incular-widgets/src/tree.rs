@@ -54,6 +54,9 @@ use crate::gestures::{
     ScaleGestureDetector,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BuildContext;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId(pub(crate) ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
