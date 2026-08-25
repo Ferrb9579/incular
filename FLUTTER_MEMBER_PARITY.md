@@ -2,7 +2,7 @@
 
 > **Flutter Baseline**: `v3.47.0` (`stable` channel, Dart SDK `3.11.0`)
 > **Snapshot Timestamp**: `2026-08-24T00:00:00Z`
-> **Total Types Considered**: `334` (`74` deep member-audited types)
+> **Total Types Considered**: `333` (`74` deep member-audited types)
 > **Total Audited Canonical Members**: `471`
 > **Resolution Rate**: `100% (0 unresolved)`
 
@@ -15,7 +15,7 @@ Every canonical public type in Incular provides Flutter-equivalent semantics map
 
 | Metric | Considered | Implemented / Resolved | Notes |
 | :--- | :--- | :--- | :--- |
-| **Type Decisions** | `334` | `334` | 100% explicit decisions across all Flutter core widgets and value types |
+| **Type Decisions** | `333` | `333` | 100% explicit decisions across all Flutter core widgets and value types |
 | **Member Parity** | `471` | `471` | 100% resolved to idiomatic Rust APIs |
 | **Invalidation Model** | 6 Phases | 6 Independent Phases | Multi-dimensional `BUILD`, `LAYOUT`, `PAINT`, `COMPOSITE`, `SEMANTICS`, `HIT_TEST` bitflags |
 | **Unresolved APIs** | 0 | 0 | 0 pending, 0 missing, 0 ambiguous |

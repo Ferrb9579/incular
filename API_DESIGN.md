@@ -114,6 +114,12 @@ While Dart strings and selections use UTF-16 code units, Incular operates native
 * **Programmer Errors**: Invalid configuration invariants (negative flex, singular matrix inversion during layout) produce immediate panic or normalization.
 * **Runtime Failures**: Missing assets, image decode errors, I/O, or platform communication failures return typed domain `Result<T, E>`.
 
+### 10. The Neutral Widget Law & 3-Layer Component Hierarchy
+
+* **Core Widget Neutrality**: Base widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`, `Button`, `TextField`, `TextArea`, `SplitView`) provide layout, event handling, and semantics only. They never inject default background colors, padding, borders, or artificial minimum dimensions.
+* **Separation of Concerns**: Visual styling (colors, corner radii, elevation, density) belongs exclusively to high-level styled components and design system tokens (Layer 3), leaving base widgets (Layer 1 and Layer 2) completely reusable and unopinionated.
+* **Typography Line-Height Multipliers**: Explicit `LineHeight` variants (`Normal`, `Multiplier`, `Absolute`) ensure line heights are unambiguous and prevent multiline text clipping or collapse.
+
 ---
 
 ## Crate Responsibilities

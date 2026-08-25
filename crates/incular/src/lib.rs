@@ -7,6 +7,8 @@ pub use incular_accessibility as accessibility;
 pub use incular_animation as animation;
 pub use incular_assets as assets;
 pub use incular_config as config;
+#[cfg(feature = "controls")]
+pub use incular_controls as controls;
 pub use incular_core as core;
 pub use incular_gestures as gestures;
 pub use incular_image as image;
@@ -60,10 +62,11 @@ pub mod prelude {
         WindowOperation, WindowOptions, WindowOptionsError,
     };
     pub use incular_rendering::{
-        BlendMode, Border, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii, Decoration,
-        DisplayList, DropShadowEffect, Effect, EffectChain, FillRule, GaussianBlur, GradientId,
-        GradientStop, GradientStops, ImageSampling, LineCap, LineJoin, LinearGradient, Path,
-        PathBuilder, PathId, RRect, RadialGradient, Stroke, SweepGradient, blend_premultiplied,
+        BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
+        Decoration, DisplayList, DropShadowEffect, Effect, EffectChain, FillRule, GaussianBlur,
+        GradientId, GradientStop, GradientStops, ImageSampling, LineCap, LineJoin, LinearGradient,
+        Path, PathBuilder, PathId, RRect, RadialGradient, Stroke, SweepGradient,
+        blend_premultiplied,
     };
     pub use incular_runtime::{
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
@@ -82,8 +85,8 @@ pub mod prelude {
         SemanticsDiagnostics, SemanticsTree,
     };
     pub use incular_text::{
-        EditableText, FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, RichText,
-        StrutStyle, TextAlign, TextBaseline, TextDecoration, TextDecorationStyle,
+        EditableText, FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, LineHeight,
+        RichText, StrutStyle, TextAlign, TextBaseline, TextDecoration, TextDecorationStyle,
         TextHeightBehavior, TextLayoutOptions, TextLeadingDistribution, TextOverflow, TextScaler,
         TextShadow, TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
     };
@@ -95,17 +98,17 @@ pub mod prelude {
         AnimatedPositionedDirectional, AnimatedRotation, AnimatedScale, AnimatedSize,
         AnimatedSlide, AnimatedSwitcher, AnnotatedRegion, AspectRatio, Autocomplete,
         AutocompleteHighlightedOption, AutofillGroup, AutomaticKeepAlive, AutovalidateMode,
-        BackButtonListener, Banner, Baseline, Blend, Blur, BlurController, BlurStyle,
+        BackButtonListener, Banner, Baseline, Blend, Blur, BlurController, BlurStyle, Border,
         BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide, BorderStyle,
         BoundaryPhysics, BoxBorder, BoxDecoration, BoxFit, BoxShadow, BoxShape, Button,
         CallbackShortcuts, Center, CheckedModeBanner, ClipOval, ClipPath, ClipRRect,
         ClipRSuperellipse, ClipRect, ColorFilterController, ColorFiltered, ColorMatrixController,
-        ColoredBox, Column, Command, ConstrainedBox, ConstraintsTransformBox, CustomPaint,
-        CustomPainter, CustomScrollView, DecoratedBox, DecoratedBoxTransition, DecoratedSliver,
-        DecorationImage, DefaultTextStyle, DefaultTextStyleTransition, Directionality,
-        DismissDirection, Dismissible, DragCallbacks, DragDownDetails, DragDropContext,
-        DragEndDetails, DragFeedback, DragGestureDetector, DragStartBehavior, DragStartDetails,
-        DragTarget, DragUpdateDetails, Draggable, DraggableScrollableActuator,
+        ColoredBox, Column, Command, ConstrainedBox, ConstraintsTransformBox, Container,
+        CustomPaint, CustomPainter, CustomScrollView, DecoratedBox, DecoratedBoxTransition,
+        DecoratedSliver, DecorationImage, DefaultTextStyle, DefaultTextStyleTransition,
+        Directionality, DismissDirection, Dismissible, DragCallbacks, DragDownDetails,
+        DragDropContext, DragEndDetails, DragFeedback, DragGestureDetector, DragStartBehavior,
+        DragStartDetails, DragTarget, DragUpdateDetails, Draggable, DraggableScrollableActuator,
         DraggableScrollableSheet, DropShadow, DropShadowController, DualTransitionBuilder, Effects,
         ErrorWidget, ExcludeFocus, ExcludeFocusTraversal, Expanded, Expansible, FadeTransition,
         FilteringTextInputFormatter, FittedBox, Flex, Flexible, Focus, FocusManager, FocusNode,
@@ -148,11 +151,11 @@ pub mod prelude {
         SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapInjector, SliverPadding,
         SliverPersistentHeader, SliverPrototypeExtentList, SliverReorderableList,
         SliverResizingHeader, SliverSafeArea, SliverVariedExtentList, SliverVisibility,
-        SnapPhysics, SnapshotWidget, Spacer, Stack, StatefulBuilder, StreamBuilder, Table,
-        TableCell, TapDownDetails, TapRegion, TapRegionSurface, TapUpDetails, Text, TextArea,
-        TextEditingController, TextEditingValue, TextField, TextFieldTapRegion, TextFormField,
-        TextInputFormatter, TextRange, TextSelection, TickerMode, TileMode, Title, Transform,
-        Transition, TranslationController, TreeSliver, TweenAnimationBuilder,
+        SnapPhysics, SnapshotWidget, Spacer, SplitPosition, SplitView, Stack, StatefulBuilder,
+        StreamBuilder, Table, TableCell, TapDownDetails, TapRegion, TapRegionSurface, TapUpDetails,
+        Text, TextArea, TextEditingController, TextEditingValue, TextField, TextFieldTapRegion,
+        TextFormField, TextInputFormatter, TextRange, TextSelection, TickerMode, TileMode, Title,
+        Transform, Transition, TranslationController, TreeSliver, TweenAnimationBuilder,
         TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport,
         UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, ValueListenableBuilder, Velocity,
         View, ViewAnchor, VirtualList, Visibility, Widget, WidgetOrderTraversalPolicy, WidgetsApp,

@@ -136,7 +136,22 @@ impl OverlayPortal {
 
 impl From<OverlayPortal> for Widget {
     fn from(value: OverlayPortal) -> Self {
-        value.child
+        if value.show_overlay {
+            // A window root may not have an explicit overlay host yet. Keep
+            // the retained logical owner and present the overlay above it in
+            // a deterministic stack; native window adapters can lift this
+            // stack into their overlay layer without changing the control
+            // descriptor API.
+            crate::Stack::new([
+                value.child,
+                value
+                    .overlay_child
+                    .unwrap_or_else(|| crate::SizedBox::shrink().into()),
+            ])
+            .into()
+        } else {
+            value.child
+        }
     }
 }
 

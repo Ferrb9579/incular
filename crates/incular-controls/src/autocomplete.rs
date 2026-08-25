@@ -1,0 +1,76 @@
+//! Free-form completion surface sharing Select/Combobox list parts.
+
+pub use crate::popup::{Arrow, Popup, Portal, Positioner, Trigger};
+pub use crate::select::{Item, List};
+use crate::{Button, ControlTheme};
+use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
+use incular_widgets::{ExplicitSemantics, Widget};
+use std::rc::Rc;
+
+#[derive(Clone)]
+pub struct Root {
+    query: String,
+    child: Option<Widget>,
+    on_query_change: Option<Rc<dyn Fn(String) + 'static>>,
+}
+
+impl Default for Root {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Root {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            child: None,
+            on_query_change: None,
+        }
+    }
+
+    #[must_use]
+    pub fn query(mut self, value: impl Into<String>) -> Self {
+        self.query = value.into();
+        self
+    }
+
+    #[must_use]
+    pub fn child(mut self, value: impl Into<Widget>) -> Self {
+        self.child = Some(value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn on_query_change(mut self, callback: impl Fn(String) + 'static) -> Self {
+        self.on_query_change = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn build(&self, _theme: &ControlTheme) -> Widget {
+        let content = self
+            .child
+            .clone()
+            .unwrap_or_else(|| Button::new(self.query.clone()).into());
+        content.semantics(
+            ExplicitSemantics::new(SemanticRole::TextField)
+                .value(self.query.clone())
+                .state(SemanticState {
+                    enabled: true,
+                    focusable: true,
+                    editable: true,
+                    ..SemanticState::default()
+                })
+                .actions([SemanticActionKind::Focus, SemanticActionKind::SetText]),
+        )
+    }
+}
+
+impl From<Root> for Widget {
+    fn from(value: Root) -> Self {
+        let value = Rc::new(value);
+        Widget::layout_builder(move |_| value.build(&crate::theme::current_control_theme()))
+    }
+}

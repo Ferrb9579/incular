@@ -20,7 +20,7 @@ use incular_platform::{
 use incular_rendering::DisplayList;
 use incular_semantics::{SemanticAction, SemanticNodeId};
 use incular_widgets::{
-    ActionId, ButtonState, Diagnostics, ElementId, PointerEvent, TreeError, Widget, WidgetTree,
+    ActionId, Diagnostics, ElementId, PointerEvent, TreeError, Widget, WidgetTree,
 };
 #[cfg(feature = "devtools")]
 use std::any::{Any, TypeId};
@@ -1609,7 +1609,9 @@ impl Runtime {
                 self.set_hover(target.map(|(element, _)| element));
                 self.pressed_button = target.map(|(element, _)| element);
                 if let Some(element) = self.pressed_button {
-                    let _ = self.tree.set_button_state(element, ButtonState::Pressed);
+                    let _ = self
+                        .tree
+                        .set_button_interaction(element, None, Some(true), None);
                     self.frame_requested = true;
                 }
                 target.map(|(element, action)| EventTarget { element, action })
@@ -1623,14 +1625,9 @@ impl Runtime {
                     .filter(|(pressed, (target, _))| pressed == target)
                     .map(|(_, target)| target);
                 if let Some(element) = pressed {
-                    let _ = self.tree.set_button_state(
-                        element,
-                        if self.hovered_button == Some(element) {
-                            ButtonState::Hovered
-                        } else {
-                            ButtonState::Normal
-                        },
-                    );
+                    let _ = self
+                        .tree
+                        .set_button_interaction(element, None, Some(false), None);
                 }
                 if let Some((element, action)) = valid {
                     if let Some(action) = action {
@@ -1648,7 +1645,9 @@ impl Runtime {
                 self.captured_text_field = None;
                 self.captured_selectable_text = None;
                 if let Some(element) = self.pressed_button.take() {
-                    let _ = self.tree.set_button_state(element, ButtonState::Normal);
+                    let _ = self
+                        .tree
+                        .set_button_interaction(element, None, Some(false), None);
                     self.frame_requested = true;
                 }
                 None
@@ -1994,7 +1993,9 @@ impl Runtime {
             return;
         }
         if let Some(previous) = self.hovered_button {
-            let _ = self.tree.set_button_state(previous, ButtonState::Normal);
+            let _ = self
+                .tree
+                .set_button_interaction(previous, Some(false), None, None);
             if let Some(action) = self.tree.hover_actions_for_element(previous).1
                 && let Some(callback) = self.handlers.get(&action).cloned()
             {
@@ -2004,7 +2005,9 @@ impl Runtime {
         self.hovered_button = next;
         if let Some(current) = next {
             if self.pressed_button != Some(current) {
-                let _ = self.tree.set_button_state(current, ButtonState::Hovered);
+                let _ = self
+                    .tree
+                    .set_button_interaction(current, Some(true), None, None);
             }
             if let Some(action) = self.tree.hover_actions_for_element(current).0
                 && let Some(callback) = self.handlers.get(&action).cloned()

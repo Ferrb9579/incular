@@ -16,9 +16,10 @@ pub use spans::{
     InlineSpan, RichText, Text, TextSpan, TextSpanVisitor, WidgetSpan, WidgetSpanAlignment,
 };
 pub use style::{
-    FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, StrutStyle, TextAlign,
-    TextBaseline, TextDecoration, TextDecorationStyle, TextHeightBehavior, TextLeadingDistribution,
-    TextOverflow, TextScaler, TextScalerKind, TextShadow, TextStyle, TextWidthBasis,
+    FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, LineHeight, StrutStyle,
+    TextAlign, TextBaseline, TextDecoration, TextDecorationStyle, TextHeightBehavior,
+    TextLeadingDistribution, TextOverflow, TextScaler, TextScalerKind, TextShadow, TextStyle,
+    TextWidthBasis,
 };
 
 mod engine;

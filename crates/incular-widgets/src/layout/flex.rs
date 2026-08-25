@@ -72,6 +72,12 @@ impl Row {
         self
     }
 
+    /// Sets cross-axis alignment (convenience alias for [`Row::cross_axis_alignment`]).
+    #[must_use]
+    pub fn alignment(self, alignment: CrossAxisAlignment) -> Self {
+        self.cross_axis_alignment(alignment)
+    }
+
     /// Sets the reading/layout direction along the horizontal axis.
     #[must_use]
     pub fn text_direction(mut self, direction: TextDirection) -> Self {
@@ -188,6 +194,12 @@ impl Column {
     pub fn cross_axis_alignment(mut self, alignment: CrossAxisAlignment) -> Self {
         self.cross_axis_alignment = alignment;
         self
+    }
+
+    /// Sets cross-axis alignment (convenience alias for [`Column::cross_axis_alignment`]).
+    #[must_use]
+    pub fn alignment(self, alignment: CrossAxisAlignment) -> Self {
+        self.cross_axis_alignment(alignment)
     }
 
     /// Sets the reading/layout direction along the horizontal axis.

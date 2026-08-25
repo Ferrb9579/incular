@@ -44,7 +44,12 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             out.push(prop("fontSize", DebugValue::Float(f64::from(style.size))));
             out.push(prop("color", color_value(style.color)));
             if let Some(height) = style.line_height {
-                out.push(prop("lineHeight", DebugValue::Float(f64::from(height))));
+                let val = match height {
+                    incular_text::LineHeight::Normal => 0.0,
+                    incular_text::LineHeight::Multiplier(m) => m as f64,
+                    incular_text::LineHeight::Absolute(a) => a as f64,
+                };
+                out.push(prop("lineHeight", DebugValue::Float(val)));
             }
             out.push(prop(
                 "fontWeight",

@@ -733,6 +733,11 @@ impl BorderSide {
     }
 
     #[must_use]
+    pub const fn solid(color: Color, width: f32) -> Self {
+        Self::new(color, width, BorderStyle::Solid)
+    }
+
+    #[must_use]
     pub const fn none() -> Self {
         Self::NONE
     }
@@ -753,8 +758,8 @@ impl incular_core::Lerp for BorderSide {
     }
 }
 
-/// A border of a box consisting of four sides.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// A box border configuration specifying stroke properties on all four sides.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Border {
     pub top: BorderSide,
     pub right: BorderSide,
@@ -766,6 +771,11 @@ pub struct Border {
 pub type BoxBorder = Border;
 
 impl Border {
+    #[must_use]
+    pub fn new(width: f32, color: incular_core::Color) -> Self {
+        Self::all(BorderSide::solid(color, width))
+    }
+
     #[must_use]
     pub const fn all(side: BorderSide) -> Self {
         Self {
@@ -825,6 +835,12 @@ impl incular_core::Lerp for Border {
             bottom: self.bottom.lerp(&other.bottom, t),
             left: self.left.lerp(&other.left, t),
         }
+    }
+}
+
+impl From<Border> for incular_rendering::Border {
+    fn from(b: Border) -> Self {
+        incular_rendering::Border::new(b.top.width, b.top.color)
     }
 }
 

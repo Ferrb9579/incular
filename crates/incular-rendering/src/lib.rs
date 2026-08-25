@@ -418,6 +418,32 @@ impl Path {
             FillRule::EvenOdd => winding.unsigned_abs() % 2 == 1,
         }
     }
+
+    /// Returns a copy of this path with an affine transform applied to its
+    /// geometry.  Path identity is intentionally not reused: the transformed
+    /// geometry is a distinct immutable mesh candidate.  This is used by
+    /// higher-level icon primitives to fit a canonical 24px path into the
+    /// requested logical size without changing pointer/layout coordinates.
+    #[must_use]
+    pub fn transformed(&self, transform: Transform) -> Self {
+        let mut path = (*self.path).clone();
+        path.apply_affine(transform.to_kurbo());
+        let bounds = (!path.is_empty() && path.is_finite()).then(|| {
+            let bounds = path.bounding_box();
+            Rect::from_origin_size(
+                Offset::new(bounds.x0 as f32, bounds.y0 as f32),
+                Size::new(
+                    (bounds.x1 - bounds.x0) as f32,
+                    (bounds.y1 - bounds.y0) as f32,
+                ),
+            )
+        });
+        Self {
+            id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
+            path: Arc::new(path),
+            bounds,
+        }
+    }
 }
 impl Default for Path {
     fn default() -> Self {

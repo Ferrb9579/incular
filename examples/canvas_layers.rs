@@ -61,7 +61,10 @@ fn artwork() -> DisplayList {
             ]),
         },
     );
-    canvas.border(panel, Border::new(2., Color::rgba(255, 255, 255, 170)));
+    canvas.border(
+        panel,
+        RenderBorder::new(2., Color::rgba(255, 255, 255, 170)),
+    );
 
     canvas.save_clip_rrect(RRect::uniform(rect(42., 46., 208., 148.), 14.));
     canvas.rect(rect(42., 46., 208., 148.), Color::rgba(12, 18, 43, 255));

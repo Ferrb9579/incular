@@ -1,9 +1,11 @@
 # Workspace-wide build configuration.
 #
-# Incremental compilation is disabled for every build (profiles also set
-# `incremental = false`). This trades slightly slower rebuilds for a much
-# smaller target/ directory: incremental caches had grown target/debug by
-# gigabytes of retained artifacts across the workspace's many crates,
-# examples, and test targets.
+# Incremental compilation is strictly disabled for every build, test, example,
+# and benchmark. This ensures deterministic compilation and prevents target/
+# directory cache explosion across the workspace's crates and targets.
+
+[build]
+incremental = false
+
 [env]
 CARGO_INCREMENTAL = "0"

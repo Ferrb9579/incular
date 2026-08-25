@@ -32,23 +32,18 @@ pub struct Container {
 }
 
 impl Container {
-    /// Creates a new Container wrapping an optional child.
+    /// Creates a new empty Container.
     #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a new Container wrapping a child widget.
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
         Self {
             child: Some(child.into()),
-            alignment: None,
-            padding: None,
-            margin: None,
-            color: None,
-            background: None,
-            border: None,
-            radius: CornerRadii::ZERO,
-            constraints: None,
-            width: None,
-            height: None,
-            transform: None,
-            clip_behavior: Clip::None,
+            ..Self::default()
         }
     }
 
@@ -102,8 +97,23 @@ impl Container {
 
     /// Sets container border.
     #[must_use]
-    pub fn border(mut self, border: Border) -> Self {
-        self.border = Some(border);
+    pub fn border(mut self, border: impl Into<Border>) -> Self {
+        self.border = Some(border.into());
+        self
+    }
+
+    /// Sets container visual decoration (color, border, radius).
+    #[must_use]
+    pub fn decoration(mut self, decoration: crate::BoxDecoration) -> Self {
+        if let Some(c) = decoration.color {
+            self.color = Some(c);
+        }
+        if let Some(b) = decoration.border {
+            self.border = Some(b.into());
+        }
+        if let Some(r) = decoration.border_radius {
+            self.radius = r.into();
+        }
         self
     }
 
@@ -152,7 +162,18 @@ impl Container {
 
 impl From<Container> for Widget {
     fn from(value: Container) -> Self {
-        let mut current = value.child.unwrap_or_else(|| SizedBox::shrink().into());
+        let has_explicit_dimensions =
+            value.width.is_some() || value.height.is_some() || value.constraints.is_some();
+
+        let mut current = if let Some(child) = value.child {
+            child
+        } else if value.alignment.is_some() || has_explicit_dimensions {
+            SizedBox::shrink().into()
+        } else {
+            // Flutter Container semantics: when no child and no alignment/explicit constraints,
+            // expand to fill bounded constraints, and shrink to zero in unbounded constraints.
+            Align::new(Alignment::CENTER, SizedBox::shrink()).into()
+        };
 
         // 1. Inner Alignment
         if let Some(alignment) = value.alignment {

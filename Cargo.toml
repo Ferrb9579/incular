@@ -19,6 +19,12 @@ incremental = false
 [profile.release]
 incremental = false
 
+[profile.test]
+incremental = false
+
+[profile.bench]
+incremental = false
+
 [dev-dependencies]
 incular = { path = "crates/incular", default-features = false }
 serde_json = { workspace = true }
@@ -38,6 +44,7 @@ incular-assets = { path = "crates/incular-assets", version = "0.1.0" }
 incular-image = { path = "crates/incular-image", version = "0.1.0" }
 incular-core = { path = "crates/incular-core", version = "0.1.0" }
 incular-config = { path = "crates/incular-config", version = "0.1.0" }
+incular-controls = { path = "crates/incular-controls", version = "0.1.0" }
 incular-gestures = { path = "crates/incular-gestures", version = "0.1.0" }
 incular-layout = { path = "crates/incular-layout", version = "0.1.0" }
 incular-navigation = { path = "crates/incular-navigation", version = "0.1.0" }
@@ -104,9 +111,4 @@ keyboard-types = "0.8.3"
 [profile.profiling]
 inherits = "release"
 debug = true
-
-[profile.test]
-incremental = false
-
-[profile.bench]
 incremental = false

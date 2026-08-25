@@ -1685,10 +1685,12 @@ dependencies = [
 name = "incular"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "incular-accessibility",
  "incular-animation",
  "incular-assets",
  "incular-config",
+ "incular-controls",
  "incular-core",
  "incular-gestures",
  "incular-image",
@@ -1707,6 +1709,8 @@ dependencies = [
  "incular-wgpu",
  "incular-widgets",
  "incular-windows",
+ "keyboard-types",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1749,6 +1753,21 @@ dependencies = [
  "icu_plurals",
  "icu_provider",
  "incular-core",
+]
+
+[[package]]
+name = "incular-controls"
+version = "0.1.0"
+dependencies = [
+ "incular-animation",
+ "incular-config",
+ "incular-core",
+ "incular-gestures",
+ "incular-rendering",
+ "incular-scroll",
+ "incular-semantics",
+ "incular-text",
+ "incular-widgets",
 ]
 
 [[package]]

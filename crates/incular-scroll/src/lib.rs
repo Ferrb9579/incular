@@ -534,7 +534,7 @@ impl MeasuredExtentIndex {
 }
 
 /// Cloneable state for a logical vertical scroll position.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ScrollController {
     state: Rc<RefCell<ScrollState>>,
 }
@@ -551,12 +551,34 @@ impl PartialEq for ScrollController {
         Rc::ptr_eq(&self.state, &other.state)
     }
 }
+
+impl Default for ScrollController {
+    fn default() -> Self {
+        // Raw scroll views retain their historical always-visible overlay
+        // behavior. The themed Controls wrapper opts into hover reveal when it
+        // is built, without changing existing applications that only use the
+        // core scroll API.
+        let state = ScrollState {
+            scrollbar_thumb_visibility: true,
+            ..ScrollState::default()
+        };
+        Self {
+            state: Rc::new(RefCell::new(state)),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct ScrollState {
     offset: f32,
     max_offset: f32,
     content_extent: f32,
     viewport_extent: f32,
+    /// The retained visual contract for an overlay scrollbar attached to this
+    /// position. Keeping it with the shared controller means a themed
+    /// scrollbar and the viewport always observe the same scroll state.
+    scrollbar_style: ScrollbarStyle,
+    scrollbar_thumb_visibility: bool,
     revision: u64,
     restoration: Option<ScrollRestoration>,
     pending_restored_offset: Option<f32>,
@@ -615,6 +637,48 @@ impl ScrollController {
     #[must_use]
     pub fn viewport_extent(&self) -> f32 {
         self.state.borrow().viewport_extent
+    }
+
+    /// Returns the style used when a retained viewport paints its overlay
+    /// scrollbar.
+    #[must_use]
+    pub fn scrollbar_style(&self) -> ScrollbarStyle {
+        self.state.borrow().scrollbar_style
+    }
+
+    /// Installs the style used by a retained viewport's overlay scrollbar.
+    ///
+    /// The controller is shared by the viewport and any themed scrollbar
+    /// wrapper, so the style is applied before layout/paint without creating
+    /// a parallel visual widget tree.
+    pub fn set_scrollbar_style(&self, style: ScrollbarStyle) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.scrollbar_style == style {
+            return false;
+        }
+        state.scrollbar_style = style;
+        state.revision = state.revision.wrapping_add(1);
+        true
+    }
+
+    /// Whether the thumb is painted even while the pointer is away from the
+    /// scrollbar. When false, the retained viewport still owns hit testing so
+    /// the thumb reveals on hover and remains draggable.
+    #[must_use]
+    pub fn scrollbar_thumb_visibility(&self) -> bool {
+        self.state.borrow().scrollbar_thumb_visibility
+    }
+
+    /// Controls whether the scrollbar thumb is always visible. The default is
+    /// hover-reveal, matching compact desktop controls.
+    pub fn set_scrollbar_thumb_visibility(&self, visible: bool) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.scrollbar_thumb_visibility == visible {
+            return false;
+        }
+        state.scrollbar_thumb_visibility = visible;
+        state.revision = state.revision.wrapping_add(1);
+        true
     }
     /// Moves the offset after clamping it to the current content bounds.
     pub fn jump_to(&self, offset: f32) -> bool {
@@ -738,10 +802,10 @@ pub struct ScrollbarStyle {
 impl Default for ScrollbarStyle {
     fn default() -> Self {
         Self {
-            width: 10.,
+            width: 8.,
             min_thumb_extent: 24.,
-            track_color: Color::rgba(20, 22, 30, 120),
-            thumb_color: Color::rgba(170, 180, 205, 190),
+            track_color: Color::TRANSPARENT,
+            thumb_color: Color::rgba(128, 128, 128, 96),
         }
     }
 }

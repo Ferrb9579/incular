@@ -12,7 +12,7 @@ use incular_core::{Offset, Size};
 use incular_rendering::{GlyphPosition, GlyphRun};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontStack, FontWeight as ParleyFontWeight, Layout,
-    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+    LayoutContext, PositionedLayoutItem, StyleProperty,
 };
 use std::{
     borrow::Cow,
@@ -150,7 +150,7 @@ struct LayoutKey {
     size: u32,
     weight: u16,
     style: FontStyle,
-    line_height: Option<u32>,
+    line_height: Option<(u8, u32)>,
     letter_spacing: u32,
     font_variations: Option<Arc<str>>,
     font_features: Option<Arc<str>>,
@@ -171,7 +171,11 @@ impl LayoutKey {
             size: style.size.to_bits(),
             weight: style.weight.0,
             style: style.style,
-            line_height: style.line_height.map(f32::to_bits),
+            line_height: style.line_height.map(|lh| match lh {
+                crate::LineHeight::Normal => (0, 0),
+                crate::LineHeight::Multiplier(m) => (1, m.to_bits()),
+                crate::LineHeight::Absolute(a) => (2, a.to_bits()),
+            }),
             letter_spacing: style.letter_spacing.to_bits(),
             font_variations: style.font_variations.clone(),
             font_features: style.font_features.clone(),
@@ -358,8 +362,17 @@ impl TextEngine {
                     rebased.range.end += byte_start;
                     font_runs.push(rebased);
                 }
+                let shifted_runs: Vec<Arc<GlyphRun>> = line
+                    .runs
+                    .iter()
+                    .map(|run| {
+                        let mut shifted = (**run).clone();
+                        shifted.origin.y += height;
+                        Arc::new(shifted)
+                    })
+                    .collect();
                 lines.push(TextLine {
-                    runs: line.runs.clone(),
+                    runs: shifted_runs.into(),
                     glyphs: glyphs.into(),
                     width: line.width,
                     baseline: line.baseline + height,
@@ -511,7 +524,9 @@ impl TextEngine {
             )));
         }
         if let Some(line_height) = style.line_height {
-            builder.push_default(StyleProperty::LineHeight(LineHeight::Absolute(line_height)));
+            if let Some(parley_lh) = line_height.to_parley(style.size) {
+                builder.push_default(StyleProperty::LineHeight(parley_lh));
+            }
         }
 
         let mut layout: Layout<()> = builder.build(text);
@@ -862,6 +877,18 @@ mod document_contracts {
 mod probe_compare {
     use super::*;
     #[test]
+    fn multiline_document_runs_have_increasing_vertical_origins() {
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let doc = "Line 1\nLine 2\nLine 3";
+        let layout = engine.layout(doc, &style, Some(200.0), TextAlign::Start);
+        assert_eq!(layout.lines.len(), 3);
+        assert_eq!(layout.lines[0].runs[0].origin.y, 0.0);
+        assert!(layout.lines[1].runs[0].origin.y > 0.0);
+        assert!(layout.lines[2].runs[0].origin.y > layout.lines[1].runs[0].origin.y);
+    }
+
+    #[test]
     fn probe_mono_vs_composed() {
         let mut engine = TextEngine::new();
         let style = TextStyle::default();
@@ -894,7 +921,11 @@ mod probe_entry_size {
         let live0 = probe_live();
         let layout = engine.layout("warm", &style, None, TextAlign::Start);
         let live1 = probe_live();
-        println!("delta_live_bytes={}", live1 - live0);
+        // VmRSS is sampled around an allocator/cache warm-up and can move in
+        // either direction when the OS reclaims pages.  Keep this diagnostic
+        // probe observational instead of allowing a harmless decrease to
+        // panic in debug builds.
+        println!("delta_live_bytes={}", live1.saturating_sub(live0));
         println!(
             "lines={} glyphs={} runs={}",
             layout.lines.len(),

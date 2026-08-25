@@ -94,6 +94,18 @@ path = "../../examples/text_quality.rs"
 [[example]]
 name = "virtual_list"
 path = "../../examples/virtual_list.rs"
+[[example]]
+name = "core_defaults"
+path = "../../examples/core_defaults.rs"
+[[example]]
+name = "controls_gallery"
+path = "../../examples/controls_gallery.rs"
+[[example]]
+name = "base_ui_controls"
+path = "../../examples/base_ui_controls.rs"
+[[example]]
+name = "studio"
+path = "../../examples/studio/main.rs"
 
 [features]
 devtools = [
@@ -101,8 +113,9 @@ devtools = [
     "incular-runtime/devtools",
     "incular-widgets/devtools",
 ]
-default = ["desktop"]
+default = ["desktop", "controls"]
 desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux", "dep:incular-windows", "dep:incular-macos"]
+controls = ["dep:incular-controls"]
 
 [dependencies]
 incular-accessibility = { workspace = true }
@@ -112,6 +125,7 @@ incular-assets = { workspace = true }
 incular-image = { workspace = true }
 incular-core = { workspace = true }
 incular-config = { workspace = true }
+incular-controls = { workspace = true, optional = true }
 incular-gestures = { workspace = true }
 incular-layout = { workspace = true }
 incular-navigation = { workspace = true }
@@ -129,6 +143,9 @@ incular-windows = { workspace = true, optional = true }
 incular-macos = { workspace = true, optional = true }
 
 [dev-dependencies]
+directories = { workspace = true }
+keyboard-types = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 [[example]]

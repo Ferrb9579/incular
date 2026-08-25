@@ -5,6 +5,7 @@
 //! the element being updated.
 
 use std::{
+    any::Any,
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
@@ -31,7 +32,7 @@ use incular_rendering::{
 };
 use incular_scroll::{
     MeasuredExtentIndex, NestedScrollCoordinator, ScrollController, ScrollbarGeometry,
-    ScrollbarStyle, scrollbar_geometry,
+    scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
@@ -56,6 +57,45 @@ use crate::gestures::{
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BuildContext;
+
+thread_local! {
+    /// Type-erased values made available while a retained layout builder is
+    /// materialized. Control libraries use this hook for ambient, typed
+    /// scopes without coupling the raw widget crate to a design-system crate.
+    static BUILD_ENVIRONMENT: RefCell<Vec<Option<Rc<dyn Any>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Runs a retained builder with one inherited, type-erased environment value.
+/// This is intentionally small and renderer-neutral; higher-level crates
+/// provide typed accessors around it.
+pub fn with_build_environment<R>(
+    environment: Option<Rc<dyn Any>>,
+    callback: impl FnOnce() -> R,
+) -> R {
+    BUILD_ENVIRONMENT.with(|stack| stack.borrow_mut().push(environment));
+    struct EnvironmentGuard;
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            BUILD_ENVIRONMENT.with(|stack| {
+                let _ = stack.borrow_mut().pop();
+            });
+        }
+    }
+    let _guard = EnvironmentGuard;
+    callback()
+}
+
+/// Reads the nearest typed value from the active retained builder scope.
+#[must_use]
+pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
+    BUILD_ENVIRONMENT.with(|stack| {
+        stack
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|value| value.as_ref()?.downcast_ref::<T>().cloned())
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ElementId(pub(crate) ArenaId);
@@ -1211,6 +1251,12 @@ pub enum WidgetKind {
     Button {
         size: Size,
         color: Color,
+        hover_color: Option<Color>,
+        pressed_color: Option<Color>,
+        focused_color: Option<Color>,
+        disabled_color: Option<Color>,
+        enabled: bool,
+        focusable_when_disabled: bool,
         action: ActionId,
         callback: Option<Rc<dyn Fn()>>,
         hover_action: ActionId,
@@ -1398,6 +1444,12 @@ pub enum WidgetKind {
     },
     LayoutBuilder {
         builder: Rc<dyn Fn(Constraints) -> Widget>,
+        environment: Option<Rc<dyn Any>>,
+        /// Optional mutable revision for builders whose callback updates
+        /// retained local state without replacing the parent widget.  The
+        /// runtime samples this value during layout and rematerializes the
+        /// builder child when it changes.
+        revision: Option<Rc<Cell<u64>>>,
     },
     Visibility {
         visible: bool,
@@ -2260,6 +2312,12 @@ impl PartialEq for WidgetKind {
                 Self::Button {
                     size: a,
                     color: b,
+                    hover_color: c0,
+                    pressed_color: d0,
+                    focused_color: e0,
+                    disabled_color: f0,
+                    enabled: g0,
+                    focusable_when_disabled: h0,
                     action: c,
                     callback: d,
                     hover_action: i,
@@ -2272,6 +2330,12 @@ impl PartialEq for WidgetKind {
                 Self::Button {
                     size: e,
                     color: f,
+                    hover_color: c1,
+                    pressed_color: d1,
+                    focused_color: e1,
+                    disabled_color: f1,
+                    enabled: g1,
+                    focusable_when_disabled: h1,
                     action: g,
                     callback: h,
                     hover_action: o,
@@ -2284,6 +2348,12 @@ impl PartialEq for WidgetKind {
             ) => {
                 a == e
                     && b == f
+                    && c0 == c1
+                    && d0 == d1
+                    && e0 == e1
+                    && f0 == f1
+                    && g0 == g1
+                    && h0 == h1
                     && c == g
                     && i == o
                     && k == q
@@ -2763,8 +2833,29 @@ impl PartialEq for WidgetKind {
                     child: f,
                 },
             ) => a == d && b == e && c == f,
-            (Self::LayoutBuilder { builder: a }, Self::LayoutBuilder { builder: b }) => {
+            (
+                Self::LayoutBuilder {
+                    builder: a,
+                    environment: c,
+                    revision: e,
+                },
+                Self::LayoutBuilder {
+                    builder: b,
+                    environment: d,
+                    revision: f,
+                },
+            ) => {
                 Rc::ptr_eq(a, b)
+                    && match (c, d) {
+                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                        (None, None) => true,
+                        _ => false,
+                    }
+                    && match (e, f) {
+                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                        (None, None) => true,
+                        _ => false,
+                    }
             }
             (
                 Self::Visibility {
@@ -2953,6 +3044,12 @@ impl Widget {
             kind: WidgetKind::Button {
                 size,
                 color,
+                hover_color: None,
+                pressed_color: None,
+                focused_color: None,
+                disabled_color: None,
+                enabled: true,
+                focusable_when_disabled: false,
                 action,
                 callback: None,
                 hover_action: ActionId(0),
@@ -3471,6 +3568,46 @@ impl Widget {
             key: None,
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(builder),
+                environment: None,
+                revision: None,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Wraps a child in an ambient retained builder environment. The wrapper
+    /// is transparent to layout and paint; descendants read the value when
+    /// their own deferred builders are materialized.
+    #[must_use]
+    pub fn environment_scope<T: Any>(value: T, child: Self) -> Self {
+        let value: Rc<dyn Any> = Rc::new(value);
+        Self {
+            key: None,
+            kind: WidgetKind::LayoutBuilder {
+                builder: Rc::new(move |_| child.clone()),
+                environment: Some(value),
+                revision: None,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained layout builder backed by an explicit local state
+    /// revision.  A callback can increment `revision` and the next frame will
+    /// rebuild only this builder's child, preserving the rest of the tree.
+    /// This is the primitive used by uncontrolled controls such as checkbox,
+    /// switch, toggle, and slider.
+    #[must_use]
+    pub fn stateful_layout_builder(
+        revision: Rc<Cell<u64>>,
+        builder: impl Fn(Constraints) -> Self + 'static,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::LayoutBuilder {
+                builder: Rc::new(builder),
+                environment: None,
+                revision: Some(revision),
             },
             semantics: SemanticProperties::default(),
         }
@@ -4081,7 +4218,34 @@ impl Icon {
 }
 impl From<Icon> for Widget {
     fn from(value: Icon) -> Self {
-        PathView::new(value.path)
+        // Icon paths use a canonical coordinate system (the built-in paths
+        // are authored around a 24px viewport).  A PathView's `size` controls
+        // layout only, so fit the geometry itself as well; otherwise a 12px
+        // check would still paint at coordinates 3..21 and appear offset or
+        // clipped inside its indicator.
+        let path = value
+            .path
+            .bounds()
+            .filter(|bounds| bounds.size.width > 0. && bounds.size.height > 0.)
+            .map_or_else(
+                || value.path.clone(),
+                |bounds| {
+                    let scale =
+                        (value.size / bounds.size.width).min(value.size / bounds.size.height);
+                    let fitted = Size::new(bounds.size.width * scale, bounds.size.height * scale);
+                    let offset = Offset::new(
+                        (value.size - fitted.width) * 0.5 - bounds.origin.x * scale,
+                        (value.size - fitted.height) * 0.5 - bounds.origin.y * scale,
+                    );
+                    Arc::new(
+                        value.path.transformed(
+                            CoreTransform::translation(offset)
+                                .then(CoreTransform::scale_non_uniform(scale, scale)),
+                        ),
+                    )
+                },
+            );
+        PathView::new(path)
             .fill(value.brush)
             .size(Size::new(value.size, value.size))
             .into()
@@ -4159,6 +4323,20 @@ pub mod icons {
         .clone()
     }
     #[must_use]
+    pub fn minus() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(3., 10.))
+                    .line_to(Offset::new(21., 10.))
+                    .line_to(Offset::new(21., 14.))
+                    .line_to(Offset::new(3., 14.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+    #[must_use]
     pub fn chevron_right() -> Arc<Path> {
         static PATH: OnceLock<Arc<Path>> = OnceLock::new();
         PATH.get_or_init(|| {
@@ -4169,6 +4347,63 @@ pub mod icons {
                     .line_to(Offset::new(10., 24.))
                     .line_to(Offset::new(7., 21.))
                     .line_to(Offset::new(16., 12.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+
+    /// A compact downward chevron used by select, disclosure, and menu
+    /// controls.  Keeping each direction as a shared immutable path avoids
+    /// per-control path construction and makes the icon independent of font
+    /// fallback or glyph metrics.
+    #[must_use]
+    pub fn chevron_down() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(3., 7.))
+                    .line_to(Offset::new(6., 4.))
+                    .line_to(Offset::new(12., 10.))
+                    .line_to(Offset::new(18., 4.))
+                    .line_to(Offset::new(21., 7.))
+                    .line_to(Offset::new(12., 16.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+
+    /// A compact upward chevron.
+    #[must_use]
+    pub fn chevron_up() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(3., 17.))
+                    .line_to(Offset::new(6., 20.))
+                    .line_to(Offset::new(12., 14.))
+                    .line_to(Offset::new(18., 20.))
+                    .line_to(Offset::new(21., 17.))
+                    .line_to(Offset::new(12., 8.))
+                    .close();
+            })
+        })
+        .clone()
+    }
+
+    /// A compact left-pointing chevron.
+    #[must_use]
+    pub fn chevron_left() -> Arc<Path> {
+        static PATH: OnceLock<Arc<Path>> = OnceLock::new();
+        PATH.get_or_init(|| {
+            path(|p| {
+                p.move_to(Offset::new(17., 3.))
+                    .line_to(Offset::new(20., 6.))
+                    .line_to(Offset::new(14., 12.))
+                    .line_to(Offset::new(20., 18.))
+                    .line_to(Offset::new(17., 21.))
+                    .line_to(Offset::new(8., 12.))
                     .close();
             })
         })
@@ -4208,8 +4443,8 @@ impl DecoratedBox {
         self
     }
     #[must_use]
-    pub fn border(mut self, border: Border) -> Self {
-        self.border = Some(border);
+    pub fn border(mut self, border: impl Into<Border>) -> Self {
+        self.border = Some(border.into());
         self
     }
     #[must_use]
@@ -4246,7 +4481,11 @@ impl From<DecoratedBox> for Widget {
     }
 }
 
-/// Public text description. Its font metrics are resolved during layout, not paint.
+/// Public text description. Its font metrics are resolved during layout, not
+/// paint.  A plain [`Text::new`] uses [`TextStyle::default`] (16 logical px,
+/// system UI family, normal weight) and reports its natural shaped size; it
+/// does not expand to the parent width unless a parent layout allocates that
+/// width explicitly.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
     text: String,
@@ -4417,7 +4656,7 @@ impl TextField {
     pub fn new(controller: TextEditingController) -> Self {
         Self {
             controller,
-            size: Size::new(260., 40.),
+            size: Size::ZERO,
             style: TextStyle::default(),
             placeholder: String::new(),
             on_submit: None,
@@ -4470,7 +4709,7 @@ impl TextArea {
     pub fn new(controller: TextEditingController) -> Self {
         Self {
             controller,
-            size: Size::new(260., 180.),
+            size: Size::ZERO,
             style: TextStyle::default(),
             placeholder: String::new(),
         }
@@ -5193,6 +5432,12 @@ pub struct Button {
     hover_callback: Option<Rc<dyn Fn()>>,
     exit_callback: Option<Rc<dyn Fn()>>,
     color: Color,
+    hover_color: Option<Color>,
+    pressed_color: Option<Color>,
+    focused_color: Option<Color>,
+    disabled_color: Option<Color>,
+    enabled: bool,
+    focusable_when_disabled: bool,
     size: Size,
     label_style: TextStyle,
     padding: EdgeInsets,
@@ -5206,20 +5451,49 @@ impl Button {
             callback: None,
             hover_callback: None,
             exit_callback: None,
-            color: Color::rgba(70, 120, 220, 255),
-            size: Size::new(96., 40.),
-            label_style: TextStyle {
-                color: Color::WHITE,
-                ..TextStyle::default()
-            },
-            padding: EdgeInsets::all(10.),
+            color: Color::TRANSPARENT,
+            hover_color: None,
+            pressed_color: None,
+            focused_color: None,
+            disabled_color: None,
+            enabled: true,
+            focusable_when_disabled: false,
+            size: Size::ZERO,
+            label_style: TextStyle::default(),
+            padding: EdgeInsets::ZERO,
             content: None,
+        }
+    }
+    /// Creates a Button wrapping custom widget content.
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self {
+            label: String::new(),
+            callback: None,
+            hover_callback: None,
+            exit_callback: None,
+            color: Color::TRANSPARENT,
+            hover_color: None,
+            pressed_color: None,
+            focused_color: None,
+            disabled_color: None,
+            enabled: true,
+            focusable_when_disabled: false,
+            size: Size::ZERO,
+            label_style: TextStyle::default(),
+            padding: EdgeInsets::ZERO,
+            content: Some(child.into()),
         }
     }
     #[must_use]
     pub fn on_press(mut self, callback: impl Fn() + 'static) -> Self {
         self.callback = Some(Rc::new(callback));
         self
+    }
+    /// Convenience alias for [`Button::on_press`].
+    #[must_use]
+    pub fn on_click(self, callback: impl Fn() + 'static) -> Self {
+        self.on_press(callback)
     }
     /// Runs once when the primary mouse pointer enters this button.
     #[must_use]
@@ -5236,6 +5510,36 @@ impl Button {
     #[must_use]
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+    #[must_use]
+    pub fn hover_color(mut self, color: Color) -> Self {
+        self.hover_color = Some(color);
+        self
+    }
+    #[must_use]
+    pub fn pressed_color(mut self, color: Color) -> Self {
+        self.pressed_color = Some(color);
+        self
+    }
+    #[must_use]
+    pub fn focused_color(mut self, color: Color) -> Self {
+        self.focused_color = Some(color);
+        self
+    }
+    #[must_use]
+    pub fn disabled_color(mut self, color: Color) -> Self {
+        self.disabled_color = Some(color);
+        self
+    }
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    #[must_use]
+    pub fn focusable_when_disabled(mut self, value: bool) -> Self {
+        self.focusable_when_disabled = value;
         self
     }
     #[must_use]
@@ -5275,6 +5579,12 @@ impl From<Button> for Widget {
             kind: WidgetKind::Button {
                 size: value.size,
                 color: value.color,
+                hover_color: value.hover_color,
+                pressed_color: value.pressed_color,
+                focused_color: value.focused_color,
+                disabled_color: value.disabled_color,
+                enabled: value.enabled,
+                focusable_when_disabled: value.focusable_when_disabled,
                 action: ActionId(0),
                 callback: value.callback,
                 hover_action: ActionId(0),
@@ -5373,6 +5683,12 @@ pub struct Element {
     /// not change. Pure post-layout measurements do not disturb identity.
     virtual_structure_revision: u64,
     layout_builder_constraints: Option<Constraints>,
+    layout_builder_revision: u64,
+    /// Effective inherited retained builder environment for this element.
+    environment: Option<Rc<dyn Any>>,
+    /// Environment supplied directly by this element, if any. This lets a
+    /// nested scope shadow its parent while descendants continue inheriting.
+    environment_override: Option<Rc<dyn Any>>,
     /// DevTools-only instrumentation. Zero cost in production builds.
     #[cfg(feature = "devtools")]
     pub dev: ElementDevData,
@@ -5486,6 +5802,12 @@ pub enum RenderKind {
     Button {
         desired: Size,
         color: Color,
+        hover_color: Option<Color>,
+        pressed_color: Option<Color>,
+        focused_color: Option<Color>,
+        disabled_color: Option<Color>,
+        enabled: bool,
+        focusable_when_disabled: bool,
     },
     Padding {
         padding: EdgeInsets,
@@ -5696,10 +6018,16 @@ pub struct RenderObject {
     focused: bool,
     pub(crate) baseline: Option<f32>,
     button_state: ButtonState,
+    button_hovered: bool,
+    button_pressed: bool,
+    button_focused: bool,
     /// Static parent-relative layout placement. This is never used to store a
     /// scroll or animation displacement.
     layer: LayerId,
     picture: Option<LayerId>,
+    /// Optional post-child picture used for shape-aware focus outlines on
+    /// transparent compound-control hit surfaces.
+    focus_picture: Option<LayerId>,
     pub(crate) clip_layer: Option<LayerId>,
     content_layer: Option<LayerId>,
     opacity_layer: Option<LayerId>,
@@ -6348,8 +6676,14 @@ impl WidgetTree {
     #[must_use]
     pub fn button_ancestor(&self, mut id: ElementId) -> Option<(ElementId, Option<ActionId>)> {
         loop {
-            if let Some(action) = self.action_for_element(id) {
-                return Some((id, (action.0 != 0).then_some(action)));
+            if let Some(WidgetKind::Button {
+                action, enabled, ..
+            }) = self.elements.get(id.0).map(|element| &element.widget.kind)
+            {
+                if !*enabled {
+                    return None;
+                }
+                return Some((id, (action.0 != 0).then_some(*action)));
             }
             id = self.parent(id)?;
         }
@@ -6818,8 +7152,48 @@ impl WidgetTree {
         let node = self.renders.get_mut(render.0).expect("live render");
         if matches!(node.kind, RenderKind::Button { .. }) && node.button_state != state {
             node.button_state = state;
+            node.button_hovered = matches!(state, ButtonState::Hovered);
+            node.button_pressed = matches!(state, ButtonState::Pressed);
+            node.button_focused = matches!(state, ButtonState::Focused);
             node.dirty.insert(DirtyFlags::PAINT);
         }
+        Ok(())
+    }
+
+    /// Updates retained hover, press, and focus bits independently. The
+    /// legacy [`set_button_state`](Self::set_button_state) API remains a
+    /// compatibility setter for callers that want an exclusive state.
+    pub fn set_button_interaction(
+        &mut self,
+        id: ElementId,
+        hovered: Option<bool>,
+        pressed: Option<bool>,
+        focused: Option<bool>,
+    ) -> Result<(), TreeError> {
+        let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
+        let node = self.renders.get_mut(render.0).expect("live render");
+        if !matches!(node.kind, RenderKind::Button { .. }) {
+            return Ok(());
+        }
+        if let Some(value) = hovered {
+            node.button_hovered = value;
+        }
+        if let Some(value) = pressed {
+            node.button_pressed = value;
+        }
+        if let Some(value) = focused {
+            node.button_focused = value;
+        }
+        node.button_state = if node.button_pressed {
+            ButtonState::Pressed
+        } else if node.button_focused {
+            ButtonState::Focused
+        } else if node.button_hovered {
+            ButtonState::Hovered
+        } else {
+            ButtonState::Normal
+        };
+        node.dirty.insert(DirtyFlags::PAINT);
         Ok(())
     }
     /// Changes only retained animation progression. The accumulated logical
@@ -7324,8 +7698,33 @@ impl WidgetTree {
     pub fn layout(&mut self, constraints: Constraints) {
         self.refresh_text_fields();
         self.refresh_virtual_ranges();
+        self.refresh_stateful_layout_builders();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints);
+        }
+    }
+
+    /// Marks local-state layout builders dirty before the normal retained
+    /// layout cache runs.  Input callbacks can mutate a control's revision
+    /// without replacing its parent widget description; this keeps that
+    /// update local while still allowing a changed child size to propagate.
+    fn refresh_stateful_layout_builders(&mut self) {
+        let dirty = self
+            .elements
+            .iter()
+            .filter_map(|(_, element)| {
+                let WidgetKind::LayoutBuilder {
+                    revision: Some(revision),
+                    ..
+                } = &element.widget.kind
+                else {
+                    return None;
+                };
+                (revision.get() != element.layout_builder_revision).then_some(element.render)
+            })
+            .collect::<Vec<_>>();
+        for render in dirty {
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
         }
     }
     /// Synchronizes the retained semantic arena after layout/compositor state
@@ -7424,17 +7823,22 @@ impl WidgetTree {
         };
         let (mut role, mut default_label, mut value, mut state, mut actions) =
             match &entry.widget.kind {
-                WidgetKind::Button { has_callback, .. } => (
+                WidgetKind::Button {
+                    has_callback,
+                    enabled,
+                    focusable_when_disabled,
+                    ..
+                } => (
                     Some(SemanticRole::Button),
                     widget_text(&entry.widget),
                     None,
                     SemanticState {
-                        enabled: true,
-                        focused: render.button_state == ButtonState::Focused,
-                        focusable: true,
+                        enabled: *enabled,
+                        focused: render.button_focused,
+                        focusable: *enabled || *focusable_when_disabled,
                         ..SemanticState::default()
                     },
-                    if *has_callback {
+                    if *has_callback && *enabled {
                         vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
                     } else {
                         vec![SemanticActionKind::Focus]
@@ -7638,8 +8042,13 @@ impl WidgetTree {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.renders.get_mut(render.0).expect("live");
         if matches!(node.kind, RenderKind::Button { .. }) {
-            node.button_state = if focused {
+            node.button_focused = focused;
+            node.button_state = if node.button_pressed {
+                ButtonState::Pressed
+            } else if node.button_focused {
                 ButtonState::Focused
+            } else if node.button_hovered {
+                ButtonState::Hovered
             } else {
                 ButtonState::Normal
             };
@@ -8108,6 +8517,14 @@ impl WidgetTree {
         parent: Option<ElementId>,
         widget: Widget,
     ) -> Result<ElementId, TreeError> {
+        let inherited_environment = parent
+            .and_then(|id| self.elements.get(id.0))
+            .and_then(|element| element.environment.clone());
+        let environment_override = match &widget.kind {
+            WidgetKind::LayoutBuilder { environment, .. } => environment.clone(),
+            _ => None,
+        };
+        let environment = environment_override.clone().or(inherited_environment);
         self.check_keys_borrowed(widget.children_refs())?;
         let layer = self
             .compositor
@@ -8133,6 +8550,17 @@ impl WidgetTree {
                 Rect::from_origin_size(Offset::ZERO, Size::ZERO),
             )
         });
+        let focus_picture = match &widget.kind {
+            WidgetKind::Button {
+                color,
+                focused_color: Some(_),
+                ..
+            } if color.alpha == 0 => Some(self.compositor.create_picture(
+                DisplayList::new(),
+                Rect::from_origin_size(Offset::ZERO, Size::ZERO),
+            )),
+            _ => None,
+        };
         let (
             clip_layer,
             content_layer,
@@ -8222,8 +8650,9 @@ impl WidgetTree {
                 (None, None, None, None, None, None, Some(blend))
             }
             _ => {
-                self.compositor
-                    .set_children(layer, picture.into_iter().collect());
+                let mut layers = picture.into_iter().collect::<Vec<_>>();
+                layers.extend(focus_picture);
+                self.compositor.set_children(layer, layers);
                 (None, None, None, None, None, None, None)
             }
         };
@@ -8246,8 +8675,12 @@ impl WidgetTree {
             focused: false,
             baseline: None,
             button_state: ButtonState::Normal,
+            button_hovered: false,
+            button_pressed: false,
+            button_focused: false,
             layer,
             picture,
+            focus_picture,
             clip_layer,
             content_layer,
             opacity_layer,
@@ -8265,6 +8698,9 @@ impl WidgetTree {
             virtual_indices: Vec::new(),
             virtual_structure_revision: 0,
             layout_builder_constraints: None,
+            layout_builder_revision: 0,
+            environment,
+            environment_override,
             #[cfg(feature = "devtools")]
             dev: ElementDevData::default(),
         }));
@@ -8281,6 +8717,36 @@ impl WidgetTree {
         self.diagnostics.mounts += 1;
         Ok(id)
     }
+
+    fn propagate_environment(&mut self, id: ElementId) {
+        let (inherited, children) = {
+            let element = self.elements.get(id.0).expect("live environment element");
+            (element.environment.clone(), element.children.clone())
+        };
+        for child in children {
+            let (override_value, previous) = {
+                let element = self.elements.get(child.0).expect("live child");
+                (
+                    element.environment_override.clone(),
+                    element.environment.clone(),
+                )
+            };
+            let effective = override_value.or_else(|| inherited.clone());
+            let changed = match (&previous, &effective) {
+                (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
+                (None, None) => false,
+                _ => true,
+            };
+            if changed {
+                let element = self.elements.get_mut(child.0).expect("live child");
+                element.environment = effective;
+                element.layout_builder_constraints = None;
+                element.layout_builder_revision = 0;
+            }
+            self.propagate_environment(child);
+        }
+    }
+
     fn update_existing(&mut self, id: ElementId, widget: &Widget) -> Result<(), TreeError> {
         // Borrow-compare first: the unchanged-subtree bailout must not clone
         // either widget. This is the dominant hot path for wide static trees
@@ -8303,6 +8769,19 @@ impl WidgetTree {
             .ok_or(TreeError::MissingElement(id))?
             .widget
             .clone();
+        let old_environment = self
+            .elements
+            .get(id.0)
+            .and_then(|element| element.environment_override.clone());
+        let new_environment = match &widget.kind {
+            WidgetKind::LayoutBuilder { environment, .. } => environment.clone(),
+            _ => None,
+        };
+        let environment_changed = match (&old_environment, &new_environment) {
+            (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
         #[cfg(feature = "devtools")]
         let property_changes = crate::devtools_props::diff_properties(&old.kind, &widget.kind);
         debug_assert_eq!(
@@ -8314,6 +8793,7 @@ impl WidgetTree {
         let render = self.elements.get(id.0).expect("present").render;
         let old_kind = render_kind(&old);
         let new_kind = render_kind(widget);
+        carry_replaced_transition(&old_kind, &new_kind);
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
         if old_kind != new_kind {
@@ -8410,12 +8890,34 @@ impl WidgetTree {
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
             }
         }
-        self.elements.get_mut(id.0).expect("present").widget = widget.clone();
-        self.elements
-            .get_mut(id.0)
-            .expect("present")
-            .dirty
-            .remove(DirtyFlags::BUILD);
+        let parent_environment = self
+            .elements
+            .get(id.0)
+            .and_then(|element| element.parent)
+            .and_then(|parent| self.elements.get(parent.0))
+            .and_then(|parent| parent.environment.clone());
+        {
+            let element = self.elements.get_mut(id.0).expect("present");
+            element.widget = widget.clone();
+            element.environment_override = new_environment;
+            element.environment = element.environment_override.clone().or(parent_environment);
+            if environment_changed {
+                element.layout_builder_constraints = None;
+            }
+            element.dirty.remove(DirtyFlags::BUILD);
+        }
+        if environment_changed {
+            self.propagate_environment(id);
+        }
+        if matches!(widget.kind, WidgetKind::LayoutBuilder { .. }) {
+            // A new descriptor may carry a different builder closure while
+            // retaining the same constraints/revision value. Force one
+            // materialization so updates cannot leave the old child mounted.
+            if let Some(element) = self.elements.get_mut(id.0) {
+                element.layout_builder_constraints = None;
+                element.layout_builder_revision = 0;
+            }
+        }
         self.diagnostics.rebuilds += 1;
         #[cfg(feature = "devtools")]
         {
@@ -8432,6 +8934,11 @@ impl WidgetTree {
         // description must preserve every still-valid mounted row; the next
         // layout pass will add/drop only indices required by the new config.
         if matches!(widget.kind, WidgetKind::VirtualList { .. }) {
+            #[cfg(feature = "devtools")]
+            self.devtools_trace_end(trace);
+            return Ok(());
+        }
+        if matches!(widget.kind, WidgetKind::LayoutBuilder { .. }) {
             #[cfg(feature = "devtools")]
             self.devtools_trace_end(trace);
             return Ok(());
@@ -8651,24 +9158,39 @@ impl WidgetTree {
     }
     fn materialize_layout_builder(&mut self, id: RenderObjectId, constraints: Constraints) {
         let element_id = self.element_for_render(id).expect("layout builder element");
-        let (builder, previous_constraints, previous_children) = {
+        let (builder, revision, previous_constraints, previous_revision, previous_children) = {
             let element = self
                 .elements
                 .get(element_id.0)
                 .expect("layout builder element");
-            let WidgetKind::LayoutBuilder { builder } = &element.widget.kind else {
+            let WidgetKind::LayoutBuilder {
+                builder,
+                environment: _,
+                revision,
+            } = &element.widget.kind
+            else {
                 return;
             };
             (
                 builder.clone(),
+                revision.clone(),
                 element.layout_builder_constraints,
+                element.layout_builder_revision,
                 element.children.clone(),
             )
         };
-        if previous_constraints == Some(constraints) && previous_children.len() == 1 {
+        let revision_value = revision.as_ref().map_or(0, |revision| revision.get());
+        if previous_constraints == Some(constraints)
+            && previous_revision == revision_value
+            && previous_children.len() == 1
+        {
             return;
         }
-        let mut child = builder(constraints);
+        let environment = self
+            .elements
+            .get(element_id.0)
+            .and_then(|element| element.environment.clone());
+        let mut child = with_build_environment(environment, || builder(constraints));
         let handlers = &mut self.pending_handlers;
         let next = &mut self.next_action;
         child.bind_callbacks(&mut |callback| {
@@ -8686,6 +9208,7 @@ impl WidgetTree {
             .expect("layout builder element");
         element.children = children;
         element.layout_builder_constraints = Some(constraints);
+        element.layout_builder_revision = revision_value;
         self.sync_render_children(element_id);
     }
     /// A controller can change independently of widget BUILD. Only mark the
@@ -8739,12 +9262,16 @@ impl WidgetTree {
         let Some(element) = self.elements.get(id.0) else {
             return;
         };
-        if matches!(
-            element.widget.kind,
-            WidgetKind::Button { .. }
-                | WidgetKind::TextField { .. }
-                | WidgetKind::SelectableText { .. }
-        ) {
+        let focusable = match &element.widget.kind {
+            WidgetKind::Button {
+                enabled,
+                focusable_when_disabled,
+                ..
+            } => *enabled || *focusable_when_disabled,
+            WidgetKind::TextField { .. } | WidgetKind::SelectableText { .. } => true,
+            _ => false,
+        };
+        if focusable {
             out.push(id);
         }
         let focus_children: Vec<_> = match element.widget.kind {
@@ -8974,6 +9501,9 @@ impl WidgetTree {
             if let Some(picture) = render.picture {
                 self.compositor.remove(picture);
             }
+            if let Some(picture) = render.focus_picture {
+                self.compositor.remove(picture);
+            }
             if let Some(layer) = render.clip_layer {
                 self.compositor.remove(layer);
             }
@@ -9033,6 +9563,7 @@ impl WidgetTree {
         let (
             layer,
             picture,
+            focus_picture,
             content_layer,
             opacity_layer,
             blur_layer,
@@ -9045,6 +9576,7 @@ impl WidgetTree {
             (
                 node.layer,
                 node.picture,
+                node.focus_picture,
                 node.content_layer,
                 node.opacity_layer,
                 node.blur_layer,
@@ -9079,9 +9611,11 @@ impl WidgetTree {
         } else if let Some(content) = content_layer {
             self.compositor.set_children(content, child_layers);
         } else {
-            let mut layers = Vec::with_capacity(child_layers.len() + 1);
+            let mut layers =
+                Vec::with_capacity(child_layers.len() + 1 + usize::from(focus_picture.is_some()));
             layers.extend(picture);
             layers.extend(child_layers);
+            layers.extend(focus_picture);
             self.compositor.set_children(layer, layers);
         }
         for child in render_children {
@@ -9755,13 +10289,30 @@ impl WidgetTree {
             } => {
                 let value = controller.value();
                 let display = text_field_display(&value, &placeholder);
-                let size = constraints.constrain(desired);
+                let intrinsic_width = if desired.width > 0.0 {
+                    desired.width
+                } else if constraints.is_width_bounded() {
+                    constraints.max_width
+                } else {
+                    260.0
+                };
+                let width_for_text = (intrinsic_width - 16.).max(0.);
                 let layout = self.text_engine.layout(
                     &display,
                     &style,
-                    multiline.then_some((size.width - 16.).max(0.)),
+                    multiline.then_some(width_for_text),
                     TextAlign::Start,
                 );
+                let intrinsic_height = if desired.height > 0.0 {
+                    desired.height
+                } else if constraints.is_height_bounded() {
+                    constraints.max_height
+                } else if multiline {
+                    (layout.metrics.size.height + 16.).max(40.)
+                } else {
+                    (layout.metrics.line_height + 16.).max(32.)
+                };
+                let size = constraints.constrain(Size::new(intrinsic_width, intrinsic_height));
                 let (revision, visual_revision) = controller.revisions();
                 let node = self.renders.get_mut(id.0).expect("live");
                 node.text_layout = Some(layout.clone());
@@ -10047,12 +10598,32 @@ impl WidgetTree {
         if dirty {
             let kind = self.renders.get(id.0).expect("live").kind.clone();
             let size = self.renders.get(id.0).expect("live").size;
-            let mut cache = DisplayList::new();
-            match kind {
-                RenderKind::Box { color, .. } => cache.push(PaintCommand::Rect {
-                    rect: Rect::from_origin_size(Offset::ZERO, size),
+            let focus_picture = self.renders.get(id.0).expect("live").focus_picture;
+            let focus_ring = match &kind {
+                RenderKind::Button {
                     color,
-                }),
+                    focused_color,
+                    enabled,
+                    ..
+                } => {
+                    let render = self.renders.get(id.0).expect("live");
+                    (render.button_focused && *enabled && color.alpha == 0)
+                        .then_some(*focused_color)
+                        .flatten()
+                }
+                _ => None,
+            };
+            let mut cache = DisplayList::new();
+            let mut focus_cache = DisplayList::new();
+            match kind {
+                RenderKind::Box { color, .. } => {
+                    if color.alpha > 0 {
+                        cache.push(PaintCommand::Rect {
+                            rect: Rect::from_origin_size(Offset::ZERO, size),
+                            color,
+                        });
+                    }
+                }
                 RenderKind::Shape {
                     path, fill, stroke, ..
                 } => {
@@ -10088,25 +10659,44 @@ impl WidgetTree {
                         cache.push(PaintCommand::Border { rrect, border });
                     }
                 }
-                RenderKind::Button { color, .. } => {
-                    let state = self.renders.get(id.0).expect("live").button_state;
-                    let adjust = match state {
-                        ButtonState::Normal => 0,
-                        ButtonState::Hovered => 18,
-                        ButtonState::Focused => 28,
-                        ButtonState::Pressed => -24,
+                RenderKind::Button {
+                    color,
+                    hover_color,
+                    pressed_color,
+                    focused_color,
+                    disabled_color,
+                    enabled,
+                    ..
+                } => {
+                    let render = self.renders.get(id.0).expect("live");
+                    // Transparent buttons are commonly used as the retained
+                    // hit/semantic surface for compound controls (checkboxes,
+                    // switches, toggles, and radios).  Treat their focused
+                    // color as a focus ring instead of filling the entire
+                    // hit surface.  Filling a label row with the accent made
+                    // keyboard focus look like a stuck hover highlight and
+                    // obscured the control's actual state.
+                    let state_color = if render.button_pressed {
+                        pressed_color.or(hover_color).or(focused_color)
+                    } else if render.button_hovered {
+                        hover_color
+                    } else if render.button_focused {
+                        focus_ring.map(|_| Color::TRANSPARENT)
+                    } else {
+                        None
                     };
-                    let shift = |value: u8| (value as i16 + adjust).clamp(0, 255) as u8;
-                    cache.push(PaintCommand::RRect {
-                        rrect: RRect::uniform(Rect::from_origin_size(Offset::ZERO, size), 6.),
-                        brush: Color::rgba(
-                            shift(color.red),
-                            shift(color.green),
-                            shift(color.blue),
-                            color.alpha,
-                        )
-                        .into(),
-                    });
+                    let base = if !enabled {
+                        disabled_color.or(Some(color))
+                    } else {
+                        state_color.or(Some(color))
+                    }
+                    .unwrap_or(color);
+                    if base.alpha > 0 {
+                        cache.push(PaintCommand::RRect {
+                            rrect: RRect::uniform(Rect::from_origin_size(Offset::ZERO, size), 4.),
+                            brush: base.into(),
+                        });
+                    }
                 }
                 RenderKind::Text {
                     style, overflow, ..
@@ -10215,10 +10805,6 @@ impl WidgetTree {
                             node.text_scroll_y,
                         )
                     };
-                    cache.push(PaintCommand::Rect {
-                        rect: Rect::from_origin_size(Offset::ZERO, size),
-                        color: Color::rgba(48, 50, 63, 255),
-                    });
                     let value = controller.value();
                     let display = text_field_display(&value, &placeholder);
                     let mut active_scroll_x = scroll_x;
@@ -10303,20 +10889,6 @@ impl WidgetTree {
                             });
                         }
                     }
-                    if focused {
-                        let border = Color::rgba(120, 170, 245, 255);
-                        cache.push(PaintCommand::Rect {
-                            rect: Rect::from_origin_size(Offset::ZERO, Size::new(size.width, 1.)),
-                            color: border,
-                        });
-                        cache.push(PaintCommand::Rect {
-                            rect: Rect::from_origin_size(
-                                Offset::new(0., (size.height - 1.).max(0.)),
-                                Size::new(size.width, 1.),
-                            ),
-                            color: border,
-                        });
-                    }
                     let node = self.renders.get_mut(id.0).expect("live");
                     node.text_scroll_x = active_scroll_x;
                     node.text_scroll_y = active_scroll_y;
@@ -10329,6 +10901,20 @@ impl WidgetTree {
                 }
                 _ => {}
             }
+            if let Some(focus_ring) = focus_ring.filter(|color| color.alpha > 0) {
+                let inset = 1.0;
+                let ring_size = Size::new(
+                    (size.width - 2. * inset).max(0.),
+                    (size.height - 2. * inset).max(0.),
+                );
+                focus_cache.push(PaintCommand::Border {
+                    rrect: RRect::uniform(
+                        Rect::from_origin_size(Offset::new(inset, inset), ring_size),
+                        4.,
+                    ),
+                    border: Border::new(2.0, focus_ring),
+                });
+            }
             let node = self.renders.get_mut(id.0).expect("live");
             node.cache = cache;
             node.dirty.remove(DirtyFlags::PAINT);
@@ -10336,6 +10922,13 @@ impl WidgetTree {
                 self.compositor.update_picture(
                     picture,
                     node.cache.clone(),
+                    Rect::from_origin_size(Offset::ZERO, node.size),
+                );
+            }
+            if let Some(picture) = focus_picture {
+                self.compositor.update_picture(
+                    picture,
+                    focus_cache,
                     Rect::from_origin_size(Offset::ZERO, node.size),
                 );
             }
@@ -10386,25 +10979,31 @@ impl WidgetTree {
         controller: &ScrollController,
         cache: &mut DisplayList,
     ) {
-        let geometry = scrollbar_geometry(size, controller, ScrollbarStyle::default());
+        let style = controller.scrollbar_style();
+        let geometry = scrollbar_geometry(size, controller, style);
         if !geometry.visible {
             return;
         }
         let node = self.renders.get(id.0).expect("live");
-        let mut thumb = ScrollbarStyle::default().thumb_color;
-        if node.scrollbar_dragging {
-            thumb = Color::rgba(205, 215, 240, 235);
-        } else if node.scrollbar_hovered {
-            thumb = Color::rgba(190, 202, 230, 220);
+        if !controller.scrollbar_thumb_visibility()
+            && !node.scrollbar_hovered
+            && !node.scrollbar_dragging
+        {
+            return;
         }
-        cache.push(PaintCommand::RRect {
-            rrect: RRect::uniform(geometry.track, ScrollbarStyle::default().width * 0.5),
-            brush: ScrollbarStyle::default().track_color.into(),
-        });
-        cache.push(PaintCommand::RRect {
-            rrect: RRect::uniform(geometry.thumb, ScrollbarStyle::default().width * 0.5),
-            brush: thumb.into(),
-        });
+        let thumb = style.thumb_color;
+        if style.track_color.alpha > 0 {
+            cache.push(PaintCommand::RRect {
+                rrect: RRect::uniform(geometry.track, style.width * 0.5),
+                brush: style.track_color.into(),
+            });
+        }
+        if thumb.alpha > 0 {
+            cache.push(PaintCommand::RRect {
+                rrect: RRect::uniform(geometry.thumb, style.width * 0.5),
+                brush: thumb.into(),
+            });
+        }
     }
     fn hit_test_render(
         &self,
@@ -10494,7 +11093,7 @@ impl WidgetTree {
             RenderKind::VirtualList { config } => config.controller.clone(),
             _ => return None,
         };
-        let mut geometry = scrollbar_geometry(node.size, &controller, ScrollbarStyle::default());
+        let mut geometry = scrollbar_geometry(node.size, &controller, controller.scrollbar_style());
         let origin = self.render_viewport_origin(render);
         geometry.track.origin = geometry.track.origin + origin;
         geometry.thumb.origin = geometry.thumb.origin + origin;
@@ -10512,7 +11111,7 @@ impl WidgetTree {
         };
         Some((
             controller.clone(),
-            scrollbar_geometry(node.size, &controller, ScrollbarStyle::default()),
+            scrollbar_geometry(node.size, &controller, controller.scrollbar_style()),
         ))
     }
     fn scrollbar_local_point(&self, render: RenderObjectId, point: Offset) -> Option<Offset> {
@@ -10542,6 +11141,7 @@ fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) 
                 kind,
                 WidgetKind::Button {
                     has_callback: true,
+                    enabled: true,
                     ..
                 }
             )
@@ -10706,9 +11306,25 @@ fn render_kind(widget: &Widget) -> RenderKind {
             border: *border,
             radius: *radius,
         },
-        WidgetKind::Button { size, color, .. } => RenderKind::Button {
+        WidgetKind::Button {
+            size,
+            color,
+            hover_color,
+            pressed_color,
+            focused_color,
+            disabled_color,
+            enabled,
+            focusable_when_disabled,
+            ..
+        } => RenderKind::Button {
             desired: *size,
             color: *color,
+            hover_color: *hover_color,
+            pressed_color: *pressed_color,
+            focused_color: *focused_color,
+            disabled_color: *disabled_color,
+            enabled: *enabled,
+            focusable_when_disabled: *focusable_when_disabled,
         },
         WidgetKind::Text {
             text,
@@ -11020,6 +11636,90 @@ fn render_kind(widget: &Widget) -> RenderKind {
             controller: controller.clone(),
         },
         WidgetKind::Blend { mode, .. } => RenderKind::Blend { mode: *mode },
+    }
+}
+
+/// Carries a compositor transition across a declarative rebuild when a
+/// controlled application creates a fresh controller value.  The widget
+/// descriptor is replaced, but the retained render object is still the same
+/// semantic/control node; jumping directly to the new controller value would
+/// make externally owned toggles and switches visibly snap.
+fn carry_replaced_transition(old: &RenderKind, new: &RenderKind) {
+    const REPLACED_TRANSITION: Duration = Duration::from_millis(140);
+
+    match (old, new) {
+        (
+            RenderKind::Opacity {
+                alpha: old_alpha,
+                controller: old_controller,
+            },
+            RenderKind::Opacity {
+                alpha: new_alpha,
+                controller: Some(new_controller),
+            },
+        ) => {
+            let replaced = match old_controller {
+                Some(old_controller) => old_controller != new_controller,
+                None => true,
+            };
+            let current_alpha = old_controller
+                .as_ref()
+                .map_or(*old_alpha, OpacityController::opacity);
+            if replaced && (current_alpha - new_alpha).abs() > f32::EPSILON {
+                new_controller.set_opacity(current_alpha);
+                new_controller.animate_to(*new_alpha, REPLACED_TRANSITION, Instant::now());
+            }
+        }
+        (
+            RenderKind::Translate {
+                controller: old_controller,
+            },
+            RenderKind::Translate {
+                controller: new_controller,
+            },
+        ) if old_controller != new_controller => {
+            let old_offset = old_controller.offset();
+            let new_offset = new_controller.offset();
+            if old_offset != new_offset {
+                new_controller.set_offset(old_offset);
+                new_controller.animate_to(new_offset, REPLACED_TRANSITION, Instant::now());
+            }
+        }
+        (
+            RenderKind::Scale {
+                controller: old_controller,
+                ..
+            },
+            RenderKind::Scale {
+                controller: new_controller,
+                ..
+            },
+        ) if old_controller != new_controller => {
+            let old_scale = old_controller.scale();
+            let new_scale = new_controller.scale();
+            if (old_scale - new_scale).abs() > f32::EPSILON {
+                new_controller.set_scale(old_scale);
+                new_controller.animate_to(new_scale, REPLACED_TRANSITION, Instant::now());
+            }
+        }
+        (
+            RenderKind::Rotation {
+                controller: old_controller,
+                ..
+            },
+            RenderKind::Rotation {
+                controller: new_controller,
+                ..
+            },
+        ) if old_controller != new_controller => {
+            let old_radians = old_controller.radians();
+            let new_radians = new_controller.radians();
+            if (old_radians - new_radians).abs() > f32::EPSILON {
+                new_controller.set_radians(old_radians);
+                new_controller.animate_to(new_radians, REPLACED_TRANSITION, Instant::now());
+            }
+        }
+        _ => {}
     }
 }
 
@@ -11713,6 +12413,62 @@ mod tests {
         assert_eq!(builds.get(), 2);
     }
     #[test]
+    fn plain_text_uses_the_documented_natural_default_style() {
+        let mut tree = WidgetTree::new();
+        let root = tree.mount(Text::new("hello").into()).unwrap();
+        tree.layout(Constraints::loose(Size::new(400., 100.)));
+        let render = tree.render_id(root).unwrap();
+        let size = tree.render_size(render).unwrap();
+        assert!(size.width > 0.0 && size.width < 100.0);
+        assert!(size.height >= 16.0);
+    }
+    #[test]
+    fn icons_fit_and_center_their_declared_logical_box() {
+        let icon: Widget = Icon::new(icons::check()).size(12.).into();
+        let RenderKind::Shape { path, desired, .. } = render_kind(&icon) else {
+            panic!("Icon should retain a shape render kind");
+        };
+        let bounds = path.bounds().expect("check path has geometry");
+        assert_eq!(desired, Size::new(12., 12.));
+        assert!(bounds.origin.x.abs() < 0.001);
+        assert!(bounds.size.width <= 12.001);
+        assert!(bounds.size.height <= 12.001);
+        assert!((bounds.origin.x + bounds.size.width - 12.).abs() < 0.001);
+        assert!((bounds.origin.y + bounds.size.height * 0.5 - 6.).abs() < 0.001);
+    }
+    #[test]
+    fn stateful_layout_builder_rebuilds_when_local_revision_changes() {
+        let builds = Rc::new(Cell::new(0));
+        let revision = Rc::new(Cell::new(0));
+        let observed = builds.clone();
+        let state = revision.clone();
+        let builder_state = state.clone();
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::stateful_layout_builder(revision, move |_| {
+                observed.set(observed.get() + 1);
+                Widget::fixed_box(
+                    Size::new(10. + builder_state.get() as f32, 10.),
+                    Color::WHITE,
+                )
+            }))
+            .unwrap();
+        let constraints = Constraints::loose(Size::new(80., 20.));
+        tree.layout(constraints);
+        assert_eq!(builds.get(), 1);
+        assert_eq!(
+            tree.render_size(tree.render_id(tree.children(root).unwrap()[0]).unwrap()),
+            Some(Size::new(10., 10.))
+        );
+        state.set(3);
+        tree.layout(constraints);
+        assert_eq!(builds.get(), 2);
+        assert_eq!(
+            tree.render_size(tree.render_id(tree.children(root).unwrap()[0]).unwrap()),
+            Some(Size::new(13., 10.))
+        );
+    }
+    #[test]
     fn affine_transform_uses_inverse_hit_testing_and_transformed_semantics() {
         let mut tree = WidgetTree::new();
         let root = tree
@@ -11901,6 +12657,39 @@ mod tests {
         let after = tree.diagnostics();
         assert_eq!(after.layouts, before.layouts);
         assert_eq!(after.paints, before.paints);
+    }
+    #[test]
+    fn replacement_opacity_controller_keeps_a_controlled_transition_alive() {
+        let old_controller = OpacityController::new();
+        old_controller.set_opacity(0.);
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                Opacity::controlled(
+                    old_controller,
+                    Widget::box_(Size::new(20., 20.), Color::WHITE),
+                )
+                .into(),
+            )
+            .unwrap();
+        let constraints = Constraints::tight(Size::new(40., 40.));
+        let start = Instant::now();
+        tree.layout(constraints);
+        tree.update_compositor(start);
+
+        let replacement = OpacityController::new();
+        tree.update(
+            root,
+            Opacity::controlled(
+                replacement.clone(),
+                Widget::box_(Size::new(20., 20.), Color::WHITE),
+            )
+            .into(),
+        )
+        .unwrap();
+        assert!(replacement.opacity() < 0.01);
+        tree.update_compositor(start + Duration::from_millis(70));
+        assert!(replacement.opacity() > 0.01 && replacement.opacity() < 0.99);
     }
     #[test]
     fn keyed_reorder_reuses_elements() {
@@ -12269,7 +13058,7 @@ mod tests {
     fn retained_text_pictures_keep_independent_column_origins() {
         let style = TextStyle {
             size: 20.,
-            line_height: Some(30.),
+            line_height: Some(incular_text::LineHeight::Absolute(30.)),
             ..TextStyle::default()
         };
         let mut tree = WidgetTree::new();
@@ -12301,7 +13090,9 @@ mod tests {
         let mut tree = WidgetTree::new();
         tree.mount(Widget::column(vec![
             Widget::box_(Size::new(100., 30.), Color::BLACK),
-            Button::new("Placed label").into(),
+            Button::new("Placed label")
+                .color(Color::rgba(70, 120, 220, 255))
+                .into(),
         ]))
         .unwrap();
         tree.layout(Constraints::tight(Size::new(200., 120.)));
@@ -13080,6 +13871,94 @@ mod tests {
         assert_eq!(controller.value().selection.extent, 9);
         tree.text_field_set_caret(root, Offset::new(5., 55.), false, Instant::now());
         assert!(controller.value().selection.extent >= 10);
+    }
+
+    #[test]
+    fn transparent_button_focus_is_an_outline_not_a_surface_fill() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                Button::with_child(Widget::fixed_box(Size::new(96., 32.), Color::WHITE))
+                    .color(Color::TRANSPARENT)
+                    .focused_color(Color::rgba(85, 150, 255, 200))
+                    .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(96., 32.)));
+        tree.set_focused(root, true, Instant::now()).unwrap();
+        let list = tree.paint();
+
+        assert!(list.commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::Border { border, .. }
+                    if border.width == 2.0 && border.color == Color::rgba(85, 150, 255, 200)
+            )
+        }));
+        assert!(!list.commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::RRect {
+                    brush: Brush::Solid(color),
+                    ..
+                } if *color == Color::rgba(85, 150, 255, 200)
+            )
+        }));
+        let content_index = list
+            .commands()
+            .iter()
+            .position(|command| {
+                matches!(
+                    command,
+                    PaintCommand::Rect { color, .. } if *color == Color::WHITE
+                )
+            })
+            .expect("focused button content should be painted");
+        let ring_index = list
+            .commands()
+            .iter()
+            .position(|command| {
+                matches!(
+                    command,
+                    PaintCommand::Border { border, .. }
+                        if border.color == Color::rgba(85, 150, 255, 200)
+                )
+            })
+            .expect("focused button should paint its outline");
+        assert!(
+            ring_index > content_index,
+            "focus outline must overlay content"
+        );
+    }
+
+    #[test]
+    fn focused_text_field_does_not_paint_framework_outline() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                TextField::new(TextEditingController::with_text("value"))
+                    .size(Size::new(180., 32.))
+                    .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::tight(Size::new(180., 32.)));
+        tree.set_focused(root, true, Instant::now()).unwrap();
+        let list = tree.paint();
+
+        assert!(
+            !list
+                .commands()
+                .iter()
+                .any(|command| matches!(command, PaintCommand::Border { .. }))
+        );
+        assert!(!list.commands().iter().any(|command| {
+            matches!(
+                command,
+                PaintCommand::Rect { rect, color }
+                    if color == &Color::rgba(120, 170, 245, 220)
+                        && (rect.size.width - 180.).abs() < f32::EPSILON
+            )
+        }));
     }
 
     #[test]

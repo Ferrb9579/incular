@@ -460,10 +460,49 @@ impl Default for TextScaler {
     }
 }
 
-/// Font and paragraph-independent visual properties.
+/// Explicit text line height representation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHeight {
+    /// Natural line height derived from font metrics.
+    Normal,
+    /// Line height as a proportional multiplier of font size (e.g. `1.4` = 1.4 * font_size).
+    Multiplier(f32),
+    /// Line height in absolute logical pixels.
+    Absolute(f32),
+}
+
+impl LineHeight {
+    #[must_use]
+    pub const fn multiplier(factor: f32) -> Self {
+        Self::Multiplier(factor)
+    }
+
+    #[must_use]
+    pub const fn absolute(pixels: f32) -> Self {
+        Self::Absolute(pixels)
+    }
+
+    #[must_use]
+    pub fn to_parley(self, font_size: f32) -> Option<parley::style::LineHeight> {
+        match self {
+            Self::Normal => None,
+            Self::Multiplier(factor) => Some(parley::style::LineHeight::Absolute(
+                (factor * font_size).max(0.0),
+            )),
+            Self::Absolute(pixels) => Some(parley::style::LineHeight::Absolute(pixels.max(0.0))),
+        }
+    }
+}
+
+/// An immutable, Flutter-style text style description.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
     pub inherit: bool,
+    pub has_explicit_color: bool,
+    pub has_explicit_size: bool,
+    pub has_explicit_weight: bool,
+    pub has_explicit_style: bool,
+    pub has_explicit_family: bool,
     pub family: FontFamily,
     pub fallback_families: Arc<[FontFamily]>,
     pub size: f32,
@@ -471,7 +510,7 @@ pub struct TextStyle {
     pub style: FontStyle,
     pub color: Color,
     pub background_color: Option<Color>,
-    pub line_height: Option<f32>,
+    pub line_height: Option<LineHeight>,
     pub letter_spacing: f32,
     pub word_spacing: Option<f32>,
     pub text_baseline: Option<TextBaseline>,
@@ -505,12 +544,14 @@ impl TextStyle {
     #[must_use]
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
         self.family = FontFamily::Named(family.into());
+        self.has_explicit_family = true;
         self
     }
 
     #[must_use]
     pub fn family(mut self, family: FontFamily) -> Self {
         self.family = family;
+        self.has_explicit_family = true;
         self
     }
 
@@ -538,43 +579,44 @@ impl TextStyle {
     #[must_use]
     pub fn font_size(mut self, size: f32) -> Self {
         self.size = size.max(0.0);
+        self.has_explicit_size = true;
         self
     }
 
     #[must_use]
-    pub fn size(mut self, size: f32) -> Self {
-        self.size = size.max(0.0);
-        self
+    pub fn size(self, size: f32) -> Self {
+        self.font_size(size)
     }
 
     #[must_use]
     pub fn font_weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
+        self.has_explicit_weight = true;
         self
     }
 
     #[must_use]
-    pub fn bold(mut self) -> Self {
-        self.weight = FontWeight::BOLD;
-        self
+    pub fn bold(self) -> Self {
+        self.font_weight(FontWeight::BOLD)
     }
 
     #[must_use]
     pub fn font_style(mut self, style: FontStyle) -> Self {
         self.style = style;
+        self.has_explicit_style = true;
         self
     }
 
     #[must_use]
-    pub fn italic(mut self) -> Self {
-        self.style = FontStyle::Italic;
-        self
+    pub fn italic(self) -> Self {
+        self.font_style(FontStyle::Italic)
     }
 
     #[must_use]
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self.foreground = None;
+        self.has_explicit_color = true;
         self
     }
 
@@ -587,13 +629,36 @@ impl TextStyle {
 
     #[must_use]
     pub fn line_height(mut self, line_height: Option<f32>) -> Self {
-        self.line_height = line_height.map(|value| value.max(0.0));
+        self.line_height = line_height.map(|value| {
+            if value <= 4.0 {
+                LineHeight::Multiplier(value.max(0.0))
+            } else {
+                LineHeight::Absolute(value.max(0.0))
+            }
+        });
         self
     }
 
     #[must_use]
-    pub fn height(mut self, height: Option<f32>) -> Self {
-        self.line_height = height.map(|value| value.max(0.0));
+    pub fn height(self, height: Option<f32>) -> Self {
+        self.line_height(height)
+    }
+
+    #[must_use]
+    pub fn line_height_multiplier(mut self, factor: f32) -> Self {
+        self.line_height = Some(LineHeight::Multiplier(factor.max(0.0)));
+        self
+    }
+
+    #[must_use]
+    pub fn line_height_absolute(mut self, pixels: f32) -> Self {
+        self.line_height = Some(LineHeight::Absolute(pixels.max(0.0)));
+        self
+    }
+
+    #[must_use]
+    pub fn line_height_mode(mut self, mode: LineHeight) -> Self {
+        self.line_height = Some(mode);
         self
     }
 
@@ -746,6 +811,7 @@ impl TextStyle {
     pub fn with_color(&self, color: Color) -> Self {
         let mut s = self.clone();
         s.color = color;
+        s.has_explicit_color = true;
         s
     }
 
@@ -759,7 +825,13 @@ impl TextStyle {
     #[must_use]
     pub fn with_line_height(&self, line_height: Option<f32>) -> Self {
         let mut s = self.clone();
-        s.line_height = line_height.map(|v| v.max(0.0));
+        s.line_height = line_height.map(|v| {
+            if v <= 4.0 {
+                LineHeight::Multiplier(v.max(0.0))
+            } else {
+                LineHeight::Absolute(v.max(0.0))
+            }
+        });
         s
     }
 
@@ -776,16 +848,29 @@ impl TextStyle {
             return other.clone();
         }
         let mut merged = self.clone();
-        merged.family = other.family.clone();
+        if other.has_explicit_family {
+            merged.family = other.family.clone();
+            merged.has_explicit_family = true;
+        }
         if !other.fallback_families.is_empty() {
             merged.fallback_families = other.fallback_families.clone();
         }
-        if other.size != 0.0 {
+        if other.has_explicit_size {
             merged.size = other.size;
+            merged.has_explicit_size = true;
         }
-        merged.weight = other.weight;
-        merged.style = other.style;
-        merged.color = other.color;
+        if other.has_explicit_weight {
+            merged.weight = other.weight;
+            merged.has_explicit_weight = true;
+        }
+        if other.has_explicit_style {
+            merged.style = other.style;
+            merged.has_explicit_style = true;
+        }
+        if other.has_explicit_color || other.foreground.is_some() {
+            merged.color = other.color;
+            merged.has_explicit_color = true;
+        }
         if other.background_color.is_some() {
             merged.background_color = other.background_color;
         }
@@ -936,6 +1021,11 @@ impl Lerp for TextStyle {
         let mix = |left: f32, right: f32| left + (right - left) * t;
         Self {
             inherit: if t < 0.5 { self.inherit } else { other.inherit },
+            has_explicit_color: self.has_explicit_color || other.has_explicit_color,
+            has_explicit_size: self.has_explicit_size || other.has_explicit_size,
+            has_explicit_weight: self.has_explicit_weight || other.has_explicit_weight,
+            has_explicit_style: self.has_explicit_style || other.has_explicit_style,
+            has_explicit_family: self.has_explicit_family || other.has_explicit_family,
             family: if t < 0.5 {
                 self.family.clone()
             } else {
@@ -969,9 +1059,33 @@ impl Lerp for TextStyle {
                 (None, None) => None,
             },
             line_height: match (self.line_height, other.line_height) {
-                (Some(left), Some(right)) => Some(mix(left, right)),
-                (Some(left), None) => Some(mix(left, 0.0)),
-                (None, Some(right)) => Some(mix(0.0, right)),
+                (Some(LineHeight::Multiplier(a)), Some(LineHeight::Multiplier(b))) => {
+                    Some(LineHeight::Multiplier(mix(a, b)))
+                }
+                (Some(LineHeight::Absolute(a)), Some(LineHeight::Absolute(b))) => {
+                    Some(LineHeight::Absolute(mix(a, b)))
+                }
+                (Some(a), Some(b)) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        Some(b)
+                    }
+                }
+                (Some(a), None) => {
+                    if t < 0.5 {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(b)) => {
+                    if t >= 0.5 {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
                 (None, None) => None,
             },
             letter_spacing: mix(self.letter_spacing, other.letter_spacing),
@@ -1099,6 +1213,11 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             inherit: true,
+            has_explicit_color: false,
+            has_explicit_size: false,
+            has_explicit_weight: false,
+            has_explicit_style: false,
+            has_explicit_family: false,
             family: FontFamily::SystemUi,
             fallback_families: Arc::new([]),
             size: 16.0,
