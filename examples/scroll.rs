@@ -5,7 +5,7 @@ fn main() {
     let controller = ScrollController::new();
     let items = (0..100)
         .map(|index| {
-            Button::new(format!("Item {index}"))
+            RawMaterialButton::new(format!("Item {index}"))
                 .color(Color::rgba(55, 90 + (index % 4) as u8 * 25, 155, 255))
                 .on_press(move || eprintln!("clicked Item {index}"))
                 .into()

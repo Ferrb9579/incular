@@ -3,9 +3,9 @@ use incular_config::Alignment;
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Button as RawButton, Container, ExplicitSemantics, Icon,
-    OpacityController, Positioned, Row, ScaleController, SizedBox, Stack, Text,
-    TranslationController, Widget,
+    Border, BorderRadius, BoxDecoration, Container, ExplicitSemantics, Icon, OpacityController,
+    Positioned, Row, ScaleController, SizedBox, Stack, Text, TranslationController, Widget,
+    internal::ActionSurface,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -169,7 +169,7 @@ impl Checkbox {
         } else {
             box_widget.into()
         };
-        let mut button = RawButton::with_child(content)
+        let mut button = ActionSurface::with_child(content)
             .color(Color::TRANSPARENT)
             .disabled_color(theme.colors.disabled_surface)
             .enabled(self.enabled);
@@ -306,7 +306,7 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
         } else {
             radio_circle.into()
         };
-        let mut button = RawButton::with_child(content)
+        let mut button = ActionSurface::with_child(content)
             .color(Color::TRANSPARENT)
             .enabled(true);
 
@@ -442,7 +442,7 @@ impl Switch {
         let revision = self.revision.clone();
         let thumb_translation = self.thumb_translation.clone();
         let on_changed = self.on_changed.clone();
-        let mut button = RawButton::with_child(track)
+        let mut button = ActionSurface::with_child(track)
             .color(Color::TRANSPARENT)
             .enabled(self.enabled);
         if self.enabled {

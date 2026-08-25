@@ -65,7 +65,7 @@ fn main() {
             .into(),
             current.presented_child(),
             Widget::row(vec![
-                Button::new("Push fade + slide")
+                RawMaterialButton::new("Push fade + slide")
                     .on_press(move || {
                         let opacity = OpacityController::new();
                         opacity.set_opacity(0.);
@@ -87,7 +87,7 @@ fn main() {
                         rerender_after_push.update(|value| *value += 1);
                     })
                     .into(),
-                Button::new("Show dialog")
+                RawMaterialButton::new("Show dialog")
                     .on_press(move || {
                         show_dialog.show_dialog(Dialog::new(
                             DecoratedBox::new(
@@ -101,7 +101,7 @@ fn main() {
                         rerender_after_dialog.update(|value| *value += 1);
                     })
                     .into(),
-                Button::new("Show sheet")
+                RawMaterialButton::new("Show sheet")
                     .on_press(move || {
                         show_sheet.show_bottom_sheet(BottomSheet::new(
                             DecoratedBox::new(Text::new("Bottom sheet entry").color(Color::WHITE))
@@ -112,7 +112,7 @@ fn main() {
                         rerender_after_sheet.update(|value| *value += 1);
                     })
                     .into(),
-                Button::new("Pop / close overlay")
+                RawMaterialButton::new("Pop / close overlay")
                     .on_press(move || {
                         if close.remove_top().is_none() && pop.can_pop() {
                             let _ = pop.pop();

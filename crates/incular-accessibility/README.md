@@ -30,7 +30,7 @@ The mapping is deliberately narrow and documented rather than inventing roles:
 
 | Incular role | AccessKit role |
 | --- | --- |
-| Button, Text, TextField, TextArea | Button, Label, TextInput, MultilineTextInput |
+| Material buttons, Text, EditableText / Material TextField | Button, Label, TextInput, MultilineTextInput |
 | Checkbox, Radio, Slider | CheckBox, RadioButton, Slider |
 | Image, Link, Heading | Image, Link, Heading |
 | List, ListItem, ScrollView | List, ListItem, ScrollView |

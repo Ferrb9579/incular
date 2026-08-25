@@ -408,7 +408,7 @@ fn reconciliation_10k(ticks: &Signal<u64>) -> Widget {
     labeled(
         "Parent rebuilds; 10k identical children cost ~zero",
         Widget::column(vec![
-            Button::new(format!("rebuild parent (generation {generation})"))
+            RawMaterialButton::new(format!("rebuild parent (generation {generation})"))
                 .on_press(move || bump.update(|value| *value += 1))
                 .into(),
             viewport(
@@ -437,7 +437,7 @@ fn keyed_reorder(flip: &Signal<u64>) -> Widget {
     labeled(
         "Keyed reorder of 5,000 children",
         Widget::column(vec![
-            Button::new(format!("reverse (generation {generation})"))
+            RawMaterialButton::new(format!("reverse (generation {generation})"))
                 .on_press(move || toggle.update(|value| *value += 1))
                 .into(),
             viewport(
@@ -471,7 +471,7 @@ fn document_edit(edits: &Signal<u64>) -> Widget {
     labeled(
         "300-paragraph document, one-line edits",
         Widget::column(vec![
-            Button::new(format!("edit paragraph 150 ({generation})"))
+            RawMaterialButton::new(format!("edit paragraph 150 ({generation})"))
                 .on_press(move || bump.update(|value| *value += 1))
                 .into(),
             viewport(
@@ -810,10 +810,10 @@ fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widget {
     labeled(
         "Shared state across windows",
         Widget::column(vec![
-            Button::new(format!("Shared counter: {count}"))
+            RawMaterialButton::new(format!("Shared counter: {count}"))
                 .on_press(move || increment.update(|value| *value += 1))
                 .into(),
-            Button::new("Open static sibling window")
+            RawMaterialButton::new("Open static sibling window")
                 .on_press(move || {
                     let manager = open_manager.clone();
                     let opened = manager.open_window_with(

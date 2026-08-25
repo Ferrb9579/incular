@@ -13,7 +13,7 @@ fn main() {
                 .color(Color::rgba(220, 230, 255, 255))
                 .into(),
             Text::new("This is a custom application example.").into(),
-            Button::new("Press me")
+            RawMaterialButton::new("Press me")
                 .on_press({
                     let pressed = pressed.clone();
                     move || {

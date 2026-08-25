@@ -1862,7 +1862,7 @@ impl std::fmt::Debug for WidgetKind {
                 .field("child", child)
                 .finish(),
             Self::Gesture { child, .. } => f
-                .debug_struct("GestureRegion")
+                .debug_struct("GestureDetector")
                 .field("child", child)
                 .finish(),
             Self::Draggable { child, .. } => {
@@ -3038,7 +3038,7 @@ impl Widget {
         }
     }
     #[must_use]
-    pub fn button(size: Size, color: Color, action: ActionId) -> Self {
+    pub(crate) fn button(size: Size, color: Color, action: ActionId) -> Self {
         Self {
             key: None,
             kind: WidgetKind::Button {
@@ -3060,6 +3060,46 @@ impl Widget {
                 child: None,
             },
             semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Builds the retained action surface shared by sibling control crates.
+    ///
+    /// This is crate-internal plumbing rather than a Flutter-facing widget;
+    /// applications should use `GestureDetector` or a Material button.
+    #[doc(hidden)]
+    pub(crate) fn action_surface(surface: crate::internal::ActionSurface) -> Self {
+        let semantic_label = surface.label.clone();
+        let label = surface.content.unwrap_or_else(|| {
+            Widget::padding(
+                surface.padding,
+                Widget::text_styled(surface.label, surface.label_style, TextAlign::Start),
+            )
+        });
+        Self {
+            key: None,
+            kind: WidgetKind::Button {
+                size: surface.size,
+                color: surface.color,
+                hover_color: surface.hover_color,
+                pressed_color: surface.pressed_color,
+                focused_color: surface.focused_color,
+                disabled_color: surface.disabled_color,
+                enabled: surface.enabled,
+                focusable_when_disabled: surface.focusable_when_disabled,
+                action: ActionId(0),
+                callback: surface.callback,
+                hover_action: ActionId(0),
+                hover_callback: surface.hover_callback,
+                exit_action: ActionId(0),
+                exit_callback: surface.exit_callback,
+                has_callback: false,
+                child: Some(Box::new(label)),
+            },
+            semantics: SemanticProperties {
+                label: Some(semantic_label),
+                ..SemanticProperties::default()
+            },
         }
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
@@ -3248,8 +3288,11 @@ impl Widget {
             semantics: SemanticProperties::default(),
         }
     }
+    /// Creates the retained core editing primitive used by
+    /// [`EditableText`]. Higher-level Material controls may add chrome and
+    /// validation around this descriptor.
     #[must_use]
-    fn text_field(
+    pub fn editable_text(
         controller: TextEditingController,
         size: Size,
         style: TextStyle,
@@ -4572,86 +4615,22 @@ impl From<RichText> for Widget {
     }
 }
 
-/// Read-only text that participates in pointer and keyboard selection.
+/// Core editable text widget.
 ///
-/// This is intentionally distinct from [`TextField`]: it owns no text buffer,
-/// caret, IME session, or mutation commands.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SelectableText {
-    text: String,
-    style: TextStyle,
-    align: TextAlign,
-}
-impl SelectableText {
-    #[must_use]
-    pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            style: TextStyle::default(),
-            align: TextAlign::Start,
-        }
-    }
-    #[must_use]
-    pub fn style(mut self, style: TextStyle) -> Self {
-        self.style = style;
-        self
-    }
-    #[must_use]
-    pub fn color(mut self, color: Color) -> Self {
-        self.style.color = color;
-        self
-    }
-    #[must_use]
-    pub fn align(mut self, align: TextAlign) -> Self {
-        self.align = align;
-        self
-    }
-}
-impl From<SelectableText> for Widget {
-    fn from(value: SelectableText) -> Self {
-        Widget::selectable_text_styled(value.text, value.style, value.align)
-    }
-}
-
-/// Coordinates selection across all [`SelectableText`] descendants.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SelectionArea {
-    controller: SelectionAreaController,
-    child: Widget,
-}
-impl SelectionArea {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self::with_controller(SelectionAreaController::new(), child)
-    }
-    #[must_use]
-    pub fn with_controller(controller: SelectionAreaController, child: impl Into<Widget>) -> Self {
-        Self {
-            controller,
-            child: child.into(),
-        }
-    }
-    #[must_use]
-    pub fn controller(&self) -> SelectionAreaController {
-        self.controller.clone()
-    }
-}
-impl From<SelectionArea> for Widget {
-    fn from(value: SelectionArea) -> Self {
-        Widget::selection_area(value.controller, value.child)
-    }
-}
-
-/// Single-line editable text. Keep the controller outside a rebuilt widget
-/// description so the text, selection, and active composition survive rebuilds.
-pub struct TextField {
+/// This is Incular's renderer-neutral counterpart to Flutter's
+/// `widgets/EditableText`.  Material `TextField` and multiline field chrome
+/// belong to a higher-level component library. Keep the controller outside a
+/// rebuilt widget description so text, selection, and active composition
+/// survive rebuilds.
+pub struct EditableText {
     controller: TextEditingController,
     size: Size,
     style: TextStyle,
     placeholder: String,
     on_submit: Option<Rc<dyn Fn(String)>>,
+    multiline: bool,
 }
-impl TextField {
+impl EditableText {
     #[must_use]
     pub fn new(controller: TextEditingController) -> Self {
         Self {
@@ -4660,6 +4639,7 @@ impl TextField {
             style: TextStyle::default(),
             placeholder: String::new(),
             on_submit: None,
+            multiline: false,
         }
     }
     #[must_use]
@@ -4682,68 +4662,30 @@ impl TextField {
         self.on_submit = Some(Rc::new(callback));
         self
     }
-}
-impl From<TextField> for Widget {
-    fn from(value: TextField) -> Self {
-        Widget::text_field(
-            value.controller,
-            value.size,
-            value.style,
-            value.placeholder,
-            value.on_submit,
-            false,
-        )
-    }
-}
-
-/// A bounded, soft-wrapping multiline editor. Enter and Shift+Enter insert a
-/// hard newline; unlike [`TextField`], it has no implicit submit action.
-pub struct TextArea {
-    controller: TextEditingController,
-    size: Size,
-    style: TextStyle,
-    placeholder: String,
-}
-impl TextArea {
+    /// Enables multiline editing. Material text-field wrappers should use
+    /// this core primitive rather than introducing a separate `TextArea`
+    /// widget name.
     #[must_use]
-    pub fn new(controller: TextEditingController) -> Self {
-        Self {
-            controller,
-            size: Size::ZERO,
-            style: TextStyle::default(),
-            placeholder: String::new(),
-        }
-    }
-    #[must_use]
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.multiline = multiline;
         self
     }
+    /// Sets an explicit multiline height while preserving the current width.
     #[must_use]
     pub fn height(mut self, height: f32) -> Self {
         self.size = Size::new(self.size.width, height);
         self
     }
-    #[must_use]
-    pub fn style(mut self, style: TextStyle) -> Self {
-        self.style = style;
-        self
-    }
-    #[must_use]
-    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
-        self.placeholder = placeholder.into();
-        self
-    }
 }
-impl From<TextArea> for Widget {
-    fn from(value: TextArea) -> Self {
-        Widget::text_field(
+impl From<EditableText> for Widget {
+    fn from(value: EditableText) -> Self {
+        Widget::editable_text(
             value.controller,
             value.size,
             value.style,
             value.placeholder,
-            None,
-            true,
+            value.on_submit,
+            value.multiline,
         )
     }
 }
@@ -5421,184 +5363,6 @@ impl VirtualList {
             controller,
             builder: Rc::new(move |item| builder(item).into()),
         })
-    }
-}
-
-/// A compositional button description. The runtime converts its callback into
-/// an opaque handler ID while it is mounted; applications never allocate IDs.
-pub struct Button {
-    label: String,
-    callback: Option<Rc<dyn Fn()>>,
-    hover_callback: Option<Rc<dyn Fn()>>,
-    exit_callback: Option<Rc<dyn Fn()>>,
-    color: Color,
-    hover_color: Option<Color>,
-    pressed_color: Option<Color>,
-    focused_color: Option<Color>,
-    disabled_color: Option<Color>,
-    enabled: bool,
-    focusable_when_disabled: bool,
-    size: Size,
-    label_style: TextStyle,
-    padding: EdgeInsets,
-    content: Option<Widget>,
-}
-impl Button {
-    #[must_use]
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            callback: None,
-            hover_callback: None,
-            exit_callback: None,
-            color: Color::TRANSPARENT,
-            hover_color: None,
-            pressed_color: None,
-            focused_color: None,
-            disabled_color: None,
-            enabled: true,
-            focusable_when_disabled: false,
-            size: Size::ZERO,
-            label_style: TextStyle::default(),
-            padding: EdgeInsets::ZERO,
-            content: None,
-        }
-    }
-    /// Creates a Button wrapping custom widget content.
-    #[must_use]
-    pub fn with_child(child: impl Into<Widget>) -> Self {
-        Self {
-            label: String::new(),
-            callback: None,
-            hover_callback: None,
-            exit_callback: None,
-            color: Color::TRANSPARENT,
-            hover_color: None,
-            pressed_color: None,
-            focused_color: None,
-            disabled_color: None,
-            enabled: true,
-            focusable_when_disabled: false,
-            size: Size::ZERO,
-            label_style: TextStyle::default(),
-            padding: EdgeInsets::ZERO,
-            content: Some(child.into()),
-        }
-    }
-    #[must_use]
-    pub fn on_press(mut self, callback: impl Fn() + 'static) -> Self {
-        self.callback = Some(Rc::new(callback));
-        self
-    }
-    /// Convenience alias for [`Button::on_press`].
-    #[must_use]
-    pub fn on_click(self, callback: impl Fn() + 'static) -> Self {
-        self.on_press(callback)
-    }
-    /// Runs once when the primary mouse pointer enters this button.
-    #[must_use]
-    pub fn on_hover(mut self, callback: impl Fn() + 'static) -> Self {
-        self.hover_callback = Some(Rc::new(callback));
-        self
-    }
-    /// Runs once when the primary mouse pointer leaves this button.
-    #[must_use]
-    pub fn on_exit(mut self, callback: impl Fn() + 'static) -> Self {
-        self.exit_callback = Some(Rc::new(callback));
-        self
-    }
-    #[must_use]
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
-        self
-    }
-    #[must_use]
-    pub fn hover_color(mut self, color: Color) -> Self {
-        self.hover_color = Some(color);
-        self
-    }
-    #[must_use]
-    pub fn pressed_color(mut self, color: Color) -> Self {
-        self.pressed_color = Some(color);
-        self
-    }
-    #[must_use]
-    pub fn focused_color(mut self, color: Color) -> Self {
-        self.focused_color = Some(color);
-        self
-    }
-    #[must_use]
-    pub fn disabled_color(mut self, color: Color) -> Self {
-        self.disabled_color = Some(color);
-        self
-    }
-    #[must_use]
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
-    }
-    #[must_use]
-    pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.focusable_when_disabled = value;
-        self
-    }
-    #[must_use]
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
-        self
-    }
-    #[must_use]
-    pub fn label_style(mut self, style: TextStyle) -> Self {
-        self.label_style = style;
-        self
-    }
-    #[must_use]
-    pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
-        self
-    }
-    /// Replaces the text label with caller-provided retained content while
-    /// preserving the button's interaction, focus, and semantic behavior.
-    #[must_use]
-    pub fn content(mut self, content: impl Into<Widget>) -> Self {
-        self.content = Some(content.into());
-        self
-    }
-}
-impl From<Button> for Widget {
-    fn from(value: Button) -> Self {
-        let semantic_label = value.label.clone();
-        let label = value.content.unwrap_or_else(|| {
-            Widget::padding(
-                value.padding,
-                Widget::text_styled(value.label, value.label_style, TextAlign::Start),
-            )
-        });
-        Self {
-            key: None,
-            kind: WidgetKind::Button {
-                size: value.size,
-                color: value.color,
-                hover_color: value.hover_color,
-                pressed_color: value.pressed_color,
-                focused_color: value.focused_color,
-                disabled_color: value.disabled_color,
-                enabled: value.enabled,
-                focusable_when_disabled: value.focusable_when_disabled,
-                action: ActionId(0),
-                callback: value.callback,
-                hover_action: ActionId(0),
-                hover_callback: value.hover_callback,
-                exit_action: ActionId(0),
-                exit_callback: value.exit_callback,
-                has_callback: false,
-                child: Some(Box::new(label)),
-            },
-            semantics: SemanticProperties {
-                label: Some(semantic_label),
-                ..SemanticProperties::default()
-            },
-        }
     }
 }
 
@@ -11233,7 +10997,7 @@ impl RenderKind {
             RenderKind::Fractional { .. } => "FractionallySizedBox",
             RenderKind::Baseline { .. } => "Baseline",
             RenderKind::RepaintBoundary => "RepaintBoundary",
-            RenderKind::Gesture => "GestureRegion",
+            RenderKind::Gesture => "GestureDetector",
             RenderKind::Align { .. } => "Align",
             RenderKind::Flex { flex, .. } => {
                 return match flex.direction {
@@ -12155,6 +11919,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::internal::ActionSurface;
     use crate::{
         AbsorbPointer, DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable,
         Expanded, ExplicitSemantics, Flexible, IgnorePointer, IndexedStack, Positioned, SizedBox,
@@ -12519,16 +12284,21 @@ mod tests {
         let controller = SelectionAreaController::new();
         let mut tree = WidgetTree::new();
         let area = tree
-            .mount(
-                SelectionArea::with_controller(
-                    controller.clone(),
-                    Widget::column(vec![
-                        SelectableText::new("Latin café").into(),
-                        SelectableText::new("עברית mixed 世界").into(),
-                    ]),
-                )
-                .into(),
-            )
+            .mount(Widget::selection_area(
+                controller.clone(),
+                Widget::column(vec![
+                    Widget::selectable_text_styled(
+                        "Latin café",
+                        TextStyle::default(),
+                        TextAlign::Start,
+                    ),
+                    Widget::selectable_text_styled(
+                        "עברית mixed 世界",
+                        TextStyle::default(),
+                        TextAlign::Start,
+                    ),
+                ]),
+            ))
             .expect("mount selection area");
         tree.layout(Constraints::tight(Size::new(180., 80.)));
         let column = tree.children(area).unwrap()[0];
@@ -12562,13 +12332,14 @@ mod tests {
         let controller = SelectionAreaController::new();
         let mut tree = WidgetTree::new();
         let area = tree
-            .mount(
-                SelectionArea::with_controller(
-                    controller.clone(),
-                    SelectableText::new("a👩\u{200d}💻b"),
-                )
-                .into(),
-            )
+            .mount(Widget::selection_area(
+                controller.clone(),
+                Widget::selectable_text_styled(
+                    "a👩\u{200d}💻b",
+                    TextStyle::default(),
+                    TextAlign::Start,
+                ),
+            ))
             .unwrap();
         tree.layout(Constraints::tight(Size::new(180., 40.)));
         let label = tree.children(area).unwrap()[0];
@@ -12582,7 +12353,13 @@ mod tests {
     #[test]
     fn standalone_selectable_text_has_its_own_read_only_selection_region() {
         let mut tree = WidgetTree::new();
-        let label = tree.mount(SelectableText::new("copy me").into()).unwrap();
+        let label = tree
+            .mount(Widget::selectable_text_styled(
+                "copy me",
+                TextStyle::default(),
+                TextAlign::Start,
+            ))
+            .unwrap();
         tree.layout(Constraints::tight(Size::new(100., 30.)));
         assert!(tree.selectable_text_select_all(label));
         assert_eq!(
@@ -13090,7 +12867,7 @@ mod tests {
         let mut tree = WidgetTree::new();
         tree.mount(Widget::column(vec![
             Widget::box_(Size::new(100., 30.), Color::BLACK),
-            Button::new("Placed label")
+            ActionSurface::new("Placed label")
                 .color(Color::rgba(70, 120, 220, 255))
                 .into(),
         ]))
@@ -13107,7 +12884,7 @@ mod tests {
         let mut tree = WidgetTree::new();
         let root = tree
             .mount(
-                Button::new("Inspector row")
+                ActionSurface::new("Inspector row")
                     .size(Size::new(180., 34.))
                     .content(Widget::row([
                         Widget::text("Inspector"),
@@ -13179,8 +12956,11 @@ mod tests {
     #[test]
     fn transparent_opacity_keeps_hit_testing_and_semantics() {
         let mut tree = WidgetTree::new();
-        tree.mount(Widget::opacity(0., Button::new("Still active").into()))
-            .unwrap();
+        tree.mount(Widget::opacity(
+            0.,
+            ActionSurface::new("Still active").into(),
+        ))
+        .unwrap();
         tree.layout(Constraints::tight(Size::new(140., 60.)));
         tree.update_semantics();
         assert!(tree.hit_test(Offset::new(10., 10.)).is_some());
@@ -13194,7 +12974,7 @@ mod tests {
     fn effect_parameter_animation_is_compositor_only_and_keeps_semantics() {
         let blur = BlurController::new(2.);
         let mut tree = WidgetTree::new();
-        tree.mount(Blur::controlled(blur.clone(), Button::new("Still active")).into())
+        tree.mount(Blur::controlled(blur.clone(), ActionSurface::new("Still active")).into())
             .unwrap();
         tree.layout(Constraints::tight(Size::new(140., 60.)));
         let _ = tree.paint();
@@ -13851,7 +13631,8 @@ mod tests {
         let mut tree = WidgetTree::new();
         let root = tree
             .mount(
-                TextArea::new(controller.clone())
+                EditableText::new(controller.clone())
+                    .multiline(true)
                     .size(Size::new(120., 100.))
                     .into(),
             )
@@ -13878,7 +13659,7 @@ mod tests {
         let mut tree = WidgetTree::new();
         let root = tree
             .mount(
-                Button::with_child(Widget::fixed_box(Size::new(96., 32.), Color::WHITE))
+                ActionSurface::with_child(Widget::fixed_box(Size::new(96., 32.), Color::WHITE))
                     .color(Color::TRANSPARENT)
                     .focused_color(Color::rgba(85, 150, 255, 200))
                     .into(),
@@ -13936,7 +13717,7 @@ mod tests {
         let mut tree = WidgetTree::new();
         let root = tree
             .mount(
-                TextField::new(TextEditingController::with_text("value"))
+                EditableText::new(TextEditingController::with_text("value"))
                     .size(Size::new(180., 32.))
                     .into(),
             )
@@ -14570,7 +14351,7 @@ mod tests {
             )
             .merge_semantics()
             .block_semantics();
-        let background = Button::new("Save").into();
+        let background = ActionSurface::new("Save").into();
         let decorative: Widget = Text::new("sparkle").into();
         let decorative = decorative.exclude_semantics();
         let mut tree = WidgetTree::new();

@@ -4,8 +4,8 @@ use incular_config::EdgeInsets;
 use incular_core::Size;
 use incular_text::TextStyle;
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Container, TextArea as RawTextArea, TextEditingController,
-    TextField as RawTextField, Widget,
+    Border, BorderRadius, BoxDecoration, Container, EditableText as RawEditableText,
+    TextEditingController, Widget,
 };
 use std::rc::Rc;
 
@@ -75,7 +75,7 @@ impl TextField {
             .border
             .unwrap_or_else(|| Border::new(theme.input.border_width, theme.colors.border));
 
-        let mut raw = RawTextField::new(self.controller.clone())
+        let mut raw = RawEditableText::new(self.controller.clone())
             .size(self.size)
             .placeholder(self.placeholder.clone())
             .style(
@@ -163,8 +163,9 @@ impl TextArea {
             .border
             .unwrap_or_else(|| Border::new(theme.input.border_width, theme.colors.border));
 
-        let raw = RawTextArea::new(self.controller.clone())
+        let raw = RawEditableText::new(self.controller.clone())
             .size(self.size)
+            .multiline(true)
             .placeholder(self.placeholder.clone())
             .style(
                 TextStyle::new()

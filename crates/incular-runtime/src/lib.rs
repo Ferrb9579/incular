@@ -4294,7 +4294,7 @@ mod tests {
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
     use incular_widgets::{
-        Button, DecoratedBox, GestureCallbacks, GestureDetector, Text, VirtualList,
+        DecoratedBox, GestureCallbacks, GestureDetector, Text, VirtualList, internal::ActionSurface,
     };
     use std::time::{Duration, Instant};
     use std::{
@@ -4378,17 +4378,17 @@ mod tests {
 
     #[test]
     fn semantic_actions_share_logical_button_and_editing_state() {
-        use incular_widgets::{TextEditingController, TextField};
+        use incular_widgets::{EditableText, TextEditingController, internal::ActionSurface};
         let hits = Rc::new(Cell::new(0));
         let controller = TextEditingController::with_text("Ada");
         let mut runtime = Runtime::new(Widget::column(vec![
-            Button::new("Increment")
+            ActionSurface::new("Increment")
                 .on_press({
                     let hits = hits.clone();
                     move || hits.set(hits.get() + 1)
                 })
                 .into(),
-            TextField::new(controller.clone()).into(),
+            EditableText::new(controller.clone()).into(),
         ]))
         .unwrap();
         let root = runtime.tree().root().unwrap();
@@ -4396,13 +4396,13 @@ mod tests {
             .schedule_update(
                 root,
                 Widget::column(vec![
-                    Button::new("Increment")
+                    ActionSurface::new("Increment")
                         .on_press({
                             let hits = hits.clone();
                             move || hits.set(hits.get() + 1)
                         })
                         .into(),
-                    TextField::new(controller.clone()).into(),
+                    EditableText::new(controller.clone()).into(),
                 ]),
             )
             .unwrap();
@@ -4439,7 +4439,7 @@ mod tests {
             1_000_000,
             40.,
             controller.clone(),
-            |index| Button::new(format!("Item {index}")),
+            |index| ActionSurface::new(format!("Item {index}")),
         ))
         .unwrap();
         runtime
@@ -4983,7 +4983,7 @@ mod tests {
     }
     #[test]
     fn hit_test_resolves_button_action() {
-        let mut runtime = Runtime::new(Widget::button(
+        let mut runtime = Runtime::new(incular_widgets::internal::action(
             Size::new(10., 10.),
             Color::WHITE,
             ActionId(1),
@@ -5009,7 +5009,7 @@ mod tests {
     }
     #[test]
     fn identified_primary_contact_can_activate_a_button() {
-        let mut runtime = Runtime::new(Widget::button(
+        let mut runtime = Runtime::new(incular_widgets::internal::action(
             Size::new(10., 10.),
             Color::WHITE,
             ActionId(2),
@@ -5040,7 +5040,7 @@ mod tests {
         let enters = Rc::new(Cell::new(0_u32));
         let exits = Rc::new(Cell::new(0_u32));
         let mut runtime = Runtime::new(
-            Button::new("Hover")
+            ActionSurface::new("Hover")
                 .on_hover({
                     let enters = enters.clone();
                     move || enters.set(enters.get() + 1)
@@ -5105,7 +5105,7 @@ mod tests {
         controller.set_offset(Offset::new(0., 30.));
         let mut runtime = Runtime::new(Widget::translate(
             controller.clone(),
-            Widget::button(Size::new(20., 20.), Color::WHITE, ActionId(9)),
+            incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(9)),
         ))
         .unwrap();
         let constraints = Constraints::tight(Size::new(100., 100.));
@@ -5134,7 +5134,7 @@ mod tests {
         let controller = incular_widgets::ScrollController::new();
         let content = Widget::column(vec![
             Widget::box_(Size::new(80., 160.), Color::WHITE),
-            Widget::button(Size::new(20., 20.), Color::WHITE, ActionId(12)),
+            incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(12)),
         ]);
         let mut runtime = Runtime::new(Widget::scroll_view(controller.clone(), content)).unwrap();
         let constraints = Constraints::tight(Size::new(100., 100.));
@@ -5248,7 +5248,7 @@ mod tests {
         let hits = Rc::new(Cell::new(0));
         let callback_hits = hits.clone();
         let app = Application::new(move |_| {
-            Button::new("Add")
+            ActionSurface::new("Add")
                 .on_press({
                     let callback_hits = callback_hits.clone();
                     move || callback_hits.set(callback_hits.get() + 1)
@@ -5285,7 +5285,7 @@ mod tests {
         let hits = Rc::new(Cell::new(0));
         let observed = hits.clone();
         let root: Widget = DecoratedBox::new(
-            Button::new("Nested").on_press(move || observed.set(observed.get() + 1)),
+            ActionSurface::new("Nested").on_press(move || observed.set(observed.get() + 1)),
         )
         .background(Color::BLACK)
         .into();
@@ -5373,7 +5373,7 @@ mod tests {
             controller.clone(),
             move |index| {
                 let hit = observed.clone();
-                Button::new(format!("Item {index}")).on_press(move || hit.set(Some(index)))
+                ActionSurface::new(format!("Item {index}")).on_press(move || hit.set(Some(index)))
             },
         ))
         .unwrap();
@@ -5405,7 +5405,7 @@ mod tests {
             50_000,
             40.,
             controller.clone(),
-            move |index| Button::new(format!("Item {index}")),
+            move |index| ActionSurface::new(format!("Item {index}")),
         ))
         .unwrap();
         let constraints = Constraints::tight(Size::new(120., 120.));
@@ -5425,14 +5425,14 @@ mod tests {
     #[test]
     fn focus_routes_text_shortcuts_and_ime_without_rebuilding_tree() {
         use incular_core::ImeEvent;
-        use incular_widgets::{TextEditingController, TextField};
+        use incular_widgets::{EditableText, TextEditingController};
         let first = TextEditingController::new();
         let second = TextEditingController::new();
         let mut runtime = Runtime::new(Widget::column(vec![
-            TextField::new(first.clone())
+            EditableText::new(first.clone())
                 .size(Size::new(120., 40.))
                 .into(),
-            TextField::new(second.clone())
+            EditableText::new(second.clone())
                 .size(Size::new(120., 40.))
                 .into(),
         ]))
@@ -5470,9 +5470,9 @@ mod tests {
 
     #[test]
     fn focused_native_style_backspace_repeat_and_delete_edit_the_buffer() {
-        use incular_widgets::{TextEditingController, TextField};
+        use incular_widgets::{EditableText, TextEditingController};
         let controller = TextEditingController::with_text("abc");
-        let mut runtime = Runtime::new(TextField::new(controller.clone()).into()).unwrap();
+        let mut runtime = Runtime::new(EditableText::new(controller.clone()).into()).unwrap();
         let constraints = Constraints::tight(Size::new(140., 50.));
         runtime.run_frame(constraints).unwrap();
         let _ = runtime.handle_input(InputEvent::Pointer {
@@ -5497,7 +5497,7 @@ mod tests {
 
     #[test]
     fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
-        use incular_widgets::{SelectableText, SelectionArea, SelectionAreaController};
+        use incular_widgets::SelectionAreaController;
 
         #[derive(Clone)]
         struct TestClipboard(Rc<RefCell<String>>);
@@ -5511,16 +5511,21 @@ mod tests {
         }
 
         let controller = SelectionAreaController::new();
-        let mut runtime = Runtime::new(
-            SelectionArea::with_controller(
-                controller.clone(),
-                Widget::column(vec![
-                    SelectableText::new("first").into(),
-                    SelectableText::new("second").into(),
-                ]),
-            )
-            .into(),
-        )
+        let mut runtime = Runtime::new(Widget::selection_area(
+            controller.clone(),
+            Widget::column(vec![
+                Widget::selectable_text_styled(
+                    "first",
+                    incular_text::TextStyle::default(),
+                    incular_text::TextAlign::Start,
+                ),
+                Widget::selectable_text_styled(
+                    "second",
+                    incular_text::TextStyle::default(),
+                    incular_text::TextAlign::Start,
+                ),
+            ]),
+        ))
         .unwrap();
         let constraints = Constraints::tight(Size::new(180., 80.));
         let _ = runtime.run_frame(constraints).unwrap();
@@ -5571,16 +5576,19 @@ mod tests {
 
     #[test]
     fn multiline_enter_replaces_selection_while_single_line_submits() {
-        use incular_widgets::{TextArea, TextEditingController, TextField, TextSelection};
+        use incular_widgets::{EditableText, TextEditingController, TextSelection};
         let single = TextEditingController::with_text("one");
         let multi = TextEditingController::with_text("ab cdef");
         let submitted = Rc::new(RefCell::new(0));
         let observed = submitted.clone();
         let mut runtime = Runtime::new(Widget::column(vec![
-            TextField::new(single.clone())
+            EditableText::new(single.clone())
                 .on_submit(move |_| *observed.borrow_mut() += 1)
                 .into(),
-            TextArea::new(multi.clone()).height(100.).into(),
+            EditableText::new(multi.clone())
+                .multiline(true)
+                .height(100.)
+                .into(),
         ]))
         .unwrap();
         runtime
@@ -5685,11 +5693,11 @@ mod tests {
 
     #[test]
     fn virtual_windows_keep_trees_environments_focus_and_semantics_independent() {
-        let mut application = Application::new(|_| Button::new("A").into()).unwrap();
+        let mut application = Application::new(|_| ActionSurface::new("A").into()).unwrap();
         let a = application.primary_window();
         let b = application
             .open_window_with(test_window_options("B", 360., 240.), |_| {
-                Button::new("B").into()
+                ActionSurface::new("B").into()
             })
             .unwrap()
             .id();
@@ -5848,7 +5856,7 @@ mod tests {
         let mut application = Application::new({
             let a_hits = a_hits.clone();
             move |_| {
-                Button::new("A")
+                ActionSurface::new("A")
                     .on_press({
                         let a_hits = a_hits.clone();
                         move || a_hits.set(a_hits.get() + 1)
@@ -5860,7 +5868,7 @@ mod tests {
         let a = application.primary_window();
         let b = application
             .open_window_with(test_window_options("B", 180., 100.), |_| {
-                Button::new("B").into()
+                ActionSurface::new("B").into()
             })
             .unwrap()
             .id();
@@ -5927,7 +5935,7 @@ mod tests {
         let b_hits = Rc::new(Cell::new(0));
         let a_observed = a_hits.clone();
         let mut application = Application::new(move |_| {
-            Button::new("A")
+            ActionSurface::new("A")
                 .on_press({
                     let hits = a_observed.clone();
                     move || hits.set(hits.get() + 1)
@@ -5939,7 +5947,7 @@ mod tests {
         let b_observed = b_hits.clone();
         let b = application
             .open_window_with(test_window_options("B", 120., 80.), move |_| {
-                Button::new("B")
+                ActionSurface::new("B")
                     .on_press({
                         let hits = b_observed.clone();
                         move || hits.set(hits.get() + 1)

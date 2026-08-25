@@ -17,19 +17,19 @@ pub fn build_interactive_canvas(state: &StudioState, theme: &StudioTheme) -> Wid
             .style(TextStyle::new().font_size(11.0).color(theme.text_secondary))
             .into(),
         SizedBox::new().width(12.0).into(),
-        Button::new("➕")
+        MaterialButton::new("➕")
             .on_click(move || {
                 zoom_in_sig.set((zoom_in_sig.get() * 1.15).min(5.0));
             })
             .into(),
         SizedBox::new().width(6.0).into(),
-        Button::new("➖")
+        MaterialButton::new("➖")
             .on_click(move || {
                 zoom_out_sig.set((zoom_out_sig.get() / 1.15).max(0.2));
             })
             .into(),
         SizedBox::new().width(6.0).into(),
-        Button::new("Reset")
+        MaterialButton::new("Reset")
             .on_click(move || {
                 zoom_reset_sig.set(1.0);
             })

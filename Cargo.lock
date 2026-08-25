@@ -1698,6 +1698,7 @@ dependencies = [
  "incular-linux",
  "incular-macos",
  "incular-macros",
+ "incular-material",
  "incular-navigation",
  "incular-painting",
  "incular-platform",
@@ -1892,6 +1893,16 @@ dependencies = [
 [[package]]
 name = "incular-macros"
 version = "0.1.0"
+
+[[package]]
+name = "incular-material"
+version = "0.1.0"
+dependencies = [
+ "incular-controls",
+ "incular-core",
+ "incular-text",
+ "incular-widgets",
+]
 
 [[package]]
 name = "incular-navigation"

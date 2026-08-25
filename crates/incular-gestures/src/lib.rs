@@ -229,10 +229,10 @@ pub struct GestureCallbacks {
     pub on_long_press: Option<Rc<dyn Fn()>>,
     pub on_pan_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives a pan whose first slop-exceeding movement was horizontal.
-    /// It competes with vertical drags in a retained `GestureRegion`.
+    /// It competes with vertical drags in a retained `GestureDetector`.
     pub on_horizontal_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives a pan whose first slop-exceeding movement was vertical.
-    /// It competes with horizontal drags in a retained `GestureRegion`.
+    /// It competes with horizontal drags in a retained `GestureDetector`.
     pub on_vertical_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Receives the active focal point and relative distance for a retained
     /// multi-pointer region. Single-pointer recognizers ignore this callback.

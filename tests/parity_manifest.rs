@@ -404,21 +404,17 @@ fn canonical_flutter_core_widgets_inventory_has_no_silently_omitted_names() {
         "ExcludeFocus",
         "ExcludeFocusTraversal",
         "ShortcutRegistrar",
-        // Selection & Radio
-        "SelectionArea",
-        "SelectableText",
+        // Selection & Radio (core primitives; Material selection wrappers are
+        // checked in the Material inventory below)
         "SelectableRegion",
         "SelectionContainer",
         "SelectionListener",
         "RadioGroup",
         "RawRadio",
         // Forms
+        "EditableText",
         "Form",
-        "TextFormField",
         "FormField",
-        "TextField",
-        "TextArea",
-        "Autocomplete",
         "RawAutocomplete",
         "AutocompleteHighlightedOption",
         "AutofillGroup",
@@ -465,7 +461,6 @@ fn canonical_flutter_core_widgets_inventory_has_no_silently_omitted_names() {
         "Text",
         "Icon",
         "Image",
-        "Button",
     ];
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
@@ -482,6 +477,53 @@ fn canonical_flutter_core_widgets_inventory_has_no_silently_omitted_names() {
             "canonical Flutter widget {widget:?} is missing from flutter_api_parity.jsonl"
         );
     }
+}
+
+#[test]
+fn canonical_flutter_material_widgets_live_in_the_material_layer() {
+    let canonical_material_widgets: &[&str] = &[
+        "ElevatedButton",
+        "FilledButton",
+        "OutlinedButton",
+        "TextButton",
+        "MaterialButton",
+        "RawMaterialButton",
+        "TextField",
+        "TextFormField",
+        "Autocomplete",
+        "SelectableText",
+        "SelectionArea",
+    ];
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
+    let source = fs::read_to_string(&path).expect("flutter API parity manifest must be checked in");
+    let manifest_names: HashSet<&str> = source
+        .lines()
+        .filter_map(|line| json_string_field(line.trim(), "flutter"))
+        .collect();
+
+    for widget in canonical_material_widgets {
+        assert!(
+            manifest_names.contains(widget),
+            "canonical Flutter Material widget {widget:?} is missing from flutter_api_parity.jsonl"
+        );
+    }
+}
+
+#[test]
+fn parity_manifest_does_not_invent_non_flutter_core_widget_names() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/flutter_api_parity.jsonl");
+    let source = fs::read_to_string(&path).expect("flutter API parity manifest must be checked in");
+    let manifest_names: HashSet<&str> = source
+        .lines()
+        .filter_map(|line| json_string_field(line.trim(), "flutter"))
+        .collect();
+
+    assert!(!manifest_names.contains("Button"));
+    assert!(!manifest_names.contains("RawButton"));
+    assert!(!manifest_names.contains("GestureRegion"));
+    assert!(!manifest_names.contains("SliverBox"));
+    assert!(!manifest_names.contains("TextArea"));
+    assert!(manifest_names.contains("EditableText"));
 }
 
 fn json_string_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {

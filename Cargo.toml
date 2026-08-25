@@ -26,7 +26,7 @@ incremental = false
 incremental = false
 
 [dev-dependencies]
-incular = { path = "crates/incular", default-features = false }
+incular = { path = "crates/incular", default-features = false, features = ["material"] }
 serde_json = { workspace = true }
 
 [workspace.package]
@@ -50,6 +50,7 @@ incular-layout = { path = "crates/incular-layout", version = "0.1.0" }
 incular-navigation = { path = "crates/incular-navigation", version = "0.1.0" }
 incular-scroll = { path = "crates/incular-scroll", version = "0.1.0" }
 incular-macros = { path = "crates/incular-macros", version = "0.1.0" }
+incular-material = { path = "crates/incular-material", version = "0.1.0" }
 incular-ios = { path = "crates/incular-ios", version = "0.1.0" }
 incular-linux = { path = "crates/incular-linux", version = "0.1.0" }
 incular-macos = { path = "crates/incular-macos", version = "0.1.0" }

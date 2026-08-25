@@ -73,7 +73,7 @@ fn main() {
         CustomScrollView::new(vec![
             Box::new(SliverAppBar::new(app_bar()).expanded_height(64.).pinned(true))
                 as Box<dyn Sliver>,
-            Box::new(SliverBox::new(Padding::all(
+            Box::new(SliverToBoxAdapter::new(Padding::all(
                 20.,
                 Column::new([
                     label("Unified slivers", BLUE, 30.),

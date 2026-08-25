@@ -63,13 +63,13 @@ fn inspector_builder(
                     .into(),
                 Text::new(format!("Shared counter: {shared_value}")).into(),
                 Text::new(format!("Inspector-local counter: {local_value}")).into(),
-                Button::new("Increment shared counter")
+                RawMaterialButton::new("Increment shared counter")
                     .on_press({
                         let shared_count = shared_count.clone();
                         move || shared_count.update(|value| *value += 1)
                     })
                     .into(),
-                Button::new("Increment inspector state")
+                RawMaterialButton::new("Increment inspector state")
                     .on_press(move || local_count.update(|value| *value += 1))
                     .into(),
                 Text::new(
@@ -187,7 +187,7 @@ fn main() {
                 .unwrap_or_else(|| "custom/in-memory restoration store".into());
             let items = (1..=48)
                 .map(|index| {
-                    Button::new(format!("Persistent scroll item {index:02}"))
+                    RawMaterialButton::new(format!("Persistent scroll item {index:02}"))
                         .color(Color::rgba(42, 70 + (index % 5) as u8 * 20, 116, 255))
                         .into()
                 })
@@ -211,13 +211,13 @@ fn main() {
                     ))
                     .into(),
                     Widget::row(vec![
-                        Button::new("Increment persistent counter")
+                        RawMaterialButton::new("Increment persistent counter")
                             .on_press({
                                 let count = count.clone();
                                 move || count.update(|value| *value += 1)
                             })
                             .into(),
-                        Button::new("Open restorable inspector")
+                        RawMaterialButton::new("Open restorable inspector")
                             .on_press({
                                 let opener = opener.clone();
                                 let count = count.clone();
@@ -232,20 +232,21 @@ fn main() {
                                 }
                             })
                             .into(),
-                        Button::new("Reset restoration for next launch")
+                        RawMaterialButton::new("Reset restoration for next launch")
                             .on_press({
                                 let restoration = restoration.clone();
                                 move || restoration.reset()
                             })
                             .into(),
                     ]),
-                    TextArea::new(editor)
+                    TextField::new(editor)
+                        .multiline(true)
                         .placeholder("Persistent text")
                         .size(Size::new(720., 92.))
                         .into(),
                     current.presented_child(),
                     Widget::row(vec![
-                        Button::new("Push restorable details")
+                        RawMaterialButton::new("Push restorable details")
                             .on_press({
                                 let registry = registry_for_build.clone();
                                 let navigator = navigator.clone();
@@ -267,7 +268,7 @@ fn main() {
                                 }
                             })
                             .into(),
-                        Button::new("Pop route")
+                        RawMaterialButton::new("Pop route")
                             .on_press({
                                 let navigator = navigator.clone();
                                 let navigation = navigation.clone();
@@ -279,7 +280,7 @@ fn main() {
                                 }
                             })
                             .into(),
-                        Button::new("Flush snapshot")
+                        RawMaterialButton::new("Flush snapshot")
                             .on_press(move || restoration.flush())
                             .into(),
                     ]),

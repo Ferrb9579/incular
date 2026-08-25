@@ -15,6 +15,8 @@ mod forms;
 mod gestures;
 mod hero;
 mod implicit_animations;
+#[doc(hidden)]
+pub mod internal;
 pub mod layout;
 mod navigation_scopes;
 mod painting_effects;

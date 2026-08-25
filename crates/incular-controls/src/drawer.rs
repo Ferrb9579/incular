@@ -5,7 +5,8 @@ use incular_config::EdgeInsets;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::{
-    BorderRadius, BoxDecoration, Button, Container, ExplicitSemantics, Positioned, Stack, Widget,
+    BorderRadius, BoxDecoration, Container, ExplicitSemantics, Positioned, Stack, Widget,
+    internal::ActionSurface,
 };
 use std::rc::Rc;
 
@@ -99,7 +100,7 @@ impl From<Root> for Widget {
         let mut children = vec![base];
         if value.modal {
             let close = value.on_open_change.clone();
-            let hit = Button::with_child(
+            let hit = ActionSurface::with_child(
                 Container::new()
                     .width(1.)
                     .height(1.)

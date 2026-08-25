@@ -120,7 +120,7 @@ fn main() {
                 .radius(12.),
             )
             .into(),
-            Button::new("Fade")
+            RawMaterialButton::new("Fade")
                 .on_press(move || {
                     let target = if fade_target_button.get() { 1. } else { 0.1 };
                     fade_target_button.set(!fade_target_button.get());

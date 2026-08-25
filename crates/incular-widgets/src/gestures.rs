@@ -295,9 +295,6 @@ impl From<GestureDetector> for Widget {
     }
 }
 
-/// Compatibility alias for [`GestureDetector`].
-pub type GestureRegion = GestureDetector;
-
 /// A widget that makes its subtree invisible to hit testing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IgnorePointer {

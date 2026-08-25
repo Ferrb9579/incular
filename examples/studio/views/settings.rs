@@ -261,7 +261,7 @@ pub fn build_settings_view(
     let reset_auto_sig = auto_save_sig.clone();
     let reset_theme_sig = theme_sig.clone();
     let reset_loc_sig = locale_sig.clone();
-    let reset_btn = Button::with_child(
+    let reset_btn = MaterialButton::with_child(
         Container::new()
             .padding(EdgeInsets::symmetric(12.0, 8.0))
             .decoration(

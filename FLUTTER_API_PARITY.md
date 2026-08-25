@@ -1,10 +1,13 @@
 # Incular Flutter Widget & Public API Parity Specification
-This document details the exhaustive public widget architecture and API parity between **Flutter Core** (`package:flutter/widgets.dart`) and **Incular**.
+This document details the public widget architecture and API parity between
+**Flutter Core** (`package:flutter/widgets.dart`), **Flutter Material**
+(`package:flutter/material.dart`), and **Incular**. Core primitives and
+Material components are intentionally tracked separately.
 Every canonical Flutter core widget is explicitly tracked in [`specs/flutter_api_parity.jsonl`](file:///home/fanisus/CODEBASE/incular/specs/flutter_api_parity.jsonl) with an authoritative status (`IMPLEMENTED`, `MERGED`, `DEFERRED`, `SKIPPED`, `INTERNAL`). No silently omitted names.
 ---
 ## 1. Parity Status Overview
-Total Flutter APIs audited: **262**
-- **IMPLEMENTED**: 244
+Total Flutter APIs audited: **336**
+- **IMPLEMENTED**: 318
 - **MERGED**: 11
 - **INTERNAL**: 3
 - **DEFERRED**: 3
@@ -225,7 +228,7 @@ Total Flutter APIs audited: **262**
 | **`SliverPadding`** | SliverPadding | `IMPLEMENTED` | `incular::prelude::SliverPadding` | Insets padding around child sliver. |
 | **`SliverAppBar`** | SliverAppBar | `IMPLEMENTED` | `incular::prelude::SliverAppBar` | Expandable and pinnable sliver app bar header. |
 | **`SliverPersistentHeader`** | SliverPersistentHeader | `IMPLEMENTED` | `incular::prelude::SliverPersistentHeader` | Pinned or floating persistent header sliver. |
-| **`SliverToBoxAdapter`** | SliverBox | `IMPLEMENTED` | `incular::prelude::SliverBox` | Adapts an arbitrary box widget into a sliver viewport. |
+| **`SliverToBoxAdapter`** | SliverToBoxAdapter | `IMPLEMENTED` | `incular::prelude::SliverToBoxAdapter` | Adapts an arbitrary box widget into a sliver viewport. |
 | **`SliverFixedExtentList`** | SliverFixedExtentList | `IMPLEMENTED` | `incular::prelude::SliverFixedExtentList` | Sliver list with fixed item extents. |
 | **`SliverVariedExtentList`** | SliverVariedExtentList | `IMPLEMENTED` | `incular::prelude::SliverVariedExtentList` | Sliver list with variable item extents. |
 | **`SliverPrototypeExtentList`** | SliverPrototypeExtentList | `IMPLEMENTED` | `incular::prelude::SliverPrototypeExtentList` | Sliver list taking extent from a prototype widget. |
@@ -299,8 +302,8 @@ Total Flutter APIs audited: **262**
 
 | Flutter API | Incular Equivalent | Status | Public Path | Notes |
 |---|---|---|---|---|
-| **`SelectionArea`** | SelectionArea | `IMPLEMENTED` | `incular::prelude::SelectionArea` | Enables multi-paragraph text selection with SelectionAreaController. |
-| **`SelectableText`** | SelectableText | `IMPLEMENTED` | `incular::prelude::SelectableText` | Selectable read-only text with cursor and copy interaction. |
+| **`SelectionArea`** | SelectionArea | `IMPLEMENTED` | `incular::material::SelectionArea` | Material selection wrapper over the core SelectionAreaController. |
+| **`SelectableText`** | SelectableText | `IMPLEMENTED` | `incular::material::SelectableText` | Material selectable read-only text wrapper over the core selection primitive. |
 | **`SelectableRegion`** | SelectableRegion | `IMPLEMENTED` | `incular::prelude::SelectableRegion` | An area that supports pointer-based text selection. |
 | **`SelectionContainer`** | SelectionContainer | `IMPLEMENTED` | `incular::prelude::SelectionContainer` | A container that hosts and manages selectable content. |
 | **`SelectionListener`** | SelectionListener | `IMPLEMENTED` | `incular::prelude::SelectionListener` | Listens for selection geometry and state changes. |
@@ -312,11 +315,11 @@ Total Flutter APIs audited: **262**
 | Flutter API | Incular Equivalent | Status | Public Path | Notes |
 |---|---|---|---|---|
 | **`Form`** | Form | `IMPLEMENTED` | `incular::prelude::Form` | Form container coordinating field registration, validation, saving, and reset. |
-| **`TextFormField`** | TextFormField | `IMPLEMENTED` | `incular::prelude::TextFormField` | Convenience text form field integrating TextEditingController with form validation. |
+| **`TextFormField`** | TextFormField | `IMPLEMENTED` | `incular::material::TextFormField` | Material convenience field composed with the core Form/FormField model. |
 | **`FormField`** | GenericFormField | `IMPLEMENTED` | `incular::prelude::GenericFormField` | Generic FormField widget managing arbitrary typed form state and validation. |
-| **`TextField`** | TextField | `IMPLEMENTED` | `incular::prelude::TextField` | Interactive single-line text input field with cursor positioning, selection, and keyboard input. |
-| **`TextArea`** | TextArea | `IMPLEMENTED` | `incular::prelude::TextArea` | Multi-line text editor with line wrapping and vertical cursor navigation. |
-| **`Autocomplete`** | Autocomplete | `IMPLEMENTED` | `incular::prelude::Autocomplete` | Filters options based on text input query with keyboard selection. |
+| **`EditableText`** | EditableText | `IMPLEMENTED` | `incular::prelude::EditableText` | Renderer-neutral retained editor with cursor, IME, selection, and multiline mode. |
+| **`TextField`** | TextField | `IMPLEMENTED` | `incular::material::TextField` | Material text input wrapper; multiline editing uses `max_lines` rather than a separate TextArea class. |
+| **`Autocomplete`** | Autocomplete | `IMPLEMENTED` | `incular::material::Autocomplete` | Filters options based on text input query with keyboard selection. |
 | **`RawAutocomplete`** | RawAutocomplete | `IMPLEMENTED` | `incular::prelude::RawAutocomplete` | Core autocomplete widget coordinating text input with options view. |
 | **`AutocompleteHighlightedOption`** | AutocompleteHighlightedOption | `IMPLEMENTED` | `incular::prelude::AutocompleteHighlightedOption` | Highlights currently focused option in autocomplete view. |
 | **`AutofillGroup`** | AutofillGroup | `IMPLEMENTED` | `incular::prelude::AutofillGroup` | Coordinates autofill context across text input descendants. |
@@ -393,9 +396,13 @@ Total Flutter APIs audited: **262**
 |---|---|---|---|---|
 | **`Image`** | Image | `IMPLEMENTED` | `incular::prelude::Image` | Raster image widget with ImageFit (Contain, Cover, Fill, FitWidth, FitHeight, None) and repeat. |
 
-### High-Level Components (1)
+### Material Components
 
 | Flutter API | Incular Equivalent | Status | Public Path | Notes |
 |---|---|---|---|---|
-| **`Button`** | Button | `IMPLEMENTED` | `incular::prelude::Button` | High-level clickable button component with on_press handler, styling, and child label. |
-
+| **`ElevatedButton`** | ElevatedButton | `IMPLEMENTED` | `incular::material::ElevatedButton` | High-emphasis Material button. |
+| **`FilledButton`** | FilledButton | `IMPLEMENTED` | `incular::material::FilledButton` | Filled Material button. |
+| **`OutlinedButton`** | OutlinedButton | `IMPLEMENTED` | `incular::material::OutlinedButton` | Outlined Material button. |
+| **`TextButton`** | TextButton | `IMPLEMENTED` | `incular::material::TextButton` | Low-emphasis text Material button. |
+| **`MaterialButton`** | MaterialButton | `IMPLEMENTED` | `incular::material::MaterialButton` | Lower-level Material button vocabulary; prefer a concrete variant for new code. |
+| **`RawMaterialButton`** | RawMaterialButton | `IMPLEMENTED` | `incular::material::RawMaterialButton` | Low-level Material action surface; intentionally not part of the core widgets layer. |

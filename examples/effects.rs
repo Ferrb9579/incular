@@ -105,7 +105,7 @@ fn main() {
             )
             .into(),
             Widget::row(vec![
-                Button::new("Animate blur")
+                RawMaterialButton::new("Animate blur")
                     .on_press(move || {
                         let target = if blur_target_button.get() { 2. } else { 18. };
                         blur_target_button.set(!blur_target_button.get());
@@ -116,7 +116,7 @@ fn main() {
                         );
                     })
                     .into(),
-                Button::new("Move shadow")
+                RawMaterialButton::new("Move shadow")
                     .on_press(move || {
                         let target = if shadow_target_button.get() { 4. } else { 22. };
                         shadow_target_button.set(!shadow_target_button.get());

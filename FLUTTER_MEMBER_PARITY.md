@@ -6,6 +6,14 @@
 > **Total Audited Canonical Members**: `471`
 > **Resolution Rate**: `100% (0 unresolved)`
 
+> **Package boundary note (2026-08-25):** “Resolved” means every audited
+> member has an explicit mapping or disposition; it does not claim that every
+> Flutter implementation detail is identical. Core `widgets` primitives are
+> kept in `incular-widgets`, while Material-only names (`TextField`,
+> `TextFormField`, `SelectableText`, `SelectionArea`, `Autocomplete`, and the
+> concrete button families) are exposed from `incular-material`. Incular
+> extensions such as `VirtualList` remain explicitly classified as extensions.
+
 ## Executive Summary
 
 Task 19 establishes API soundness, Flutter 3.47 stable baseline conformance, and a single unified canonical API graph.
@@ -563,4 +571,3 @@ Every canonical public type in Incular provides Flutter-equivalent semantics map
 | `TextStyle.wordSpacing` | `property` | `TextStyle::word_spacing` | `incular-text` | `implemented` | Direct idiomatic mapping |
 | `TextWidthBasis.longestLine` | `enum_variant` | `TextWidthBasis::longest_line` | `incular-text` | `implemented` | Direct idiomatic mapping |
 | `TextWidthBasis.parent` | `enum_variant` | `TextWidthBasis::parent` | `incular-text` | `implemented` | Direct idiomatic mapping |
-

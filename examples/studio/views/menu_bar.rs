@@ -32,7 +32,7 @@ pub fn build_menu_bar(state: &StudioState, theme: &StudioTheme, locale: &StudioL
     );
 
     // Command palette button
-    let palette_btn = Button::with_child(
+    let palette_btn = MaterialButton::with_child(
         Container::new()
             .padding(EdgeInsets::symmetric(8.0, 4.0))
             .decoration(

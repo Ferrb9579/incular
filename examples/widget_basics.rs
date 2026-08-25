@@ -6,14 +6,14 @@ use incular::prelude::*;
 fn main() {
     let app = Application::new(|_cx| {
         // 1. Unstyled neutral Button: sizes strictly to its child, transparent background
-        let neutral_button = Button::with_child(
+        let neutral_button = RawMaterialButton::with_child(
             Text::new("Neutral Button (Unstyled)")
                 .style(TextStyle::new().font_size(13.0).color(Color::WHITE)),
         )
         .on_click(|| println!("Clicked unstyled button"));
 
         // 2. Application-styled Button: uses Container for padding, background, border, radius
-        let styled_button = Button::with_child(
+        let styled_button = RawMaterialButton::with_child(
             Container::new()
                 .padding(EdgeInsets::symmetric(14.0, 8.0))
                 .decoration(

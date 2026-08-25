@@ -2,7 +2,7 @@ use incular_config::Constraints;
 use incular_core::{Color, Size};
 use incular_rendering::PaintCommand;
 use incular_text::{LineHeight, TextStyle};
-use incular_widgets::*;
+use incular_widgets::{internal::ActionSurface, *};
 
 #[test]
 fn container_empty_expands_when_bounded_shrinks_when_unbounded_and_paints_nothing() {
@@ -51,7 +51,7 @@ fn container_empty_expands_when_bounded_shrinks_when_unbounded_and_paints_nothin
 fn button_with_child_sizes_strictly_to_child_and_is_unpainted() {
     let mut tree = WidgetTree::new();
     let child = SizedBox::new().width(50.0).height(25.0);
-    let button = Button::with_child(child);
+    let button = ActionSurface::with_child(child);
     let root = tree.mount(button.into()).unwrap();
 
     tree.layout(Constraints::loose(Size::new(500.0, 500.0)));
@@ -74,7 +74,7 @@ fn button_with_child_sizes_strictly_to_child_and_is_unpainted() {
 fn button_with_color_paints_background_rrect() {
     let mut tree = WidgetTree::new();
     let child = SizedBox::new().width(60.0).height(30.0);
-    let button = Button::with_child(child).color(Color::rgba(100, 150, 200, 255));
+    let button = ActionSurface::with_child(child).color(Color::rgba(100, 150, 200, 255));
     let _root = tree.mount(button.into()).unwrap();
 
     tree.layout(Constraints::loose(Size::new(500.0, 500.0)));

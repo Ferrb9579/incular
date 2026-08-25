@@ -4,7 +4,9 @@ use crate::{Button, ButtonVariant, ControlTheme};
 use incular_config::Alignment;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Button as RawButton, ExplicitSemantics, OpacityController, Stack, Widget};
+use incular_widgets::{
+    ExplicitSemantics, OpacityController, Stack, Widget, internal::ActionSurface,
+};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -97,7 +99,7 @@ impl Toggle {
         }
 
         // Keep both visual variants mounted and cross-fade their retained
-        // surfaces.  The transparent raw button below remains the sole hit
+        // surfaces.  The transparent action surface below remains the sole hit
         // target and semantic node, so the transition never duplicates input
         // or accessibility actions.
         let selected_visual = Widget::ignore_pointer(
@@ -129,7 +131,7 @@ impl Toggle {
         let selected_opacity = self.selected_opacity.clone();
         let unselected_opacity = self.unselected_opacity.clone();
         let callback = self.on_change.clone();
-        let mut button = RawButton::with_child(visual)
+        let mut button = ActionSurface::with_child(visual)
             .color(Color::TRANSPARENT)
             .disabled_color(theme.colors.disabled_surface)
             .enabled(self.enabled);

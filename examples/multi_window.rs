@@ -19,13 +19,13 @@ fn main() {
                 .color(Color::rgba(215, 232, 255, 255))
                 .into(),
             Padding::all(10., Text::new(format!("Shared count: {value}"))).into(),
-            Button::new("Increment shared count")
+            RawMaterialButton::new("Increment shared count")
                 .on_press({
                     let count = primary_count.clone();
                     move || count.update(|value| *value += 1)
                 })
                 .into(),
-            Button::new("Open Counter Window")
+            RawMaterialButton::new("Open Counter Window")
                 .on_press(move || {
                     let count = shared_count.clone();
                     let _ = counter_opener.open_window_with(
@@ -39,7 +39,7 @@ fn main() {
                             Widget::column(vec![
                                 Text::new("Counter Window").into(),
                                 Text::new(format!("Shared count: {value}")).into(),
-                                Button::new("Increment")
+                                RawMaterialButton::new("Increment")
                                     .on_press({
                                         let count = count.clone();
                                         move || count.update(|value| *value += 1)
@@ -50,7 +50,7 @@ fn main() {
                     );
                 })
                 .into(),
-            Button::new("Open Inspector Window")
+            RawMaterialButton::new("Open Inspector Window")
                 .on_press({
                     let inspector_count = primary_count.clone();
                     move || {

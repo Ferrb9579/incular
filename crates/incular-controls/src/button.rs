@@ -4,8 +4,8 @@ use incular_config::EdgeInsets;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Button as RawButton, Container, ExplicitSemantics, Text,
-    Widget,
+    Border, BorderRadius, BoxDecoration, Container, ExplicitSemantics, Text, Widget,
+    internal::ActionSurface,
 };
 use std::rc::Rc;
 
@@ -147,7 +147,7 @@ impl Button {
             .padding(padding)
             .decoration(
                 BoxDecoration::new()
-                    // The retained raw button owns the state-aware surface;
+                    // The retained action surface owns the state-aware surface;
                     // keeping this wrapper transparent lets hover/pressed
                     // paint updates remain visible instead of being covered
                     // by a second opaque decoration.
@@ -157,7 +157,7 @@ impl Button {
             )
             .child(content);
 
-        let mut raw = RawButton::with_child(decorated)
+        let mut raw = ActionSurface::with_child(decorated)
             .color(bg)
             .hover_color(hover_bg)
             .pressed_color(pressed_bg)

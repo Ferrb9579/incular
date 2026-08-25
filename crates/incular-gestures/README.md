@@ -9,7 +9,8 @@ keyboard shortcut dispatch. It depends only on
 primitives rather than the other way around.
 
 `GestureDetector::observe` selects an action without calling application code;
-`GestureRegion` uses that boundary to wait for `GestureArena` arbitration.
+the retained `GestureDetector` adapter uses that boundary to wait for
+`GestureArena` arbitration.
 Direct `GestureDetector::handle` remains available for standalone use. Arena
 keys include both window and pointer identity. Scale members explicitly opt
 into simultaneous compatibility, while tap, long-press, pan, and directional

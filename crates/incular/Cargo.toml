@@ -113,9 +113,10 @@ devtools = [
     "incular-runtime/devtools",
     "incular-widgets/devtools",
 ]
-default = ["desktop", "controls"]
+default = ["desktop", "controls", "material"]
 desktop = ["dep:incular-platform", "dep:incular-wgpu", "dep:incular-linux", "dep:incular-windows", "dep:incular-macos"]
 controls = ["dep:incular-controls"]
+material = ["controls", "dep:incular-material"]
 
 [dependencies]
 incular-accessibility = { workspace = true }
@@ -126,6 +127,7 @@ incular-image = { workspace = true }
 incular-core = { workspace = true }
 incular-config = { workspace = true }
 incular-controls = { workspace = true, optional = true }
+incular-material = { workspace = true, optional = true }
 incular-gestures = { workspace = true }
 incular-layout = { workspace = true }
 incular-navigation = { workspace = true }

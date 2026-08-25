@@ -211,12 +211,12 @@
   cyclic Tab/Shift+Tab traversal, and weak registration cleanup.
 - [x] Typed `Command` / `Actions` dispatch bound through `Shortcuts`.
 - [x] Retained-tree pointer/gesture dispatch via facade-exported
-  `GestureRegion`, including hit-tested down-sequence capture, nested
+  `GestureDetector`, including hit-tested down-sequence capture, nested
   hit-ancestor arena arbitration, cancellation, and runtime routing before
   button handling.
 - [x] Identified multi-pointer dispatch: `PointerWithId` preserves contact
   identity, retained regions capture sequences independently, and
-  `GestureRegion.on_scale_update` claims compatible scale members across
+  `GestureDetector.on_scale_update` claims compatible scale members across
   contacts before callbacks are emitted.
 - [x] Per-window/pointer gesture arenas: tap/long-press/drag/scale candidates
   enter pending, exclusive recognizers cancel losers, and scale is explicitly
@@ -321,7 +321,7 @@
   `Page`, `Dialog`, and `BottomSheet`, and
   `CustomScrollView`, `SliverList`, and `SliverGrid`, plus `ImageRepeat` and
   `CustomPaint` and `RepaintBoundary`,
-  `RouteRegistry`, `RouteTransition`, `GestureRegion`, `DragGestureDetector`,
+  `RouteRegistry`, `RouteTransition`, `GestureDetector`, `DragGestureDetector`,
   `ScaleGestureDetector`, `FadeTransition`, `SlideTransition`, and
   `Transition`, through the `incular` facade prelude.
 - [ ] Dedicated parity-validation tests for every listed Flutter API.

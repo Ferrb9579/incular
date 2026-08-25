@@ -42,6 +42,17 @@ fn facade_exposes_the_extracted_subsystems() {
 }
 
 #[test]
+fn facade_exposes_material_components_at_the_material_boundary() {
+    let controller = TextEditingController::with_text("Ada");
+    let _: Widget = ElevatedButton::new("Save").into();
+    let _: Widget = OutlinedButton::new("Cancel").into();
+    let _: Widget = TextButton::new("Later").into();
+    let _: Widget = TextField::new(controller).max_lines(None).into();
+    let _: Widget = SelectableText::new("copy me").into();
+    let _: Widget = SelectionArea::new(Text::new("select me")).into();
+}
+
+#[test]
 fn facade_exposes_variable_extent_lazy_lists() {
     let index = MeasuredExtentIndex::new(10, 32.);
     let controller = ScrollController::new();

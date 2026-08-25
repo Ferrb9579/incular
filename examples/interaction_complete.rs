@@ -141,7 +141,7 @@ fn main() {
                 nested_surface.into(),
                 ignore_demo,
                 absorb_demo,
-                Button::new("Reset interaction status")
+                RawMaterialButton::new("Reset interaction status")
                     .on_press(move || {
                         reset_horizontal.set(0);
                         reset_vertical.set(0);

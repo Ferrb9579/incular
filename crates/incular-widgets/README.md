@@ -1,8 +1,11 @@
 # incular-widgets
 
-Widget contracts, the widget tree, built-in components, layout integration,
-build context, lifecycle, and future state handling for Incular. Components
-such as buttons, text fields, lists, and containers belong in this crate.
+Widget contracts, the widget tree, built-in renderer-neutral primitives, layout
+integration, build context, lifecycle, and future state handling for Incular.
+Design-system components live in sibling packages. In particular, this crate
+exports `EditableText` for editing and gesture/focus primitives for composing
+custom interactions; Material `ElevatedButton`/`TextField`/`TextFormField` and
+`RawMaterialButton` belong to `incular-material`.
 
 `Image` uses decoded intrinsic dimensions for layout and supports explicit
 width/height plus `Fill`, `Contain`, `Cover`, `None`, and `ScaleDown` fits.
@@ -18,7 +21,7 @@ paint caches are regenerated only for paint-dirty render objects.
 
 This crate depends on core, layout, painting, and the platform-neutral
 `incular-gestures` recognizers; it owns neither scheduling, native input loops,
-nor GPU resources. `GestureRegion` is the retained-tree adapter, while pointer
+nor GPU resources. `GestureDetector` is the retained-tree adapter, while pointer
 event values and recognition state are owned by `incular-gestures`.
 
 ## Vector painting
@@ -39,25 +42,25 @@ raw OS events.
 ## Focused editable text
 
 `TextEditingController` owns a UTF-8 buffer, base/extent selection and active
-IME preedit independently of a rebuilt `TextField` description. Edits use
+IME preedit independently of a rebuilt `EditableText` description. Edits use
 extended grapheme cluster boundaries (ICU4X `icu_segmenter` compiled data), while public
 selection offsets remain valid UTF-8 byte offsets for direct Rust slicing.
-`TextField` is intentionally single-line: Enter calls `on_submit` and never
-inserts a newline. `TextArea` shares the same controller but shapes a wrapped
-paragraph in a fixed viewport; Enter and Shift+Enter replace the selection with
-a hard newline, ArrowUp/Down and Home/End use shaped-line geometry, and the
-caret keeps itself vertically visible. Selection painting is line-by-line.
-Neither control implements bidi visual cursor movement yet.
+`EditableText` is the renderer-neutral primitive: its `.multiline(true)` mode
+inserts hard newlines and uses shaped-line geometry for ArrowUp/Down and
+Home/End. Material `TextField` adds themed chrome and exposes the Flutter-style
+`max_lines`/`multiline` API. Selection painting is line-by-line. Neither
+control implements bidi visual cursor movement yet.
 
 ## Read-only selection
 
-`SelectableText` has no mutable text buffer, caret, or IME route. Wrap one or
-more labels in `SelectionArea` to select across them with pointer drag or
-Shift+Arrow and copy with Ctrl/Cmd+C. Its coordinator derives caret positions
-and selection rectangles from the cached Parley-backed layout, including
-wrapped, mixed-font, and bidirectional text; selection changes only repaint
-the highlight and never reshape or rerasterize glyphs. Keep the optional
-`SelectionAreaController` when application code needs the copied selection.
+The core selection primitives (`SelectableRegion`, `SelectionContainer`, and
+`SelectionListener`) have no mutable text buffer, caret, or IME route. The
+Material package provides `SelectableText` and `SelectionArea` descriptors that
+wrap these primitives. Their coordinator derives caret positions and selection
+rectangles from the cached Parley-backed layout, including wrapped, mixed-font,
+and bidirectional text; selection changes only repaint the highlight and never
+reshape or rerasterize glyphs. Keep the optional `SelectionAreaController` when
+application code needs the copied selection.
 
 ## Opt-in editor and form restoration
 

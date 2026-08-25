@@ -14,7 +14,8 @@ fn main() {
                 .size(Size::new(320., 42.))
                 .into(),
             Text::new("Multiline (Enter and Shift+Enter add a line)").into(),
-            TextArea::new(note.clone())
+            TextField::new(note.clone())
+                .multiline(true)
                 .placeholder("Type Unicode or use an IME")
                 .size(Size::new(320., 180.))
                 .into(),

@@ -2,7 +2,7 @@
 //!
 //! Tap the panel, drag with one pointer, or use a touchscreen to pinch with
 //! two contacts. The status labels and the translated card are rebuilt from
-//! the callbacks owned by `GestureRegion`.
+//! the callbacks owned by `GestureDetector`.
 use incular::prelude::*;
 use std::rc::Rc;
 
@@ -87,7 +87,7 @@ fn main() {
             )
             .callbacks(callbacks)
             .into(),
-            Button::new("Reset interaction")
+            RawMaterialButton::new("Reset interaction")
                 .on_press(move || {
                     reset_pan.set(Offset::ZERO);
                     reset_scale.set(1.);

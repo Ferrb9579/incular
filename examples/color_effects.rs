@@ -138,7 +138,7 @@ fn main() {
                     .blur(5.)
                     .build(),
             ]),
-            Button::new("Animate saturation")
+            RawMaterialButton::new("Animate saturation")
                 .on_press(move || {
                     let target = if animate_target_for_button.get() {
                         0.

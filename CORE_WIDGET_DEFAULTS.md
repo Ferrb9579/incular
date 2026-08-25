@@ -19,8 +19,8 @@ This document establishes the authoritative framework contract for core widget v
 A foundational Incular widget must **never** inject arbitrary visual styling (such as default blue backgrounds, hardcoded padding, or artificial minimum dimensions) unless that styling is an intrinsic property of the widget's semantic specification.
 
 ### Key Rules
-1. **No Hidden Paint**: Primitive layout widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`) and unstyled semantic controls (`Button`, `TextField`, `TextArea`) emit zero extraneous draw commands into the display list when unconfigured or transparent.
-2. **Child-Driven Sizing**: Interactive controls like `Button` wrap their children tightly and size strictly based on incoming constraints and child intrinsic dimensions.
+1. **No Hidden Paint**: Primitive layout widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`) and unstyled semantic primitives (`GestureDetector`, `EditableText`) emit zero extraneous draw commands into the display list when unconfigured or transparent.
+2. **Child-Driven Sizing**: Material and application controls wrap their children tightly and size strictly based on incoming constraints and child intrinsic dimensions.
 3. **No Hardcoded Color Magic**: Default text styles inherit ambient properties. Buttons do not default to framework-selected blues. Text fields do not default to opaque dark grays.
 
 ---
@@ -31,7 +31,7 @@ Incular organizes UI construction into three cleanly separated tiers:
 
 ```mermaid
 graph TD
-    L1[Layer 1: Structural Primitives\nRow, Column, Stack, SizedBox, Container, Padding] --> L2[Layer 2: Semantic Controls\nButton, TextField, TextArea, SplitView, GestureDetector]
+    L1[Layer 1: Structural Primitives\nRow, Column, Stack, SizedBox, Container, Padding] --> L2[Layer 2: Core Semantics\nEditableText, SplitView, GestureDetector]
     L2 --> L3[Layer 3: Styled Components & Tokens\nstudio_button, Card, DecoratedBox, App Theme]
 ```
 
@@ -42,9 +42,8 @@ graph TD
 
 ### Layer 2: Semantic Controls
 - **Purpose**: Interaction handling, keyboard focus, accessibility roles, and state management.
-- **Widgets**: `Button`, `TextField`, `TextArea`, `SplitView`, `GestureDetector`, `MouseRegion`, `Focus`.
+- **Widgets**: `EditableText`, `SplitView`, `GestureDetector`, `MouseRegion`, `Focus`.
 - **Contract**: Provide full semantic behavior (`SemanticRole::Button`, hover/press state tracking, text editing deltas, caret navigation, hit testing) while remaining visually neutral by default.
-  - `Button::new("Save")` is equivalent to `Button::with_child(Text::new("Save"))` with transparent chrome and zero extra padding.
   - `SplitView` separates hit area from visual divider rendering.
 
 ### Layer 3: Styled Components & Design System
@@ -61,10 +60,7 @@ graph TD
 | `Container::new()` | Expands to bounded parent; shrinks to `0 × 0` if unbounded | `None` (no paint) | `EdgeInsets::ZERO` | `None` | Structural grouping |
 | `Container::with_child(c)` | Sizes to child clamped to constraints | `None` (no paint) | `EdgeInsets::ZERO` | `None` | Passthrough wrapper |
 | `SizedBox::new()` | `0 × 0` or specified `width`/`height` | `None` (no paint) | `EdgeInsets::ZERO` | `None` | Layout constraint |
-| `Button::new(label)` | Natural size of label text | `Color::TRANSPARENT` | `EdgeInsets::ZERO` | `None` | `SemanticRole::Button`, click/hover callbacks |
-| `Button::with_child(child)` | Natural size of child | `Color::TRANSPARENT` | `EdgeInsets::ZERO` | `None` | `SemanticRole::Button`, click/hover callbacks |
-| `TextField::new(ctrl)` | Width: available / 260px; Height: text line height + 16px | `None` (transparent) | `EdgeInsets::ZERO` | Focus underline on focus | `SemanticRole::TextField`, text caret & selection |
-| `TextArea::new(ctrl)` | Width: available / 260px; Height: multiline text height + 16px | `None` (transparent) | `EdgeInsets::ZERO` | Focus underline on focus | `SemanticRole::TextArea`, multiline caret & selection |
+| `EditableText::new(ctrl)` | Natural text size (or explicit size) | `None` (transparent) | `EdgeInsets::ZERO` | `None` | Core editable text, caret, IME, and selection |
 | `SplitView::horizontal/vertical` | Fills available parent constraints | `None` | `EdgeInsets::ZERO` | Unpainted unless `divider_color` set | Interactive dual-pane divider |
 | `Scrollbar` | Width: 8px, Thumb min: 24px | Track: `Color::TRANSPARENT` | `EdgeInsets::ZERO` | `None` | Neutral semi-transparent thumb |
 | `Row` / `Column` / `Flex` | Sized by children along axis, expands/shrinks cross-axis per config | `None` | `EdgeInsets::ZERO` | `None` | Flex layout |
@@ -77,8 +73,8 @@ graph TD
 To prevent developers from needing to construct basic styled buttons and input fields from scratch while preserving unstyled core purity, the `incular-controls` package provides ready-to-use platform-neutral desktop controls:
 
 - **Tokens (`ControlTheme`)**: `ControlColors` (verified accessible contrast for light and dark palettes), `ControlTypography` (6-tier desktop scale), `ControlMetrics` (density-aware heights: 26px compact, 32px standard, 38px comfortable), `ControlMotion`.
-- **Button Suite**: `Button`, `PrimaryButton`, `GhostButton`, `IconButton`.
-- **Form Inputs**: `TextField`, `TextArea` with ambient theme borders, focus rings, and placeholders.
+- **Button Suite**: `Button`, `PrimaryButton`, `GhostButton`, `IconButton` (base controls); Material applications use `ElevatedButton`, `FilledButton`, `OutlinedButton`, and `TextButton` from `incular-material`.
+- **Form Inputs**: `TextField` and `TextFormField` from `incular-material`, with multiline editing selected through `max_lines` rather than a separate `TextArea` class.
 - **Selection & Toggles**: `Checkbox`, `Radio`, `Switch`.
 - **Surfaces**: `Card`, `Divider`, `Scrollbar`.
 - **Architecture**: `incular-widgets` **never** depends on `incular-controls`. Application developers can opt in or substitute alternative component systems (`incular-material`, `incular-fluent`, etc.).

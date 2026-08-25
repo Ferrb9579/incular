@@ -59,7 +59,7 @@ pub fn build_command_palette(state: &StudioState, theme: &StudioTheme) -> Widget
                 .into(),
         ];
 
-        let item = Button::with_child(
+        let item = MaterialButton::with_child(
             Container::new()
                 .padding(EdgeInsets::symmetric(12.0, 8.0))
                 .decoration(

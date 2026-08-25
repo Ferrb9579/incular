@@ -3,7 +3,7 @@
 use crate::{ControlTheme, Switch};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Button as RawButton, ExplicitSemantics, Widget};
+use incular_widgets::{ExplicitSemantics, Widget, internal::ActionSurface};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -76,7 +76,7 @@ impl Root {
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
         if let Some(child) = &self.child {
-            let mut button = RawButton::with_child(child.clone())
+            let mut button = ActionSurface::with_child(child.clone())
                 .color(Color::TRANSPARENT)
                 .disabled_color(theme.colors.disabled_surface)
                 .enabled(self.enabled && !self.read_only);

@@ -1,0 +1,173 @@
+//! Framework-internal retained surfaces.
+//!
+//! These types are exposed only so sibling framework crates can share the
+//! retained implementation. They are intentionally not re-exported from the
+//! public widget prelude and are not part of Incular's Flutter-facing API.
+
+use std::rc::Rc;
+
+use incular_config::EdgeInsets;
+use incular_core::{Color, Size};
+use incular_text::TextStyle;
+
+use crate::{ActionId, Widget};
+
+/// Constructs the retained action node used by runtime and framework tests.
+///
+/// This explicit-ID form is framework plumbing; applications should compose
+/// interactions with `GestureDetector` or use a Material button.
+#[doc(hidden)]
+pub fn action(size: Size, color: Color, action: ActionId) -> Widget {
+    Widget::button(size, color, action)
+}
+
+/// Internal action surface used by control implementations.
+///
+/// Flutter has no `widgets::ActionSurface`. Material's raw button is
+/// `RawMaterialButton`; the public Material crate provides that name as a
+/// compatibility surface over this retained implementation.
+#[doc(hidden)]
+pub struct ActionSurface {
+    pub(crate) label: String,
+    pub(crate) callback: Option<Rc<dyn Fn()>>,
+    pub(crate) hover_callback: Option<Rc<dyn Fn()>>,
+    pub(crate) exit_callback: Option<Rc<dyn Fn()>>,
+    pub(crate) color: Color,
+    pub(crate) hover_color: Option<Color>,
+    pub(crate) pressed_color: Option<Color>,
+    pub(crate) focused_color: Option<Color>,
+    pub(crate) disabled_color: Option<Color>,
+    pub(crate) enabled: bool,
+    pub(crate) focusable_when_disabled: bool,
+    pub(crate) size: Size,
+    pub(crate) label_style: TextStyle,
+    pub(crate) padding: EdgeInsets,
+    pub(crate) content: Option<Widget>,
+}
+
+impl ActionSurface {
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            callback: None,
+            hover_callback: None,
+            exit_callback: None,
+            color: Color::TRANSPARENT,
+            hover_color: None,
+            pressed_color: None,
+            focused_color: None,
+            disabled_color: None,
+            enabled: true,
+            focusable_when_disabled: false,
+            size: Size::ZERO,
+            label_style: TextStyle::default(),
+            padding: EdgeInsets::ZERO,
+            content: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self {
+            label: String::new(),
+            content: Some(child.into()),
+            ..Self::new("")
+        }
+    }
+
+    #[must_use]
+    pub fn on_press(mut self, callback: impl Fn() + 'static) -> Self {
+        self.callback = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_click(self, callback: impl Fn() + 'static) -> Self {
+        self.on_press(callback)
+    }
+
+    #[must_use]
+    pub fn on_hover(mut self, callback: impl Fn() + 'static) -> Self {
+        self.hover_callback = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_exit(mut self, callback: impl Fn() + 'static) -> Self {
+        self.exit_callback = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    #[must_use]
+    pub fn hover_color(mut self, color: Color) -> Self {
+        self.hover_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn pressed_color(mut self, color: Color) -> Self {
+        self.pressed_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn focused_color(mut self, color: Color) -> Self {
+        self.focused_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn disabled_color(mut self, color: Color) -> Self {
+        self.disabled_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn focusable_when_disabled(mut self, value: bool) -> Self {
+        self.focusable_when_disabled = value;
+        self
+    }
+
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    #[must_use]
+    pub fn label_style(mut self, style: TextStyle) -> Self {
+        self.label_style = style;
+        self
+    }
+
+    #[must_use]
+    pub fn padding(mut self, padding: EdgeInsets) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    #[must_use]
+    pub fn content(mut self, content: impl Into<Widget>) -> Self {
+        self.content = Some(content.into());
+        self
+    }
+}
+
+impl From<ActionSurface> for Widget {
+    fn from(value: ActionSurface) -> Self {
+        Widget::action_surface(value)
+    }
+}

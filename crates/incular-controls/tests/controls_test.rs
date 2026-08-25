@@ -180,7 +180,7 @@ fn shared_state_values_resolve_specific_flags() {
 fn retained_button_interaction_keeps_hover_press_and_focus_independent() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::button(
+        .mount(incular_widgets::internal::action(
             Size::new(96.0, 32.0),
             incular_core::Color::WHITE,
             ActionId(1),

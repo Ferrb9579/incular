@@ -119,7 +119,7 @@ fn compact_button(
     selected: bool,
     callback: impl Fn() + 'static,
 ) -> Widget {
-    Button::new(label)
+    RawMaterialButton::new(label)
         .size(Size::new(0., 34.))
         .padding(EdgeInsets::symmetric(12., 7.))
         .label_style(TextStyle {
@@ -1237,7 +1237,7 @@ fn main() {
             }
             let bridge = app_bridge.clone();
             performance_controls.push(
-                Button::new(if recording {
+                RawMaterialButton::new(if recording {
                     "Stop recording"
                 } else {
                     "Start recording"
@@ -1306,7 +1306,7 @@ fn main() {
             let shared = Arc::clone(&app_shared);
             let tick = app_tick.clone();
             inspector_controls.push(
-                Button::new(if select_mode {
+                RawMaterialButton::new(if select_mode {
                     "Stop selecting"
                 } else {
                     "Select widget in target"
@@ -1472,7 +1472,7 @@ fn main() {
                 );
                 let shared = Arc::clone(&app_shared);
                 let tick = app_tick.clone();
-                Button::new(label)
+                RawMaterialButton::new(label)
                     .size(Size::new(0., 34.))
                     .padding(EdgeInsets::symmetric(10., 7.))
                     .label_style(TextStyle {
@@ -1575,7 +1575,7 @@ fn main() {
                 let bridge = app_bridge.clone();
                 let shared = Arc::clone(&app_shared);
                 let tick = app_tick.clone();
-                Button::new(label)
+                RawMaterialButton::new(label)
                     .size(Size::new(0., 34.))
                     .padding(EdgeInsets::symmetric(10., 7.))
                     .label_style(TextStyle {
@@ -1751,7 +1751,7 @@ fn main() {
                         };
                         let toggle_shared = Arc::clone(&list_shared);
                         let toggle_tick = list_tick.clone();
-                        Button::new(if expanded { "Collapse" } else { "Expand" })
+                        RawMaterialButton::new(if expanded { "Collapse" } else { "Expand" })
                             .size(Size::new(28., 28.))
                             .padding(EdgeInsets::all(6.))
                             .content(icon)
@@ -1781,7 +1781,7 @@ fn main() {
                             ),
                         ),
                     );
-                    let selection: Widget = Button::new(label)
+                    let selection: Widget = RawMaterialButton::new(label)
                         .size(Size::new(0., 30.))
                         .content(content)
                         .color(color)

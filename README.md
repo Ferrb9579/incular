@@ -21,7 +21,13 @@ The repository is organized as a layered Cargo workspace:
   lists, canvas recording, and retained compositor layers.
 - `incular-painting` is a source-compatible compatibility import for
   `incular-rendering`.
-- `incular-widgets` will provide the widget, layout, and built-in component model.
+- `incular-widgets` provides renderer-neutral widget, layout, and retained
+  primitive behavior (`EditableText`, gesture/focus composition, selection,
+  forms, and viewports).
+- `incular-controls` provides a platform-neutral themed control engine.
+- `incular-material` provides the Flutter Material-shaped application layer
+  (`ElevatedButton`, `TextField`, `TextFormField`, selection, dialogs, menus,
+  and the other Material components).
 - `incular-platform` provides shared platform abstractions.
 - `incular-android` provides Android integration.
 - `incular-ios` provides iOS integration.

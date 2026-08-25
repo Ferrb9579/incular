@@ -1,5 +1,6 @@
 //! A declarative native counter: no element IDs, action IDs, or runtime wiring.
 use incular::prelude::*;
+use incular_controls::ButtonStyle;
 
 fn main() {
     let count = Signal::new(0_u32);
@@ -12,8 +13,9 @@ fn main() {
                 .color(Color::rgba(220, 230, 255, 255))
                 .into(),
             Text::new(format!("Count: {value}")).into(),
-            Button::new("Increment")
-                .on_press(move || callback_count.update(|count| *count += 1))
+            ElevatedButton::new("Increment")
+            .style(ButtonStyle::new())
+                .on_click(move || callback_count.update(|count| *count += 1))
                 .into(),
         ])
     })

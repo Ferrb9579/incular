@@ -9,7 +9,9 @@ Platform-neutral, styled, ready-to-use desktop UI controls and design tokens for
 ### Architecture Separation
 - `incular-widgets`: Layout primitives, raw gesture recognizers, semantic roles, unstyled rendering mechanics.
 - `incular-controls`: Styled buttons, inputs, toggles, sliders, scrollbars, cards, dividers, and cohesive light/dark `ControlTheme` design tokens.
-- `incular-material` / `incular-cupertino` / `incular-fluent` (future): Optional sibling design system packages.
+- `incular-material` is the Flutter-shaped application layer built on these
+  controls. `incular-cupertino` and `incular-fluent` remain optional future
+  sibling design-system packages.
 
 ## Quick Start
 

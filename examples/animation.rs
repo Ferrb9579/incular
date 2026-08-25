@@ -8,7 +8,7 @@ fn main() {
     let app = Application::new(move |_| {
         let trigger = moving.clone();
         Widget::column(vec![
-            Button::new("Move")
+            RawMaterialButton::new("Move")
                 .on_press(move || {
                     trigger.animate_to(
                         Offset::new(180., 0.),

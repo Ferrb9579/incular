@@ -22,7 +22,7 @@ pub fn build_bottom_panel(
     let make_tab_btn = |tab: BottomTab, label: &str| {
         let is_active = current_tab == tab;
         let tab_sig = bottom_tab_sig.clone();
-        Button::with_child(
+        MaterialButton::with_child(
             Container::new()
                 .padding(EdgeInsets::symmetric(10.0, 4.0))
                 .decoration(

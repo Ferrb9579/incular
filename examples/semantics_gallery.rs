@@ -103,7 +103,8 @@ fn dashboard() -> Widget {
             .accessibility_label("Display name")
             .accessibility_description("Editable single-line name"),
         Widget::from(
-            TextArea::new(biography)
+            TextField::new(biography)
+                .multiline(true)
                 .size(Size::new(460., 88.))
                 .placeholder("Write a biography"),
         )
@@ -112,10 +113,10 @@ fn dashboard() -> Widget {
         list,
         modal_demo,
         Widget::row(vec![
-            Button::new("Save")
+            RawMaterialButton::new("Save")
                 .on_press(|| println!("save activated"))
                 .into(),
-            Button::new("Dismiss")
+            RawMaterialButton::new("Dismiss")
                 .color(Color::rgba(112, 76, 156, 255))
                 .on_press(|| println!("dismiss activated"))
                 .into(),

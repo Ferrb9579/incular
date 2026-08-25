@@ -54,7 +54,7 @@ Desktop applications require seamless session recovery:
 ## 6. Visual Correctness & Semantic Neutrality (Task 20.1 Hardening)
 
 Reference application hardening uncovered and resolved framework-level visual defects:
-1. **Unstyled Core Widgets**: Core widgets (`Container`, `Button`, `TextField`, `TextArea`, `SplitView`) are strictly unstyled by default. Buttons wrap their children tightly with zero forced padding or arbitrary blue background fills, ensuring all UI styling is owned by application design systems.
+1. **Unstyled Core Widgets**: Core widgets (`Container`, `EditableText`, and `GestureDetector`) are strictly renderer-neutral by default. Material controls (`ElevatedButton`, `TextField`, and `TextFormField`) are opt-in through `incular-material`; `SplitView` remains an explicit Incular extension. Material button surfaces wrap children tightly while design-system styling stays above the core.
 2. **Typography Multipliers**: Text line height explicitly models `LineHeight::Multiplier(f32)` and `LineHeight::Absolute(f32)`, mapping relative multipliers (e.g. 1.4x) directly to font size and preventing multiline text overlap.
 3. **Unambiguous Split Sizing**: `SplitView` provides explicit `.first_extent(x)`, `.second_extent(x)`, and `.split_fraction(f)` sizing modes, decoupling divider hit areas (8px) from visual line thicknesses (1px).
 

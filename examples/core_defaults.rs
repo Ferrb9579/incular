@@ -86,18 +86,18 @@ fn main() {
         ])
         .spacing(6.0);
 
-        // 4. Raw Unstyled Button
-        let raw_button_demo = Column::new([
-            Widget::from(Text::new("4. Raw Button Primitive (Zero Injected Paint)").style(TextStyle::new().bold())),
-            Widget::from(Text::new("Button::with_child wraps hit test and tap dispatch without injecting colors or padding.")
+        // 4. Low-level Material action surface
+        let action_surface_demo = Column::new([
+            Widget::from(Text::new("4. RawMaterialButton (Zero Injected Paint)").style(TextStyle::new().bold())),
+            Widget::from(Text::new("RawMaterialButton::with_child wraps hit test and tap dispatch without injecting colors or padding.")
                 .style(TextStyle::new().font_size(12.0))),
-            Widget::from(Button::with_child(
+            Widget::from(RawMaterialButton::with_child(
                 Container::new()
                     .padding(EdgeInsets::symmetric(12.0, 6.0))
                     .color(Color::rgba(50, 120, 230, 255))
-                    .child(Text::new("Explicitly Styled Container in Raw Button").style(TextStyle::new().color(Color::WHITE))),
+                    .child(Text::new("Explicitly Styled Container in Material action surface").style(TextStyle::new().color(Color::WHITE))),
             )
-            .on_click(|| println!("Raw button clicked!"))),
+            .on_click(|| println!("Material action surface clicked!"))),
         ])
         .spacing(6.0);
 
@@ -115,7 +115,7 @@ fn main() {
                     Widget::from(SizedBox::new().height(12.0)),
                     Widget::from(align_demo),
                     Widget::from(SizedBox::new().height(12.0)),
-                    Widget::from(raw_button_demo),
+                    Widget::from(action_surface_demo),
                 ])
                 .spacing(8.0),
             )

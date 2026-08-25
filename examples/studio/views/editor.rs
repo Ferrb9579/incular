@@ -59,7 +59,7 @@ pub fn build_editor_workspace(
                 SizedBox::new().width(0.0).into()
             },
             SizedBox::new().width(6.0).into(),
-            Button::with_child(
+            MaterialButton::with_child(
                 Text::new("✕").style(TextStyle::new().font_size(10.0).color(theme.text_muted)),
             )
             .on_click(move || {
@@ -97,7 +97,7 @@ pub fn build_editor_workspace(
             )
             .child(tab_label);
 
-        let tab_button = Button::with_child(tab_container).on_click(move || {
+        let tab_button = MaterialButton::with_child(tab_container).on_click(move || {
             active_sig_select.set(doc_idx);
         });
 
@@ -107,7 +107,7 @@ pub fn build_editor_workspace(
     // New File button
     let docs_sig_new = docs_sig.clone();
     let active_sig_new = active_sig.clone();
-    let new_tab_btn = Button::with_child(
+    let new_tab_btn = MaterialButton::with_child(
         Container::new()
             .padding(EdgeInsets::symmetric(8.0, 6.0))
             .child(Text::new("+").style(TextStyle::new().font_size(14.0).color(theme.text_muted))),
@@ -161,12 +161,14 @@ pub fn build_editor_workspace(
                 .padding(EdgeInsets::all(8.0))
                 .color(theme.background)
                 .child(
-                    TextArea::new(doc.controller.clone()).style(
-                        TextStyle::new()
-                            .font_size(font_size)
-                            .line_height(Some(1.4))
-                            .color(theme.text_primary),
-                    ),
+                    TextField::new(doc.controller.clone())
+                        .multiline(true)
+                        .style(
+                            TextStyle::new()
+                                .font_size(font_size)
+                                .line_height(Some(1.4))
+                                .color(theme.text_primary),
+                        ),
                 );
 
             let editor_row_items: Vec<Widget> = vec![

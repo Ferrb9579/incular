@@ -2,13 +2,13 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use incular_config::Constraints;
 use incular_core::Size;
-use incular_widgets::{Button, Text, Widget, WidgetTree};
+use incular_widgets::{Text, Widget, WidgetTree, internal::ActionSurface};
 
 fn semantic_tree(width: usize) -> Widget {
     let mut children = Vec::with_capacity(width);
     for index in 0..width {
         if index % 3 == 0 {
-            children.push(Button::new(format!("action {index}")).into());
+            children.push(ActionSurface::new(format!("action {index}")).into());
         } else {
             children.push(Text::new(format!("label {index}")).into());
         }

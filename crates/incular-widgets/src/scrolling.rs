@@ -842,9 +842,6 @@ impl Sliver for SliverToBoxAdapter {
     }
 }
 
-/// Legacy alias for [`SliverToBoxAdapter`].
-pub type SliverBox = SliverToBoxAdapter;
-
 /// A lazy fixed-extent list sliver.
 #[derive(Clone)]
 pub struct SliverList {

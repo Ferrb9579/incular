@@ -109,7 +109,7 @@ pub fn build_project_tree(
             )
             .child(row_content);
 
-        let btn: Widget = Button::with_child(item_container)
+        let btn: Widget = MaterialButton::with_child(item_container)
             .on_click(move || {
                 selected_sig_item.set(Some(node_id.clone()));
                 if is_dir {

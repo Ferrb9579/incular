@@ -1,6 +1,6 @@
 //! Radio group and rich selection infrastructure widgets.
 
-use crate::{GestureDetector, SelectionArea, Text, Widget};
+use crate::{GestureDetector, SelectionAreaController, Text, Widget};
 use std::rc::Rc;
 
 /// Coordinates mutually exclusive selection for a group of radio buttons.
@@ -95,7 +95,7 @@ impl SelectableRegion {
 
 impl From<SelectableRegion> for Widget {
     fn from(value: SelectableRegion) -> Self {
-        SelectionArea::new(value.child).into()
+        Widget::selection_area(SelectionAreaController::new(), value.child)
     }
 }
 

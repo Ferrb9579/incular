@@ -3,7 +3,7 @@
 use crate::{ControlTheme, Radio};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Button as RawButton, ExplicitSemantics, Widget};
+use incular_widgets::{internal::ActionSurface, ExplicitSemantics, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
     pub fn build(&self, _theme: &ControlTheme) -> Widget {
         if let Some(child) = &self.child {
             let selected = self.selected.as_ref() == Some(&self.value);
-            let mut button = RawButton::with_child(child.clone())
+            let mut button = ActionSurface::with_child(child.clone())
                 .color(Color::TRANSPARENT)
                 .enabled(self.enabled);
             if let Some(callback) = self.on_change.clone() {

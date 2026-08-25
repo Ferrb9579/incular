@@ -3,7 +3,7 @@
 use crate::{Checkbox, ControlTheme};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Button as RawButton, ExplicitSemantics, Widget};
+use incular_widgets::{ExplicitSemantics, Widget, internal::ActionSurface};
 use std::rc::Rc;
 
 /// Explicit checkbox value, including the mixed state used by tree views.
@@ -148,7 +148,7 @@ impl Root {
             // retained hit target and semantic state; replacing the visual
             // never drops checkbox behavior.
             let state = self.state;
-            let mut button = RawButton::with_child(child)
+            let mut button = ActionSurface::with_child(child)
                 .color(Color::TRANSPARENT)
                 .disabled_color(theme.colors.disabled_surface)
                 .enabled(self.enabled && !self.read_only);
