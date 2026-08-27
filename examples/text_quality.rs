@@ -1,5 +1,6 @@
 //! Inspect Incular's DPI-aware grayscale text path across micro through huge sizes.
 use incular::prelude::*;
+use incular::widgets::internal::ScrollView;
 
 fn sample(size: f32, text: &str, color: Color) -> Widget {
     Text::new(format!("{size:>3.0} px  {text}"))

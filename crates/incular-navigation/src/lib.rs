@@ -3,13 +3,18 @@
 //! The subsystem depends one-way on widget descriptions and retained
 //! transition layers. It owns no widget tree or renderer state.
 
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use incular_core::Color;
-use incular_widgets::{
-    FadeTransition, OpacityController, SlideTransition, TranslationController, Widget,
-};
-use serde::{Deserialize, Serialize};
+use incular_widgets::internal::{OpacityController, TranslationController};
+use incular_widgets::{FadeTransition, SlideTransition, Widget};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 /// Stable identity for a route in a [`Navigator`].
@@ -362,6 +367,195 @@ pub struct Page {
     pub name: String,
     pub child: Widget,
 }
+
+/// Stable, serializable metadata associated with a route.
+///
+/// Flutter exposes route arguments as an untyped `Object?`. Incular keeps the
+/// persisted representation explicit JSON and lets applications recover a
+/// concrete Rust type at the boundary with [`RouteSettings::arguments`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RouteSettings {
+    name: String,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    arguments: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restoration_scope: Option<RouteScopeKey>,
+}
+
+impl RouteSettings {
+    /// Creates settings with no untyped arguments.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            arguments: Value::Null,
+            restoration_scope: None,
+        }
+    }
+
+    /// Sets serializable route arguments. The value remains JSON only at the
+    /// persistence boundary; callers can use [`Self::arguments`] to decode it
+    /// into their application enum/struct.
+    pub fn with_arguments<T: Serialize>(
+        mut self,
+        arguments: &T,
+    ) -> Result<Self, serde_json::Error> {
+        self.arguments = serde_json::to_value(arguments)?;
+        Ok(self)
+    }
+
+    /// Attaches a stable restoration scope to this route.
+    #[must_use]
+    pub fn restoration_scope(mut self, scope: RouteScopeKey) -> Self {
+        self.restoration_scope = Some(scope);
+        self
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn raw_arguments(&self) -> &Value {
+        &self.arguments
+    }
+
+    /// Decodes the route arguments into an application-owned type.
+    pub fn arguments<T: DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.arguments.clone())
+    }
+
+    #[must_use]
+    pub fn restoration_scope_key(&self) -> Option<&RouteScopeKey> {
+        self.restoration_scope.as_ref()
+    }
+}
+
+/// Rust-native route presentation composition.
+///
+/// These variants replace Flutter's `Route`/`ModalRoute`/`PopupRoute` class
+/// hierarchy. Core owns the mechanics and Material can supply appearance.
+#[derive(Clone)]
+pub enum RoutePresentation {
+    /// A normal page in the navigator's content area.
+    Page {
+        opaque: bool,
+        maintain_state: bool,
+        fullscreen_dialog: bool,
+    },
+    /// A non-fullscreen overlay presentation.
+    Popup {
+        barrier: Option<ModalBarrier>,
+        maintain_state: bool,
+    },
+    /// A modal presentation that isolates background input.
+    Modal {
+        barrier: ModalBarrier,
+        focus_trap: bool,
+    },
+    /// A route backed by one or more existing overlay entries.
+    Overlay { entries: Vec<OverlayEntry> },
+}
+
+impl Default for RoutePresentation {
+    fn default() -> Self {
+        Self::Page {
+            opaque: true,
+            maintain_state: true,
+            fullscreen_dialog: false,
+        }
+    }
+}
+
+impl RoutePresentation {
+    #[must_use]
+    pub const fn page() -> Self {
+        Self::Page {
+            opaque: true,
+            maintain_state: true,
+            fullscreen_dialog: false,
+        }
+    }
+
+    #[must_use]
+    pub fn popup(barrier: Option<ModalBarrier>) -> Self {
+        Self::Popup {
+            barrier,
+            maintain_state: true,
+        }
+    }
+
+    #[must_use]
+    pub fn modal(barrier: ModalBarrier) -> Self {
+        Self::Modal {
+            barrier,
+            focus_trap: true,
+        }
+    }
+
+    #[must_use]
+    pub fn overlay(entries: impl IntoIterator<Item = OverlayEntry>) -> Self {
+        Self::Overlay {
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    #[must_use]
+    pub const fn is_opaque(&self) -> bool {
+        matches!(self, Self::Page { opaque: true, .. })
+    }
+
+    #[must_use]
+    pub const fn blocks_background_input(&self) -> bool {
+        matches!(self, Self::Modal { .. })
+    }
+}
+
+/// A typed, retained completion channel for a route result.
+///
+/// The navigator remains synchronous and renderer-independent; applications
+/// retain this handle and complete it from their route action. No `Any` or
+/// untyped Dart `Object?` is needed.
+#[derive(Clone)]
+pub struct RouteResult<T> {
+    state: Rc<RefCell<Option<T>>>,
+}
+
+impl<T> Default for RouteResult<T> {
+    fn default() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(None)),
+        }
+    }
+}
+
+impl<T> RouteResult<T> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Completes the result once. Repeated completion is rejected.
+    pub fn complete(&self, value: T) -> Result<(), T> {
+        let mut slot = self.state.borrow_mut();
+        if slot.is_some() {
+            return Err(value);
+        }
+        *slot = Some(value);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.state.borrow().is_some()
+    }
+
+    #[must_use]
+    pub fn take(&self) -> Option<T> {
+        self.state.borrow_mut().take()
+    }
+}
 impl Page {
     #[must_use]
     pub fn new(name: impl Into<String>, child: impl Into<Widget>) -> Self {
@@ -379,6 +573,8 @@ pub struct Route {
     pub name: String,
     pub child: Widget,
     pub transition: RouteTransition,
+    pub settings: RouteSettings,
+    pub presentation: RoutePresentation,
 }
 
 /// Observable lifecycle emitted by a [`Navigator`].
@@ -455,12 +651,48 @@ impl fmt::Debug for NavigatorObserver {
 impl Route {
     #[must_use]
     pub fn new(name: impl Into<String>, child: impl Into<Widget>) -> Self {
+        let name = name.into();
         Self {
             id: RouteId(0),
-            name: name.into(),
+            settings: RouteSettings::new(name.clone()),
+            name,
             child: child.into(),
             transition: RouteTransition::None,
+            presentation: RoutePresentation::default(),
         }
+    }
+    /// Replaces the route metadata and keeps the legacy `name` field in sync.
+    #[must_use]
+    pub fn settings(mut self, settings: RouteSettings) -> Self {
+        self.name = settings.name.clone();
+        self.settings = settings;
+        self
+    }
+
+    #[must_use]
+    pub fn presentation(mut self, presentation: RoutePresentation) -> Self {
+        self.presentation = presentation;
+        self
+    }
+
+    #[must_use]
+    pub fn popup(self, barrier: Option<ModalBarrier>) -> Self {
+        self.presentation(RoutePresentation::popup(barrier))
+    }
+
+    #[must_use]
+    pub fn modal(self, barrier: ModalBarrier) -> Self {
+        self.presentation(RoutePresentation::modal(barrier))
+    }
+
+    #[must_use]
+    pub fn dialog(self) -> Self {
+        self.modal(ModalBarrier::default())
+    }
+
+    #[must_use]
+    pub fn overlay(self, entries: impl IntoIterator<Item = OverlayEntry>) -> Self {
+        self.presentation(RoutePresentation::overlay(entries))
     }
     #[must_use]
     pub fn transition(mut self, transition: RouteTransition) -> Self {
@@ -471,6 +703,38 @@ impl Route {
     #[must_use]
     pub fn presented_child(&self) -> Widget {
         self.transition.apply(self.child.clone())
+    }
+}
+
+/// Ergonomic builder for a page route with a custom transition.
+#[derive(Clone)]
+pub struct PageRouteBuilder {
+    route: Route,
+}
+
+impl PageRouteBuilder {
+    #[must_use]
+    pub fn new(name: impl Into<String>, child: impl Into<Widget>) -> Self {
+        Self {
+            route: Route::new(name, child),
+        }
+    }
+
+    #[must_use]
+    pub fn settings(mut self, settings: RouteSettings) -> Self {
+        self.route = self.route.settings(settings);
+        self
+    }
+
+    #[must_use]
+    pub fn transition(mut self, transition: RouteTransition) -> Self {
+        self.route = self.route.transition(transition);
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> Route {
+        self.route
     }
 }
 impl From<Page> for Route {
@@ -491,6 +755,17 @@ pub enum RouteTransition {
     },
 }
 impl RouteTransition {
+    /// Creates a neutral compositor fade-in without exposing the retained
+    /// opacity controller. The route owns the animation and the runtime ticks
+    /// it along with the rest of the retained tree.
+    #[must_use]
+    pub fn fade_in(duration: Duration, now: Instant) -> Self {
+        let opacity = OpacityController::new();
+        opacity.set_opacity(0.);
+        opacity.animate_to(1., duration, now);
+        Self::Fade(opacity)
+    }
+
     #[must_use]
     pub fn apply(&self, child: Widget) -> Widget {
         match self {
@@ -721,6 +996,7 @@ fn normalize_location(location: &str) -> String {
 #[derive(Default)]
 struct NavigatorState {
     next_id: u64,
+    revision: u64,
     routes: Vec<Route>,
     restorable_routes: Vec<Option<RestorableRoute>>,
     route_scope_cleanup: Option<RouteScopeCleanup>,
@@ -798,6 +1074,7 @@ impl Navigator {
             let id = route.id;
             state.routes.push(route.clone());
             state.restorable_routes.push(None);
+            state.revision = state.revision.wrapping_add(1);
             (id, previous, route)
         };
         self.notify(NavigationEvent::Pushed {
@@ -818,12 +1095,15 @@ impl Navigator {
             let id = RouteId(state.next_id);
             let pushed = Route {
                 id,
+                settings: RouteSettings::new(page.name.clone()),
                 name: page.name,
                 child: page.child,
                 transition: RouteTransition::None,
+                presentation: RoutePresentation::default(),
             };
             state.routes.push(pushed.clone());
             state.restorable_routes.push(Some(route));
+            state.revision = state.revision.wrapping_add(1);
             (id, previous, pushed)
         };
         self.notify(NavigationEvent::Pushed {
@@ -842,14 +1122,17 @@ impl Navigator {
             state.next_id = state.next_id.wrapping_add(1).max(1);
             next_routes.push(Route {
                 id: RouteId(state.next_id),
+                settings: RouteSettings::new(page.name.clone()),
                 name: page.name,
                 child: page.child,
                 transition: RouteTransition::None,
+                presentation: RoutePresentation::default(),
             });
             next_restorable.push(Some(route));
         }
         state.routes = next_routes;
         state.restorable_routes = next_restorable;
+        state.revision = state.revision.wrapping_add(1);
     }
 
     fn replace_with_fallback(&self, page: Page) {
@@ -857,11 +1140,14 @@ impl Navigator {
         state.next_id = state.next_id.wrapping_add(1).max(1);
         state.routes = vec![Route {
             id: RouteId(state.next_id),
+            settings: RouteSettings::new(page.name.clone()),
             name: page.name,
             child: page.child,
             transition: RouteTransition::None,
+            presentation: RoutePresentation::default(),
         }];
         state.restorable_routes = vec![None];
+        state.revision = state.revision.wrapping_add(1);
     }
 
     /// Installs a bridge that removes a route-specific restoration scope after
@@ -932,6 +1218,7 @@ impl Navigator {
             return false;
         }
         route.state = value;
+        state.revision = state.revision.wrapping_add(1);
         true
     }
 
@@ -958,15 +1245,18 @@ impl Navigator {
                 state.next_id = state.next_id.wrapping_add(1).max(1);
                 next.push(Route {
                     id: RouteId(state.next_id),
+                    settings: RouteSettings::new(page.name.clone()),
                     name: page.name,
                     child: page.child,
                     transition: RouteTransition::None,
+                    presentation: RoutePresentation::default(),
                 });
                 next_restorable.push(None);
             }
         }
         state.routes = next;
         state.restorable_routes = next_restorable;
+        state.revision = state.revision.wrapping_add(1);
     }
     /// Attempts a guarded pop. Unlike [`Self::pop`], this distinguishes an
     /// empty navigator from a route that deliberately blocked navigation.
@@ -988,6 +1278,7 @@ impl Navigator {
                 .pop()
                 .expect("a non-empty guarded navigator must remain non-empty");
             let restorable = state.restorable_routes.pop().flatten();
+            state.revision = state.revision.wrapping_add(1);
             let cleanup = restorable
                 .as_ref()
                 .filter(|route| route.removes_scope_on_pop())
@@ -1039,6 +1330,7 @@ impl Navigator {
             route.id = RouteId(state.next_id);
             state.routes.push(route.clone());
             state.restorable_routes.push(None);
+            state.revision = state.revision.wrapping_add(1);
             (previous, route, cleanup)
         };
         if let Some((scope_key, cleanup)) = cleanup {
@@ -1058,6 +1350,13 @@ impl Navigator {
     #[must_use]
     pub fn routes(&self) -> Vec<Route> {
         self.state.borrow().routes.clone()
+    }
+
+    /// Monotonic stack revision. Applications that bridge navigator state to
+    /// a `Signal` can compare this value without exposing retained internals.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
     }
     #[must_use]
     pub fn can_pop(&self) -> bool {
@@ -1217,7 +1516,7 @@ impl BackDispatcher {
 }
 
 /// Modal overlay configuration. The barrier is input-blocking by default.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModalBarrier {
     pub color: Color,
     pub dismissible: bool,
@@ -1251,6 +1550,18 @@ impl OverlayEntry {
     pub fn modal(mut self, barrier: ModalBarrier) -> Self {
         self.barrier = Some(barrier);
         self
+    }
+
+    #[must_use]
+    pub fn blocks_background_input(&self) -> bool {
+        self.barrier.is_some()
+    }
+
+    #[must_use]
+    pub fn dismissible(&self) -> bool {
+        self.barrier
+            .as_ref()
+            .is_none_or(|barrier| barrier.dismissible)
     }
 }
 
@@ -1326,6 +1637,27 @@ impl Overlay {
     pub fn remove_top(&self) -> Option<OverlayEntry> {
         self.entries.borrow_mut().pop()
     }
+
+    /// Removes the top entry only when it has a dismissible barrier.
+    pub fn dismiss_top(&self) -> Option<OverlayEntry> {
+        let dismissible = self
+            .entries
+            .borrow()
+            .last()
+            .is_some_and(OverlayEntry::dismissible);
+        dismissible.then(|| self.remove_top()).flatten()
+    }
+
+    /// Whether the current overlay stack must consume pointer/keyboard input
+    /// before it reaches the route underneath it.
+    #[must_use]
+    pub fn blocks_background_input(&self) -> bool {
+        self.entries
+            .borrow()
+            .iter()
+            .rev()
+            .any(OverlayEntry::blocks_background_input)
+    }
     #[must_use]
     pub fn entries(&self) -> Vec<OverlayEntry> {
         self.entries.borrow().clone()
@@ -1341,6 +1673,56 @@ mod tests {
 
     fn page() -> Widget {
         Widget::fixed_box(Size::new(1., 1.), Color::WHITE)
+    }
+
+    #[test]
+    fn route_settings_round_trip_typed_arguments_and_scope() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Args {
+            document: u64,
+        }
+        let scope = RouteScopeKey::new("document-7").unwrap();
+        let settings = RouteSettings::new("/editor")
+            .with_arguments(&Args { document: 7 })
+            .unwrap()
+            .restoration_scope(scope.clone());
+        assert_eq!(settings.name(), "/editor");
+        assert_eq!(settings.arguments::<Args>().unwrap(), Args { document: 7 });
+        assert_eq!(settings.restoration_scope_key(), Some(&scope));
+    }
+
+    #[test]
+    fn composable_route_presentations_and_typed_result_are_retained() {
+        let route = PageRouteBuilder::new("settings", page())
+            .settings(RouteSettings::new("settings"))
+            .build()
+            .modal(ModalBarrier {
+                dismissible: false,
+                ..ModalBarrier::default()
+            });
+        assert!(route.presentation.blocks_background_input());
+        assert!(!route.presentation.is_opaque());
+
+        let result = RouteResult::<bool>::new();
+        assert!(!result.is_complete());
+        assert!(result.complete(true).is_ok());
+        assert_eq!(result.complete(false), Err(false));
+        assert_eq!(result.take(), Some(true));
+    }
+
+    #[test]
+    fn modal_overlay_blocks_input_and_respects_dismissibility() {
+        let overlay = Overlay::new();
+        overlay.insert(OverlayEntry::new(page()));
+        assert!(!overlay.blocks_background_input());
+        overlay.insert(OverlayEntry::new(page()).modal(ModalBarrier {
+            dismissible: false,
+            ..ModalBarrier::default()
+        }));
+        assert!(overlay.blocks_background_input());
+        assert!(overlay.dismiss_top().is_none());
+        assert!(overlay.remove_top().is_some());
+        assert!(!overlay.blocks_background_input());
     }
     #[test]
     fn navigator_is_a_lifo_stack() {

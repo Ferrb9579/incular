@@ -3,7 +3,10 @@
 
 use incular_config::Constraints;
 use incular_core::Size;
-use incular_widgets::{Key, Text, Widget, WidgetTree};
+use incular_widgets::{
+    Text, Widget,
+    internal::{Key, WidgetTree},
+};
 
 /// Live-allocation accounting to distinguish leaks from page retention.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

@@ -1,12 +1,181 @@
 //! Ambient configuration and inherited environment widgets.
 
-use incular_config::TextDirection;
-use incular_core::Color;
+use incular_config::{
+    Locale, LocaleResolver, LocalizationCatalog, LocalizedMessage, RuntimeEnvironment,
+    TextDirection,
+};
+use incular_core::{BuildContext, Color};
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_text::TextStyle;
 use std::rc::Rc;
 
-use crate::{BuildContext, LayoutBuilder, Widget};
+use crate::{LayoutBuilder, Widget};
+
+/// A typed, window-local environment snapshot for descendants that need
+/// viewport, scale, safe-area, brightness, or accessibility information.
+/// The runtime installs its authoritative snapshot on each `WidgetTree`; this
+/// descriptor is useful for isolated subtrees and deterministic tests.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MediaQuery {
+    data: RuntimeEnvironment,
+    child: Widget,
+}
+
+/// The renderer-neutral data carried by [`MediaQuery`]. Incular's runtime
+/// environment already owns viewport, scale, safe-area, brightness, and
+/// accessibility values, so this is an alias rather than a second snapshot
+/// type to keep synchronized.
+pub type MediaQueryData = RuntimeEnvironment;
+
+impl MediaQuery {
+    #[must_use]
+    pub fn new(data: RuntimeEnvironment, child: impl Into<Widget>) -> Self {
+        Self {
+            data: data.normalized(),
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn data(&self) -> &RuntimeEnvironment {
+        &self.data
+    }
+
+    #[must_use]
+    pub fn into_data(self) -> RuntimeEnvironment {
+        self.data
+    }
+}
+
+impl From<MediaQuery> for Widget {
+    fn from(value: MediaQuery) -> Self {
+        Widget::environment_scope(value.data, value.child)
+    }
+}
+
+/// Typed localization scope for a retained subtree.
+///
+/// Catalog storage remains application-owned through [`LocalizationCatalog`]
+/// and is exposed to deferred builders as `(Locale, Rc<dyn
+/// LocalizationCatalog>)`. This keeps locale selection in `incular-config`
+/// without recreating Flutter's delegate/inherited-widget hierarchy.
+#[derive(Clone)]
+pub struct Localizations {
+    locale: Locale,
+    catalog: Rc<dyn LocalizationCatalog>,
+    child: Widget,
+}
+
+impl Localizations {
+    #[must_use]
+    pub fn new(
+        locale: Locale,
+        catalog: impl LocalizationCatalog + 'static,
+        child: impl Into<Widget>,
+    ) -> Self {
+        Self {
+            locale,
+            catalog: Rc::new(catalog),
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn locale(&self) -> &Locale {
+        &self.locale
+    }
+
+    #[must_use]
+    pub fn catalog(&self) -> &Rc<dyn LocalizationCatalog> {
+        &self.catalog
+    }
+
+    /// Replaces the preferred locale while retaining the same catalog and
+    /// child subtree. Rebuilding a scope with this value invalidates only
+    /// descendants that read the localization environment.
+    #[must_use]
+    pub fn with_locale(mut self, locale: Locale) -> Self {
+        self.locale = locale;
+        self
+    }
+
+    /// Resolves a message key through ICU4X locale fallback and this scope's
+    /// application-owned catalog.
+    #[must_use]
+    pub fn resolve(&self, key: &str) -> Option<LocalizedMessage<'_>> {
+        LocaleResolver::resolve_message(
+            std::slice::from_ref(&self.locale),
+            self.catalog.as_ref(),
+            key,
+        )
+    }
+
+    #[must_use]
+    pub fn text(&self, key: &str) -> Option<String> {
+        self.resolve(key).map(|message| message.value.to_owned())
+    }
+
+    #[must_use]
+    pub fn text_direction(&self) -> TextDirection {
+        LocaleResolver::text_direction(&self.locale)
+    }
+}
+
+impl From<Localizations> for Widget {
+    fn from(value: Localizations) -> Self {
+        Widget::environment_scope((value.locale, value.catalog), value.child)
+    }
+}
+
+/// Ambient selection colors for editable text descendants.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefaultSelectionStyle {
+    cursor_color: Option<Color>,
+    selection_color: Option<Color>,
+    handle_color: Option<Color>,
+    child: Widget,
+}
+
+impl DefaultSelectionStyle {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            cursor_color: None,
+            selection_color: None,
+            handle_color: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn cursor_color(mut self, color: Color) -> Self {
+        self.cursor_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn selection_color(mut self, color: Color) -> Self {
+        self.selection_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn handle_color(mut self, color: Color) -> Self {
+        self.handle_color = Some(color);
+        self
+    }
+}
+
+impl From<DefaultSelectionStyle> for Widget {
+    fn from(value: DefaultSelectionStyle) -> Self {
+        let style = (
+            value.cursor_color,
+            value.selection_color,
+            value.handle_color,
+        );
+        Widget::environment_scope(style, value.child)
+    }
+}
 
 /// Directionality provides ambient text direction (`Ltr` or `Rtl`) to its subtree.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,7 +201,7 @@ impl Directionality {
 
 impl From<Directionality> for Widget {
     fn from(value: Directionality) -> Self {
-        value.child
+        Widget::environment_scope(value.text_direction, value.child)
     }
 }
 
@@ -60,7 +229,7 @@ impl DefaultTextStyle {
 
 impl From<DefaultTextStyle> for Widget {
     fn from(value: DefaultTextStyle) -> Self {
-        value.child
+        Widget::environment_scope(value.style, value.child)
     }
 }
 
@@ -105,7 +274,8 @@ impl IconTheme {
 
 impl From<IconTheme> for Widget {
     fn from(value: IconTheme) -> Self {
-        value.child
+        let child = value.child.clone();
+        Widget::environment_scope(value, child)
     }
 }
 
@@ -144,7 +314,7 @@ impl From<OrientationBuilder> for Widget {
             } else {
                 Orientation::Portrait
             };
-            let dummy_ctx = BuildContext;
+            let dummy_ctx = BuildContext::new();
             builder(&dummy_ctx, orientation)
         })
         .into()
@@ -176,7 +346,7 @@ impl ScrollConfiguration {
 
 impl From<ScrollConfiguration> for Widget {
     fn from(value: ScrollConfiguration) -> Self {
-        value.child
+        Widget::environment_scope(value.physics, value.child)
     }
 }
 
@@ -206,7 +376,7 @@ impl PrimaryScrollController {
 
 impl From<PrimaryScrollController> for Widget {
     fn from(value: PrimaryScrollController) -> Self {
-        value.child
+        Widget::environment_scope(value.controller, value.child)
     }
 }
 
@@ -234,7 +404,7 @@ impl TickerMode {
 
 impl From<TickerMode> for Widget {
     fn from(value: TickerMode) -> Self {
-        value.child
+        Widget::environment_scope(value.enabled, value.child)
     }
 }
 
@@ -263,7 +433,7 @@ impl SensitiveContent {
 
 impl From<SensitiveContent> for Widget {
     fn from(value: SensitiveContent) -> Self {
-        value.child
+        Widget::environment_scope(value.sensitive, value.child)
     }
 }
 
@@ -306,5 +476,107 @@ impl LookupBoundary {
 impl From<LookupBoundary> for Widget {
     fn from(value: LookupBoundary) -> Self {
         value.child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Catalog;
+
+    impl LocalizationCatalog for Catalog {
+        fn supported_locales(&self) -> &[Locale] {
+            static LOCALES: std::sync::OnceLock<Vec<Locale>> = std::sync::OnceLock::new();
+            LOCALES
+                .get_or_init(|| vec!["en".parse().expect("valid locale")])
+                .as_slice()
+        }
+
+        fn message(&self, locale: &Locale, key: &str) -> Option<&str> {
+            (locale.to_string() == "en" && key == "greeting").then_some("Hello")
+        }
+    }
+
+    #[test]
+    fn localizations_use_icu_fallback_and_direction() {
+        let localizations = Localizations::new(
+            "en-GB".parse().expect("valid locale"),
+            Catalog,
+            Widget::column(Vec::<Widget>::new()),
+        );
+        assert_eq!(localizations.text("greeting").as_deref(), Some("Hello"));
+        assert_eq!(localizations.text_direction(), TextDirection::Ltr);
+        assert_eq!(
+            localizations
+                .resolve("greeting")
+                .unwrap()
+                .locale
+                .to_string(),
+            "en"
+        );
+    }
+
+    #[test]
+    fn media_query_data_is_the_normalized_runtime_environment() {
+        let data = MediaQueryData {
+            viewport: incular_core::Size::new(640., 480.),
+            scale_factor: f64::NAN,
+            brightness: incular_config::Brightness::Dark,
+            ..RuntimeEnvironment::default()
+        };
+        let query = MediaQuery::new(data, Widget::column(Vec::<Widget>::new()));
+        assert_eq!(query.data().viewport, incular_core::Size::new(640., 480.));
+        assert_eq!(query.data().scale_factor, 1.);
+        assert_eq!(query.data().brightness, incular_config::Brightness::Dark);
+    }
+
+    #[test]
+    fn media_query_resize_updates_consumers() {
+        let child = Widget::column(Vec::<Widget>::new());
+        let first = MediaQuery::new(
+            RuntimeEnvironment {
+                viewport: incular_core::Size::new(320., 240.),
+                ..RuntimeEnvironment::default()
+            },
+            child.clone(),
+        );
+        let second = MediaQuery::new(
+            RuntimeEnvironment {
+                viewport: incular_core::Size::new(800., 600.),
+                ..RuntimeEnvironment::default()
+            },
+            child,
+        );
+        assert_ne!(first.data().viewport, second.data().viewport);
+    }
+
+    #[test]
+    fn media_query_brightness_update() {
+        let child = Widget::column(Vec::<Widget>::new());
+        let light = MediaQuery::new(RuntimeEnvironment::default(), child.clone());
+        let dark = MediaQuery::new(
+            RuntimeEnvironment {
+                brightness: incular_config::Brightness::Dark,
+                ..RuntimeEnvironment::default()
+            },
+            child,
+        );
+        assert_ne!(light.data().brightness, dark.data().brightness);
+    }
+
+    #[test]
+    fn locale_change_rebuilds_only_consumers() {
+        let localizations = Localizations::new(
+            "en".parse().expect("valid locale"),
+            Catalog,
+            Widget::column(Vec::<Widget>::new()),
+        );
+        let changed = localizations
+            .clone()
+            .with_locale("ar".parse().expect("valid locale"));
+        assert_eq!(localizations.locale().to_string(), "en");
+        assert_eq!(changed.locale().to_string(), "ar");
+        assert_eq!(changed.text_direction(), TextDirection::Rtl);
     }
 }

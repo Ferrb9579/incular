@@ -14,7 +14,95 @@ use std::{
     },
 };
 
+use incular_config::{Locale, TextDirection};
+use incular_core::Size;
+
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Configuration used when resolving an image provider.
+///
+/// This is an immutable description of the target widget environment. The
+/// provider may use it to choose a density variant, while the default
+/// [`ImageProvider::load_with`] implementation preserves existing providers
+/// that only have one source asset.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageConfiguration {
+    pub size: Option<Size>,
+    pub device_pixel_ratio: f64,
+    pub text_direction: Option<TextDirection>,
+    pub locale: Option<Locale>,
+}
+
+impl Default for ImageConfiguration {
+    fn default() -> Self {
+        Self {
+            size: None,
+            device_pixel_ratio: 1.0,
+            text_direction: None,
+            locale: None,
+        }
+    }
+}
+
+impl ImageConfiguration {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    #[must_use]
+    pub fn device_pixel_ratio(mut self, ratio: f64) -> Self {
+        self.device_pixel_ratio = if ratio.is_finite() && ratio > 0. {
+            ratio
+        } else {
+            1.0
+        };
+        self
+    }
+
+    #[must_use]
+    pub fn text_direction(mut self, direction: TextDirection) -> Self {
+        self.text_direction = Some(direction);
+        self
+    }
+
+    #[must_use]
+    pub fn locale(mut self, locale: Locale) -> Self {
+        self.locale = Some(locale);
+        self
+    }
+
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.device_pixel_ratio =
+            if self.device_pixel_ratio.is_finite() && self.device_pixel_ratio > 0. {
+                self.device_pixel_ratio
+            } else {
+                1.0
+            };
+        self.size = self.size.map(|size| {
+            Size::new(
+                if size.width.is_finite() {
+                    size.width.max(0.)
+                } else {
+                    0.
+                },
+                if size.height.is_finite() {
+                    size.height.max(0.)
+                } else {
+                    0.
+                },
+            )
+        });
+        self
+    }
+}
 
 /// Stable renderer-neutral identity for an immutable raster image resource.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,6 +116,86 @@ pub enum ImageSource {
     Memory,
     FileSystem(PathBuf),
     Generated,
+}
+
+/// A Rust-native image provider. Providers are cheap descriptions; decoding
+/// happens only when [`Self::load`] is called, so rebuilds do not reread or
+/// recopy image bytes.
+pub trait ImageProvider: Clone + fmt::Debug + PartialEq + Eq {
+    fn load(&self) -> Result<ImageHandle, ImageError>;
+
+    /// Resolves this provider for a target environment. Providers with
+    /// density- or locale-specific sources can override this; the common
+    /// single-source case remains a zero-cost compatibility default.
+    fn load_with(&self, _configuration: &ImageConfiguration) -> Result<ImageHandle, ImageError> {
+        self.load()
+    }
+}
+
+/// Loads an image from an application asset path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetImage(PathBuf);
+
+impl AssetImage {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl ImageProvider for AssetImage {
+    fn load(&self) -> Result<ImageHandle, ImageError> {
+        ImageHandle::from_file(&self.0)
+    }
+}
+
+/// Loads an image from encoded in-memory bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryImage(Arc<[u8]>);
+
+impl MemoryImage {
+    #[must_use]
+    pub fn new(bytes: impl Into<Arc<[u8]>>) -> Self {
+        Self(bytes.into())
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &Arc<[u8]> {
+        &self.0
+    }
+}
+
+impl ImageProvider for MemoryImage {
+    fn load(&self) -> Result<ImageHandle, ImageError> {
+        ImageHandle::from_bytes(&*self.0)
+    }
+}
+
+/// Loads an image from a filesystem path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileImage(PathBuf);
+
+impl FileImage {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self(path.into())
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl ImageProvider for FileImage {
+    fn load(&self) -> Result<ImageHandle, ImageError> {
+        ImageHandle::from_file(&self.0)
+    }
 }
 
 /// Decoded 8-bit sRGB source pixels in straight-alpha RGBA order.
@@ -257,5 +425,56 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(cache.diagnostics().image_decodes, 1);
         assert_eq!(cache.diagnostics().load_cache_hits, 1);
+    }
+
+    #[test]
+    fn memory_provider_decodes_on_demand() {
+        const PNG: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2,
+            8, 6, 0, 0, 0, 114, 182, 13, 36, 0, 0, 0, 24, 73, 68, 65, 84, 120, 156, 5, 193, 129, 1,
+            0, 0, 4, 192, 160, 248, 220, 229, 83, 34, 105, 71, 226, 30, 63, 110, 6, 127, 180, 47,
+            0, 167, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ];
+        let provider = MemoryImage::new(Arc::<[u8]>::from(PNG));
+        assert_eq!(provider.load().unwrap().decoded().width(), 2);
+    }
+
+    #[test]
+    fn image_configuration_resolution() {
+        let configuration = ImageConfiguration::new()
+            .size(incular_core::Size {
+                width: -10.,
+                height: f32::NAN,
+            })
+            .device_pixel_ratio(f64::NAN)
+            .text_direction(TextDirection::Rtl)
+            .locale("ar".parse().expect("valid locale"))
+            .normalized();
+        assert_eq!(configuration.size, Some(incular_core::Size::ZERO));
+        assert_eq!(configuration.device_pixel_ratio, 1.);
+        assert_eq!(configuration.text_direction, Some(TextDirection::Rtl));
+        assert_eq!(
+            configuration.locale.as_ref().map(ToString::to_string),
+            Some("ar".into())
+        );
+    }
+
+    #[test]
+    fn provider_load_with_preserves_single_source_resolution() {
+        let provider = MemoryImage::new(Arc::<[u8]>::from([
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2,
+            8, 6, 0, 0, 0, 114, 182, 13, 36, 0, 0, 0, 24, 73, 68, 65, 84, 120, 156, 5, 193, 129, 1,
+            0, 0, 4, 192, 160, 248, 220, 229, 83, 34, 105, 71, 226, 30, 63, 110, 6, 127, 180, 47,
+            0, 167, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]));
+        let configuration = ImageConfiguration::new().device_pixel_ratio(2.);
+        assert_eq!(
+            provider
+                .load_with(&configuration)
+                .unwrap()
+                .decoded()
+                .height(),
+            2
+        );
     }
 }

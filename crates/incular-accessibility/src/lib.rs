@@ -548,6 +548,7 @@ fn map_role(role: Role) -> AccessKitRole {
         Role::GenericContainer => AccessKitRole::GenericContainer,
         Role::Checkbox => AccessKitRole::CheckBox,
         Role::Radio => AccessKitRole::RadioButton,
+        Role::Switch => AccessKitRole::Switch,
         Role::Slider => AccessKitRole::Slider,
         Role::Menu => AccessKitRole::Menu,
         Role::Dialog => AccessKitRole::Dialog,
@@ -565,6 +566,7 @@ fn is_interactive_role(role: Role) -> bool {
             | Role::TextArea
             | Role::Checkbox
             | Role::Radio
+            | Role::Switch
             | Role::Slider
             | Role::Link
     )

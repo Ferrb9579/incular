@@ -13,7 +13,8 @@ use std::{
 
 use incular_core::{RestorationKey, RestorationScope};
 
-use crate::{TextEditingController, Widget};
+use crate::Widget;
+use incular_text::{TextEditingController, TextEditingValue};
 
 /// Stable identity for a field registered with a [`Form`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -43,21 +44,33 @@ struct FieldState {
     on_submit: RefCell<Option<SubmitCallback>>,
     autovalidate: Cell<AutovalidateMode>,
     error: RefCell<Option<String>>,
+    controller_listener: Cell<usize>,
 }
 
 #[derive(Default)]
-struct FormState {
+struct FormRegistry {
     next_id: u64,
     fields: HashMap<FormFieldId, Weak<FieldState>>,
+    listeners: HashMap<usize, Rc<dyn Fn()>>,
+    next_listener: usize,
+    revision: u64,
 }
 
 /// Form-level validation and submit coordination.
 #[derive(Clone, Default)]
 pub struct Form {
-    state: Rc<RefCell<FormState>>,
+    state: Rc<RefCell<FormRegistry>>,
     child: Option<Widget>,
     autovalidate_mode: AutovalidateMode,
 }
+
+/// Rust-native replacement for Flutter's mutable `FormState` lookup handle.
+///
+/// A clone is the stable controller identity, so it survives declarative
+/// rebuilds without requiring a `GlobalKey<FormState>` or a retained widget
+/// object. [`FormController`] is an equivalent descriptive alias.
+pub type FormState = Form;
+pub type FormController = Form;
 
 impl Form {
     #[must_use]
@@ -69,7 +82,7 @@ impl Form {
     #[must_use]
     pub fn of_child(child: impl Into<Widget>) -> Self {
         Self {
-            state: Rc::new(RefCell::new(FormState::default())),
+            state: Rc::new(RefCell::new(FormRegistry::default())),
             child: Some(child.into()),
             autovalidate_mode: AutovalidateMode::Disabled,
         }
@@ -94,12 +107,26 @@ impl Form {
         };
         let field = Rc::new(FieldState {
             initial_text: controller.text(),
-            controller,
+            controller: controller.clone(),
             validator: RefCell::new(None),
             on_submit: RefCell::new(None),
             autovalidate: Cell::new(AutovalidateMode::Disabled),
             error: RefCell::new(None),
+            controller_listener: Cell::new(0),
         });
+        let field_weak = Rc::downgrade(&field);
+        let form_weak = Rc::downgrade(&self.state);
+        let listener = controller.add_listener(move |_| {
+            if let Some(field) = field_weak.upgrade()
+                && field.autovalidate.get() != AutovalidateMode::Disabled
+            {
+                let _ = validate_field(&field);
+            }
+            if let Some(form) = form_weak.upgrade() {
+                notify_form_listeners(&form);
+            }
+        });
+        field.controller_listener.set(listener);
         self.state
             .borrow_mut()
             .fields
@@ -139,9 +166,12 @@ impl Form {
     /// part of the operation, so forms cannot retain stale registrations.
     #[must_use]
     pub fn validate(&self) -> bool {
-        self.live_fields()
+        let valid = self
+            .live_fields()
             .into_iter()
-            .all(|(_, field)| validate_field(&field))
+            .all(|(_, field)| validate_field(&field));
+        notify_form_listeners(&self.state);
+        valid
     }
 
     /// Restores every live field to the value it had when registered.
@@ -150,14 +180,16 @@ impl Form {
             field.controller.set_text(field.initial_text.clone());
             field.error.replace(None);
         }
+        notify_form_listeners(&self.state);
     }
 
-    /// Validates the form then invokes each registered submit callback.  A
+    /// Validates the form then invokes each registered save callback. A
     /// callback is never invoked while any field is invalid.
     #[must_use]
-    pub fn submit(&self) -> bool {
+    pub fn save(&self) -> bool {
         let fields = self.live_fields();
         if !fields.iter().all(|(_, field)| validate_field(field)) {
+            notify_form_listeners(&self.state);
             return false;
         }
         for (_, field) in fields {
@@ -165,7 +197,14 @@ impl Form {
                 callback(field.controller.text());
             }
         }
+        notify_form_listeners(&self.state);
         true
+    }
+
+    /// Interaction-oriented alias for [`Self::save`].
+    #[must_use]
+    pub fn submit(&self) -> bool {
+        self.save()
     }
 
     /// Returns the current errors keyed by stable field identity.
@@ -180,6 +219,27 @@ impl Form {
     #[must_use]
     pub fn field_count(&self) -> usize {
         self.live_fields().len()
+    }
+
+    /// Adds a lightweight UI invalidation listener. The callback runs after a
+    /// field edit, validation, save, or reset.
+    pub fn add_listener(&self, listener: impl Fn() + 'static) -> usize {
+        let mut state = self.state.borrow_mut();
+        state.next_listener = state.next_listener.wrapping_add(1).max(1);
+        let token = state.next_listener;
+        state.listeners.insert(token, Rc::new(listener));
+        token
+    }
+
+    /// Removes a listener previously returned by [`Self::add_listener`].
+    pub fn remove_listener(&self, token: usize) -> bool {
+        self.state.borrow_mut().listeners.remove(&token).is_some()
+    }
+
+    /// Returns a monotonic revision suitable for an external `Signal` bridge.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
     }
 
     fn live_fields(&self) -> Vec<(FormFieldId, Rc<FieldState>)> {
@@ -197,7 +257,7 @@ impl Form {
 pub struct FormField {
     id: FormFieldId,
     field: Rc<FieldState>,
-    form: Weak<RefCell<FormState>>,
+    form: Weak<RefCell<FormRegistry>>,
 }
 
 impl FormField {
@@ -214,6 +274,7 @@ impl FormField {
         if self.field.autovalidate.get() == AutovalidateMode::Always {
             let _ = self.validate();
         }
+        self.notify_form();
         self
     }
 
@@ -223,13 +284,23 @@ impl FormField {
         if mode == AutovalidateMode::Always {
             let _ = self.validate();
         }
+        self.notify_form();
         self
     }
 
     #[must_use]
     pub fn on_submit(self, callback: impl Fn(String) + 'static) -> Self {
         self.field.on_submit.replace(Some(Rc::new(callback)));
+        self.notify_form();
         self
+    }
+
+    /// Installs the callback invoked by [`Form::save`]. This is the
+    /// Flutter-shaped spelling; `on_submit` remains an interaction alias for
+    /// existing callers.
+    #[must_use]
+    pub fn on_saved(self, callback: impl Fn(String) + 'static) -> Self {
+        self.on_submit(callback)
     }
 
     /// Updates the backing editor and records user interaction for
@@ -249,7 +320,9 @@ impl FormField {
 
     #[must_use]
     pub fn validate(&self) -> bool {
-        validate_field(&self.field)
+        let valid = validate_field(&self.field);
+        self.notify_form();
+        valid
     }
 
     #[must_use]
@@ -275,11 +348,22 @@ impl FormField {
             .controller
             .set_text(self.field.initial_text.clone());
         self.field.error.replace(None);
+        self.notify_form();
+    }
+
+    fn notify_form(&self) {
+        if let Some(form) = self.form.upgrade() {
+            notify_form_listeners(&form);
+        }
     }
 }
 
 impl Drop for FormField {
     fn drop(&mut self) {
+        let listener = self.field.controller_listener.get();
+        if listener != 0 {
+            let _ = self.field.controller.remove_listener(listener);
+        }
         if let Some(form) = self.form.upgrade() {
             form.borrow_mut().fields.remove(&self.id);
         }
@@ -295,6 +379,17 @@ fn validate_field(field: &FieldState) -> bool {
     let valid = error.is_none();
     field.error.replace(error);
     valid
+}
+
+fn notify_form_listeners(form: &Rc<RefCell<FormRegistry>>) {
+    let listeners = {
+        let mut state = form.borrow_mut();
+        state.revision = state.revision.wrapping_add(1);
+        state.listeners.values().cloned().collect::<Vec<_>>()
+    };
+    for listener in listeners {
+        listener();
+    }
 }
 
 impl From<Form> for Widget {
@@ -526,9 +621,9 @@ pub trait TextInputFormatter {
     /// Formats an edit update from `old_value` to `new_value`.
     fn format_edit_update(
         &self,
-        old_value: &crate::TextEditingValue,
-        new_value: &crate::TextEditingValue,
-    ) -> crate::TextEditingValue;
+        old_value: &TextEditingValue,
+        new_value: &TextEditingValue,
+    ) -> TextEditingValue;
 }
 
 /// A text input formatter that filters characters using a predicate.
@@ -569,9 +664,9 @@ impl FilteringTextInputFormatter {
 impl TextInputFormatter for FilteringTextInputFormatter {
     fn format_edit_update(
         &self,
-        _old_value: &crate::TextEditingValue,
-        new_value: &crate::TextEditingValue,
-    ) -> crate::TextEditingValue {
+        _old_value: &TextEditingValue,
+        new_value: &TextEditingValue,
+    ) -> TextEditingValue {
         let filtered: String = new_value
             .text
             .chars()
@@ -583,11 +678,10 @@ impl TextInputFormatter for FilteringTextInputFormatter {
                 }
             })
             .collect();
-        crate::TextEditingValue {
+        TextEditingValue {
             text: filtered,
             selection: new_value.selection,
-            preedit: new_value.preedit.clone(),
-            preedit_selection: new_value.preedit_selection,
+            composing: new_value.composing,
         }
     }
 }
@@ -629,18 +723,17 @@ impl LengthLimitingTextInputFormatter {
 impl TextInputFormatter for LengthLimitingTextInputFormatter {
     fn format_edit_update(
         &self,
-        old_value: &crate::TextEditingValue,
-        new_value: &crate::TextEditingValue,
-    ) -> crate::TextEditingValue {
+        old_value: &TextEditingValue,
+        new_value: &TextEditingValue,
+    ) -> TextEditingValue {
         if new_value.text.chars().count() <= self.max_length {
             new_value.clone()
         } else {
             let truncated: String = new_value.text.chars().take(self.max_length).collect();
-            crate::TextEditingValue {
+            TextEditingValue {
                 text: truncated,
                 selection: old_value.selection,
-                preedit: None,
-                preedit_selection: None,
+                composing: new_value.composing,
             }
         }
     }
@@ -685,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn form_validates_autovalidates_submits_and_resets() {
+    fn form_validate_save_reset() {
         let form = Form::new();
         let controller = TextEditingController::with_text("Ada");
         let submitted = Rc::new(Cell::new(0));
@@ -706,6 +799,26 @@ mod tests {
         assert_eq!(submitted.get(), 1);
         form.reset();
         assert_eq!(controller.text(), "Ada");
+    }
+
+    #[test]
+    fn form_controller_survives_rebuild() {
+        let form: FormState = Form::new();
+        let controller = TextEditingController::with_text("before");
+        let saved = Rc::new(Cell::new(0));
+        let field = form.register(controller.clone()).on_saved({
+            let saved = saved.clone();
+            move |_| saved.set(saved.get() + 1)
+        });
+
+        // A rebuilt subtree receives a clone of the controller identity; its
+        // registration and callbacks remain attached to the same state.
+        let rebuilt = form.clone();
+        field.set_text("after");
+        assert!(rebuilt.save());
+        assert_eq!(saved.get(), 1);
+        rebuilt.reset();
+        assert_eq!(controller.text(), "before");
     }
 
     #[test]

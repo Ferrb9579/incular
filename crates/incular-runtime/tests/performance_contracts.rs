@@ -10,7 +10,8 @@ use incular_core::{Offset, Size};
 use incular_runtime::{Application, FrameHistory, PerformanceHub, ProfilerMode, Signal};
 use incular_scroll::MeasuredExtentIndex;
 use incular_text::{TextAlign, TextEngine};
-use incular_widgets::{Text, TextStyle, TranslationController, Widget};
+use incular_widgets::internal::{TranslationController, performance_overlay_placeholder};
+use incular_widgets::{Text, TextStyle, Widget};
 use std::time::{Duration, Instant};
 
 fn tight(size: f32) -> Constraints {
@@ -227,7 +228,7 @@ fn overlay_install_requires_keyed_placeholder() {
     let mut app2 = Application::new(move |_cx| {
         Widget::column(vec![
             Text::new("content").into(),
-            incular_widgets::performance_overlay_placeholder(),
+            performance_overlay_placeholder(),
         ])
     })
     .expect("app2");
@@ -241,7 +242,7 @@ fn overlay_install_requires_keyed_placeholder() {
 /// and shared-GPU reuse means B's presentation counters stay frozen.
 #[test]
 fn static_window_is_not_presented_while_another_animates() {
-    use incular_widgets::TranslationController;
+    use incular_widgets::internal::TranslationController;
 
     let translation = TranslationController::new();
     let trigger = translation.clone();

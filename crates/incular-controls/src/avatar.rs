@@ -3,9 +3,8 @@
 use crate::theme::ControlTheme;
 use incular_config::Alignment;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, ClipOval, Container, ExplicitSemantics, Text, Widget,
-};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{Border, BorderRadius, BoxDecoration, ClipOval, Container, Text, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]

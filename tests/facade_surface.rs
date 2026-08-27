@@ -5,12 +5,8 @@ use incular::prelude::*;
 #[test]
 fn public_facade_composes_scroll_gesture_and_navigation_features() {
     let controller = ScrollController::new();
-    let header = SliverAppBar::new(Widget::fixed_box(Size::new(120., 32.), Color::WHITE))
-        .expanded_height(32.)
-        .pinned(true);
-
-    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(header)];
-    let view = CustomScrollView::new(slivers).controller(controller);
+    let view = SingleChildScrollView::new(Widget::fixed_box(Size::new(120., 32.), Color::WHITE))
+        .controller(controller);
     let gestures = GestureDetector::new(Widget::fixed_box(Size::new(120., 80.), Color::BLACK));
     let _: Widget = Column::new([Widget::from(view), Widget::from(gestures)]).into();
 
@@ -43,6 +39,10 @@ fn facade_exposes_the_extracted_subsystems() {
 
 #[test]
 fn facade_exposes_material_components_at_the_material_boundary() {
+    use incular::material_prelude::{
+        ElevatedButton, OutlinedButton, SelectableText, SelectionArea, TextButton, TextField,
+    };
+    use incular::widgets::internal::TextEditingController;
     let controller = TextEditingController::with_text("Ada");
     let _: Widget = ElevatedButton::new("Save").into();
     let _: Widget = OutlinedButton::new("Cancel").into();
@@ -54,7 +54,7 @@ fn facade_exposes_material_components_at_the_material_boundary() {
 
 #[test]
 fn facade_exposes_variable_extent_lazy_lists() {
-    let index = MeasuredExtentIndex::new(10, 32.);
+    let index = incular::scroll::MeasuredExtentIndex::new(10, 32.);
     let controller = ScrollController::new();
     let _: Widget = ListView::variable_extent(10, 32., |_| {
         Widget::fixed_box(Size::new(20., 32.), Color::WHITE)
@@ -113,11 +113,11 @@ fn facade_exposes_colored_box_and_mouse_region() {
 
 #[test]
 fn facade_exposes_retained_affine_widgets() {
+    use incular::widgets::internal::ScaleController;
     let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
     let _: Widget = Transform::rotation(0.25, child.clone()).into();
-    let _: Widget = FittedBox::new(child.clone()).fit(ImageFit::Contain).into();
+    let _: Widget = FittedBox::new(child.clone()).fit(BoxFit::Contain).into();
     let _: Widget = ScaleTransition::new(ScaleController::new(), child.clone()).into();
-    let _: Widget = RotationTransition::new(RotationController::new(), child).into();
     let affine = AffineTransform::skew(0.1, 0.2);
     assert!(affine.inverse().is_some());
 }

@@ -1,6 +1,12 @@
 use std::{collections::HashSet, fs, path::Path, rc::Rc, time::Duration};
 
 use incular::prelude::*;
+use incular::scroll::{BoundaryPhysics, Scrollability};
+use incular::widgets::internal::{
+    FilteringTextInputFormatter, LengthLimitingTextInputFormatter,
+    TextEditingValue as RetainedTextEditingValue, TextInputFormatter,
+    TextSelection as RetainedTextSelection,
+};
 use serde_json::Value;
 
 #[test]
@@ -219,27 +225,24 @@ fn test_focus_and_traversal_policies() {
 #[test]
 fn test_forms_and_text_formatters() {
     let digit_formatter = FilteringTextInputFormatter::digits_only();
-    let old_val = TextEditingValue {
+    let old_val = RetainedTextEditingValue {
         text: "123".into(),
-        selection: TextSelection::collapsed(3),
-        preedit: None,
-        preedit_selection: None,
+        selection: RetainedTextSelection::collapsed(3),
+        composing: None,
     };
-    let new_val = TextEditingValue {
+    let new_val = RetainedTextEditingValue {
         text: "123abc45".into(),
-        selection: TextSelection::collapsed(8),
-        preedit: None,
-        preedit_selection: None,
+        selection: RetainedTextSelection::collapsed(8),
+        composing: None,
     };
     let formatted = digit_formatter.format_edit_update(&old_val, &new_val);
     assert_eq!(formatted.text, "12345");
 
     let limit_formatter = LengthLimitingTextInputFormatter::new(5);
-    let long_val = TextEditingValue {
+    let long_val = RetainedTextEditingValue {
         text: "123456789".into(),
-        selection: TextSelection::collapsed(9),
-        preedit: None,
-        preedit_selection: None,
+        selection: RetainedTextSelection::collapsed(9),
+        composing: None,
     };
     let limited = limit_formatter.format_edit_update(&old_val, &long_val);
     assert_eq!(limited.text, "12345");

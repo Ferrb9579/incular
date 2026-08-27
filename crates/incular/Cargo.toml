@@ -101,6 +101,18 @@ path = "../../examples/core_defaults.rs"
 name = "controls_gallery"
 path = "../../examples/controls_gallery.rs"
 [[example]]
+name = "material_gallery"
+path = "../../examples/material_gallery.rs"
+[[example]]
+name = "material_workbench"
+path = "../../examples/material_workbench.rs"
+[[example]]
+name = "flutter_widgets_gallery"
+path = "../../examples/flutter_widgets_gallery.rs"
+[[example]]
+name = "workbench"
+path = "../../examples/workbench.rs"
+[[example]]
 name = "base_ui_controls"
 path = "../../examples/base_ui_controls.rs"
 [[example]]

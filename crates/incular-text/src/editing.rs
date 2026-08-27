@@ -1,7 +1,9 @@
 //! Renderer-independent editing and selection state.
 
 use crate::TextStyle;
-use std::{cell::RefCell, fmt, ops::Range, rc::Rc};
+use icu_segmenter::GraphemeClusterSegmenter;
+use incular_core::{RestorationKey, RestorationScope};
+use std::{cell::RefCell, fmt, ops::Range, rc::Rc, time::Instant};
 
 /// Whether a caret is associated with the leading or trailing edge of a
 /// bidirectional run.
@@ -250,6 +252,19 @@ struct ControllerState {
     value: TextEditingValue,
     listeners: Vec<(usize, Listener)>,
     next_listener: usize,
+    content_revision: u64,
+    visual_revision: u64,
+    caret_reset: Option<Instant>,
+    preferred_caret_x: Option<f32>,
+    preedit: Option<String>,
+    preedit_selection: Option<TextRange>,
+    restoration: Option<TextRestoration>,
+}
+
+#[derive(Clone)]
+struct TextRestoration {
+    scope: RestorationScope,
+    key: RestorationKey,
 }
 
 /// Cloneable editing controller. It owns no platform resources; platform and
@@ -257,6 +272,12 @@ struct ControllerState {
 #[derive(Clone, Default)]
 pub struct TextEditingController {
     inner: Rc<RefCell<ControllerState>>,
+}
+
+impl PartialEq for TextEditingController {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
 }
 
 impl fmt::Debug for TextEditingController {
@@ -270,8 +291,43 @@ impl fmt::Debug for TextEditingController {
 
 impl TextEditingController {
     #[must_use]
-    pub fn new(text: impl Into<String>) -> Self {
+    pub fn new() -> Self {
+        Self::from_value(TextEditingValue::default())
+    }
+
+    /// Creates a controller initialized with committed text.
+    #[must_use]
+    pub fn with_text(text: impl Into<String>) -> Self {
         Self::from_value(TextEditingValue::new(text))
+    }
+
+    /// Creates an empty editor and restores its committed state, if present.
+    #[must_use]
+    pub fn restored(scope: RestorationScope, key: RestorationKey) -> Self {
+        let controller = Self::new();
+        controller.bind_restoration(scope, key);
+        controller
+    }
+
+    /// Binds committed text and selection to a stable restoration value.
+    pub fn bind_restoration(&self, scope: RestorationScope, key: RestorationKey) {
+        let restored = scope.get_json(&key).and_then(value_from_json);
+        let mut state = self.inner.borrow_mut();
+        state.restoration = Some(TextRestoration { scope, key });
+        if let Some(value) = restored {
+            state.value = value;
+            state.content_revision = state.content_revision.saturating_add(1);
+            state.visual_revision = state.visual_revision.saturating_add(1);
+            state.preedit = None;
+            state.preedit_selection = None;
+            state.caret_reset = None;
+            state.preferred_caret_x = None;
+        }
+    }
+
+    /// Stops persisting subsequent editor mutations without deleting the saved value.
+    pub fn unbind_restoration(&self) {
+        self.inner.borrow_mut().restoration = None;
     }
 
     #[must_use]
@@ -305,23 +361,27 @@ impl TextEditingController {
     }
 
     pub fn set_value(&self, value: TextEditingValue) {
-        self.update(value);
+        self.update(value, true);
     }
 
     pub fn set_text(&self, text: impl Into<String>) {
-        self.update(TextEditingValue::new(text));
+        self.update(TextEditingValue::new(text), true);
+    }
+
+    pub fn clear(&self) {
+        self.set_text("");
     }
 
     pub fn set_selection(&self, selection: TextSelection) {
         let mut value = self.value();
         value.selection = selection.clamp_to(&value.text);
-        self.update(value);
+        self.update(value, false);
     }
 
     pub fn set_composing(&self, composing: Option<ComposingRange>) {
         let mut value = self.value();
         value.composing = composing.map(|range| range.clamp_to(&value.text));
-        self.update(value);
+        self.update(value, false);
     }
 
     /// Adds a listener and returns an opaque token accepted by
@@ -343,13 +403,13 @@ impl TextEditingController {
 
     pub fn apply_delta(&self, delta: &TextEditingDelta) {
         let next = delta.apply(&self.value());
-        self.update(next);
+        self.update(next, true);
     }
 
     pub fn replace_selection(&self, replacement: &str) {
         let value = self.value();
         let range = value.selection.range();
-        self.update(value.replace(range, replacement));
+        self.update(value.replace(range, replacement), true);
     }
 
     pub fn insert_text(&self, text: &str) {
@@ -357,38 +417,189 @@ impl TextEditingController {
     }
 
     pub fn delete_backward(&self) {
-        let value = self.value();
-        let range = if value.selection.is_collapsed() {
-            previous_boundary(&value.text, value.selection.base)
-                .map_or(TextRange::collapsed(value.selection.base), |start| {
-                    TextRange::new(start, value.selection.base)
-                })
-        } else {
-            value.selection.range()
-        };
-        self.update(value.replace(range, ""));
+        self.backspace();
     }
 
     pub fn delete_forward(&self) {
         let value = self.value();
         let range = if value.selection.is_collapsed() {
-            next_boundary(&value.text, value.selection.extent)
+            next_grapheme_boundary(&value.text, value.selection.extent)
                 .map_or(TextRange::collapsed(value.selection.extent), |end| {
                     TextRange::new(value.selection.extent, end)
                 })
         } else {
             value.selection.range()
         };
-        self.update(value.replace(range, ""));
+        self.update(value.replace(range, ""), true);
     }
 
-    fn update(&self, value: TextEditingValue) {
+    /// Alias used by the Widgets editor API.
+    pub fn insert(&self, text: &str) {
+        self.insert_text(text);
+    }
+
+    /// Deletes one grapheme cluster behind the caret, or the active selection.
+    pub fn backspace(&self) {
+        let value = self.value();
+        let range = if value.selection.is_collapsed() {
+            previous_grapheme_boundary(&value.text, value.selection.extent)
+                .map_or(TextRange::collapsed(value.selection.extent), |start| {
+                    TextRange::new(start, value.selection.extent)
+                })
+        } else {
+            value.selection.range()
+        };
+        self.update(value.replace(range, ""), true);
+    }
+
+    /// Deletes one grapheme cluster ahead of the caret, or the active selection.
+    pub fn delete(&self) {
+        self.delete_forward();
+    }
+
+    pub fn move_left(&self, extend: bool) {
+        self.move_cursor(
+            previous_grapheme_boundary(&self.value().text, self.value().selection.extent)
+                .unwrap_or(0),
+            extend,
+        );
+    }
+
+    pub fn move_right(&self, extend: bool) {
+        let value = self.value();
+        self.move_cursor(
+            next_grapheme_boundary(&value.text, value.selection.extent).unwrap_or(value.text.len()),
+            extend,
+        );
+    }
+
+    pub fn move_home(&self, extend: bool) {
+        self.move_cursor(0, extend);
+    }
+
+    pub fn move_end(&self, extend: bool) {
+        self.move_cursor(self.text().len(), extend);
+    }
+
+    pub fn select_all(&self) {
+        self.set_selection(TextSelection::new(0, self.text().len()));
+    }
+
+    #[must_use]
+    pub fn selected_text(&self) -> String {
+        let value = self.value();
+        let range = value.selection.range();
+        value.text[range.as_range()].to_owned()
+    }
+
+    /// Sets transient IME preedit text without changing committed content.
+    pub fn set_preedit(&self, text: impl Into<String>, selection: Option<TextRange>) {
+        let text = text.into();
+        let mut state = self.inner.borrow_mut();
+        state.preedit_selection = selection.map(|range| range.clamp_to(&text));
+        state.preedit = (!text.is_empty()).then_some(text);
+        state.visual_revision = state.visual_revision.saturating_add(1);
+        drop(state);
+        self.notify_listeners();
+    }
+
+    pub fn commit_preedit(&self, text: &str) {
+        self.replace_selection(text);
+        self.clear_preedit();
+    }
+
+    pub fn clear_preedit(&self) {
+        let mut state = self.inner.borrow_mut();
+        if state.preedit.take().is_some() {
+            state.preedit_selection = None;
+            state.visual_revision = state.visual_revision.saturating_add(1);
+            drop(state);
+            self.notify_listeners();
+        }
+    }
+
+    #[must_use]
+    pub fn preedit(&self) -> Option<String> {
+        self.inner.borrow().preedit.clone()
+    }
+
+    #[must_use]
+    pub fn preedit_selection(&self) -> Option<TextRange> {
+        self.inner.borrow().preedit_selection
+    }
+
+    /// Returns committed and visual revisions used by retained repaint scheduling.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn revisions(&self) -> (u64, u64) {
+        let state = self.inner.borrow();
+        (state.content_revision, state.visual_revision)
+    }
+
+    /// Restarts the caret blink after an editing interaction.
+    #[doc(hidden)]
+    pub fn reset_caret(&self, now: Instant) {
+        let mut state = self.inner.borrow_mut();
+        state.caret_reset = Some(now);
+        state.visual_revision = state.visual_revision.saturating_add(1);
+    }
+
+    /// Returns whether the caret should be painted at `now`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn caret_visible(&self, now: Instant) -> bool {
+        self.inner.borrow().caret_reset.is_some_and(|start| {
+            (now.checked_duration_since(start)
+                .unwrap_or_default()
+                .as_millis()
+                / 500)
+                .is_multiple_of(2)
+        })
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn preferred_caret_x(&self) -> Option<f32> {
+        self.inner.borrow().preferred_caret_x
+    }
+
+    #[doc(hidden)]
+    pub fn move_cursor_with_x(&self, target: usize, extend: bool, x: f32) {
+        self.move_cursor_impl(target, extend, Some(x));
+    }
+
+    #[doc(hidden)]
+    pub fn move_cursor(&self, target: usize, extend: bool) {
+        self.move_cursor_impl(target, extend, None);
+    }
+
+    fn move_cursor_impl(&self, target: usize, extend: bool, preferred_x: Option<f32>) {
+        let mut value = self.value();
+        let target = nearest_char_boundary(&value.text, target.min(value.text.len()));
+        value.selection = if extend {
+            TextSelection::new(value.selection.base, target)
+        } else {
+            TextSelection::collapsed(target)
+        };
+        self.update(value, false);
+        let mut state = self.inner.borrow_mut();
+        state.preferred_caret_x = preferred_x;
+    }
+
+    fn update(&self, value: TextEditingValue, content_changed: bool) {
         let listeners = {
             let mut state = self.inner.borrow_mut();
             if state.value == value {
                 return;
             }
             state.value = value;
+            if content_changed {
+                state.content_revision = state.content_revision.saturating_add(1);
+            }
+            state.visual_revision = state.visual_revision.saturating_add(1);
+            state.preedit = None;
+            state.preedit_selection = None;
+            state.preferred_caret_x = None;
             state
                 .listeners
                 .iter()
@@ -399,7 +610,60 @@ impl TextEditingController {
         for listener in listeners {
             listener(&value);
         }
+        self.persist_restoration();
     }
+
+    fn notify_listeners(&self) {
+        let (value, listeners) = {
+            let state = self.inner.borrow();
+            (
+                state.value.clone(),
+                state
+                    .listeners
+                    .iter()
+                    .map(|(_, listener)| listener.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for listener in listeners {
+            listener(&value);
+        }
+    }
+
+    fn persist_restoration(&self) {
+        let (restoration, value) = {
+            let state = self.inner.borrow();
+            (state.restoration.clone(), value_to_json(&state.value))
+        };
+        if let Some(restoration) = restoration {
+            restoration.scope.set_json(&restoration.key, value);
+        }
+    }
+}
+
+fn value_to_json(value: &TextEditingValue) -> serde_json::Value {
+    serde_json::json!({
+        "text": value.text,
+        "selection": {
+            "base": value.selection.base,
+            "extent": value.selection.extent,
+        },
+    })
+}
+
+fn value_from_json(value: serde_json::Value) -> Option<TextEditingValue> {
+    let object = value.as_object()?;
+    let text = object.get("text")?.as_str()?.to_owned();
+    let selection = object
+        .get("selection")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|selection| {
+            let base = usize::try_from(selection.get("base")?.as_u64()?).ok()?;
+            let extent = usize::try_from(selection.get("extent")?.as_u64()?).ok()?;
+            Some(TextSelection::new(base, extent))
+        })
+        .unwrap_or_else(|| TextSelection::collapsed(text.len()));
+    Some(TextEditingValue::new(text.clone()).with_selection(selection.clamp_to(&text)))
 }
 
 /// A renderer-neutral editable text description.
@@ -495,23 +759,24 @@ fn nearest_char_boundary(text: &str, offset: usize) -> usize {
     boundary
 }
 
-fn previous_boundary(text: &str, offset: usize) -> Option<usize> {
+fn previous_grapheme_boundary(text: &str, offset: usize) -> Option<usize> {
     let offset = nearest_char_boundary(text, offset.min(text.len()));
     (offset > 0).then(|| {
-        text[..offset]
-            .char_indices()
-            .next_back()
-            .map_or(0, |(index, _)| index)
+        GraphemeClusterSegmenter::new()
+            .segment_str(text)
+            .take_while(|index| *index < offset)
+            .last()
+            .unwrap_or(0)
     })
 }
 
-fn next_boundary(text: &str, offset: usize) -> Option<usize> {
+fn next_grapheme_boundary(text: &str, offset: usize) -> Option<usize> {
     let offset = nearest_char_boundary(text, offset.min(text.len()));
     (offset < text.len()).then(|| {
-        text[offset..]
-            .chars()
-            .next()
-            .map_or(text.len(), |character| offset + character.len_utf8())
+        GraphemeClusterSegmenter::new()
+            .segment_str(text)
+            .find(|index| *index > offset)
+            .unwrap_or(text.len())
     })
 }
 
@@ -532,7 +797,7 @@ mod tests {
 
     #[test]
     fn controller_notifies_listeners_and_applies_deltas() {
-        let controller = TextEditingController::new("hello");
+        let controller = TextEditingController::with_text("hello");
         let calls = Rc::new(Cell::new(0));
         let calls_for_listener = calls.clone();
         let token = controller.add_listener(move |_| {
@@ -547,7 +812,7 @@ mod tests {
 
     #[test]
     fn deletion_moves_by_codepoint_not_by_byte() {
-        let controller = TextEditingController::new("a🙂");
+        let controller = TextEditingController::with_text("a🙂");
         controller.delete_backward();
         assert_eq!(controller.text(), "a");
         controller.delete_backward();

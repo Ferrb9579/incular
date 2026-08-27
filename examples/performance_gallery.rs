@@ -10,8 +10,12 @@
 //! Scenarios are mounted one at a time through the retained tree, so switching
 //! unmounts the previous scenario's elements. The overlay at the top-left is
 //! repaint-contained and rebuilds only when the performance hub publishes.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
-use incular_widgets::performance_overlay_placeholder;
+use incular::widgets::internal::{
+    Effects, Key, MeasuredExtentIndex, PathView, ScrollView, TranslationController, VirtualList,
+    performance_overlay_placeholder,
+};
 use std::time::{Duration, Instant};
 
 const SCENARIOS: [&str; 15] = [

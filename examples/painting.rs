@@ -1,5 +1,6 @@
 //! Visual smoke test for Phase 9.1B vector painting and retained gradients.
 use incular::prelude::*;
+use incular::widgets::internal::{PathView, icons};
 use std::sync::Arc;
 
 fn stops(colors: &[(f32, Color)]) -> GradientStops {

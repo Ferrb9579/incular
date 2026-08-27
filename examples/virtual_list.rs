@@ -1,7 +1,9 @@
 //! A million logical rows, with only the viewport and a 240 logical-pixel
 //! cache materialized at once. Drag the visible right-hand thumb or click its
 //! track; no row strings or Widgets are preallocated.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::VirtualList;
 
 fn main() {
     let controller = ScrollController::new();

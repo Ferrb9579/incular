@@ -16,6 +16,7 @@ incular-core = { workspace = true }
 incular-rendering = { workspace = true }
 parley = { workspace = true }
 icu_segmenter = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

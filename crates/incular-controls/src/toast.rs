@@ -7,9 +7,8 @@
 
 use crate::theme::ControlTheme;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{
-    BorderRadius, BoxDecoration, Column, Container, ExplicitSemantics, Stack, Text, Widget,
-};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{BorderRadius, BoxDecoration, Column, Container, Stack, Text, Widget};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 

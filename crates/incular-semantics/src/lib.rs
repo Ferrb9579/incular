@@ -22,6 +22,8 @@ pub enum Role {
     GenericContainer,
     Checkbox,
     Radio,
+    /// A two-state toggle distinct from a momentary button.
+    Switch,
     Slider,
     Menu,
     Dialog,
@@ -90,6 +92,11 @@ pub struct SemanticState {
     pub expanded: Option<bool>,
     pub read_only: bool,
     pub editable: bool,
+    /// Whether a text field's value is visually obscured (for example a
+    /// password field).  Keeping this in the portable tree lets native
+    /// accessibility adapters make the same privacy decision as the widget
+    /// layer without exposing the clear-text paint representation.
+    pub obscured: bool,
     pub multiline: bool,
     pub selection: Option<TextSelection>,
     pub item_index: Option<usize>,

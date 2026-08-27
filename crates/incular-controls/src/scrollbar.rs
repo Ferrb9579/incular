@@ -7,7 +7,8 @@
 
 use crate::theme::ControlTheme;
 use incular_scroll::{ScrollController, ScrollbarStyle as RawScrollbarStyle};
-use incular_widgets::{Widget, WidgetKind};
+use incular_widgets::Widget;
+use incular_widgets::internal::WidgetKind;
 
 /// Themed vertical scrollbar/scroll-area wrapper.
 ///
@@ -112,8 +113,8 @@ impl From<Scrollbar> for Widget {
     fn from(value: Scrollbar) -> Self {
         let value = std::rc::Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
@@ -124,8 +125,8 @@ mod tests {
     use super::*;
     use incular_config::Constraints;
     use incular_core::{Color, Offset, Size};
-    use incular_rendering::PaintCommand;
-    use incular_widgets::WidgetTree;
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::internal::WidgetTree;
 
     #[test]
     fn plain_content_becomes_a_retained_scroll_view() {
@@ -175,10 +176,10 @@ mod tests {
 
         let commands = tree.paint();
         assert!(commands.commands().iter().any(|command| {
-            matches!(command, PaintCommand::RRect { rrect, brush } if rrect.rect.size.width == 12. && *brush == style.track_color.into())
+            matches!(command, PaintCommand::RRect { rrect, brush } if rrect.rect.size.width == 12. && brush == &Brush::Solid(style.track_color))
         }));
         assert!(commands.commands().iter().any(|command| {
-            matches!(command, PaintCommand::RRect { rrect, brush } if rrect.rect.size.width == 12. && *brush == style.thumb_color.into())
+            matches!(command, PaintCommand::RRect { rrect, brush } if rrect.rect.size.width == 12. && brush == &Brush::Solid(style.thumb_color))
         }));
     }
 

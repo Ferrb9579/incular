@@ -34,5 +34,5 @@ fn build_ui() -> Widget {
 `ControlThemeScope` when retained builders materialize, so nested light/dark
 scopes work without threading a theme through every constructor. Compound
 parts live in the `checkbox`, `switch`, `radio`, `field`, `tabs`, `menu`,
-`dialog`, `popover`, `tooltip`, `select`, and `overlay` modules. See
-`CONTROLS_ARCHITECTURE.md` and `CONTROL_STYLING.md` at the repository root.
+`dialog`, `popover`, `tooltip`, `select`, and `overlay` modules. The repository
+README and this crate README are the durable architecture overview.

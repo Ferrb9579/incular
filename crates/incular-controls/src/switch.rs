@@ -3,7 +3,10 @@
 use crate::{ControlTheme, Switch};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{ExplicitSemantics, Widget, internal::ActionSurface};
+use incular_widgets::{
+    Widget,
+    internal::{ActionSurface, ExplicitSemantics},
+};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -13,6 +16,12 @@ pub struct Root {
     enabled: bool,
     read_only: bool,
     child: Option<Widget>,
+    active_track_color: Option<Color>,
+    inactive_track_color: Option<Color>,
+    active_thumb_color: Option<Color>,
+    inactive_thumb_color: Option<Color>,
+    outline_color: Option<Color>,
+    outline_width: Option<f32>,
     on_change: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -30,6 +39,12 @@ impl Root {
             enabled: true,
             read_only: false,
             child: None,
+            active_track_color: None,
+            inactive_track_color: None,
+            active_thumb_color: None,
+            inactive_thumb_color: None,
+            outline_color: None,
+            outline_width: None,
             on_change: None,
         }
     }
@@ -69,6 +84,37 @@ impl Root {
         self
     }
     #[must_use]
+    pub fn active_track_color(mut self, value: Color) -> Self {
+        self.active_track_color = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn inactive_track_color(mut self, value: Color) -> Self {
+        self.inactive_track_color = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn active_thumb_color(mut self, value: Color) -> Self {
+        self.active_thumb_color = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn inactive_thumb_color(mut self, value: Color) -> Self {
+        self.inactive_thumb_color = Some(value);
+        self
+    }
+    #[must_use]
+    pub fn outline_color(mut self, value: Color) -> Self {
+        self.outline_color = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn outline_width(mut self, value: f32) -> Self {
+        self.outline_width = Some(value.max(0.0));
+        self
+    }
+    #[must_use]
     pub fn on_checked_change(mut self, callback: impl Fn(bool) + 'static) -> Self {
         self.on_change = Some(Rc::new(callback));
         self
@@ -88,7 +134,7 @@ impl Root {
             }
             let raw: Widget = button.into();
             return raw.semantics(
-                ExplicitSemantics::new(SemanticRole::Button)
+                ExplicitSemantics::new(SemanticRole::Switch)
                     .state(SemanticState {
                         enabled: self.enabled,
                         focusable: self.enabled || self.read_only,
@@ -103,6 +149,24 @@ impl Root {
             );
         }
         let mut switch = Switch::new(self.checked).enabled(self.enabled && !self.read_only);
+        if let Some(color) = self.active_track_color {
+            switch = switch.active_track_color(color);
+        }
+        if let Some(color) = self.inactive_track_color {
+            switch = switch.inactive_track_color(color);
+        }
+        if let Some(color) = self.active_thumb_color {
+            switch = switch.active_thumb_color(color);
+        }
+        if let Some(color) = self.inactive_thumb_color {
+            switch = switch.inactive_thumb_color(color);
+        }
+        if let Some(color) = self.outline_color {
+            switch = switch.outline_color(color);
+        }
+        if let Some(width) = self.outline_width {
+            switch = switch.outline_width(width);
+        }
         if let Some(callback) = self.on_change.clone() {
             switch = switch.on_changed(move |value| callback(value));
         }
@@ -113,8 +177,8 @@ impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

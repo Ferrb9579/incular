@@ -1,5 +1,7 @@
 //! Color-matrix, blend-mode, and ordered effect-chain showcase.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::{Blend, ColorFilterController, Effects, TranslationController};
 use std::{
     cell::Cell,
     rc::Rc,

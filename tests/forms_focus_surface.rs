@@ -1,6 +1,9 @@
 //! Compile/use coverage for public form, autocomplete, focus, and action APIs.
 
+use incular::gestures::{Actions, Command, Shortcuts};
+use incular::material_prelude::Autocomplete;
 use incular::prelude::*;
+use incular::widgets::internal::TextEditingController;
 
 #[test]
 fn facade_exposes_form_autocomplete_focus_and_typed_actions() {

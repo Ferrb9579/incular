@@ -1150,7 +1150,7 @@ mod tests {
         let mut tree = WidgetTree::new();
         tree.mount(Widget::scroll_view(
             crate::ScrollController::new(),
-            Widget::button(Size::new(30., 20.), Color::WHITE, crate::ActionId(1)),
+            Widget::button(Size::new(30., 20.), Color::WHITE, crate::tree::ActionId(1)),
         ))
         .expect("mount");
         tree.layout(Constraints::tight(Size::new(40., 30.)));

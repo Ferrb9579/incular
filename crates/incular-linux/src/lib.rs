@@ -16,7 +16,7 @@ use incular_runtime::{
     Application, ApplicationLifecycle, NativeWindowCommand, Runtime, RuntimeWake,
 };
 use incular_wgpu::{RendererError, SharedGpuContext, WgpuRenderer};
-use incular_widgets::ActionId;
+use incular_widgets::internal::ActionId;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 #[cfg(feature = "devtools")]
 use std::{path::PathBuf, process::Command};

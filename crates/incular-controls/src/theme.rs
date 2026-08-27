@@ -760,5 +760,5 @@ impl Default for ControlTheme {
 /// the dark preset, matching `ControlTheme::default()`.
 #[must_use]
 pub fn current_control_theme() -> ControlTheme {
-    incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default()
+    incular_widgets::internal::current_build_environment::<ControlTheme>().unwrap_or_default()
 }

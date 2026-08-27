@@ -1,4 +1,5 @@
 //! A declarative native counter: no element IDs, action IDs, or runtime wiring.
+use incular::material::ElevatedButton;
 use incular::prelude::*;
 use incular_controls::ButtonStyle;
 
@@ -14,7 +15,7 @@ fn main() {
                 .into(),
             Text::new(format!("Count: {value}")).into(),
             ElevatedButton::new("Increment")
-            .style(ButtonStyle::new())
+                .style(ButtonStyle::new())
                 .on_click(move || callback_count.update(|count| *count += 1))
                 .into(),
         ])

@@ -1,6 +1,6 @@
 //! Accessible semantic annotation widgets.
 
-use incular_semantics::{SemanticAction, SemanticRole};
+use incular_semantics::{SemanticAction, SemanticRole, SemanticState};
 
 use crate::Widget;
 
@@ -12,6 +12,7 @@ pub struct Semantics {
     value: Option<String>,
     description: Option<String>,
     actions: Vec<SemanticAction>,
+    state: SemanticState,
     child: Option<Widget>,
 }
 
@@ -25,6 +26,7 @@ impl Semantics {
             value: None,
             description: None,
             actions: Vec::new(),
+            state: SemanticState::default(),
             child: Some(child.into()),
         }
     }
@@ -64,6 +66,18 @@ impl Semantics {
         self
     }
 
+    /// Sets the complete retained semantic state for this annotation.
+    ///
+    /// The state is copied into the retained [`crate::ExplicitSemantics`]
+    /// descriptor when this widget is converted. This keeps semantic state
+    /// renderer-independent and lets native accessibility projections expose
+    /// the same values as the widget tree.
+    #[must_use]
+    pub fn state(mut self, state: SemanticState) -> Self {
+        self.state = state;
+        self
+    }
+
     #[must_use]
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
         self.description = Some(hint.into());
@@ -94,32 +108,38 @@ impl Semantics {
     }
 
     #[must_use]
-    pub const fn selected(self, _selected: bool) -> Self {
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.state.selected = selected;
         self
     }
 
     #[must_use]
-    pub const fn enabled(self, _enabled: bool) -> Self {
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.state.enabled = enabled;
         self
     }
 
     #[must_use]
-    pub const fn checked(self, _checked: bool) -> Self {
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.state.checked = Some(checked);
         self
     }
 
     #[must_use]
-    pub const fn toggled(self, _toggled: bool) -> Self {
+    pub fn toggled(mut self, toggled: bool) -> Self {
+        self.state.checked = Some(toggled);
         self
     }
 
     #[must_use]
-    pub const fn focused(self, _focused: bool) -> Self {
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.state.focused = focused;
         self
     }
 
     #[must_use]
-    pub const fn read_only(self, _read_only: bool) -> Self {
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.state.read_only = read_only;
         self
     }
 
@@ -129,7 +149,8 @@ impl Semantics {
     }
 
     #[must_use]
-    pub const fn multiline(self, _multiline: bool) -> Self {
+    pub fn multiline(mut self, multiline: bool) -> Self {
+        self.state.multiline = multiline;
         self
     }
 
@@ -227,24 +248,32 @@ impl Semantics {
     pub fn on_paste(self, _callback: impl Fn() + 'static) -> Self {
         self
     }
+
+    fn explicit(&self) -> Option<crate::ExplicitSemantics> {
+        let role = self.role?;
+        let mut explicit = crate::ExplicitSemantics::new(role)
+            .state(self.state.clone())
+            .actions(self.actions.iter().map(SemanticAction::kind));
+        if let Some(label) = &self.label {
+            explicit = explicit.label(label.clone());
+        }
+        if let Some(value) = &self.value {
+            explicit = explicit.value(value.clone());
+        }
+        if let Some(description) = &self.description {
+            explicit = explicit.description(description.clone());
+        }
+        Some(explicit)
+    }
 }
 
 impl From<Semantics> for Widget {
     fn from(value: Semantics) -> Self {
+        let explicit = value.explicit();
         let mut widget: Widget = value
             .child
             .unwrap_or_else(|| crate::SizedBox::shrink().into());
-        if let Some(role) = value.role {
-            let mut explicit = crate::ExplicitSemantics::new(role);
-            if let Some(l) = value.label {
-                explicit = explicit.label(l);
-            }
-            if let Some(v) = value.value {
-                explicit = explicit.value(v);
-            }
-            if let Some(d) = value.description {
-                explicit = explicit.description(d);
-            }
+        if let Some(explicit) = explicit {
             widget = widget.semantics(explicit);
         } else {
             if let Some(l) = value.label {
@@ -255,6 +284,47 @@ impl From<Semantics> for Widget {
             }
         }
         widget
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_state_and_explicit_actions_survive_widget_conversion() {
+        let semantics = Semantics::new(crate::SizedBox::shrink())
+            .role(SemanticRole::Checkbox)
+            .label("Remember me")
+            .value("on")
+            .enabled(true)
+            .selected(true)
+            .checked(true)
+            .focused(true)
+            .read_only(true)
+            .multiline(true)
+            .action(SemanticAction::Focus)
+            .action(SemanticAction::Activate);
+
+        let explicit = semantics
+            .explicit()
+            .expect("role creates explicit semantics");
+        assert_eq!(explicit.role, SemanticRole::Checkbox);
+        assert_eq!(explicit.label.as_deref(), Some("Remember me"));
+        assert_eq!(explicit.value.as_deref(), Some("on"));
+        assert!(explicit.state.enabled);
+        assert!(explicit.state.selected);
+        assert_eq!(explicit.state.checked, Some(true));
+        assert!(explicit.state.focused);
+        assert!(explicit.state.read_only);
+        assert!(explicit.state.multiline);
+        assert_eq!(
+            explicit.actions,
+            vec![
+                incular_semantics::SemanticActionKind::Focus,
+                incular_semantics::SemanticActionKind::Activate,
+            ]
+        );
     }
 }
 

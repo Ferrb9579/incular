@@ -13,7 +13,8 @@ use incular_config::{Alignment, Axis, Clip, Constraints, EdgeInsets};
 use incular_core::{Color, Size};
 use incular_rendering::{CornerRadii, DisplayList, Path};
 
-use crate::{DecoratedBox, ImageFit, Widget, WidgetKind};
+use crate::tree::BoxFit;
+use crate::{DecoratedBox, Widget, WidgetKind};
 
 /// Insets its child by given [`EdgeInsets`].
 #[derive(Clone, Debug, PartialEq)]
@@ -612,10 +613,10 @@ impl From<AspectRatio> for Widget {
     }
 }
 
-/// Scales and positions its child according to [`ImageFit`] and [`Alignment`].
+/// Scales and positions its child according to [`BoxFit`] and [`Alignment`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct FittedBox {
-    fit: ImageFit,
+    fit: BoxFit,
     alignment: Alignment,
     child: Widget,
 }
@@ -625,14 +626,14 @@ impl FittedBox {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
-            fit: ImageFit::Contain,
+            fit: BoxFit::Contain,
             alignment: Alignment::CENTER,
             child: child.into(),
         }
     }
 
     #[must_use]
-    pub fn fit(mut self, fit: ImageFit) -> Self {
+    pub fn fit(mut self, fit: BoxFit) -> Self {
         self.fit = fit;
         self
     }
@@ -1133,16 +1134,16 @@ impl From<ConstraintsTransformBox> for Widget {
     }
 }
 
-/// Wraps a child subtree with an explicit [`crate::Key`].
+/// Wraps a child subtree with an explicit retained key.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeyedSubtree {
-    key: crate::Key,
+    key: crate::tree::Key,
     child: Widget,
 }
 
 impl KeyedSubtree {
     #[must_use]
-    pub fn new(key: impl Into<crate::Key>, child: impl Into<Widget>) -> Self {
+    pub fn new(key: impl Into<crate::tree::Key>, child: impl Into<Widget>) -> Self {
         Self {
             key: key.into(),
             child: child.into(),

@@ -4,10 +4,8 @@ use crate::overlay::Side;
 use incular_config::EdgeInsets;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{
-    BorderRadius, BoxDecoration, Container, ExplicitSemantics, Positioned, Stack, Widget,
-    internal::ActionSurface,
-};
+use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
+use incular_widgets::{BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]

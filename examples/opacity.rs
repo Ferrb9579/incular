@@ -1,5 +1,8 @@
 //! Retained offscreen group-opacity showcase.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::icons;
+use incular::widgets::internal::{OpacityController, TranslationController};
 use std::{
     cell::Cell,
     rc::Rc,

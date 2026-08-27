@@ -7,7 +7,10 @@ use incular_controls::{
 };
 use incular_core::Size;
 use incular_rendering::{Brush, PaintCommand};
-use incular_widgets::{ActionId, ButtonState, TextEditingController, Widget, WidgetTree};
+use incular_widgets::{
+    Widget,
+    internal::{ActionId, ButtonState, TextEditingController, WidgetTree},
+};
 
 #[test]
 fn control_theme_contrast_and_defaults() {
@@ -153,7 +156,7 @@ fn theme_scope_changes_materialized_button_surface() {
                 PaintCommand::RRect {
                     brush: Brush::Solid(color),
                     ..
-                } => Some(*color),
+                } => Some(color.to_owned()),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("button {root:?} did not paint a surface"))

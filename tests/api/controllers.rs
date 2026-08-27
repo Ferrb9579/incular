@@ -1,4 +1,5 @@
 use incular::prelude::*;
+use incular::widgets::internal::TextEditingController as RetainedTextEditingController;
 
 #[test]
 fn test_controllers_contract() {
@@ -13,7 +14,7 @@ fn test_controllers_contract() {
     page_ctrl.jump_to(200.0);
     assert_eq!(page_ctrl.offset(), 200.0);
 
-    let text_ctrl = TextEditingController::with_text("Initial");
+    let text_ctrl = RetainedTextEditingController::with_text("Initial");
     assert_eq!(text_ctrl.text(), "Initial");
     text_ctrl.set_text("Updated");
     assert_eq!(text_ctrl.text(), "Updated");

@@ -56,8 +56,8 @@ impl From<Card> for Widget {
     fn from(value: Card) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
@@ -108,8 +108,8 @@ impl From<Divider> for Widget {
     fn from(value: Divider) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

@@ -2,6 +2,7 @@
 //! Demonstrates CustomPaint, vector paths, brushes, gradients, zoom and pan.
 
 use crate::{state::StudioState, theme::StudioTheme};
+use incular::material::MaterialButton;
 use incular::prelude::*;
 
 #[must_use]

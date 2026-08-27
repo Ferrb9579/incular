@@ -1,6 +1,7 @@
 //! Radio group and rich selection infrastructure widgets.
 
-use crate::{GestureDetector, SelectionAreaController, Text, Widget};
+use crate::selection::SelectionAreaController;
+use crate::{GestureDetector, Text, Widget};
 use std::rc::Rc;
 
 /// Coordinates mutually exclusive selection for a group of radio buttons.

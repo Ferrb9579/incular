@@ -1830,6 +1830,8 @@ name = "incular-image"
 version = "0.1.0"
 dependencies = [
  "image",
+ "incular-config",
+ "incular-core",
 ]
 
 [[package]]
@@ -1898,8 +1900,12 @@ version = "0.1.0"
 name = "incular-material"
 version = "0.1.0"
 dependencies = [
+ "incular-config",
  "incular-controls",
  "incular-core",
+ "incular-rendering",
+ "incular-scroll",
+ "incular-semantics",
  "incular-text",
  "incular-widgets",
 ]
@@ -1995,6 +2001,7 @@ dependencies = [
  "incular-core",
  "incular-rendering",
  "parley",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,5 +1,7 @@
 //! A text-containing card translated by retained compositor state.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::TranslationController;
 use std::time::{Duration, Instant};
 
 fn main() {

@@ -6,7 +6,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use incular_config::Constraints;
 use incular_core::Size;
-use incular_widgets::{Key, Text, Widget, WidgetTree};
+use incular_widgets::internal::{ElementId, Key, WidgetTree};
+use incular_widgets::{Text, Widget};
 
 fn frame_constraints() -> Constraints {
     Constraints::tight(Size::new(600., 6000.))
@@ -26,7 +27,7 @@ fn keyed_row(items: usize, generation: u64) -> Widget {
 }
 
 /// Mounts `root`, lays it out once, and returns the tree with its root id.
-fn prepared(root: Widget) -> (WidgetTree, incular_widgets::ElementId) {
+fn prepared(root: Widget) -> (WidgetTree, ElementId) {
     let mut tree = WidgetTree::default();
     let id = tree.mount(root).expect("mount");
     tree.layout(frame_constraints());
@@ -255,7 +256,8 @@ fn extended_bench(c: &mut Criterion) {
     // 100k unchanged: OPT-IN ONLY (`INCULAR_HEAVY_BENCH=1`). The retained
     // 100k-node tree costs >6 GB resident memory (≈65 KB per widget across
     // element/render/layer/display-list state), which must never be mounted
-    // incidentally by a default benchmark sweep. See PERFORMANCE.md.
+    // incidentally by a default benchmark sweep. See MEMORY.md for the
+    // workspace's low-memory build policy.
     if std::env::var("INCULAR_HEAVY_BENCH").is_ok() {
         group.bench_function("unchanged_100k", |b| {
             let (mut tree, root) = prepared(keyed_row(100_000, 0));

@@ -7,9 +7,8 @@
 use crate::theme::ControlTheme;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{
-    BorderRadius, BoxDecoration, Container, ExplicitSemantics, Positioned, Stack, Widget,
-};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]

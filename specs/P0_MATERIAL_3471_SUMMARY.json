@@ -1,0 +1,63 @@
+{
+  "artifact": "specs/P0_MATERIAL_3471.jsonl",
+  "canonical_manifest": "specs/flutter_material_3471_parity.jsonl",
+  "canonical_row_count": 551,
+  "flutter_commit": "6655482ec06e547f90abf8ae7590466f4415978d",
+  "flutter_tag": "3.47.1",
+  "generation": "tools/generate_material_p0.py; priority review target/material25/priority.jsonl",
+  "implementation_status_counts": {
+    "DEFERRED": 167,
+    "DEFERRED_PLATFORM": 158,
+    "INTERNAL": 4,
+    "MERGED_CONTROLS_IMPLEMENTED": 60,
+    "MERGED_CORE_IMPLEMENTED": 1,
+    "RUSTIFIED_IMPLEMENTED": 134,
+    "SKIPPED_LEGACY": 27
+  },
+  "p0_deferred_platform_count": 158,
+  "p0_implementation_status_counts": {
+    "DEFERRED_PLATFORM": 158,
+    "MERGED_CONTROLS_IMPLEMENTED": 58,
+    "RUSTIFIED_IMPLEMENTED": 120,
+    "SKIPPED_LEGACY": 11
+  },
+  "p0_port_policy_counts": {
+    "DEFER_PLATFORM": 158,
+    "MERGED_CONTROLS": 58,
+    "RUSTIFIED": 120,
+    "SKIP_LEGACY": 11
+  },
+  "p0_row_count": 347,
+  "p0_tracks": {
+    "buttons": 62,
+    "dialogs": 7,
+    "dropdowns": 14,
+    "icons": 2,
+    "menus": 29,
+    "progress": 6,
+    "scaffold_navigation": 41,
+    "selection": 45,
+    "slider": 10,
+    "snackbar": 8,
+    "surfaces": 40,
+    "tabs": 15,
+    "text_input": 14,
+    "theme": 50,
+    "tooltip": 4
+  },
+  "p0_true_deferred_count": 158,
+  "port_policy_counts": {
+    "DEFER_PLATFORM": 329,
+    "MERGED_CONTROLS": 60,
+    "MERGED_CORE": 1,
+    "RUSTIFIED": 134,
+    "SKIP_LEGACY": 27
+  },
+  "priority_counts": {
+    "P0_MATERIAL_DEPLOYABLE": 347,
+    "P1_MATERIAL_COMMON": 173,
+    "P2_MATERIAL_ADVANCED": 26,
+    "P3_MATERIAL_COMPATIBILITY": 5
+  },
+  "scope_note": "P0 deployability projection only; P1/P2/P3 and legacy/platform rows remain tracked in the canonical graph."
+}

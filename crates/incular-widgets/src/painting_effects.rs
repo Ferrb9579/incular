@@ -1,12 +1,15 @@
 //! Painting, image, masking, clipping, and compositor effect widgets.
 
 use incular_config::Clip;
-use incular_core::Color;
+use incular_core::{Color, Offset};
 use incular_image::ImageHandle;
 use incular_rendering::{BlendMode, Brush, CornerRadii, Path};
 use std::sync::Arc;
 
-use crate::{Blur, BlurController, ClipRRect, DecoratedBox, Image, ImageFit, ImageRepeat, Widget};
+use crate::tree::ImageFit;
+use crate::{
+    Blur, BlurController, ClipRRect, DecoratedBox, DropShadow, Image, ImageRepeat, Widget,
+};
 
 /// Renders a raw raster image buffer directly without asset caching.
 #[derive(Clone, Debug, PartialEq)]
@@ -338,10 +341,20 @@ impl PhysicalModel {
 
 impl From<PhysicalModel> for Widget {
     fn from(value: PhysicalModel) -> Self {
-        DecoratedBox::new(value.child)
+        let surface = DecoratedBox::new(value.child)
             .background(value.color)
-            .radius(value.border_radius.top_left)
+            .radius(value.border_radius.top_left);
+        if value.elevation > 0.0 {
+            DropShadow::new(
+                Offset::new(0.0, value.elevation * 0.18),
+                (value.elevation * 0.55).max(1.0),
+                value.shadow_color,
+                surface,
+            )
             .into()
+        } else {
+            surface.into()
+        }
     }
 }
 

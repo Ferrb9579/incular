@@ -3,7 +3,10 @@
 use crate::{Checkbox, ControlTheme};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{ExplicitSemantics, Widget, internal::ActionSurface};
+use incular_widgets::{
+    Border, BorderRadius, Widget,
+    internal::{ActionSurface, ExplicitSemantics},
+};
 use std::rc::Rc;
 
 /// Explicit checkbox value, including the mixed state used by tree views.
@@ -32,6 +35,12 @@ pub struct Root {
     required: bool,
     label: Option<String>,
     child: Option<Widget>,
+    active_color: Option<Color>,
+    inactive_color: Option<Color>,
+    check_color: Option<Color>,
+    border_color: Option<Color>,
+    border_width: Option<f32>,
+    radius: Option<f32>,
     on_change: Option<Rc<dyn Fn(CheckedState) + 'static>>,
 }
 
@@ -51,6 +60,12 @@ impl Root {
             required: false,
             label: None,
             child: None,
+            active_color: None,
+            inactive_color: None,
+            check_color: None,
+            border_color: None,
+            border_width: None,
+            radius: None,
             on_change: None,
         }
     }
@@ -118,6 +133,48 @@ impl Root {
         self.child = Some(value.into());
         self
     }
+    /// Sets the fill color used while the indicator is checked.
+    #[must_use]
+    pub fn active_color(mut self, value: Color) -> Self {
+        self.active_color = Some(value);
+        self
+    }
+    /// Sets the fill color used while the indicator is unchecked.
+    #[must_use]
+    pub fn inactive_color(mut self, value: Color) -> Self {
+        self.inactive_color = Some(value);
+        self
+    }
+    /// Sets the color of the check or mixed-state mark.
+    #[must_use]
+    pub fn check_color(mut self, value: Color) -> Self {
+        self.check_color = Some(value);
+        self
+    }
+    /// Sets the indicator outline color.
+    #[must_use]
+    pub fn border_color(mut self, value: Color) -> Self {
+        self.border_color = Some(value);
+        self
+    }
+    /// Sets the indicator outline from a renderer-neutral border descriptor.
+    #[must_use]
+    pub fn side(mut self, value: Border) -> Self {
+        self.border_color = Some(value.top.color);
+        self.border_width = Some(value.top.width.max(0.0));
+        self
+    }
+    /// Sets the indicator corner radius.
+    #[must_use]
+    pub fn shape(mut self, value: BorderRadius) -> Self {
+        self.radius = Some(value.top_left.x.max(0.0));
+        self
+    }
+    #[must_use]
+    pub fn radius(mut self, value: f32) -> Self {
+        self.radius = Some(value.max(0.0));
+        self
+    }
     #[must_use]
     pub fn on_checked_change(mut self, callback: impl Fn(CheckedState) + 'static) -> Self {
         self.on_change = Some(Rc::new(callback));
@@ -128,6 +185,24 @@ impl Root {
     pub fn build(&self, theme: &ControlTheme) -> Widget {
         let mut checkbox =
             Checkbox::new(self.state.is_checked()).enabled(self.enabled && !self.read_only);
+        if let Some(color) = self.active_color {
+            checkbox = checkbox.active_color(color);
+        }
+        if let Some(color) = self.inactive_color {
+            checkbox = checkbox.inactive_color(color);
+        }
+        if let Some(color) = self.check_color {
+            checkbox = checkbox.check_color(color);
+        }
+        if let Some(color) = self.border_color {
+            checkbox = checkbox.border_color(color);
+        }
+        if let Some(width) = self.border_width {
+            checkbox = checkbox.border_width(width);
+        }
+        if let Some(radius) = self.radius {
+            checkbox = checkbox.radius(radius);
+        }
         if let Some(label) = &self.label {
             checkbox = checkbox.label(label.clone());
         }
@@ -192,8 +267,8 @@ impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

@@ -1,5 +1,6 @@
 //! A visual gallery for the retained layout primitives.
 use incular::prelude::*;
+use incular::widgets::internal::ScrollView;
 
 const SURFACE: Color = Color::rgba(35, 42, 58, 255);
 const MUTED: Color = Color::rgba(190, 202, 222, 255);

@@ -6,9 +6,13 @@
 
 use incular::prelude::{
     Application, Column, Container, CrossAxisAlignment, EdgeInsets, Expanded, Row, Signal,
-    SingleChildScrollView, Size, SizedBox, Text, TextEditingController, Widget, WindowOptions,
+    SingleChildScrollView, Size, SizedBox, Text, Widget, WindowOptions,
 };
+use incular::widgets::internal::TextEditingController;
 use incular_controls::prelude::*;
+use incular_controls::{
+    Card as ControlsCard, Divider as ControlsDivider, IconButton as ControlsIconButton,
+};
 use incular_controls::{avatar, meter, progress, scroll_area, toast};
 
 fn main() {
@@ -61,7 +65,7 @@ fn main() {
             );
 
         // 1. Button Suite
-        let buttons = Card::new(
+        let buttons = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Buttons").style(theme.typography.title.clone())),
                 Widget::from(Row::new([
@@ -78,14 +82,16 @@ fn main() {
                         GhostButton::new("Ghost Button").on_click(|| println!("Ghost clicked")),
                     ),
                     Widget::from(SizedBox::new().width(8.0)),
-                    Widget::from(IconButton::new("⚙").on_click(|| println!("Settings clicked"))),
+                    Widget::from(
+                        ControlsIconButton::new("⚙").on_click(|| println!("Settings clicked")),
+                    ),
                 ])),
             ])
             .spacing(10.0),
         );
 
         // 2. Input Fields
-        let inputs = Card::new(
+        let inputs = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Text Inputs").style(theme.typography.title.clone())),
                 Widget::from(Row::new([Widget::from(Expanded::new(
@@ -101,7 +107,7 @@ fn main() {
         );
 
         // 3. Selection & Toggles
-        let selection = Card::new(
+        let selection = ControlsCard::new(
             Column::new([
                 Widget::from(
                     Text::new("Selection & Toggles").style(theme.typography.title.clone()),
@@ -141,7 +147,7 @@ fn main() {
         );
 
         // 4. Density Preview
-        let density_section = Card::new(
+        let density_section = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Density Scaling").style(theme.typography.title.clone())),
                 Widget::from(Row::new([
@@ -175,7 +181,7 @@ fn main() {
 
         // Feedback and display controls exercise the compound APIs that are
         // easy to miss when only the classic button/input examples are shown.
-        let feedback_section = Card::new(
+        let feedback_section = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Feedback & display").style(theme.typography.title.clone())),
                 Widget::from(Text::new("Progress").style(theme.typography.body_emphasis.clone())),
@@ -194,7 +200,7 @@ fn main() {
             .spacing(10.0),
         );
 
-        let navigation_section = Card::new(
+        let navigation_section = ControlsCard::new(
             Column::new([
                 Widget::from(
                     Text::new("Navigation & composition").style(theme.typography.title.clone()),
@@ -235,7 +241,7 @@ fn main() {
             (1..=12).map(|index| Widget::from(Text::new(format!("Scrollable row {index}")))),
         )
         .spacing(6.0);
-        let scroll_section = Card::new(
+        let scroll_section = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Scroll area").style(theme.typography.title.clone())),
                 Widget::from(
@@ -257,7 +263,7 @@ fn main() {
         let page = Column::new([
             Widget::from(title),
             Widget::from(description),
-            Widget::from(Divider::new()),
+            Widget::from(ControlsDivider::new()),
             Widget::from(buttons),
             Widget::from(inputs),
             Widget::from(selection),

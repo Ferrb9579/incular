@@ -10,7 +10,27 @@ use incular_config::EdgeInsets;
 use incular_core::{Color, Size};
 use incular_text::TextStyle;
 
-use crate::{ActionId, Widget};
+// The editor model is owned by `incular-text`; the internal bridge keeps the
+// path available to sibling implementation crates without creating a second
+// retained controller type in Widgets.
+pub use incular_text::{TextEditingController, TextEditingValue, TextRange, TextSelection};
+
+// The retained engine is deliberately kept behind this `doc(hidden)` bridge.
+// Runtime/platform/control crates need to exchange element IDs and diagnostics,
+// but those implementation details must not become part of the Flutter-facing
+// `incular_widgets::*` namespace.  Keeping the bridge explicit also makes the
+// boundary auditable: anything below this module is framework plumbing, not a
+// public Widgets API.
+pub use crate::forms::*;
+pub use crate::gestures::PointerEvent;
+pub use crate::gestures::*;
+pub use crate::layout::*;
+pub use crate::painting_effects::*;
+pub use crate::scrolling::*;
+pub use crate::selection::*;
+pub use crate::tree::icons;
+pub use crate::tree::*;
+pub use incular_scroll::*;
 
 /// Constructs the retained action node used by runtime and framework tests.
 ///

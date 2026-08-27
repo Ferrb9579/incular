@@ -2,7 +2,8 @@
 //! Uses fine-grained reactive Signals rather than a monolithic global Mutex.
 
 use incular_runtime::Signal;
-use incular_widgets::{FocusNode, ScrollController, TextEditingController};
+use incular_widgets::internal::TextEditingController;
+use incular_widgets::{FocusNode, ScrollController};
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{localization::StudioLocale, restoration::RestorationData, theme::ThemeMode};

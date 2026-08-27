@@ -2,7 +2,7 @@
 
 use crate::{ControlTheme, progress};
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{ExplicitSemantics, Widget};
+use incular_widgets::{Widget, internal::ExplicitSemantics};
 use std::rc::Rc;
 
 #[derive(Clone)]

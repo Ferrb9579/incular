@@ -1,5 +1,7 @@
 //! Native editing: type `abc`, press Backspace, and watch it become `ab`.
+use incular::material::TextField;
 use incular::prelude::*;
+use incular::widgets::internal::TextEditingController;
 
 fn main() {
     let name = TextEditingController::with_text("Ada");

@@ -4,6 +4,7 @@
 //! viewport. At its top or bottom, wheel remainder transfers to the outer
 //! viewport exactly once. The variable rows use the same retained list path.
 use incular::prelude::*;
+use incular::widgets::internal::{MeasuredExtentIndex, ScrollView, VirtualList};
 
 fn main() {
     let outer = ScrollController::new();

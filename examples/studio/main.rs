@@ -22,6 +22,7 @@ use crate::{
     },
 };
 use incular::prelude::*;
+use incular::widgets::internal::SplitView;
 
 fn main() {
     let stress_tree_count = std::env::var("INCULAR_STUDIO_STRESS_TREE")

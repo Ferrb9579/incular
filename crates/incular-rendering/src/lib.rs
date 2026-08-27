@@ -1,6 +1,6 @@
 //! Renderer-neutral scene, canvas, display-list, and compositor primitives.
 use incular_assets::FontHandle;
-use incular_core::{Arena, ArenaId, Color, DirtyFlags, Offset, Rect, Size, Transform};
+use incular_core::{Arena, ArenaId, Color, DirtyFlags, Lerp, Offset, Rect, Size, Transform};
 use incular_image::ImageHandle;
 use kurbo::{BezPath, Point, Shape};
 use std::sync::{
@@ -299,6 +299,44 @@ pub enum Brush {
     RadialGradient(RadialGradient),
     SweepGradient(SweepGradient),
 }
+
+/// A renderer-neutral shader value.
+///
+/// Incular's gradients are already immutable, cacheable shader descriptions;
+/// keeping this alias means widgets and text do not need a second shader
+/// hierarchy that would eventually drift from the renderer's brush model.
+pub type Shader = Brush;
+
+/// Image filtering policy matching Flutter's public quality vocabulary.
+///
+/// The current display-list backend exposes nearest-neighbour and linear
+/// sampling. `Low`, `Medium`, and `High` intentionally lower to linear until
+/// a backend grows a more expensive filter; callers still retain a stable,
+/// renderer-independent policy value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FilterQuality {
+    None,
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+impl FilterQuality {
+    #[must_use]
+    pub const fn sampling(self) -> ImageSampling {
+        match self {
+            Self::None => ImageSampling::Nearest,
+            Self::Low | Self::Medium | Self::High => ImageSampling::Linear,
+        }
+    }
+}
+
+impl From<FilterQuality> for ImageSampling {
+    fn from(value: FilterQuality) -> Self {
+        value.sampling()
+    }
+}
 impl From<Color> for Brush {
     fn from(color: Color) -> Self {
         Self::Solid(color)
@@ -376,6 +414,177 @@ impl Default for Stroke {
             join: LineJoin::Miter,
             miter_limit: 4.,
         }
+    }
+}
+
+/// Whether a [`Paint`] covers the interior or the outline of a path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PaintStyle {
+    #[default]
+    Fill,
+    Stroke,
+}
+
+/// A renderer-neutral paint description.
+///
+/// `Paint` is deliberately a small immutable builder around the authoritative
+/// [`Brush`], [`Stroke`], [`BlendMode`], and [`ColorFilter`] types. It does not
+/// introduce a second display command model; [`Canvas::draw_path`] lowers it
+/// directly to the existing fill/stroke commands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Paint {
+    brush: Brush,
+    style: PaintStyle,
+    stroke: Stroke,
+    blend_mode: BlendMode,
+    color_filter: Option<ColorFilter>,
+}
+
+impl Default for Paint {
+    fn default() -> Self {
+        Self {
+            brush: Brush::Solid(Color::BLACK),
+            style: PaintStyle::Fill,
+            stroke: Stroke::default(),
+            blend_mode: BlendMode::SrcOver,
+            color_filter: None,
+        }
+    }
+}
+
+impl Paint {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn brush(mut self, brush: impl Into<Brush>) -> Self {
+        self.brush = brush.into();
+        self
+    }
+
+    #[must_use]
+    pub fn shader(self, shader: impl Into<Shader>) -> Self {
+        self.brush(shader)
+    }
+
+    #[must_use]
+    pub fn color(self, color: Color) -> Self {
+        self.brush(color)
+    }
+
+    #[must_use]
+    pub fn style(mut self, style: PaintStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    #[must_use]
+    pub fn fill(self) -> Self {
+        self.style(PaintStyle::Fill)
+    }
+
+    #[must_use]
+    pub fn stroke(self) -> Self {
+        self.style(PaintStyle::Stroke)
+    }
+
+    #[must_use]
+    pub fn stroke_settings(mut self, stroke: Stroke) -> Self {
+        self.stroke = Stroke {
+            width: if stroke.width.is_finite() {
+                stroke.width.max(0.)
+            } else {
+                0.
+            },
+            cap: stroke.cap,
+            join: stroke.join,
+            miter_limit: if stroke.miter_limit.is_finite() {
+                stroke.miter_limit.max(0.)
+            } else {
+                0.
+            },
+        };
+        self
+    }
+
+    #[must_use]
+    pub fn stroke_width(mut self, width: f32) -> Self {
+        self.stroke.width = if width.is_finite() { width.max(0.) } else { 0. };
+        self
+    }
+
+    #[must_use]
+    pub fn blend_mode(mut self, blend_mode: BlendMode) -> Self {
+        self.blend_mode = blend_mode;
+        self
+    }
+
+    #[must_use]
+    pub fn color_filter(mut self, color_filter: Option<ColorFilter>) -> Self {
+        self.color_filter = color_filter;
+        self
+    }
+
+    #[must_use]
+    pub fn brush_value(&self) -> &Brush {
+        &self.brush
+    }
+
+    #[must_use]
+    pub const fn style_value(&self) -> PaintStyle {
+        self.style
+    }
+
+    #[must_use]
+    pub const fn stroke_value(&self) -> Stroke {
+        self.stroke
+    }
+
+    #[must_use]
+    pub const fn blend_mode_value(&self) -> BlendMode {
+        self.blend_mode
+    }
+
+    #[must_use]
+    pub fn color_filter_value(&self) -> Option<ColorFilter> {
+        self.color_filter
+    }
+}
+
+/// Canonical single-shadow value used by text and other paint-producing
+/// domains. Subsystems should use this type instead of defining a parallel
+/// color/offset/blur tuple.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shadow {
+    pub color: Color,
+    pub offset: Offset,
+    pub blur_radius: f32,
+}
+
+impl Shadow {
+    #[must_use]
+    pub const fn new(color: Color, offset: Offset, blur_radius: f32) -> Self {
+        Self {
+            color,
+            offset,
+            blur_radius: if blur_radius.is_finite() && blur_radius > 0. {
+                blur_radius
+            } else {
+                0.
+            },
+        }
+    }
+}
+
+impl Lerp for Shadow {
+    fn lerp(&self, other: &Self, t: f32) -> Self {
+        Self::new(
+            self.color.lerp(&other.color, t),
+            self.offset.lerp(&other.offset, t),
+            self.blur_radius.lerp(&other.blur_radius, t),
+        )
     }
 }
 /// Stable identity for immutable path geometry. It deliberately does not
@@ -1435,6 +1644,19 @@ impl Canvas {
             stroke,
         });
     }
+    /// Lowers a [`Paint`] to the existing renderer-neutral path command.
+    ///
+    /// Blend and color-filter metadata remain available on the paint for a
+    /// compositor/backend that needs them; the retained path geometry itself
+    /// is never duplicated into a second command representation.
+    pub fn draw_path(&mut self, path: Arc<Path>, paint: &Paint, fill_rule: FillRule) {
+        match paint.style_value() {
+            PaintStyle::Fill => self.fill_path(path, paint.brush_value().clone(), fill_rule),
+            PaintStyle::Stroke => {
+                self.stroke_path(path, paint.brush_value().clone(), paint.stroke_value())
+            }
+        }
+    }
     pub fn image(&mut self, image: ImageHandle, source: Rect, destination: Rect) {
         self.image_with_sampling(image, source, destination, ImageSampling::Linear);
     }
@@ -2196,6 +2418,54 @@ mod tests {
             c.finish().commands()[0],
             PaintCommand::Rect { .. }
         ));
+    }
+
+    #[test]
+    fn filter_quality_maps_to_sampler() {
+        assert_eq!(FilterQuality::None.sampling(), ImageSampling::Nearest);
+        assert_eq!(FilterQuality::Low.sampling(), ImageSampling::Linear);
+        assert_eq!(
+            ImageSampling::from(FilterQuality::Medium),
+            ImageSampling::Linear
+        );
+        assert_eq!(
+            ImageSampling::from(FilterQuality::High),
+            ImageSampling::Linear
+        );
+    }
+
+    #[test]
+    fn paint_lowers_to_existing_display_commands() {
+        let mut builder = Path::builder();
+        builder.move_to(Offset::ZERO).line_to(Offset::new(10., 0.));
+        let path = Arc::new(builder.build());
+
+        let mut canvas = Canvas::default();
+        canvas.draw_path(
+            path.clone(),
+            &Paint::new().color(Color::WHITE),
+            FillRule::NonZero,
+        );
+        canvas.draw_path(
+            path,
+            &Paint::new().stroke().stroke_width(2.),
+            FillRule::NonZero,
+        );
+        assert!(matches!(
+            canvas.finish().commands(),
+            [PaintCommand::FillPath { .. }, PaintCommand::StrokePath { stroke, .. }]
+                if stroke.width == 2.
+        ));
+    }
+
+    #[test]
+    fn shadow_lowers_correctly() {
+        let first = Shadow::new(Color::BLACK, Offset::ZERO, -2.);
+        let second = Shadow::new(Color::WHITE, Offset::new(10., 4.), 6.);
+        assert_eq!(first.blur_radius, 0.);
+        let midpoint = first.lerp(&second, 0.5);
+        assert_eq!(midpoint.offset, Offset::new(5., 2.));
+        assert_eq!(midpoint.blur_radius, 3.);
     }
     #[test]
     fn radii_normalize_coherently_across_opposing_edges() {

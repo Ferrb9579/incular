@@ -5,7 +5,9 @@
 
 use incular::prelude::*;
 use incular_controls::Button as ControlButton;
+use incular_controls::Card as ControlsCard;
 use incular_controls::prelude::*;
+use incular_widgets::internal::TextEditingController;
 
 fn main() {
     // These values deliberately live outside the application builder.  The
@@ -26,7 +28,7 @@ fn main() {
         let slider_display = slider_value.get();
         let tab = selected_tab.get();
 
-        let header = Card::new(
+        let header = ControlsCard::new(
             Column::new([
                 Widget::from(
                     Text::new("Compound controls").style(TextStyle::new().font_size(24.0).bold()),
@@ -42,7 +44,7 @@ fn main() {
             .spacing(6.0),
         );
 
-        let actions = Card::new(
+        let actions = ControlsCard::new(
             Column::new([
                 Widget::from(
                     Text::new("Button variants").style(TextStyle::new().font_size(14.0).bold()),
@@ -65,7 +67,7 @@ fn main() {
 
         let remember_signal = remember.clone();
         let pinned_signal = pinned.clone();
-        let selection = Card::new(
+        let selection = ControlsCard::new(
             Column::new([
                 Widget::from(
                     Text::new("Selection and toggles")
@@ -121,7 +123,7 @@ fn main() {
             .spacing(10.0),
         );
 
-        let project_field = Card::new(
+        let project_field = ControlsCard::new(
             field::Root::new()
                 .label("Project name")
                 .description("Used in the title bar")
@@ -133,7 +135,7 @@ fn main() {
         );
 
         let slider_signal = slider_value.clone();
-        let slider = Card::new(
+        let slider = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Slider").style(TextStyle::new().font_size(14.0).bold())),
                 Widget::from(
@@ -163,7 +165,7 @@ fn main() {
             "Details is selected. Click Overview to switch back."
         });
         let selected_tab_signal = selected_tab.clone();
-        let tabs = Card::new(
+        let tabs = ControlsCard::new(
             Column::new([
                 Widget::from(Text::new("Tabs").style(TextStyle::new().font_size(14.0).bold())),
                 Widget::from(

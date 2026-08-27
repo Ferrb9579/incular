@@ -1,6 +1,7 @@
 //! Typography values shared by plain and rich text.
 
 use incular_core::{ChangeImpact, Color, Lerp};
+use incular_rendering::Shadow;
 use std::sync::Arc;
 
 /// A logical font family. Named families are resolved by [`super::TextEngine`].
@@ -178,6 +179,115 @@ impl Lerp for FontVariation {
     }
 }
 
+/// Immutable icon font metadata.
+///
+/// Icon glyphs use the normal text shaping pipeline: this value only carries
+/// the code point and font selection metadata, then [`Self::text_style`]
+/// produces the same [`TextStyle`] used by ordinary text. There is no second
+/// icon renderer or path model to keep synchronized with text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconData {
+    code_point: u32,
+    font_family: Option<FontFamily>,
+    font_package: Option<String>,
+    match_text_direction: bool,
+    font_variations: Arc<[FontVariation]>,
+}
+
+impl IconData {
+    #[must_use]
+    pub fn new(code_point: u32) -> Self {
+        Self {
+            code_point,
+            font_family: None,
+            font_package: None,
+            match_text_direction: false,
+            font_variations: Arc::from([]),
+        }
+    }
+
+    #[must_use]
+    pub const fn code_point(&self) -> u32 {
+        self.code_point
+    }
+
+    #[must_use]
+    pub fn glyph(&self) -> Option<char> {
+        char::from_u32(self.code_point)
+    }
+
+    #[must_use]
+    pub fn glyph_text(&self) -> Option<String> {
+        self.glyph().map(|glyph| glyph.to_string())
+    }
+
+    #[must_use]
+    pub fn font_family_value(&self) -> Option<&FontFamily> {
+        self.font_family.as_ref()
+    }
+
+    #[must_use]
+    pub fn font_package_value(&self) -> Option<&str> {
+        self.font_package.as_deref()
+    }
+
+    #[must_use]
+    pub const fn match_text_direction_value(&self) -> bool {
+        self.match_text_direction
+    }
+
+    #[must_use]
+    pub fn font_variations(&self) -> &[FontVariation] {
+        &self.font_variations
+    }
+
+    #[must_use]
+    pub fn family(mut self, family: FontFamily) -> Self {
+        self.font_family = Some(family);
+        self
+    }
+
+    #[must_use]
+    pub fn font_family(mut self, family: impl Into<String>) -> Self {
+        self.font_family = Some(FontFamily::Named(family.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn font_package(mut self, package: impl Into<String>) -> Self {
+        self.font_package = Some(package.into());
+        self
+    }
+
+    #[must_use]
+    pub fn match_text_direction(mut self, match_text_direction: bool) -> Self {
+        self.match_text_direction = match_text_direction;
+        self
+    }
+
+    #[must_use]
+    pub fn variations<I>(mut self, variations: I) -> Self
+    where
+        I: IntoIterator<Item = FontVariation>,
+    {
+        self.font_variations = variations.into_iter().collect::<Vec<_>>().into();
+        self
+    }
+
+    /// Builds the ordinary text style used to shape this glyph.
+    #[must_use]
+    pub fn text_style(&self, size: f32) -> TextStyle {
+        let mut style = TextStyle::default().font_size(size);
+        if let Some(family) = &self.font_family {
+            style = style.family(family.clone());
+        }
+        if !self.font_variations.is_empty() {
+            style = style.font_variation_settings(&self.font_variations);
+        }
+        style
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FontStyle {
     #[default]
@@ -295,34 +405,9 @@ pub enum TextDecorationStyle {
     Wavy,
 }
 
-/// Shadow cast by text glyphs.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct TextShadow {
-    pub color: Color,
-    pub offset: incular_core::Offset,
-    pub blur_radius: f32,
-}
-
-impl TextShadow {
-    #[must_use]
-    pub const fn new(color: Color, offset: incular_core::Offset, blur_radius: f32) -> Self {
-        Self {
-            color,
-            offset,
-            blur_radius,
-        }
-    }
-}
-
-impl Lerp for TextShadow {
-    fn lerp(&self, other: &Self, t: f32) -> Self {
-        Self {
-            color: self.color.lerp(&other.color, t),
-            offset: self.offset.lerp(&other.offset, t),
-            blur_radius: self.blur_radius.lerp(&other.blur_radius, t).max(0.0),
-        }
-    }
-}
+/// Compatibility spelling for the renderer-owned canonical shadow value.
+/// Text must not maintain a second color/offset/blur representation.
+pub type TextShadow = Shadow;
 
 /// Baseline strut configuration defining minimum vertical line spacing.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1273,5 +1358,28 @@ mod tests {
         assert_eq!(base.change_impact(&paint_change), ChangeImpact::Paint);
         let layout_change = base.clone().font_size(18.0);
         assert_eq!(base.change_impact(&layout_change), ChangeImpact::Layout);
+    }
+
+    #[test]
+    fn font_weight_maps_to_text_stack() {
+        let style = TextStyle::default().font_weight(FontWeight::W700);
+        assert_eq!(style.weight, FontWeight::W700);
+        assert_eq!(style.weight.value(), 700);
+    }
+
+    #[test]
+    fn font_feature_tag_round_trip() {
+        let feature = FontFeature::new(*b"liga", 0);
+        assert_eq!(feature.tag, *b"liga");
+        assert_eq!(feature.value, 0);
+        assert_eq!(feature.to_css_setting(), "\"liga\" 0");
+    }
+
+    #[test]
+    fn font_variation_axis_round_trip() {
+        let variation = FontVariation::new(*b"wght", 650.);
+        assert_eq!(variation.axis, *b"wght");
+        assert_eq!(variation.value, 650.);
+        assert_eq!(variation.to_css_setting(), "\"wght\" 650.0");
     }
 }

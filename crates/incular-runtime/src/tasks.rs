@@ -17,7 +17,7 @@ use std::{
 };
 
 use incular_platform::WindowId;
-use incular_widgets::ElementId;
+use incular_widgets::internal::ElementId;
 use tokio::{
     runtime::{Builder, Handle, Runtime as TokioRuntime},
     task::{AbortHandle, JoinHandle},
@@ -43,16 +43,19 @@ pub enum TaskFailure {
 }
 
 /// A small application-state value for asynchronous results. It is not an
-/// executor; applications normally store it in a `Signal` from a UI callback.
+/// executor; applications normally store it in a [`Signal`](crate::Signal)
+/// from a UI callback. The error type is application-owned so callers can
+/// preserve structured domain failures instead of converting everything to a
+/// string or a framework-specific snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AsyncValue<T> {
+pub enum AsyncState<T, E> {
     Idle,
     Loading,
     Ready(T),
-    Error(TaskFailure),
+    Error(E),
 }
 
-impl<T> AsyncValue<T> {
+impl<T, E> AsyncState<T, E> {
     #[must_use]
     pub const fn is_loading(&self) -> bool {
         matches!(self, Self::Loading)
@@ -62,7 +65,38 @@ impl<T> AsyncValue<T> {
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Ready(_) | Self::Error(_))
     }
+
+    #[must_use]
+    pub const fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready(_))
+    }
+
+    #[must_use]
+    pub const fn is_error(&self) -> bool {
+        matches!(self, Self::Error(_))
+    }
+
+    /// Maps a successful value while preserving loading/idle/error states.
+    #[must_use]
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> AsyncState<U, E> {
+        match self {
+            Self::Idle => AsyncState::Idle,
+            Self::Loading => AsyncState::Loading,
+            Self::Ready(value) => AsyncState::Ready(map(value)),
+            Self::Error(error) => AsyncState::Error(error),
+        }
+    }
 }
+
+/// Backwards-compatible task failure state. New application code should use
+/// [`AsyncState<T, E>`] with its own error type; this alias is retained for
+/// task handles whose cancellation errors are owned by the runtime.
+pub type AsyncValue<T> = AsyncState<T, TaskFailure>;
 
 /// A cancellation and diagnostics handle for Tokio work tracked by Incular.
 /// It intentionally is not another `JoinHandle`: use [`TokioHandle`] for

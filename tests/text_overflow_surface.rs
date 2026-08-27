@@ -12,7 +12,7 @@ fn public_text_and_rich_text_overflow_configuration_mounts_retained_widgets() {
         .overflow(TextOverflow::Clip)
         .into();
 
-    let mut tree = incular::widgets::WidgetTree::new();
+    let mut tree = incular::widgets::internal::WidgetTree::new();
     tree.mount(Widget::column(vec![text, rich])).unwrap();
     tree.layout(incular::config::Constraints::tight(Size::new(80., 60.)));
 }

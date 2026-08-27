@@ -6,6 +6,8 @@ use crate::{
     theme::StudioTheme,
     views::interactive_canvas::build_interactive_canvas,
 };
+use incular::controls::TextField;
+use incular::material::MaterialButton;
 use incular::prelude::*;
 
 #[must_use]

@@ -1,6 +1,6 @@
 //! Typed, retained-local drag/drop bindings.
 //!
-//! A [`DragDropContext`] is generic over the payload and shared explicitly by
+//! A `DragDropContext` is generic over the payload and shared explicitly by
 //! its [`Draggable`] sources and [`DragTarget`]s. There is no process-global
 //! payload registry or untyped public `Any`: a target can only observe a
 //! payload from the same typed context. A context exposes an optional
@@ -83,8 +83,8 @@ pub trait RetainedDragTarget {
 }
 
 /// Typed retained drag source. Its payload stays within its supplied
-/// [`DragDropContext`], and may be previewed by an application overlay through
-/// [`DragDropContext::feedback`].
+/// `DragDropContext`, and may be previewed by an application overlay through
+/// `DragDropContext::feedback`.
 #[derive(Clone)]
 pub struct Draggable<T: Clone + 'static> {
     context: DragDropContext<T>,
@@ -189,7 +189,7 @@ impl<T: Clone + 'static> From<Draggable<T>> for Widget {
     }
 }
 
-/// Typed drop target for the same local [`DragDropContext`] as its sources.
+/// Typed drop target for the same local `DragDropContext` as its sources.
 #[derive(Clone)]
 pub struct DragTarget<T: Clone + 'static> {
     context: DragDropContext<T>,

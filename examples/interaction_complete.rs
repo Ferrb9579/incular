@@ -5,6 +5,7 @@
 //! reveals a target behind it while AbsorbPointer blocks both its child and
 //! the target behind it. Every active gesture stream receives automatic,
 //! window-local retained `PointerCapture` until up or cancellation.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
 
 fn text(value: impl Into<String>) -> Widget {

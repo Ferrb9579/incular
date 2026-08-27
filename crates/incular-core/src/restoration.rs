@@ -179,6 +179,21 @@ impl RestorationScope {
         }
     }
 
+    /// Extends this scope with one stable child segment.
+    ///
+    /// The runtime performs duplicate-scope validation; this convenience name
+    /// makes the namespacing operation discoverable to application-owned
+    /// state without implying position-based identity.
+    #[must_use]
+    pub fn child(&self, key: RestorationKey) -> Self {
+        self.child_unchecked(key)
+    }
+
+    #[must_use]
+    pub fn is_root(&self) -> bool {
+        self.path.is_empty()
+    }
+
     /// Returns the stable hierarchical path owned by this scope.
     #[must_use]
     pub fn path(&self) -> &[RestorationKey] {
@@ -274,5 +289,20 @@ mod tests {
         scope.set_json(&value, json!("night"));
         scope.remove(&value);
         assert_eq!(scope.get_json(&value), None);
+    }
+
+    #[test]
+    fn restoration_scope_namespaces_children() {
+        let backend = Rc::new(MemoryBackend::default());
+        let root = RestorationScope::root(backend);
+        assert!(root.is_root());
+        let value = key("selection");
+        let first = root.child(key("first"));
+        let second = root.child(key("second"));
+        first.set_json(&value, json!(1));
+        second.set_json(&value, json!(2));
+        assert_eq!(first.get_json(&value), Some(json!(1)));
+        assert_eq!(second.get_json(&value), Some(json!(2)));
+        assert!(first.path() != second.path());
     }
 }

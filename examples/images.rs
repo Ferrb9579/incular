@@ -25,18 +25,18 @@ fn main() {
             Image::new(encoded.clone()).width(128.).height(32.).into(),
             Image::new(checker.clone())
                 .width(128.)
-                .fit(ImageFit::Contain)
+                .fit(BoxFit::Contain)
                 .into(),
             Image::new(checker.clone())
                 .width(128.)
                 .height(64.)
-                .fit(ImageFit::Cover)
+                .fit(BoxFit::Cover)
                 .into(),
             Widget::text("The same shared ImageHandle is used three times."),
             Image::new(checker.clone())
                 .width(64.)
                 .height(64.)
-                .fit(ImageFit::Fill)
+                .fit(BoxFit::Fill)
                 .sampling(ImageSampling::Nearest)
                 .into(),
         ])

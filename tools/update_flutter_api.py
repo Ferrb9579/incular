@@ -14,7 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_FILE = REPO_ROOT / "specs" / "flutter_stable_api_snapshot.json"
 MEMBER_PARITY_FILE = REPO_ROOT / "specs" / "flutter_member_parity.jsonl"
 TYPE_PARITY_FILE = REPO_ROOT / "specs" / "flutter_api_parity.jsonl"
-DOC_FILE = REPO_ROOT / "FLUTTER_MEMBER_PARITY.md"
+# Generated prose belongs in ignored build output; the checked-in JSONL
+# manifests are the durable source of truth and keep the repository root
+# free of task-report Markdown.
+DOC_FILE = REPO_ROOT / "target" / "FLUTTER_MEMBER_PARITY.md"
 
 def load_snapshot():
     if not SNAPSHOT_FILE.exists():
@@ -179,6 +182,7 @@ def generate_docs():
             lines.append(f"| {f_sig} | `{m['flutter_member_kind']}` | {i_sig} | `{m['incular_crate']}` | `{m['status']}` | {m.get('rationale', '')} |")
         lines.append("")
 
+    DOC_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(DOC_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"Generated {DOC_FILE}")
@@ -187,7 +191,7 @@ def main():
     parser = argparse.ArgumentParser(description="Incular Flutter API Member Parity Tool")
     parser.add_argument("--check", action="store_true", help="Validate parity between snapshot and manifest")
     parser.add_argument("--diff", action="store_true", help="Show Flutter 3.29 -> 3.47 diff")
-    parser.add_argument("--generate-docs", action="store_true", help="Regenerate FLUTTER_MEMBER_PARITY.md")
+    parser.add_argument("--generate-docs", action="store_true", help="Regenerate target/FLUTTER_MEMBER_PARITY.md")
 
     args = parser.parse_args()
     if args.diff:

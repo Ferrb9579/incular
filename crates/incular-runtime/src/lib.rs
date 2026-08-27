@@ -2,6 +2,7 @@
 mod profiling;
 mod restoration;
 mod tasks;
+mod undo;
 
 use incular_accessibility::{
     AccessKitProjection, NativeAccessibilityUpdate, SemanticActionRequest,
@@ -19,9 +20,13 @@ use incular_platform::{
 };
 use incular_rendering::DisplayList;
 use incular_semantics::{SemanticAction, SemanticNodeId};
-use incular_widgets::{
-    ActionId, Diagnostics, ElementId, PointerEvent, TreeError, Widget, WidgetTree,
+#[cfg(feature = "devtools")]
+use incular_widgets::internal::InvalidationCause;
+use incular_widgets::internal::{
+    ActionId, Diagnostics, ElementId, Key, PointerEvent, TextRange, TextSelection, TreeError,
+    WidgetTree,
 };
+use incular_widgets::{FocusScopeNode, FocusScopeSubscription, Widget};
 #[cfg(feature = "devtools")]
 use std::any::{Any, TypeId};
 use std::{
@@ -50,9 +55,10 @@ pub use restoration::{
     RestorationStore, RestorationStoreError,
 };
 pub use tasks::{
-    AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure, TaskHandle,
-    TaskScope, TokioHandle, UiDispatcher,
+    AsyncState, AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure,
+    TaskHandle, TaskScope, TokioHandle, UiDispatcher,
 };
+pub use undo::{UndoHistoryController, UndoHistoryState};
 
 /// Process-wide scheduler/reactivity counters. Relaxed atomics on the UI
 /// thread cost a single increment per event and never allocate.
@@ -402,8 +408,13 @@ struct ReactiveQueue {
     queued: HashSet<ElementId>,
     order: VecDeque<ElementId>,
     dependencies: HashMap<ElementId, Vec<Weak<dyn Dependency>>>,
+    /// Focus-scope subscriptions registered by builders. Keeping the token in
+    /// the same lifetime bucket as signal dependencies makes unmount and
+    /// rebuild cleanup deterministic rather than leaking callbacks into a
+    /// long-lived scope node.
+    focus_scopes: HashMap<ElementId, Vec<FocusScopeSubscription>>,
     #[cfg(feature = "devtools")]
-    causes: HashMap<ElementId, Vec<incular_widgets::InvalidationCause>>,
+    causes: HashMap<ElementId, Vec<InvalidationCause>>,
 }
 impl ReactiveQueue {
     fn enqueue(&mut self, id: ElementId) {
@@ -412,7 +423,7 @@ impl ReactiveQueue {
         }
     }
     #[cfg(feature = "devtools")]
-    fn note_cause(&mut self, id: ElementId, cause: incular_widgets::InvalidationCause) {
+    fn note_cause(&mut self, id: ElementId, cause: InvalidationCause) {
         const MAX_CAUSES: usize = 8;
         let causes = self.causes.entry(id).or_default();
         if causes.len() == MAX_CAUSES {
@@ -421,7 +432,7 @@ impl ReactiveQueue {
         causes.push(cause);
     }
     #[cfg(feature = "devtools")]
-    fn take_causes(&mut self, id: ElementId) -> Vec<incular_widgets::InvalidationCause> {
+    fn take_causes(&mut self, id: ElementId) -> Vec<InvalidationCause> {
         self.causes.remove(&id).unwrap_or_default()
     }
     fn take(&mut self) -> Option<ElementId> {
@@ -437,12 +448,17 @@ impl ReactiveQueue {
                 }
             }
         }
+        self.focus_scopes.remove(&id);
     }
     fn record(&mut self, id: ElementId, dep: Weak<dyn Dependency>) {
         let entries = self.dependencies.entry(id).or_default();
         if !entries.iter().any(|current| current.ptr_eq(&dep)) {
             entries.push(dep);
         }
+    }
+
+    fn watch_focus_scope(&mut self, id: ElementId, subscription: FocusScopeSubscription) {
+        self.focus_scopes.entry(id).or_default().push(subscription);
     }
     fn forget(&mut self, id: ElementId) {
         self.refresh(id);
@@ -452,7 +468,11 @@ impl ReactiveQueue {
     }
 
     fn clear(&mut self) {
-        let ids: Vec<_> = self.dependencies.keys().copied().collect();
+        // Focus-only builders do not appear in `dependencies`; include their
+        // owner IDs so closing a window drops every subscription token too.
+        let mut ids: HashSet<_> = self.dependencies.keys().copied().collect();
+        ids.extend(self.focus_scopes.keys().copied());
+        let ids: Vec<_> = ids.into_iter().collect();
         for id in ids {
             self.refresh(id);
         }
@@ -777,7 +797,7 @@ impl<T: 'static> Signal<T> {
         #[cfg(feature = "devtools")]
         let cause = self.inner.dev_signal_id.get().map(|id| {
             let (old, new) = self.inner.dev_last_write.borrow().clone();
-            incular_widgets::InvalidationCause::Signal {
+            InvalidationCause::Signal {
                 id,
                 name: self.inner.dev_name.borrow().clone(),
                 old,
@@ -792,10 +812,7 @@ impl<T: 'static> Signal<T> {
                     #[cfg(feature = "devtools")]
                     {
                         if DEV_TASK_COMPLETION.with(Cell::get) {
-                            queue.note_cause(
-                                element,
-                                incular_widgets::InvalidationCause::TaskCompletion,
-                            );
+                            queue.note_cause(element, InvalidationCause::TaskCompletion);
                         }
                         if let Some(cause) = &cause {
                             queue.note_cause(element, cause.clone());
@@ -962,7 +979,7 @@ impl Runtime {
             action
         });
         tree.mount(root)?;
-        Ok(Self {
+        let mut runtime = Self {
             pending_event_processing_us: 0,
             tree,
             pending: HashMap::new(),
@@ -972,6 +989,7 @@ impl Runtime {
                 queued: HashSet::new(),
                 order: VecDeque::new(),
                 dependencies: HashMap::new(),
+                focus_scopes: HashMap::new(),
                 #[cfg(feature = "devtools")]
                 causes: HashMap::new(),
             })),
@@ -999,7 +1017,15 @@ impl Runtime {
             window_id,
             window_scope,
             window_manager,
-        })
+        };
+        // Focus nodes live outside the retained tree so they may be shared by
+        // rebuildable descriptors. Resolve the first mounted autofocus listener
+        // once the element IDs exist, then keep runtime and node focus mirrored
+        // for subsequent keyboard traversal.
+        if let Some(autofocus) = runtime.tree.autofocus_element() {
+            runtime.set_focus(Some(autofocus));
+        }
+        Ok(runtime)
     }
     /// Starts work owned by this retained root. Component code should prefer
     /// [`BuildContext::spawn`] so completion lifetime follows its owner.
@@ -1226,10 +1252,8 @@ impl Runtime {
         if self.environment_dependencies.get() & changed != 0 {
             if let Some(root) = self.application_root {
                 #[cfg(feature = "devtools")]
-                self.tree.note_invalidation(
-                    root,
-                    incular_widgets::InvalidationCause::EnvironmentChanged,
-                );
+                self.tree
+                    .note_invalidation(root, InvalidationCause::EnvironmentChanged);
                 let _ = self.rebuild_from_builder(root);
                 self.frame_requested = true;
             }
@@ -1353,20 +1377,25 @@ impl Runtime {
                     true
                 })
                 .unwrap_or(false),
-            SemanticAction::SetText(text) => self
-                .tree
-                .text_controller(element)
-                .map(|controller| {
-                    controller.set_text(text);
-                    true
-                })
-                .unwrap_or(false),
+            SemanticAction::SetText(text) => {
+                if !self.tree.text_field_is_editable(element) {
+                    false
+                } else {
+                    self.tree
+                        .text_controller(element)
+                        .map(|controller| {
+                            controller.set_text(text);
+                            true
+                        })
+                        .unwrap_or(false)
+                }
+            }
             SemanticAction::SetSelection { base, extent } => self
                 .tree
                 .text_controller(element)
                 .map(|controller| {
                     let length = controller.text().len();
-                    controller.set_selection(incular_widgets::TextSelection {
+                    controller.set_selection(TextSelection {
                         base: base.min(length),
                         extent: extent.min(length),
                     });
@@ -1450,10 +1479,8 @@ impl Runtime {
             return Err(TreeError::MissingElement(id));
         }
         #[cfg(feature = "devtools")]
-        self.tree.note_invalidation(
-            id,
-            incular_widgets::InvalidationCause::WidgetConfigurationChanged,
-        );
+        self.tree
+            .note_invalidation(id, InvalidationCause::WidgetConfigurationChanged);
         self.tree.mark_build(id)?;
         let mut widget = widget;
         self.prepare_widget(&mut widget);
@@ -1668,11 +1695,13 @@ impl Runtime {
             return;
         }
         if let Some(previous) = self.focused {
+            self.tree.set_keyboard_focus(previous, false);
             let _ = self.tree.set_focused(previous, false, Instant::now());
         }
         self.focused = next;
         if let Some(current) = next {
             let _ = self.tree.set_focused(current, true, Instant::now());
+            self.tree.set_keyboard_focus(current, true);
         }
         self.frame_requested = true;
     }
@@ -1697,6 +1726,23 @@ impl Runtime {
             self.editing_diagnostics.key_down_received += 1;
         } else {
             self.editing_diagnostics.key_up_received += 1;
+        }
+
+        // A FocusNode may be requested by application code or a FocusScopeNode
+        // without going through runtime pointer/Tab handling. Adopt that
+        // external selection before routing the event through retained parents.
+        if let Some(external) = self.tree.focused_keyboard_element()
+            && self.focused != Some(external)
+        {
+            self.set_focus(Some(external));
+        }
+
+        // KeyboardListener/Shortcuts are the nearest retained command scopes.
+        // Give them first refusal for every transition, including key-up and
+        // auto-repeat; text editing and Tab traversal remain fallthrough paths.
+        if self.tree.dispatch_keyboard(self.focused, event.clone()) {
+            self.frame_requested = true;
+            return;
         }
         if !event.state.is_down() {
             return;
@@ -1740,16 +1786,23 @@ impl Runtime {
         let Some(controller) = self.tree.text_controller(field) else {
             return;
         };
+        let editable = self.tree.text_field_is_editable(field);
         let extend = event.modifiers.shift();
         if command_modifier(event.modifiers) {
             match event.code {
                 Code::KeyA => controller.select_all(),
                 Code::KeyC => self.clipboard.set_text(controller.selected_text()),
                 Code::KeyX => {
+                    if !editable {
+                        return;
+                    }
                     self.clipboard.set_text(controller.selected_text());
                     controller.replace_selection("");
                 }
                 Code::KeyV => {
+                    if !editable {
+                        return;
+                    }
                     if let Some(text) = self.clipboard.get_text() {
                         controller.insert(&text);
                     }
@@ -1759,10 +1812,16 @@ impl Runtime {
         } else {
             match event.code {
                 Code::Backspace => {
+                    if !editable {
+                        return;
+                    }
                     controller.backspace();
                     self.editing_diagnostics.backspace_commands += 1;
                 }
                 Code::Delete => {
+                    if !editable {
+                        return;
+                    }
                     controller.delete();
                     self.editing_diagnostics.delete_commands += 1;
                 }
@@ -1785,6 +1844,9 @@ impl Runtime {
                     }
                 }
                 Code::Enter => {
+                    if !editable {
+                        return;
+                    }
                     if self.tree.is_multiline_text_field(field) {
                         controller.insert("\n");
                     } else {
@@ -1801,6 +1863,9 @@ impl Runtime {
         let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
             return;
         };
+        if !self.tree.text_field_is_editable(field) {
+            return;
+        }
         if text.chars().any(char::is_control) {
             return;
         }
@@ -1819,10 +1884,13 @@ impl Runtime {
         let Some(controller) = self.tree.text_controller(field) else {
             return;
         };
+        if !self.tree.text_field_is_editable(field) {
+            return;
+        }
         match event {
             ImeEvent::Preedit { text, selection } => controller.set_preedit(
                 text,
-                selection.map(|(start, end)| incular_widgets::TextRange::new(start, end)),
+                selection.map(|(start, end)| TextRange::new(start, end)),
             ),
             ImeEvent::Commit(text) => controller.commit_preedit(&text),
             ImeEvent::End => controller.clear_preedit(),
@@ -2110,6 +2178,40 @@ impl BuildContext {
     #[must_use]
     pub fn task_scope(&self) -> TaskScope {
         self.owner_scope.child()
+    }
+
+    /// Makes the current retained builder depend on a focus scope.
+    ///
+    /// A scope is an application-owned handle rather than a signal, so this
+    /// explicit watch registers a weak, owner-lifetime subscription in the
+    /// runtime's ordinary reactive queue. Calling it during the initial build
+    /// is harmless; the subsequent retained builder pass installs the live
+    /// subscription once its element identity exists.
+    pub fn watch_focus_scope(&self, scope: &FocusScopeNode) {
+        let target = BUILD_SCOPE.with(|current| {
+            let current = current.borrow();
+            current
+                .as_ref()
+                .map(|build| (build.element, build.queue.clone()))
+        });
+        let Some((element, queue)) = target else {
+            return;
+        };
+        let Some(queue_for_callback) = queue.upgrade() else {
+            return;
+        };
+        let weak_queue = Rc::downgrade(&queue_for_callback);
+        let subscription = scope.observe(move || {
+            if let Some(queue) = weak_queue.upgrade() {
+                let mut queue = queue.borrow_mut();
+                queue.enqueue(element);
+                #[cfg(feature = "devtools")]
+                queue.note_cause(element, InvalidationCause::Manual);
+            }
+        });
+        queue_for_callback
+            .borrow_mut()
+            .watch_focus_scope(element, subscription);
     }
 
     /// Returns the stable restoration scope for this build when the owning
@@ -3845,9 +3947,7 @@ impl Application {
         let hub = self.hub.clone();
         let installed = self.with_window_mut(window_id, |record| {
             let tree = record.runtime.tree();
-            let Some(target) =
-                tree.element_with_key(&incular_widgets::Key::from(PERFORMANCE_OVERLAY_KEY))
-            else {
+            let Some(target) = tree.element_with_key(&Key::from(PERFORMANCE_OVERLAY_KEY)) else {
                 return Err(TreeError::MissingElement(
                     tree.root().expect("mounted window root"),
                 ));
@@ -4239,7 +4339,7 @@ impl Application {
     }
 }
 /// Widget key that marks the performance-overlay mount point.
-pub const PERFORMANCE_OVERLAY_KEY: &str = incular_widgets::PERFORMANCE_OVERLAY_KEY;
+pub const PERFORMANCE_OVERLAY_KEY: &str = incular_widgets::internal::PERFORMANCE_OVERLAY_KEY;
 
 /// Builds the repaint-contained overlay visual from one snapshot.
 fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
@@ -4247,7 +4347,7 @@ fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
     let lines = snapshot.overlay_lines();
     let monospace = || {
         incular_widgets::TextStyle::default()
-            .family(incular_widgets::FontFamily::Monospace)
+            .family(incular_text::FontFamily::Monospace)
             .font_size(11.)
             .color(incular_core::Color::rgba(190, 220, 255, 255))
     };
@@ -4293,9 +4393,8 @@ mod tests {
     use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
-    use incular_widgets::{
-        DecoratedBox, GestureCallbacks, GestureDetector, Text, VirtualList, internal::ActionSurface,
-    };
+    use incular_widgets::internal::{GestureCallbacks, VirtualList};
+    use incular_widgets::{DecoratedBox, GestureDetector, Text, internal::ActionSurface};
     use std::time::{Duration, Instant};
     use std::{
         cell::Cell,
@@ -4378,7 +4477,10 @@ mod tests {
 
     #[test]
     fn semantic_actions_share_logical_button_and_editing_state() {
-        use incular_widgets::{EditableText, TextEditingController, internal::ActionSurface};
+        use incular_widgets::{
+            EditableText,
+            internal::{ActionSurface, TextEditingController},
+        };
         let hits = Rc::new(Cell::new(0));
         let controller = TextEditingController::with_text("Ada");
         let mut runtime = Runtime::new(Widget::column(vec![
@@ -4428,7 +4530,7 @@ mod tests {
         assert_eq!(controller.text(), "hello");
         assert_eq!(
             controller.value().selection,
-            incular_widgets::TextSelection { base: 1, extent: 4 }
+            TextSelection { base: 1, extent: 4 }
         );
     }
 
@@ -4473,7 +4575,7 @@ mod tests {
     #[test]
     fn semantic_scroll_uses_existing_controller() {
         let controller = incular_widgets::ScrollController::new();
-        let mut runtime = Runtime::new(incular_widgets::ScrollView::vertical(
+        let mut runtime = Runtime::new(incular_widgets::internal::ScrollView::vertical(
             controller.clone(),
             Widget::fixed_box(Size::new(100., 2000.), Color::WHITE),
         ))
@@ -4953,6 +5055,37 @@ mod tests {
     }
 
     #[test]
+    fn watched_focus_scope_invalidates_a_mounted_builder() {
+        let scope = FocusScopeNode::new();
+        let node = incular_widgets::FocusNode::new();
+        scope.register(&node);
+        let builds = Rc::new(Cell::new(0));
+        let observed_builds = builds.clone();
+        let observed_scope = scope.clone();
+        let application = Application::new(move |cx| {
+            cx.watch_focus_scope(&observed_scope);
+            observed_builds.set(observed_builds.get() + 1);
+            Text::new(if observed_scope.focused().is_some() {
+                "focused"
+            } else {
+                "unfocused"
+            })
+            .into()
+        })
+        .unwrap();
+        let mut runtime = application.into_runtime();
+        let constraints = Constraints::tight(Size::new(220., 50.));
+        runtime.run_frame(constraints).unwrap();
+        let baseline = builds.get();
+        assert!(!runtime.frame_requested());
+
+        assert!(scope.request_focus(&node));
+        assert!(runtime.frame_requested());
+        runtime.run_frame(constraints).unwrap();
+        assert!(builds.get() > baseline);
+    }
+
+    #[test]
     fn locale_resolution_rebuilds_only_locale_consumers() {
         let builds = Rc::new(Cell::new(0));
         let observed = builds.clone();
@@ -5101,7 +5234,7 @@ mod tests {
     }
     #[test]
     fn translated_button_hit_tests_at_its_visible_position_without_repaint() {
-        let controller = incular_widgets::TranslationController::new();
+        let controller = incular_widgets::internal::TranslationController::new();
         controller.set_offset(Offset::new(0., 30.));
         let mut runtime = Runtime::new(Widget::translate(
             controller.clone(),
@@ -5163,7 +5296,7 @@ mod tests {
     }
     #[test]
     fn animation_ticks_request_frames_without_rebuild_or_paint() {
-        let controller = incular_widgets::TranslationController::new();
+        let controller = incular_widgets::internal::TranslationController::new();
         let mut runtime = Runtime::new(Widget::translate(
             controller.clone(),
             Widget::text("warm text"),
@@ -5187,7 +5320,7 @@ mod tests {
     }
     #[test]
     fn retained_card_text_and_background_move_together_without_repaint() {
-        let controller = incular_widgets::TranslationController::new();
+        let controller = incular_widgets::internal::TranslationController::new();
         let mut runtime = Runtime::new(Widget::padding(
             incular_config::EdgeInsets {
                 left: 20.,
@@ -5423,9 +5556,60 @@ mod tests {
     }
 
     #[test]
+    fn mounted_keyboard_listener_dispatches_shortcuts_and_key_up() {
+        use incular_widgets::{
+            Actions, Command, FocusNode, KeyboardListener, ShortcutKey, Shortcuts,
+        };
+
+        let shortcut_hits = Rc::new(Cell::new(0));
+        let observed_shortcut = shortcut_hits.clone();
+        let mut actions = Actions::new();
+        actions.register(Command::new("save"), move || {
+            observed_shortcut.set(observed_shortcut.get() + 1);
+        });
+        let actions = Rc::new(actions);
+        let mut shortcuts = Shortcuts::new();
+        shortcuts.bind(
+            ShortcutKey::new(Code::KeyS, Modifiers::CONTROL),
+            Command::new("save"),
+        );
+        let shortcuts = Rc::new(shortcuts);
+
+        let key_ups = Rc::new(Cell::new(0));
+        let observed_key_up = key_ups.clone();
+        let focus_node = FocusNode::new();
+        let root: Widget = KeyboardListener::new(Text::new("keyboard target"))
+            .focus_node(focus_node.clone())
+            .autofocus(true)
+            .with_shortcuts(shortcuts, actions)
+            .on_key_up(move |_| observed_key_up.set(observed_key_up.get() + 1))
+            .into();
+        let mut runtime = Runtime::new(root).unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(220., 50.)))
+            .unwrap();
+
+        assert!(focus_node.has_focus());
+        assert_eq!(runtime.focused_element(), runtime.tree().root());
+
+        let mut down = shortcut_key_down(Code::KeyS);
+        down.repeat = false;
+        assert!(runtime.handle_input(InputEvent::Key(down)).is_none());
+        assert_eq!(shortcut_hits.get(), 1);
+
+        let mut up = KeyboardEvent::key_up(
+            KeyboardKey::Named(incular_core::NamedKey::Unidentified),
+            Code::KeyS,
+        );
+        up.modifiers = Modifiers::CONTROL;
+        assert!(runtime.handle_input(InputEvent::Key(up)).is_none());
+        assert_eq!(key_ups.get(), 1);
+    }
+
+    #[test]
     fn focus_routes_text_shortcuts_and_ime_without_rebuilding_tree() {
         use incular_core::ImeEvent;
-        use incular_widgets::{EditableText, TextEditingController};
+        use incular_widgets::{EditableText, internal::TextEditingController};
         let first = TextEditingController::new();
         let second = TextEditingController::new();
         let mut runtime = Runtime::new(Widget::column(vec![
@@ -5470,7 +5654,7 @@ mod tests {
 
     #[test]
     fn focused_native_style_backspace_repeat_and_delete_edit_the_buffer() {
-        use incular_widgets::{EditableText, TextEditingController};
+        use incular_widgets::{EditableText, internal::TextEditingController};
         let controller = TextEditingController::with_text("abc");
         let mut runtime = Runtime::new(EditableText::new(controller.clone()).into()).unwrap();
         let constraints = Constraints::tight(Size::new(140., 50.));
@@ -5488,7 +5672,7 @@ mod tests {
         controller.set_text("é👩‍💻");
         let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Backspace)));
         assert_eq!(controller.text(), "é");
-        controller.set_selection(incular_widgets::TextSelection::collapsed(0));
+        controller.set_selection(TextSelection::collapsed(0));
         let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Delete)));
         assert_eq!(controller.text(), "");
         assert_eq!(runtime.editing_diagnostics().backspace_commands, 5);
@@ -5497,7 +5681,7 @@ mod tests {
 
     #[test]
     fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
-        use incular_widgets::SelectionAreaController;
+        use incular_widgets::internal::SelectionAreaController;
 
         #[derive(Clone)]
         struct TestClipboard(Rc<RefCell<String>>);
@@ -5576,7 +5760,10 @@ mod tests {
 
     #[test]
     fn multiline_enter_replaces_selection_while_single_line_submits() {
-        use incular_widgets::{EditableText, TextEditingController, TextSelection};
+        use incular_widgets::{
+            EditableText,
+            internal::{TextEditingController, TextSelection},
+        };
         let single = TextEditingController::with_text("one");
         let multi = TextEditingController::with_text("ab cdef");
         let submitted = Rc::new(RefCell::new(0));

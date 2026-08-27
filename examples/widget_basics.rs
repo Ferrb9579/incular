@@ -2,6 +2,8 @@
 //! Demonstrates unstyled core primitives, constraint semantics, and decoupled styled components.
 
 use incular::prelude::*;
+use incular::material::RawMaterialButton;
+use incular::widgets::internal::SplitView;
 
 fn main() {
     let app = Application::new(|_cx| {

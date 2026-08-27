@@ -1,5 +1,7 @@
 //! Retained Gaussian blur and arbitrary-subtree drop-shadow showcase.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::{Blur, BlurController, DropShadow, DropShadowController, icons};
 use std::{
     rc::Rc,
     time::{Duration, Instant},

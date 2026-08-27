@@ -1,11 +1,17 @@
 use incular::prelude::*;
+use incular::widgets::internal::{
+    FilteringTextInputFormatter, GenericFormField, LengthLimitingTextInputFormatter,
+    TextEditingController as RetainedTextEditingController,
+    TextEditingValue as RetainedTextEditingValue, TextInputFormatter,
+    TextSelection as RetainedTextSelection,
+};
 use std::cell::Cell;
 use std::rc::Rc;
 
 #[test]
 fn test_forms_and_input_formatters_contract() {
     let form = Form::new();
-    let controller = TextEditingController::with_text("123");
+    let controller = RetainedTextEditingController::with_text("123");
     let field = form.register(controller.clone()).validator(|text| {
         if text.len() < 3 {
             Some("Length must be at least 3".into())
@@ -18,17 +24,15 @@ fn test_forms_and_input_formatters_contract() {
     assert!(form.validate());
 
     let digits = FilteringTextInputFormatter::digits_only();
-    let old_val = TextEditingValue {
+    let old_val = RetainedTextEditingValue {
         text: "123".into(),
-        selection: TextSelection::collapsed(3),
-        preedit: None,
-        preedit_selection: None,
+        selection: RetainedTextSelection::collapsed(3),
+        composing: None,
     };
-    let new_val = TextEditingValue {
+    let new_val = RetainedTextEditingValue {
         text: "123abc45".into(),
-        selection: TextSelection::collapsed(8),
-        preedit: None,
-        preedit_selection: None,
+        selection: RetainedTextSelection::collapsed(8),
+        composing: None,
     };
     let filtered = digits.format_edit_update(&old_val, &new_val);
     assert_eq!(filtered.text, "12345");

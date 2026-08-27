@@ -2,7 +2,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use incular_config::{Alignment, Constraints};
 use incular_core::Size;
-use incular_widgets::{Padding, Text, Widget, WidgetTree};
+use incular_widgets::internal::{ElementId, WidgetTree};
+use incular_widgets::{Padding, Text, Widget};
 
 fn frame(size: f32) -> Constraints {
     Constraints::tight(Size::new(size, size))
@@ -47,7 +48,7 @@ fn stack_tree(depth: usize) -> Widget {
     Widget::stack(Alignment::CENTER, children)
 }
 
-fn prepared(root: Widget) -> (WidgetTree, incular_widgets::ElementId) {
+fn prepared(root: Widget) -> (WidgetTree, ElementId) {
     let mut tree = WidgetTree::default();
     let id = tree.mount(root).expect("mount");
     tree.layout(frame(600.));

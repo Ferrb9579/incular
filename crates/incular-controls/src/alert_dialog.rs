@@ -5,7 +5,7 @@
 
 pub use crate::popup::{Arrow, Close, Description, Popup, Positioner, Title, Trigger};
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{ExplicitSemantics, Widget};
+use incular_widgets::{Widget, internal::ExplicitSemantics};
 use std::rc::Rc;
 
 pub use crate::popup::Portal;

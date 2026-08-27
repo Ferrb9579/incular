@@ -1,8 +1,11 @@
-use incular_config::Constraints;
+use incular_config::{Axis, Constraints};
 use incular_core::{Color, Size};
 use incular_rendering::PaintCommand;
 use incular_text::{LineHeight, TextStyle};
-use incular_widgets::{internal::ActionSurface, *};
+use incular_widgets::{
+    internal::{ActionSurface, SplitView, WidgetTree},
+    *,
+};
 
 #[test]
 fn container_empty_expands_when_bounded_shrinks_when_unbounded_and_paints_nothing() {
@@ -132,5 +135,33 @@ fn text_style_line_height_multiplier_and_inheritance() {
         merged.color,
         Color::rgba(200, 100, 50, 255),
         "Child style must not overwrite ambient color when color was unspecified"
+    );
+}
+
+#[test]
+fn scrollable_widget_defaults_match_flutter_axes() {
+    assert_eq!(
+        SingleChildScrollView::new(SizedBox::new()).get_scroll_direction(),
+        Axis::Vertical
+    );
+    assert_eq!(
+        ListView::new(Vec::<Widget>::new()).get_scroll_direction(),
+        Axis::Vertical
+    );
+    assert_eq!(
+        ListView::builder(10, |_| SizedBox::new()).get_scroll_direction(),
+        Axis::Vertical
+    );
+    assert_eq!(
+        ListView::separated(10, |_| SizedBox::new(), |_| SizedBox::new()).get_scroll_direction(),
+        Axis::Vertical
+    );
+    assert_eq!(
+        PageView::new(Vec::<Widget>::new()).get_scroll_direction(),
+        Axis::Horizontal
+    );
+    assert_eq!(
+        PageView::builder(3, 240.0, |_| SizedBox::new()).get_scroll_direction(),
+        Axis::Horizontal
     );
 }

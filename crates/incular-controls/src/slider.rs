@@ -2,9 +2,12 @@
 
 use crate::theme::ControlTheme;
 use incular_config::Axis;
+use incular_core::{Color, KeyboardKey, NamedKey};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
+use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{
-    Container, ExplicitSemantics, GestureDetector, HitTestBehavior, Positioned, Stack, Widget,
+    Container, FocusNode, GestureDetector, HitTestBehavior, KeyboardListener, Positioned, Stack,
+    Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -42,8 +45,22 @@ pub struct Root {
     range: Range,
     orientation: Axis,
     enabled: bool,
+    secondary_value: Option<f32>,
+    active_track_color: Option<Color>,
+    inactive_track_color: Option<Color>,
+    secondary_track_color: Option<Color>,
+    thumb_color: Option<Color>,
+    tap_enabled: bool,
+    drag_enabled: bool,
+    semantic_value: Option<String>,
+    track_extent: Option<f32>,
+    rtl: bool,
+    focus_node: FocusNode,
+    autofocus: bool,
     child: Option<Widget>,
     on_change: Option<Rc<dyn Fn(f32) + 'static>>,
+    on_change_start: Option<Rc<dyn Fn(f32) + 'static>>,
+    on_change_end: Option<Rc<dyn Fn(f32) + 'static>>,
 }
 impl Default for Root {
     fn default() -> Self {
@@ -59,8 +76,22 @@ impl Root {
             range: Range::default(),
             orientation: Axis::Horizontal,
             enabled: true,
+            secondary_value: None,
+            active_track_color: None,
+            inactive_track_color: None,
+            secondary_track_color: None,
+            thumb_color: None,
+            tap_enabled: true,
+            drag_enabled: true,
+            semantic_value: None,
+            track_extent: None,
+            rtl: false,
+            focus_node: FocusNode::new(),
+            autofocus: false,
             child: None,
             on_change: None,
+            on_change_start: None,
+            on_change_end: None,
         }
     }
     #[must_use]
@@ -90,6 +121,92 @@ impl Root {
         self.enabled = !value;
         self
     }
+
+    /// Sets the optional secondary progress segment used by Material sliders.
+    #[must_use]
+    pub fn secondary_value(mut self, value: Option<f32>) -> Self {
+        self.secondary_value = value.map(|value| self.range.clamp(value));
+        self
+    }
+
+    #[must_use]
+    pub fn active_track_color(mut self, value: Color) -> Self {
+        self.active_track_color = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn inactive_track_color(mut self, value: Color) -> Self {
+        self.inactive_track_color = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn secondary_track_color(mut self, value: Color) -> Self {
+        self.secondary_track_color = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn thumb_color(mut self, value: Color) -> Self {
+        self.thumb_color = Some(value);
+        self
+    }
+
+    /// Controls whether tapping the track activates the slider.  Material's
+    /// `SliderInteraction` maps its tap policies to this headless flag.
+    #[must_use]
+    pub fn tap_enabled(mut self, value: bool) -> Self {
+        self.tap_enabled = value;
+        self
+    }
+
+    /// Controls whether dragging the thumb/track changes the value.
+    #[must_use]
+    pub fn drag_enabled(mut self, value: bool) -> Self {
+        self.drag_enabled = value;
+        self
+    }
+
+    /// Overrides the semantic value string while retaining the numeric value
+    /// for the control's range mechanics.
+    #[must_use]
+    pub fn semantic_value(mut self, value: impl Into<String>) -> Self {
+        self.semantic_value = Some(value.into());
+        self
+    }
+
+    /// Sets a preferred logical track extent.  An omitted extent keeps the
+    /// controls default, while Material can provide a theme/layout-specific
+    /// value without forking slider interaction.
+    #[must_use]
+    pub fn track_extent(mut self, value: f32) -> Self {
+        self.track_extent = Some(value.max(1.0));
+        self
+    }
+
+    /// Mirrors Flutter's direction-aware slider behavior. In right-to-left
+    /// horizontal layouts the logical left/right keys are reversed while the
+    /// visual track remains unchanged.
+    #[must_use]
+    pub fn rtl(mut self, value: bool) -> Self {
+        self.rtl = value;
+        self
+    }
+
+    /// Associates a retained focus node with the slider's keyboard surface.
+    #[must_use]
+    pub fn focus_node(mut self, value: FocusNode) -> Self {
+        self.focus_node = value;
+        self
+    }
+
+    /// Requests the slider focus when its retained element is mounted.
+    #[must_use]
+    pub fn autofocus(mut self, value: bool) -> Self {
+        self.autofocus = value;
+        self
+    }
     #[must_use]
     pub fn child(mut self, value: impl Into<Widget>) -> Self {
         self.child = Some(value.into());
@@ -98,6 +215,20 @@ impl Root {
     #[must_use]
     pub fn on_value_change(mut self, cb: impl Fn(f32) + 'static) -> Self {
         self.on_change = Some(Rc::new(cb));
+        self
+    }
+
+    /// Registers a callback at the beginning of a retained drag.
+    #[must_use]
+    pub fn on_change_start(mut self, cb: impl Fn(f32) + 'static) -> Self {
+        self.on_change_start = Some(Rc::new(cb));
+        self
+    }
+
+    /// Registers a callback when a retained drag ends.
+    #[must_use]
+    pub fn on_change_end(mut self, cb: impl Fn(f32) + 'static) -> Self {
+        self.on_change_end = Some(Rc::new(cb));
         self
     }
 
@@ -114,69 +245,107 @@ impl Root {
         let ratio = ((current_value - self.range.min)
             / (self.range.max - self.range.min).max(f32::EPSILON))
         .clamp(0., 1.);
-        let track_extent = 180.;
+        let track_extent = self.track_extent.unwrap_or(180.0);
         let track_thickness = theme.slider.track_height.max(1.);
         let thumb_size = theme.slider.thumb_size.max(track_thickness);
+        let inactive_color = self
+            .inactive_track_color
+            .unwrap_or(theme.colors.border_strong);
+        let active_color = self.active_track_color.unwrap_or(if self.enabled {
+            theme.colors.accent
+        } else {
+            theme.colors.disabled_foreground
+        });
+        let secondary_color = self
+            .secondary_track_color
+            .unwrap_or(theme.colors.accent_active);
+        let thumb_color = self.thumb_color.unwrap_or(theme.colors.surface);
         let track = if self.orientation == Axis::Horizontal {
             Container::new()
                 .width(track_extent)
                 .height(track_thickness)
-                .color(theme.colors.border_strong)
+                .color(if self.enabled {
+                    inactive_color
+                } else {
+                    theme.colors.disabled_surface
+                })
         } else {
             Container::new()
                 .width(track_thickness)
                 .height(track_extent)
-                .color(theme.colors.border_strong)
+                .color(if self.enabled {
+                    inactive_color
+                } else {
+                    theme.colors.disabled_surface
+                })
         };
         let indicator_extent = (track_extent * ratio).max(track_thickness);
         let indicator = if self.orientation == Axis::Horizontal {
             Container::new()
                 .width(indicator_extent)
                 .height(track_thickness)
-                .color(if self.enabled {
-                    theme.colors.accent
-                } else {
-                    theme.colors.disabled_foreground
-                })
+                .color(active_color)
         } else {
             Container::new()
                 .width(track_thickness)
                 .height(indicator_extent)
-                .color(if self.enabled {
-                    theme.colors.accent
-                } else {
-                    theme.colors.disabled_foreground
-                })
+                .color(active_color)
         };
+        let secondary_indicator: Option<Widget> = self.secondary_value.map(|secondary| {
+            let secondary_ratio = ((secondary - self.range.min)
+                / (self.range.max - self.range.min).max(f32::EPSILON))
+            .clamp(0.0, 1.0);
+            if self.orientation == Axis::Horizontal {
+                Container::new()
+                    .width((track_extent * secondary_ratio).max(track_thickness))
+                    .height(track_thickness)
+                    .color(secondary_color)
+                    .into()
+            } else {
+                Container::new()
+                    .width(track_thickness)
+                    .height((track_extent * secondary_ratio).max(track_thickness))
+                    .color(secondary_color)
+                    .into()
+            }
+        });
         let thumb = Container::new()
             .width(thumb_size)
             .height(thumb_size)
-            .color(theme.colors.surface)
+            .color(thumb_color)
             .border(incular_widgets::Border::new(
                 theme.button.border_width,
-                theme.colors.border_strong,
+                if self.enabled {
+                    inactive_color
+                } else {
+                    theme.colors.disabled_foreground
+                },
             ))
             .radius(theme.slider.radius);
         let visual = if self.orientation == Axis::Horizontal {
-            Stack::new([
-                Widget::from(track),
-                Widget::from(Positioned::new(indicator).left(0.).top(0.)),
-                Widget::from(
-                    Positioned::new(thumb)
-                        .left((track_extent * ratio - thumb_size * 0.5).max(0.))
-                        .top((track_thickness - thumb_size) * 0.5),
-                ),
-            ])
+            let mut children = vec![Widget::from(track)];
+            if let Some(indicator) = secondary_indicator {
+                children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
+            }
+            children.push(Widget::from(Positioned::new(indicator).left(0.).top(0.)));
+            children.push(Widget::from(
+                Positioned::new(thumb)
+                    .left((track_extent * ratio - thumb_size * 0.5).max(0.))
+                    .top((track_thickness - thumb_size) * 0.5),
+            ));
+            Stack::new(children)
         } else {
-            Stack::new([
-                Widget::from(track),
-                Widget::from(Positioned::new(indicator).left(0.).bottom(0.)),
-                Widget::from(
-                    Positioned::new(thumb)
-                        .left((track_thickness - thumb_size) * 0.5)
-                        .bottom((track_extent * ratio - thumb_size * 0.5).max(0.)),
-                ),
-            ])
+            let mut children = vec![Widget::from(track)];
+            if let Some(indicator) = secondary_indicator {
+                children.push(Widget::from(Positioned::new(indicator).left(0.).bottom(0.)));
+            }
+            children.push(Widget::from(Positioned::new(indicator).left(0.).bottom(0.)));
+            children.push(Widget::from(
+                Positioned::new(thumb)
+                    .left((track_thickness - thumb_size) * 0.5)
+                    .bottom((track_extent * ratio - thumb_size * 0.5).max(0.)),
+            ));
+            Stack::new(children)
         };
         let value = self.value.clone();
         let revision = self.revision.clone();
@@ -201,6 +370,10 @@ impl Root {
         let drag_value = value.clone();
         let drag_revision = revision.clone();
         let drag_callback = callback.clone();
+        let drag_start_callback = self.on_change_start.clone();
+        let drag_end_callback = self.on_change_end.clone();
+        let drag_started = Rc::new(Cell::new(false));
+        let drag_started_for_update = drag_started.clone();
         let drag = move |delta: incular_core::Offset| {
             let travel = if orientation == Axis::Horizontal {
                 delta.x / track_extent
@@ -211,25 +384,127 @@ impl Root {
             if (next - drag_value.get()).abs() <= f32::EPSILON {
                 return;
             }
+            if !drag_started_for_update.replace(true) {
+                if let Some(callback) = &drag_start_callback {
+                    callback(next);
+                }
+            }
             drag_value.set(next);
             drag_revision.set(drag_revision.get().wrapping_add(1));
             if let Some(callback) = &drag_callback {
                 callback(next);
             }
         };
-        let interactive: Widget = if self.enabled {
-            let detector = GestureDetector::new(visual)
-                .behavior(HitTestBehavior::Opaque)
-                .on_tap(activate);
-            if orientation == Axis::Horizontal {
-                detector.on_horizontal_drag_update(drag).into()
+        let mut interactive: Widget = if self.enabled && (self.tap_enabled || self.drag_enabled) {
+            let detector = GestureDetector::new(visual).behavior(HitTestBehavior::Opaque);
+            let detector = if self.tap_enabled {
+                detector.on_tap(activate)
             } else {
-                detector.on_vertical_drag_update(drag).into()
+                detector
+            };
+            if self.drag_enabled && orientation == Axis::Horizontal {
+                let detector = detector.on_horizontal_drag_update(drag);
+                if let Some(callback) = drag_end_callback {
+                    let drag_value = value.clone();
+                    let drag_started = drag_started.clone();
+                    detector
+                        .on_horizontal_drag_end(move |_| {
+                            if drag_started.replace(false) {
+                                callback(drag_value.get());
+                            }
+                        })
+                        .into()
+                } else {
+                    detector.into()
+                }
+            } else if self.drag_enabled {
+                let detector = detector.on_vertical_drag_update(drag);
+                if let Some(callback) = drag_end_callback {
+                    let drag_value = value.clone();
+                    let drag_started = drag_started.clone();
+                    detector
+                        .on_vertical_drag_end(move |_| {
+                            if drag_started.replace(false) {
+                                callback(drag_value.get());
+                            }
+                        })
+                        .into()
+                } else {
+                    detector.into()
+                }
+            } else {
+                detector.into()
             }
         } else {
             visual.into()
         };
-        let value_text = format!("{:.3}", range.clamp(current_value));
+
+        // Sliders are keyboard controls as well as pointer controls. Keep the
+        // value and callback in the same retained cells used by pointer drag,
+        // so arrow/Home/End/repeat events cannot diverge from mouse behavior.
+        if self.enabled {
+            let keyboard_value = value.clone();
+            let keyboard_revision = revision.clone();
+            let keyboard_callback = callback.clone();
+            let keyboard_range = range;
+            let keyboard_orientation = orientation;
+            let keyboard_rtl = self.rtl;
+            let focus_node = self.focus_node.clone();
+            let keyboard = KeyboardListener::new(interactive)
+                .focus_node(focus_node)
+                .autofocus(self.autofocus)
+                .on_key(move |event| {
+                    if !event.state.is_down() {
+                        return false;
+                    }
+                    let action = match &event.key {
+                        KeyboardKey::Named(NamedKey::ArrowLeft)
+                            if keyboard_orientation == Axis::Horizontal =>
+                        {
+                            Some(if keyboard_rtl { 1.0 } else { -1.0 })
+                        }
+                        KeyboardKey::Named(NamedKey::ArrowRight)
+                            if keyboard_orientation == Axis::Horizontal =>
+                        {
+                            Some(if keyboard_rtl { -1.0 } else { 1.0 })
+                        }
+                        KeyboardKey::Named(NamedKey::ArrowUp)
+                            if keyboard_orientation == Axis::Vertical =>
+                        {
+                            Some(1.0)
+                        }
+                        KeyboardKey::Named(NamedKey::ArrowDown)
+                            if keyboard_orientation == Axis::Vertical =>
+                        {
+                            Some(-1.0)
+                        }
+                        KeyboardKey::Named(NamedKey::Home) => None,
+                        KeyboardKey::Named(NamedKey::End) => None,
+                        KeyboardKey::Character(text) if text == " " => Some(1.0),
+                        _ => return false,
+                    };
+                    let current = keyboard_value.get();
+                    let next = match &event.key {
+                        KeyboardKey::Named(NamedKey::Home) => keyboard_range.min,
+                        KeyboardKey::Named(NamedKey::End) => keyboard_range.max,
+                        _ => keyboard_range
+                            .clamp(current + action.unwrap_or(1.0) * keyboard_range.step),
+                    };
+                    if (next - current).abs() > f32::EPSILON {
+                        keyboard_value.set(next);
+                        keyboard_revision.set(keyboard_revision.get().wrapping_add(1));
+                        if let Some(callback) = &keyboard_callback {
+                            callback(next);
+                        }
+                    }
+                    true
+                });
+            interactive = keyboard.into();
+        }
+        let value_text = self
+            .semantic_value
+            .clone()
+            .unwrap_or_else(|| format!("{:.3}", range.clamp(current_value)));
         interactive.semantics(
             ExplicitSemantics::new(SemanticRole::Slider)
                 .value(value_text)
@@ -239,7 +514,13 @@ impl Root {
                     ..SemanticState::default()
                 })
                 .actions(if self.enabled {
-                    [SemanticActionKind::Focus, SemanticActionKind::Activate].to_vec()
+                    [
+                        SemanticActionKind::Focus,
+                        SemanticActionKind::Activate,
+                        SemanticActionKind::Increment,
+                        SemanticActionKind::Decrement,
+                    ]
+                    .to_vec()
                 } else {
                     Vec::new()
                 }),
@@ -251,8 +532,8 @@ impl From<Root> for Widget {
         let value = Rc::new(value);
         let revision = value.revision.clone();
         Widget::stateful_layout_builder(revision, move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

@@ -3,6 +3,7 @@
 //! Scroll this window to see the app bar and the "Pinned section" header stay
 //! at the leading edge while the lazy grid moves underneath them.
 use incular::prelude::*;
+use incular::widgets::internal::{Sliver, SliverAppBar};
 
 const NAVY: Color = Color::rgba(19, 31, 54, 255);
 const BLUE: Color = Color::rgba(48, 103, 190, 255);

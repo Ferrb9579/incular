@@ -1,0 +1,1448 @@
+{
+  "flutter_tag": "3.47.1",
+  "flutter_commit": "6655482ec06e547f90abf8ae7590466f4415978d",
+  "dart_version": "3.13.1",
+  "previous_tag": "3.47.0",
+  "previous_commit": "4cf24164269a5ebf0c16a028a00727d0e77bbb05",
+  "source": "packages/flutter/lib/widgets.dart",
+  "direct_export_count": 173,
+  "recursive_symbol_count": 1307,
+  "status_counts": {
+    "RUSTIFIED": 269,
+    "DEFERRED_RENDERER": 765,
+    "MERGED": 109,
+    "DEFERRED_PLATFORM": 28,
+    "SKIPPED_DART_MECHANIC": 121,
+    "SKIPPED_DEPRECATED": 15
+  },
+  "symbol_kind_counts": {
+    "WIDGET": 601,
+    "VALUE_TYPE": 257,
+    "CALLBACK": 141,
+    "ENUM": 74,
+    "CONTROLLER": 22,
+    "TRAIT/EXTENSION_POINT": 54,
+    "FRAMEWORK_INTERNAL_API": 121,
+    "DELEGATE": 34,
+    "FUNCTION": 3
+  },
+  "application_facing_count": 1171,
+  "platform_specific_count": 28,
+  "deprecated_count": 15,
+  "port_policy_counts": {
+    "RUSTIFIED": 224,
+    "DEFER_RENDERER": 640,
+    "DIRECT": 76,
+    "MERGED_DOMAIN": 148,
+    "DEFER_PLATFORM": 28,
+    "MERGED_TOKIO": 6,
+    "INTERNAL": 7,
+    "SKIP_DART_MECHANIC": 120,
+    "MERGED_SIGNAL": 6,
+    "SKIP_LOW_VALUE": 36,
+    "MERGED_CONTEXT": 16
+  },
+  "priority_counts": {
+    "P3_COMPATIBILITY": 862,
+    "P0_DEPLOYABLE": 207,
+    "P1_COMMON": 42,
+    "NEVER_PORT": 169,
+    "P2_ADVANCED": 27
+  },
+  "p0_deployable_count": 207,
+  "p0_application_facing_count": 207,
+  "p0_actionable_count": 207,
+  "exports": [
+    {
+      "directive": "export",
+      "uri": "package:characters/characters.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "external"
+    },
+    {
+      "directive": "export",
+      "uri": "package:vector_math/vector_math_64.dart",
+      "mode": "show",
+      "show": [
+        "Matrix4"
+      ],
+      "hide": null,
+      "origin": "external"
+    },
+    {
+      "directive": "export",
+      "uri": "foundation.dart",
+      "mode": "show",
+      "show": [
+        "Brightness",
+        "UniqueKey"
+      ],
+      "hide": null,
+      "origin": "foundation.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "rendering.dart",
+      "mode": "show",
+      "show": [
+        "TextSelectionHandleType"
+      ],
+      "hide": null,
+      "origin": "rendering.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/actions.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/actions.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/adapter.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/adapter.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/animated_cross_fade.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/animated_cross_fade.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/animated_scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/animated_scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/animated_size.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/animated_size.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/animated_switcher.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/animated_switcher.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/annotated_region.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/annotated_region.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/app.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/app.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/app_lifecycle_listener.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/app_lifecycle_listener.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/async.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/async.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/autocomplete.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/autocomplete.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/autofill.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/autofill.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/automatic_keep_alive.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/automatic_keep_alive.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/banner.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/banner.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/basic.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/basic.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/binding.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/binding.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/bottom_navigation_bar_item.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/bottom_navigation_bar_item.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/color_filter.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/color_filter.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/container.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/container.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/context_menu_button_item.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/context_menu_button_item.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/context_menu_controller.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/context_menu_controller.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/date.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/date.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/debug.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/debug.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/decorated_sliver.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/decorated_sliver.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/default_selection_style.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/default_selection_style.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/default_text_editing_shortcuts.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/default_text_editing_shortcuts.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/desktop_text_selection_toolbar_layout_delegate.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/desktop_text_selection_toolbar_layout_delegate.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/dialog.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/dialog.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/dismissible.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/dismissible.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/display_feature_sub_screen.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/display_feature_sub_screen.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/disposable_build_context.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/disposable_build_context.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/drag_boundary.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/drag_boundary.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/drag_target.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/drag_target.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/draggable_scrollable_sheet.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/draggable_scrollable_sheet.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/dual_transition_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/dual_transition_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/editable_text.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/editable_text.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/expansible.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/expansible.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/fade_in_image.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/fade_in_image.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/feedback.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/feedback.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/flutter_logo.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/flutter_logo.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/focus_manager.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/focus_manager.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/focus_scope.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/focus_scope.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/focus_traversal.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/focus_traversal.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/form.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/form.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/framework.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/framework.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/gesture_detector.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/gesture_detector.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/grid_paper.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/grid_paper.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/heroes.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/heroes.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/icon.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/icon.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/icon_data.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/icon_data.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/icon_theme.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/icon_theme.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/icon_theme_data.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/icon_theme_data.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/image.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/image.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/image_filter.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/image_filter.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/image_icon.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/image_icon.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/implicit_animations.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/implicit_animations.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/indexed_stack.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/indexed_stack.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/inherited_model.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/inherited_model.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/inherited_notifier.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/inherited_notifier.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/inherited_theme.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/inherited_theme.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/interactive_viewer.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/interactive_viewer.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/keyboard_listener.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/keyboard_listener.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/layout_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/layout_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/list_wheel_scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/list_wheel_scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/localizations.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/localizations.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/lookup_boundary.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/lookup_boundary.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/magnifier.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/magnifier.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/media_query.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/media_query.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/modal_barrier.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/modal_barrier.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/navigation_toolbar.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/navigation_toolbar.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/navigator.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/navigator.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/navigator_pop_handler.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/navigator_pop_handler.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/nested_scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/nested_scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/notification_listener.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/notification_listener.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/orientation_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/orientation_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/overflow_bar.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/overflow_bar.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/overlay.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/overlay.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/overscroll_indicator.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/overscroll_indicator.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/page_storage.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/page_storage.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/page_transitions_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/page_transitions_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/page_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/page_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/pages.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/pages.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/performance_overlay.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/performance_overlay.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/pinned_header_sliver.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/pinned_header_sliver.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/placeholder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/placeholder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/platform_menu_bar.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/platform_menu_bar.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/platform_selectable_region_context_menu.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/platform_selectable_region_context_menu.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/platform_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/platform_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/pop_scope.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/pop_scope.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/preferred_size.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/preferred_size.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/primary_scroll_controller.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/primary_scroll_controller.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/radio_group.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/radio_group.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/raw_keyboard_listener.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/raw_keyboard_listener.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/raw_menu_anchor.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/raw_menu_anchor.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/raw_radio.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/raw_radio.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/raw_tooltip.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/raw_tooltip.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/reorderable_list.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/reorderable_list.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/repeating_animation_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/repeating_animation_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/restoration.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/restoration.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/restoration_properties.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/restoration_properties.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/router.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/router.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/routes.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/routes.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/safe_area.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/safe_area.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_activity.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_activity.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_aware_image_provider.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_aware_image_provider.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_configuration.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_configuration.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_context.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_context.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_controller.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_controller.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_delegate.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_delegate.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_metrics.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_metrics.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_notification.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_notification.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_notification_observer.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_notification_observer.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_physics.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_physics.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_position.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_position.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_position_with_single_context.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_position_with_single_context.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_simulation.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_simulation.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scrollable.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scrollable.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scrollable_helpers.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scrollable_helpers.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/scrollbar.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/scrollbar.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/selectable_region.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/selectable_region.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/selection_container.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/selection_container.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/semantics_debugger.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/semantics_debugger.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sensitive_content.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sensitive_content.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/service_extensions.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/service_extensions.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/shared_app_data.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/shared_app_data.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/shortcuts.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/shortcuts.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/single_child_scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/single_child_scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/size_changed_layout_notifier.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/size_changed_layout_notifier.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_fill.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_fill.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_floating_header.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_floating_header.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_layout_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_layout_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_persistent_header.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_persistent_header.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_prototype_extent_list.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_prototype_extent_list.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_resizing_header.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_resizing_header.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/sliver_tree.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/sliver_tree.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/slotted_render_object_widget.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/slotted_render_object_widget.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/snapshot_widget.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/snapshot_widget.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/spacer.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/spacer.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/spell_check.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/spell_check.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/standard_component_type.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/standard_component_type.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/status_transitions.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/status_transitions.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/stretch_effect.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/stretch_effect.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/system_context_menu.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/system_context_menu.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/table.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/table.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/tap_region.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/tap_region.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/text.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/text.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/text_editing_intents.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/text_editing_intents.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/text_selection.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/text_selection.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/text_selection_toolbar_anchors.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/text_selection_toolbar_anchors.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/text_selection_toolbar_layout_delegate.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/text_selection_toolbar_layout_delegate.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/texture.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/texture.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/ticker_provider.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/ticker_provider.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/title.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/title.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/toggleable.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/toggleable.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/transitions.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/transitions.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/tween_animation_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/tween_animation_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/two_dimensional_scroll_view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/two_dimensional_scroll_view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/two_dimensional_viewport.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/two_dimensional_viewport.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/undo_history.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/undo_history.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/unique_widget.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/unique_widget.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/value_listenable_builder.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/value_listenable_builder.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/view.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/view.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/viewport.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/viewport.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/widget_inspector.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/widget_inspector.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/widget_span.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/widget_span.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/widget_state.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/widget_state.dart"
+    },
+    {
+      "directive": "export",
+      "uri": "src/widgets/will_pop_scope.dart",
+      "mode": "all",
+      "show": null,
+      "hide": null,
+      "origin": "src/widgets/will_pop_scope.dart"
+    }
+  ]
+}

@@ -582,6 +582,7 @@ struct ScrollState {
     revision: u64,
     restoration: Option<ScrollRestoration>,
     pending_restored_offset: Option<f32>,
+    pending_jump_offset: Option<f32>,
 }
 #[derive(Clone)]
 struct ScrollRestoration {
@@ -699,6 +700,21 @@ impl ScrollController {
         persist_scroll_offset(restoration, value);
         true
     }
+
+    /// Requests a programmatic position before the viewport has established
+    /// its extents.  This is useful for retained page/tab controllers: the
+    /// request is applied on the first layout pass instead of being clamped
+    /// away when `max_offset` is still zero.
+    pub fn deferred_jump_to(&self, offset: f32) -> bool {
+        if !offset.is_finite() {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        let offset = offset.max(0.0);
+        state.pending_jump_offset = Some(offset);
+        state.revision = state.revision.wrapping_add(1);
+        true
+    }
     pub fn scroll_by(&self, delta: f32) -> bool {
         self.jump_to(self.offset() + delta)
     }
@@ -740,12 +756,38 @@ impl ScrollController {
     /// The method is public so independent viewport implementations can share
     /// a controller; applications normally use `jump_to` or `scroll_by`.
     pub fn update_extents(&self, content: f32, viewport: f32) {
+        self.update_extents_with_physics(content, viewport, ScrollPhysics::default());
+    }
+
+    /// Updates content and viewport extents while applying the configured
+    /// range-maintaining policy.
+    ///
+    /// A plain extent update clamps a position when the new range becomes
+    /// smaller.  [`ScrollPhysics::range_maintaining`] additionally keeps a
+    /// position that was anchored to the old trailing edge anchored to the
+    /// new trailing edge.  This is the important case for a list whose
+    /// content grows, shrinks, or whose viewport is resized while the user is
+    /// at the end.  The ordinary `update_extents` API remains available for
+    /// callers that want simple clamping.
+    pub fn update_extents_with_physics(&self, content: f32, viewport: f32, physics: ScrollPhysics) {
         let persistence = {
             let mut state = self.state.borrow_mut();
+            let old_max_offset = state.max_offset;
+            let old_offset = state.offset;
             state.content_extent = content.max(0.);
             state.viewport_extent = viewport.max(0.);
             state.max_offset = (state.content_extent - state.viewport_extent).max(0.);
-            if let Some(restored) = state.pending_restored_offset {
+            if let Some(requested) = state.pending_jump_offset {
+                let next = requested.min(state.max_offset);
+                if next != state.offset {
+                    state.offset = next;
+                    state.revision += 1;
+                }
+                if requested <= state.max_offset {
+                    state.pending_jump_offset = None;
+                }
+                None
+            } else if let Some(restored) = state.pending_restored_offset {
                 let next = restored.min(state.max_offset);
                 if next != state.offset {
                     state.offset = next;
@@ -759,7 +801,18 @@ impl ScrollController {
                 }
                 None
             } else {
-                let next = state.offset.min(state.max_offset);
+                let next = if physics.is_range_maintaining()
+                    && (state.max_offset - old_max_offset).abs() > f32::EPSILON
+                    && old_max_offset > 0.
+                    && (old_offset - old_max_offset).abs() <= 0.001
+                {
+                    // Preserve the logical trailing-edge anchor when the
+                    // range changes.  This handles both content mutation and
+                    // viewport resize without rebuilding the scroll view.
+                    state.max_offset
+                } else {
+                    old_offset.clamp(0., state.max_offset)
+                };
                 if next != state.offset {
                     state.offset = next;
                     state.revision += 1;
@@ -772,6 +825,40 @@ impl ScrollController {
         if let Some((restoration, offset)) = persistence {
             persist_scroll_offset(restoration, offset);
         }
+    }
+
+    /// Settles this position according to a composed physics policy.
+    ///
+    /// Bouncing positions return to the nearest range boundary, while page or
+    /// fixed-extent policies choose their deterministic snap target.  The
+    /// operation is intentionally synchronous; the runtime can animate toward
+    /// the returned target using its normal frame scheduler when desired.
+    pub fn settle_physics(&self, physics: ScrollPhysics, velocity: f32) -> bool {
+        let target = physics.snap_target_for_extent(
+            self.offset(),
+            velocity,
+            0.,
+            self.max_offset(),
+            self.viewport_extent(),
+        );
+        self.jump_to(target)
+    }
+
+    /// Preserves the visible logical anchor after content is inserted or
+    /// removed before the current viewport. `delta_before_viewport` is the
+    /// change in content extent before the anchor (positive for insertion,
+    /// negative for removal). This is intentionally an explicit mutation
+    /// operation so virtualized models can call it without forcing a rebuild.
+    pub fn adjust_for_content_change(
+        &self,
+        delta_before_viewport: f32,
+        physics: ScrollPhysics,
+    ) -> bool {
+        if !physics.is_range_maintaining() || !delta_before_viewport.is_finite() {
+            return false;
+        }
+        let current = self.offset();
+        self.jump_to(current + delta_before_viewport)
     }
 }
 
@@ -923,6 +1010,11 @@ pub enum SnapPhysics {
     Page {
         extent: f32,
     },
+    /// A page whose extent is the viewport's current main-axis dimension.
+    /// This is the policy used by a Flutter-style `PageView` with static
+    /// children; unlike a fixed page extent it remains correct after a window
+    /// resize.
+    PageViewport,
     FixedExtent {
         extent: f32,
     },
@@ -955,6 +1047,7 @@ pub struct ScrollPhysics {
     pub scrollability: Scrollability,
     pub boundary: BoundaryPhysics,
     pub snap: SnapPhysics,
+    maintain_range: bool,
 }
 
 impl Default for ScrollPhysics {
@@ -970,6 +1063,7 @@ impl ScrollPhysics {
             scrollability: Scrollability::WhenScrollable,
             boundary: BoundaryPhysics::Clamping,
             snap: SnapPhysics::None,
+            maintain_range: false,
         }
     }
 
@@ -999,6 +1093,15 @@ impl ScrollPhysics {
     #[must_use]
     pub const fn page_snapping(mut self, extent: f32) -> Self {
         self.snap = SnapPhysics::Page { extent };
+        self
+    }
+
+    /// Enables viewport-sized page snapping.  This is the composable
+    /// equivalent of Flutter's `PageScrollPhysics` when the page extent is
+    /// supplied by the viewport rather than a fixed constructor argument.
+    #[must_use]
+    pub const fn page(mut self) -> Self {
+        self.snap = SnapPhysics::PageViewport;
         self
     }
 
@@ -1085,9 +1188,24 @@ impl ScrollPhysics {
     /// retreats; low velocity picks the nearest item.
     #[must_use]
     pub fn snap_target(self, position: f32, velocity: f32, min: f32, max: f32) -> f32 {
+        self.snap_target_for_extent(position, velocity, min, max, 0.)
+    }
+
+    /// Selects a snap target, resolving [`SnapPhysics::PageViewport`] against
+    /// the supplied viewport extent.
+    #[must_use]
+    pub fn snap_target_for_extent(
+        self,
+        position: f32,
+        velocity: f32,
+        min: f32,
+        max: f32,
+        viewport_extent: f32,
+    ) -> f32 {
         let extent = match self.snap {
             SnapPhysics::None => return position.clamp(min.min(max), max.max(min)),
             SnapPhysics::Page { extent } | SnapPhysics::FixedExtent { extent } => extent,
+            SnapPhysics::PageViewport => viewport_extent,
         };
         if !extent.is_finite() || extent <= 0. {
             return position.clamp(min.min(max), max.max(min));
@@ -1101,6 +1219,18 @@ impl ScrollPhysics {
             unit.round()
         };
         (index * extent).clamp(min.min(max), max.max(min))
+    }
+
+    /// Returns the page/fixed-item step used for semantic scroll actions.
+    /// Viewport pages resolve against the current viewport dimension.
+    #[must_use]
+    pub fn snap_extent(self, viewport_extent: f32) -> Option<f32> {
+        let extent = match self.snap {
+            SnapPhysics::Page { extent } | SnapPhysics::FixedExtent { extent } => extent,
+            SnapPhysics::PageViewport => viewport_extent,
+            SnapPhysics::None => return None,
+        };
+        (extent.is_finite() && extent > 0.).then_some(extent)
     }
 
     /// Advances a bounce spring using a monotonic elapsed frame duration in
@@ -1148,6 +1278,7 @@ impl ScrollPhysics {
         if self.snap == SnapPhysics::None {
             self.snap = parent.snap;
         }
+        self.maintain_range |= parent.maintain_range;
         self
     }
 
@@ -1157,8 +1288,16 @@ impl ScrollPhysics {
     }
 
     #[must_use]
-    pub const fn range_maintaining(self) -> Self {
+    pub const fn range_maintaining(mut self) -> Self {
+        self.maintain_range = true;
         self
+    }
+
+    /// Whether this policy keeps a trailing-edge position when extents
+    /// change.
+    #[must_use]
+    pub const fn is_range_maintaining(self) -> bool {
+        self.maintain_range
     }
 
     #[must_use]
@@ -1506,6 +1645,27 @@ mod tests {
     }
 
     #[test]
+    fn always_scrollable_accepts_small_content() {
+        let controller = ScrollController::new();
+        controller.update_extents(40., 100.);
+        let result = controller.apply_physics(ScrollPhysics::clamping().always_scrollable(), 12.);
+        assert!(result.accepted);
+        assert_eq!(result.position, 0.);
+        assert_eq!(result.unconsumed, 12.);
+    }
+
+    #[test]
+    fn never_scrollable_rejects_user_drag_but_controller_jump_still_works() {
+        let controller = ScrollController::new();
+        controller.update_extents(300., 100.);
+        let result = controller.apply_physics(ScrollPhysics::clamping().never_scrollable(), 40.);
+        assert!(!result.accepted);
+        assert_eq!(controller.offset(), 0.);
+        assert!(controller.jump_to(80.));
+        assert_eq!(controller.offset(), 80.);
+    }
+
+    #[test]
     fn bouncing_is_resistant_bounded_and_returns_with_monotonic_spring_steps() {
         let physics = ScrollPhysics::clamping().bouncing();
         let bounced = physics.apply_delta(0., -1_000., 0., 100.);
@@ -1537,6 +1697,79 @@ mod tests {
         assert_eq!(page.snap_target(149., 500., 0., 500.), 200.);
         let fixed = ScrollPhysics::clamping().fixed_extent_snapping(32.);
         assert_eq!(fixed.snap_target(70., -500., 0., 320.), 64.);
+    }
+
+    #[test]
+    fn page_physics_targets_the_current_viewport_page() {
+        let page = ScrollPhysics::clamping().page();
+        assert_eq!(page.snap_target_for_extent(149., 0., 0., 500., 100.), 100.);
+        assert_eq!(
+            page.snap_target_for_extent(149., 500., 0., 500., 100.),
+            200.
+        );
+        assert_eq!(page.snap_extent(100.), Some(100.));
+    }
+
+    #[test]
+    fn range_maintaining_preserves_trailing_edge_when_extents_change() {
+        let controller = ScrollController::new();
+        let physics = ScrollPhysics::clamping().range_maintaining();
+        controller.update_extents_with_physics(300., 100., physics);
+        assert!(controller.jump_to(200.));
+
+        // Growing content keeps the visible end anchored.
+        controller.update_extents_with_physics(420., 100., physics);
+        assert_eq!(controller.max_offset(), 320.);
+        assert_eq!(controller.offset(), 320.);
+
+        // A viewport resize that shrinks the range keeps the same edge
+        // anchored and never leaves the valid range.
+        controller.update_extents_with_physics(420., 180., physics);
+        assert_eq!(controller.max_offset(), 240.);
+        assert_eq!(controller.offset(), 240.);
+    }
+
+    #[test]
+    fn range_maintaining_adjusts_anchor_for_insertions_before_viewport() {
+        let controller = ScrollController::new();
+        let physics = ScrollPhysics::clamping().range_maintaining();
+        controller.update_extents_with_physics(1_000., 100., physics);
+        controller.jump_to(400.);
+        assert!(controller.adjust_for_content_change(48., physics));
+        assert_eq!(controller.offset(), 448.);
+        assert!(controller.adjust_for_content_change(-24., physics));
+        assert_eq!(controller.offset(), 424.);
+    }
+
+    #[test]
+    fn physics_composition_order_is_deterministic() {
+        let first = ScrollPhysics::clamping()
+            .bouncing()
+            .then(ScrollPhysics::clamping().always_scrollable())
+            .range_maintaining();
+        let second = ScrollPhysics::clamping()
+            .range_maintaining()
+            .then(ScrollPhysics::clamping().bouncing().always_scrollable());
+        assert_eq!(first.scrollability, Scrollability::Always);
+        assert_eq!(first.boundary, second.boundary);
+        assert_eq!(first.scrollability, second.scrollability);
+        assert!(first.is_range_maintaining());
+        assert!(second.is_range_maintaining());
+    }
+
+    #[test]
+    fn controller_settle_returns_bounce_or_page_positions_to_stable_targets() {
+        let controller = ScrollController::new();
+        controller.update_extents(300., 100.);
+        let bounce = ScrollPhysics::clamping().bouncing();
+        assert!(controller.apply_physics(bounce, -40.).position < 0.);
+        assert!(controller.settle_physics(bounce, 0.));
+        assert_eq!(controller.offset(), 0.);
+
+        assert!(controller.jump_to(149.));
+        let page = ScrollPhysics::clamping().page_snapping(100.);
+        assert!(controller.settle_physics(page, 0.));
+        assert_eq!(controller.offset(), 100.);
     }
 
     #[test]

@@ -6,6 +6,15 @@
 
 [build]
 incremental = false
+# Keep the workspace build serial by default.  The renderer/native dependency
+# graph is large and developer machines commonly have rust-analyzer resident;
+# one compiler process avoids concurrent memory spikes.  A measured caller can
+# override this with `CARGO_BUILD_JOBS` when it has enough headroom.
+jobs = 1
 
 [env]
 CARGO_INCREMENTAL = "0"
+# Keep test harnesses serial as well.  The runtime tests intentionally cover
+# large retained trees and can exceed a capped process when dozens of tests
+# allocate in parallel.
+RUST_TEST_THREADS = "1"

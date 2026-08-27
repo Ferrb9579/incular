@@ -1,9 +1,11 @@
-use crate::theme::ControlTheme;
-use incular_config::EdgeInsets;
-use incular_core::Color;
+use crate::theme::{ControlDensity, ControlTheme};
+use incular_config::{Alignment, EdgeInsets};
+use incular_core::{Color, Size};
 use incular_text::TextStyle;
-use incular_widgets::Border;
+use incular_widgets::{Border, BorderRadius, Widget};
 use std::sync::Arc;
+use std::time::Duration;
+use std::{fmt, rc::Rc};
 
 /// Interactive state flags shared by every control.
 ///
@@ -165,6 +167,28 @@ pub enum StateValue<T> {
     Value(T),
     States(StateTable<T>),
     Resolver(Arc<dyn Fn(ControlState) -> T + Send + Sync + 'static>),
+}
+
+impl<T: fmt::Debug> fmt::Debug for StateValue<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(value) => formatter.debug_tuple("Value").field(value).finish(),
+            Self::States(table) => formatter.debug_tuple("States").field(table).finish(),
+            Self::Resolver(_) => formatter.write_str("Resolver(..)"),
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for StateValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Value(a), Self::Value(b)) => a == b,
+            (Self::States(a), Self::States(b)) => a == b,
+            // Resolver closures do not have structural equality.
+            (Self::Resolver(_), Self::Resolver(_)) => false,
+            _ => false,
+        }
+    }
 }
 
 impl<T: Clone> StateValue<T> {
@@ -459,20 +483,109 @@ pub enum ButtonVariant {
     Destructive,
 }
 
+/// Alignment of a Material button's icon relative to its label.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IconAlignment {
+    #[default]
+    Start,
+    End,
+}
+
+/// Material's minimum interactive target policy.  The Material crate
+/// re-exports this under the Flutter spelling `MaterialTapTargetSize`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TapTargetSize {
+    #[default]
+    Padded,
+    ShrinkWrap,
+}
+
+/// Ink splash factory policy.  Rendering adapters can map these values to
+/// their concrete ripple implementation without changing component APIs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SplashFactory {
+    #[default]
+    Ripple,
+    Splash,
+    Sparkle,
+    NoSplash,
+}
+
+/// A builder used by Material buttons to insert a layer around their content.
+/// It is intentionally renderer-neutral and is applied after state resolution.
+#[derive(Clone)]
+pub struct ButtonLayerBuilder(Rc<dyn Fn(Widget, ControlState) -> Widget>);
+
+impl ButtonLayerBuilder {
+    #[must_use]
+    pub fn new(builder: impl Fn(Widget, ControlState) -> Widget + 'static) -> Self {
+        Self(Rc::new(builder))
+    }
+
+    #[must_use]
+    pub fn build(&self, child: Widget, state: ControlState) -> Widget {
+        (self.0)(child, state)
+    }
+}
+
+impl fmt::Debug for ButtonLayerBuilder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ButtonLayerBuilder(..)")
+    }
+}
+
+impl PartialEq for ButtonLayerBuilder {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
 /// Configuration style for Button controls.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ButtonStyle {
     pub variant: ButtonVariant,
     pub background: Option<Color>,
+    /// General state-aware background property. The compact `background` and
+    /// `background_states` fields remain for backwards compatibility.
+    pub background_property: Option<StateValue<Color>>,
     /// Optional state-aware background palette. When present it takes
     /// precedence over the single `background` value.
     pub background_states: Option<StateColor>,
     pub foreground: Option<Color>,
+    /// General state-aware foreground property.
+    pub foreground_property: Option<StateValue<Color>>,
     /// Optional state-aware foreground palette.
     pub foreground_states: Option<StateColor>,
+    /// State-dependent overlay color (the Material ink/highlight layer).
+    pub overlay_color: Option<StateValue<Color>>,
+    /// State-dependent shadow color.
+    pub shadow_color: Option<StateValue<Color>>,
+    /// State-dependent surface tint color.
+    pub surface_tint_color: Option<StateValue<Color>>,
+    /// State-dependent elevation in logical pixels.
+    pub elevation: Option<StateValue<f32>>,
     pub border: Option<Border>,
+    /// State-dependent border side equivalent.
+    pub side: Option<StateValue<Border>>,
+    /// State-dependent shape equivalent.
+    pub shape: Option<StateValue<BorderRadius>>,
     pub border_radius: Option<f32>,
     pub padding: Option<EdgeInsets>,
+    pub minimum_size: Option<Size>,
+    pub fixed_size: Option<Size>,
+    pub maximum_size: Option<Size>,
+    pub icon_color: Option<StateValue<Color>>,
+    pub icon_size: Option<StateValue<f32>>,
+    pub icon_alignment: Option<IconAlignment>,
+    pub mouse_cursor: Option<String>,
+    pub visual_density: Option<ControlDensity>,
+    pub tap_target_size: Option<TapTargetSize>,
+    pub animation_duration: Option<Duration>,
+    pub enable_feedback: Option<bool>,
+    pub alignment: Option<Alignment>,
+    pub splash_factory: Option<SplashFactory>,
+    pub background_builder: Option<ButtonLayerBuilder>,
+    pub foreground_builder: Option<ButtonLayerBuilder>,
     pub height: Option<f32>,
     pub text_style: Option<TextStyle>,
 }
@@ -495,6 +608,13 @@ impl ButtonStyle {
         self
     }
 
+    /// Flutter-shaped spelling retained for Material `ButtonStyle` callers.
+    #[must_use]
+    pub fn background_color(mut self, background: impl Into<StateValue<Color>>) -> Self {
+        self.background_property = Some(background.into());
+        self
+    }
+
     #[must_use]
     pub fn background_states(mut self, background: StateColor) -> Self {
         self.background_states = Some(background);
@@ -507,9 +627,148 @@ impl ButtonStyle {
         self
     }
 
+    /// Flutter-shaped spelling retained for Material `ButtonStyle` callers.
+    #[must_use]
+    pub fn foreground_color(mut self, foreground: impl Into<StateValue<Color>>) -> Self {
+        self.foreground_property = Some(foreground.into());
+        self
+    }
+
     #[must_use]
     pub fn foreground_states(mut self, foreground: StateColor) -> Self {
         self.foreground_states = Some(foreground);
+        self
+    }
+
+    #[must_use]
+    pub fn overlay_color(mut self, color: impl Into<StateValue<Color>>) -> Self {
+        self.overlay_color = Some(color.into());
+        self
+    }
+
+    #[must_use]
+    pub fn shadow_color(mut self, color: impl Into<StateValue<Color>>) -> Self {
+        self.shadow_color = Some(color.into());
+        self
+    }
+
+    #[must_use]
+    pub fn surface_tint_color(mut self, color: impl Into<StateValue<Color>>) -> Self {
+        self.surface_tint_color = Some(color.into());
+        self
+    }
+
+    #[must_use]
+    pub fn elevation(mut self, elevation: impl Into<StateValue<f32>>) -> Self {
+        self.elevation = Some(elevation.into());
+        self
+    }
+
+    #[must_use]
+    pub fn side(mut self, side: impl Into<StateValue<Border>>) -> Self {
+        self.side = Some(side.into());
+        self
+    }
+
+    #[must_use]
+    pub fn shape(mut self, shape: impl Into<StateValue<BorderRadius>>) -> Self {
+        self.shape = Some(shape.into());
+        self
+    }
+
+    #[must_use]
+    pub fn minimum_size(mut self, size: Size) -> Self {
+        self.minimum_size = Some(size);
+        self
+    }
+
+    #[must_use]
+    pub fn fixed_size(mut self, size: Size) -> Self {
+        self.fixed_size = Some(size);
+        self
+    }
+
+    #[must_use]
+    pub fn maximum_size(mut self, size: Size) -> Self {
+        self.maximum_size = Some(size);
+        self
+    }
+
+    #[must_use]
+    pub fn icon_color(mut self, color: impl Into<StateValue<Color>>) -> Self {
+        self.icon_color = Some(color.into());
+        self
+    }
+
+    #[must_use]
+    pub fn icon_size(mut self, size: impl Into<StateValue<f32>>) -> Self {
+        self.icon_size = Some(size.into());
+        self
+    }
+
+    #[must_use]
+    pub fn icon_alignment(mut self, alignment: IconAlignment) -> Self {
+        self.icon_alignment = Some(alignment);
+        self
+    }
+
+    #[must_use]
+    pub fn mouse_cursor(mut self, cursor: impl Into<String>) -> Self {
+        self.mouse_cursor = Some(cursor.into());
+        self
+    }
+
+    #[must_use]
+    pub fn visual_density(mut self, density: ControlDensity) -> Self {
+        self.visual_density = Some(density);
+        self
+    }
+
+    #[must_use]
+    pub fn tap_target_size(mut self, size: TapTargetSize) -> Self {
+        self.tap_target_size = Some(size);
+        self
+    }
+
+    #[must_use]
+    pub fn animation_duration(mut self, duration: Duration) -> Self {
+        self.animation_duration = Some(duration);
+        self
+    }
+
+    #[must_use]
+    pub fn enable_feedback(mut self, enabled: bool) -> Self {
+        self.enable_feedback = Some(enabled);
+        self
+    }
+
+    #[must_use]
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = Some(alignment);
+        self
+    }
+
+    #[must_use]
+    pub fn splash_factory(mut self, factory: SplashFactory) -> Self {
+        self.splash_factory = Some(factory);
+        self
+    }
+
+    #[must_use]
+    pub fn background_builder(
+        mut self,
+        builder: impl Fn(Widget, ControlState) -> Widget + 'static,
+    ) -> Self {
+        self.background_builder = Some(ButtonLayerBuilder::new(builder));
+        self
+    }
+
+    #[must_use]
+    pub fn foreground_builder(
+        mut self,
+        builder: impl Fn(Widget, ControlState) -> Widget + 'static,
+    ) -> Self {
+        self.foreground_builder = Some(ButtonLayerBuilder::new(builder));
         self
     }
 
@@ -543,17 +802,75 @@ impl ButtonStyle {
         self
     }
 
+    /// Merges sparse overrides using Flutter's `ButtonStyle.merge` semantics:
+    /// unset fields in `other` leave the receiver unchanged.
+    #[must_use]
+    pub fn merge(mut self, other: &Self) -> Self {
+        if other.variant != ButtonVariant::Default {
+            self.variant = other.variant;
+        }
+        macro_rules! override_field {
+            ($field:ident) => {
+                if other.$field.is_some() {
+                    self.$field = other.$field.clone();
+                }
+            };
+        }
+        override_field!(background);
+        override_field!(background_property);
+        override_field!(background_states);
+        override_field!(foreground);
+        override_field!(foreground_property);
+        override_field!(foreground_states);
+        override_field!(overlay_color);
+        override_field!(shadow_color);
+        override_field!(surface_tint_color);
+        override_field!(elevation);
+        override_field!(border);
+        override_field!(side);
+        override_field!(shape);
+        override_field!(border_radius);
+        override_field!(padding);
+        override_field!(minimum_size);
+        override_field!(fixed_size);
+        override_field!(maximum_size);
+        override_field!(icon_color);
+        override_field!(icon_size);
+        override_field!(icon_alignment);
+        override_field!(mouse_cursor);
+        override_field!(visual_density);
+        override_field!(tap_target_size);
+        override_field!(animation_duration);
+        override_field!(enable_feedback);
+        override_field!(alignment);
+        override_field!(splash_factory);
+        override_field!(background_builder);
+        override_field!(foreground_builder);
+        override_field!(height);
+        override_field!(text_style);
+        self
+    }
+
+    /// Rust spelling of Flutter's `copyWith` for sparse styles.
+    #[must_use]
+    pub fn copy_with(self, other: &Self) -> Self {
+        self.merge(other)
+    }
+
     /// Resolves background color against active state and theme.
     #[must_use]
     pub fn resolve_background(&self, state: ControlState, theme: &ControlTheme) -> Color {
-        if state.is_disabled() {
-            return theme.colors.disabled_surface;
-        }
         if let Some(bg) = self.background_states {
+            return bg.resolve(state);
+        }
+        if let Some(bg) = self.background_property.as_ref() {
             return bg.resolve(state);
         }
         if let Some(bg) = self.background {
             return bg;
+        }
+        if state.is_disabled() {
+            return theme.colors.disabled_surface;
         }
         match self.variant {
             ButtonVariant::Default | ButtonVariant::Standard => {
@@ -603,14 +920,17 @@ impl ButtonStyle {
     /// Resolves text foreground color against active state and theme.
     #[must_use]
     pub fn resolve_foreground(&self, state: ControlState, theme: &ControlTheme) -> Color {
-        if state.is_disabled() {
-            return theme.colors.disabled_foreground;
-        }
         if let Some(fg) = self.foreground_states {
+            return fg.resolve(state);
+        }
+        if let Some(fg) = self.foreground_property.as_ref() {
             return fg.resolve(state);
         }
         if let Some(fg) = self.foreground {
             return fg;
+        }
+        if state.is_disabled() {
+            return theme.colors.disabled_foreground;
         }
         match self.variant {
             ButtonVariant::Default | ButtonVariant::Standard | ButtonVariant::Ghost => {
@@ -620,6 +940,50 @@ impl ButtonStyle {
                 theme.colors.accent_foreground
             }
         }
+    }
+
+    /// Resolves elevation for a state, reaching the retained paint layer via
+    /// the Material component that consumes the style.
+    #[must_use]
+    pub fn resolve_elevation(&self, state: ControlState, _theme: &ControlTheme) -> f32 {
+        self.elevation.as_ref().map_or_else(
+            || match self.variant {
+                ButtonVariant::Primary => 1.0,
+                ButtonVariant::Danger | ButtonVariant::Destructive => 1.0,
+                _ => 0.0,
+            },
+            |value| value.resolve(state).max(0.0),
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_overlay_color(&self, state: ControlState, theme: &ControlTheme) -> Color {
+        self.overlay_color.as_ref().map_or_else(
+            || {
+                if state.is_pressed() {
+                    theme.colors.pressed_overlay
+                } else if state.is_hovered() {
+                    theme.colors.hover_overlay
+                } else {
+                    Color::TRANSPARENT
+                }
+            },
+            |value| value.resolve(state),
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_shadow_color(&self, state: ControlState, theme: &ControlTheme) -> Color {
+        self.shadow_color
+            .as_ref()
+            .map_or(theme.colors.border, |value| value.resolve(state))
+    }
+
+    #[must_use]
+    pub fn resolve_surface_tint_color(&self, state: ControlState, theme: &ControlTheme) -> Color {
+        self.surface_tint_color
+            .as_ref()
+            .map_or(theme.colors.accent, |value| value.resolve(state))
     }
 }
 

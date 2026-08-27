@@ -3,9 +3,9 @@ use crate::theme::ControlTheme;
 use incular_config::EdgeInsets;
 use incular_core::Size;
 use incular_text::TextStyle;
+use incular_widgets::internal::TextEditingController;
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Container, EditableText as RawEditableText,
-    TextEditingController, Widget,
+    Border, BorderRadius, BoxDecoration, Container, EditableText as RawEditableText, Widget,
 };
 use std::rc::Rc;
 
@@ -105,8 +105,8 @@ impl From<TextField> for Widget {
     fn from(value: TextField) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
@@ -191,8 +191,8 @@ impl From<TextArea> for Widget {
     fn from(value: TextArea) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

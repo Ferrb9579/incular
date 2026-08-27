@@ -1,9 +1,10 @@
 //! A visible retained-semantics showcase. It prints Incular's portable tree
 //! before opening the window; a desktop AccessKit adapter projects that same
 //! retained tree only after a native accessibility client activates it.
+use incular::material::{RawMaterialButton, TextField};
 use incular::{
     prelude::*,
-    widgets::{ExplicitSemantics, WidgetTree},
+    widgets::internal::{ExplicitSemantics, TextEditingController, WidgetTree},
 };
 
 fn state(checked: Option<bool>, enabled: bool) -> SemanticState {

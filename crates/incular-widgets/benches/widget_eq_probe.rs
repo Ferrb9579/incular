@@ -1,6 +1,7 @@
 //! Attribution probe: raw Widget clone/equality cost at 10k siblings.
 use criterion::{Criterion, criterion_group, criterion_main};
-use incular_widgets::{Key, Text, Widget};
+use incular_widgets::internal::Key;
+use incular_widgets::{Text, Widget};
 
 fn row(generation: u64) -> Vec<Widget> {
     (0..10_000)

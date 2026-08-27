@@ -21,8 +21,9 @@ pub use crate::scroll_area;
 pub use crate::scrollbar::Scrollbar;
 pub use crate::selection::{Checkbox, Radio, Switch};
 pub use crate::styles::{
-    ButtonStyle, ButtonVariant, CardStyle, ControlState, DividerStyle, SelectionStyle, StateColor,
-    StateTable, StateValue, TextFieldStyle,
+    ButtonLayerBuilder, ButtonStyle, ButtonVariant, CardStyle, ControlState, DividerStyle,
+    IconAlignment, SelectionStyle, SplashFactory, StateColor, StateTable, StateValue,
+    TapTargetSize, TextFieldStyle,
 };
 pub use crate::text_input::{Input, TextArea, TextField};
 pub use crate::theme::{

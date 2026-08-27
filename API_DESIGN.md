@@ -116,9 +116,22 @@ While Dart strings and selections use UTF-16 code units, Incular operates native
 
 ### 10. The Neutral Widget Law & 3-Layer Component Hierarchy
 
-* **Core Widget Neutrality**: Base widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`, `GestureDetector`, `EditableText`) provide layout, event handling, and semantics only. Material controls (`ElevatedButton`, `TextField`, `TextFormField`, and friends) live in `incular-material`; `SplitView` is an intentional Incular extension. Core widgets never inject design-system colors, borders, or artificial minimum dimensions.
+* **Core Widget Neutrality**: Base widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`, `GestureDetector`, `EditableText`) provide layout, event handling, and semantics only. Material controls (`ElevatedButton`, `TextField`, `TextFormField`, and friends) live in `incular-material`; Incular-only headless controls live in `incular-controls`. Core widgets never inject design-system colors, borders, or artificial minimum dimensions.
 * **Separation of Concerns**: Visual styling (colors, corner radii, elevation, density) belongs exclusively to high-level styled components and design system tokens (Layer 3), leaving base widgets (Layer 1 and Layer 2) completely reusable and unopinionated.
 * **Typography Line-Height Multipliers**: Explicit `LineHeight` variants (`Normal`, `Multiplier`, `Absolute`) ensure line heights are unambiguous and prevent multiline text clipping or collapse.
+
+### 11. Permanent Flutter library boundary
+
+The Flutter 3.47.1 library export graph defines the Widgets parity namespace.
+The following rules are permanent:
+
+1. Flutter library ownership defines the parity namespace.
+2. `incular-widgets` never becomes a miscellaneous widget bucket.
+3. Incular-only headless controls live in `incular-controls`.
+4. Material concepts live in `incular-material`.
+5. Domain logic stays in domain crates even when exported through Widgets parity.
+6. Each behavior has one implementation; wrappers compose it rather than fork it.
+7. Flutter API names are references; Rust language conventions remain idiomatic.
 
 ---
 

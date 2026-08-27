@@ -1,4 +1,5 @@
 use incular::prelude::*;
+use incular::scroll::{BoundaryPhysics, Scrollability};
 
 #[test]
 fn test_scrolling_widgets_and_physics_contract() {

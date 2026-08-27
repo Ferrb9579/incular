@@ -27,9 +27,6 @@ pub use incular_widgets as widgets;
 
 /// Common application-facing types for the initial native UI slice.
 pub mod prelude {
-    #[cfg(feature = "material")]
-    pub use incular_material::prelude::*;
-
     pub use incular_animation::{
         AnimationController, AnimationStatus, BoundedFrictionSimulation, ClampedSimulation, Curve,
         CurveChain, Curves, FrictionSimulation, GravitySimulation, ScrollSpringSimulation,
@@ -45,21 +42,22 @@ pub mod prelude {
     };
     pub use incular_core::{
         ChangeImpact, Code, Color, DirtyFlags, HslColor, HsvColor, ImeEvent, InputEvent,
-        Invalidation, KeyState, KeyboardEvent, KeyboardKey, Lerp, Location, Modifiers, NamedKey,
-        Offset, PointerPhase, Rect, RestorationKey, RestorationKeyError, RestorationScope, Size,
-        Transform as AffineTransform,
+        Invalidation, Key, KeyState, KeyboardEvent, KeyboardKey, Lerp, LocalKey, Location,
+        Modifiers, NamedKey, Offset, PointerPhase, Rect, RestorationKey, RestorationKeyError,
+        RestorationScope, Size, Transform as AffineTransform, UniqueKey, ValueKey,
     };
     pub use incular_image::{
-        DecodedImage, ImageCache, ImageCacheDiagnostics, ImageError, ImageHandle, ImageId,
-        ImageSource,
+        AssetImage, DecodedImage, FileImage, ImageCache, ImageCacheDiagnostics, ImageConfiguration,
+        ImageError, ImageHandle, ImageId, ImageProvider, ImageSource, MemoryImage,
     };
     pub use incular_navigation::{
         BackDispatchReport, BackDispatcher, BottomSheet, Dialog, ModalBarrier,
         NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigationEvent, NavigationRestoreReport, Navigator,
-        NavigatorObserver, NavigatorSnapshot, Overlay, OverlayEntry, Page, PopDecision, PopResult,
-        RestorableNavigationError, RestorableRoute, RestorableRouteBuildError, RestorableRouteId,
-        RestorableRouteIdError, RestorableRouteRegistrationError, Route, RouteRegistry,
-        RouteScopeKey, RouteScopeKeyError, RouteTransition,
+        NavigatorObserver, NavigatorSnapshot, Overlay, OverlayEntry, Page, PageRouteBuilder,
+        PopDecision, PopResult, RestorableNavigationError, RestorableRoute,
+        RestorableRouteBuildError, RestorableRouteId, RestorableRouteIdError,
+        RestorableRouteRegistrationError, Route, RoutePresentation, RouteRegistry, RouteResult,
+        RouteScopeKey, RouteScopeKeyError, RouteSettings, RouteTransition,
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
@@ -68,22 +66,22 @@ pub mod prelude {
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
-        Decoration, DisplayList, DropShadowEffect, Effect, EffectChain, FillRule, GaussianBlur,
-        GradientId, GradientStop, GradientStops, ImageSampling, LineCap, LineJoin, LinearGradient,
-        Path, PathBuilder, PathId, RRect, RadialGradient, Stroke, SweepGradient,
-        blend_premultiplied,
+        Decoration, DisplayList, DropShadowEffect, Effect, EffectChain, FillRule, FilterQuality,
+        GaussianBlur, GradientId, GradientStop, GradientStops, ImageSampling, LineCap, LineJoin,
+        LinearGradient, Paint, PaintStyle, Path, PathBuilder, PathId, RRect, RadialGradient,
+        Shader, Shadow, Stroke, SweepGradient, blend_premultiplied,
     };
     pub use incular_runtime::{
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
-        AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics, FileRestorationStore,
-        FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics, GpuSample,
-        InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, PerformanceHub,
+        AsyncState, AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics,
+        FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics,
+        GpuSample, InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, PerformanceHub,
         PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory,
         RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
         RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics, RuntimeErrorReport,
         SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
-        UiDispatcher, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
-        WindowRestorationId,
+        UiDispatcher, UndoHistoryController, UndoHistoryState, WindowDiagnostics, WindowError,
+        WindowHandle, WindowOpener, WindowRestorationId,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,
@@ -91,80 +89,73 @@ pub mod prelude {
     };
     pub use incular_text::{
         EditableText as TextEditingModel, FontFamily, FontFeature, FontStyle, FontVariation,
-        FontWeight, LineHeight, RichText, StrutStyle, TextAlign, TextBaseline, TextDecoration,
-        TextDecorationStyle, TextHeightBehavior, TextLayoutOptions, TextLeadingDistribution,
-        TextOverflow, TextScaler, TextShadow, TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
+        FontWeight, IconData, LineHeight, RichText, StrutStyle, TextAlign, TextBaseline,
+        TextDecoration, TextDecorationStyle, TextEditingController, TextEditingValue,
+        TextHeightBehavior, TextLayoutOptions, TextLeadingDistribution, TextOverflow, TextRange,
+        TextScaler, TextSelection, TextShadow, TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
     };
     pub use incular_widgets::{
-        AbsorbPointer, ActionId, ActionListener, Actions, Align, AlignTransition, AnimatedAlign,
-        AnimatedBuilder, AnimatedContainer, AnimatedCrossFade, AnimatedDefaultTextStyle,
-        AnimatedFractionallySizedBox, AnimatedGrid, AnimatedList, AnimatedModalBarrier,
-        AnimatedOpacity, AnimatedPadding, AnimatedPhysicalModel, AnimatedPositioned,
-        AnimatedPositionedDirectional, AnimatedRotation, AnimatedScale, AnimatedSize,
-        AnimatedSlide, AnimatedSwitcher, AnnotatedRegion, AspectRatio,
+        AbsorbPointer, Action, ActionListener, ActionResult, Actions, Align, AlignTransition,
+        AnimatedAlign, AnimatedBuilder, AnimatedContainer, AnimatedCrossFade,
+        AnimatedDefaultTextStyle, AnimatedFractionallySizedBox, AnimatedGrid, AnimatedList,
+        AnimatedModalBarrier, AnimatedOpacity, AnimatedPadding, AnimatedPhysicalModel,
+        AnimatedPositioned, AnimatedPositionedDirectional, AnimatedRotation, AnimatedScale,
+        AnimatedSize, AnimatedSlide, AnimatedSwitcher, AnnotatedRegion, AspectRatio,
         AutocompleteHighlightedOption, AutofillGroup, AutomaticKeepAlive, AutovalidateMode,
-        BackButtonListener, Banner, Baseline, Blend, Blur, BlurController, BlurStyle, Border,
-        BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide, BorderStyle,
-        BoundaryPhysics, BoxBorder, BoxDecoration, BoxFit, BoxShadow, BoxShape, CallbackShortcuts,
-        Center, CheckedModeBanner, ClipOval, ClipPath, ClipRRect, ClipRSuperellipse, ClipRect,
-        ColorFilterController, ColorFiltered, ColorMatrixController, ColoredBox, Column, Command,
-        ConstrainedBox, ConstraintsTransformBox, Container, CustomPaint, CustomPainter,
+        BackButtonListener, Banner, Baseline, Border, BorderDirectional, BorderRadius,
+        BorderRadiusDirectional, BorderSide, BorderStyle, BoxBorder, BoxDecoration, BoxFit,
+        BoxShadow, BoxShape, CallbackShortcuts, Center, CheckedModeBanner, ClipOval, ClipPath,
+        ClipRRect, ClipRSuperellipse, ClipRect, ColorFiltered, ColoredBox, Column, Command,
+        CommandId, ConstrainedBox, ConstraintsTransformBox, Container, CustomPaint, CustomPainter,
         CustomScrollView, DecoratedBox, DecoratedBoxTransition, DecoratedSliver, DecorationImage,
-        DefaultTextStyle, DefaultTextStyleTransition, Directionality, DismissDirection,
-        Dismissible, DragCallbacks, DragDownDetails, DragDropContext, DragEndDetails, DragFeedback,
-        DragGestureDetector, DragStartBehavior, DragStartDetails, DragTarget, DragUpdateDetails,
-        Draggable, DraggableScrollableActuator, DraggableScrollableSheet, DropShadow,
-        DropShadowController, DualTransitionBuilder, EditableText, Effects, ErrorWidget,
-        ExcludeFocus, ExcludeFocusTraversal, Expanded, Expansible, FadeTransition,
-        FilteringTextInputFormatter, FittedBox, Flex, Flexible, Focus, FocusManager, FocusNode,
-        FocusScope, FocusTraversalGroup, FocusTraversalOrder, FocusTraversalPolicy,
-        FocusableActionDetector, Form, FormField, FormFieldId, FormFieldState,
-        FractionalTranslation, FractionallySizedBox, FutureBuilder, GenericFormField,
-        GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
-        GestureCallbacks, GestureDecision, GestureDetector, GestureDisposition, GridDelegate,
-        GridPaper, GridView, Hero, HeroControllerScope, HeroMode, Icon, IconTheme, IgnorePointer,
-        Image, ImageFiltered, ImageFit, ImageIcon, ImageRepeat, IndexedSemantics, IndexedStack,
-        InteractiveViewer, ItemExtentStrategy, KeepAlive, KeepAlivePolicy, Key, KeyboardListener,
-        KeyedSubtree, LayoutBuilder, LengthLimitingTextInputFormatter, LimitedBox, ListBody,
-        ListView, ListWheelScrollView, ListenableBuilder, Listener, LongPressDraggable,
-        LongPressEndDetails, LongPressMoveUpdateDetails, LongPressStartDetails, MatrixTransition,
-        MaxLengthEnforcement, MeasuredExtentIndex, MouseRegion, NavigationToolbar,
-        NavigatorPopHandler, NestedScrollCoordinator, NestedScrollView, NotificationListener,
-        Offstage, Opacity, OpacityController, OrderedTraversalPolicy, Orientation,
-        OrientationBuilder, OverflowBar, OverflowBox, OverlayPortal, Padding, PageController,
-        PageStorage, PageView, PathView, PerformanceOverlay, PhysicalModel, PhysicalShape,
-        PinnedHeaderSliver, Placeholder, PlatformMenuBar, PointerCapture, PointerEvent, PopScope,
-        Positioned, PositionedTransition, PreferredSize, PrimaryScrollController, RadioGroup,
-        Radius, RawAutocomplete, RawGestureDetector, RawImage, RawRadio, RawScrollbar, RawTooltip,
-        ReadingOrderTraversalPolicy, RelativePositionedTransition,
-        ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
-        RepaintBoundary, RepaintBoundaryPolicy, RepeatingAnimationBuilder, RootRestorationScope,
-        RotatedBox, RotationController, RotationTransition, Router, Row, SafeArea, ScaleController,
-        ScaleEndDetails, ScaleGestureDetector, ScaleStartDetails, ScaleTransition,
-        ScaleUpdateDetails, ScrollCacheExtent, ScrollConfiguration, ScrollController, ScrollDelta,
-        ScrollMetrics, ScrollNotificationObserver, ScrollPhysics, ScrollSpringStep, ScrollView,
-        ScrollViewConfig, ScrollViewKeyboardDismissBehavior, Scrollability,
-        ScrollbarDragDiagnostics, ScrollbarGeometry, ScrollbarStyle, SelectableRegion,
-        SelectionAreaController, SelectionContainer, SelectionListener, SemanticIndexPolicy,
-        Semantics, SemanticsDebugger, SensitiveContent, SensitiveContentHost, ShaderMask,
+        DefaultSelectionStyle, DefaultTextStyle, DefaultTextStyleTransition, Directionality,
+        DismissDirection, Dismissible, DragTarget, Draggable, DraggableScrollableActuator,
+        DraggableScrollableSheet, DualTransitionBuilder, EditableText, ErrorWidget, ExcludeFocus,
+        ExcludeFocusTraversal, Expanded, Expansible, FadeTransition, FittedBox, Flex, Flexible,
+        Focus, FocusManager, FocusNode, FocusScope, FocusScopeNode, FocusTraversalGroup,
+        FocusTraversalOrder, FocusTraversalPolicy, FocusableActionDetector, Form, FormController,
+        FormField, FormFieldState, FormState, FractionalTranslation, FractionallySizedBox,
+        GestureDetector, GridPaper, GridView, Hero, HeroControllerScope, HeroMode, Icon, IconTheme,
+        IgnorePointer, Image, ImageFiltered, ImageIcon, ImageRepeat, IndexedSemantics,
+        IndexedStack, Intent, KeepAlive, KeyboardListener, KeyedSubtree, LayoutBuilder, LimitedBox,
+        ListBody, ListView, ListWheelScrollView, Listener, Localizations, LogicalShortcutKey,
+        LongPressDraggable, MatrixTransition, MediaQuery, MediaQueryData, MouseRegion,
+        NavigationToolbar, NavigatorPopHandler, NestedScrollView, NotificationListener, Offstage,
+        Opacity, OrderedTraversalPolicy, Orientation, OrientationBuilder, OverflowBar, OverflowBox,
+        OverlayPortal, Padding, PageController, PageStorage, PageView, PerformanceOverlay,
+        PinnedHeaderSliver, PlatformMenuBar, PopScope, Positioned, PositionedTransition,
+        PrimaryScrollController, RadioGroup, Radius, RawAutocomplete, RawGestureDetector, RawImage,
+        RawRadio, RawScrollbar, RawTooltip, ReadingOrderTraversalPolicy,
+        RelativePositionedTransition, ReorderableDelayedDragStartListener,
+        ReorderableDragStartListener, ReorderableList, RepaintBoundary, RepeatingAnimationBuilder,
+        RootRestorationScope, RotatedBox, RotationTransition, Router, Row, SafeArea,
+        ScaleTransition, ScrollConfiguration, ScrollController, ScrollMetrics,
+        ScrollNotificationObserver, ScrollPhysics, ScrollViewKeyboardDismissBehavior,
+        SelectableRegion, SelectionContainer, SelectionListener, Semantics, SemanticsDebugger,
+        SensitiveContent, SensitiveContentHost, ShaderMask, ShortcutKey, ShortcutTrigger,
         Shortcuts, SingleChildScrollView, SizeTransition, SizedBox, SizedOverflowBox,
-        SlideTransition, Sliver, SliverAnimatedGrid, SliverAnimatedList, SliverAppBar,
+        SlideTransition, Sliver, SliverAnimatedGrid, SliverAnimatedList,
         SliverConstrainedCrossAxis, SliverCrossAxisExpanded, SliverCrossAxisGroup,
         SliverFillRemaining, SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader,
         SliverGrid, SliverIgnorePointer, SliverLayoutBuilder, SliverList, SliverMainAxisGroup,
         SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapInjector, SliverPadding,
         SliverPersistentHeader, SliverPrototypeExtentList, SliverReorderableList,
         SliverResizingHeader, SliverSafeArea, SliverToBoxAdapter, SliverVariedExtentList,
-        SliverVisibility, SnapPhysics, SnapshotWidget, Spacer, SplitPosition, SplitView, Stack,
-        StatefulBuilder, StreamBuilder, Table, TableCell, TapDownDetails, TapRegion,
-        TapRegionSurface, TapUpDetails, Text, TextEditingController, TextEditingValue,
-        TextFieldTapRegion, TextInputFormatter, TextRange, TextSelection, TickerMode, TileMode,
-        Title, Transform, Transition, TranslationController, TreeSliver, TweenAnimationBuilder,
-        TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport,
-        UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, ValueListenableBuilder, Velocity,
-        View, ViewAnchor, VirtualList, Visibility, Widget, WidgetOrderTraversalPolicy, WidgetsApp,
-        Wrap, icons,
+        SliverVisibility, SnapshotWidget, Spacer, Stack, Table, TableCell, TapRegion,
+        TapRegionSurface, Text, TextFieldTapRegion, TickerMode, TileMode, Title, Transform,
+        TreeSliver, TweenAnimationBuilder, TwoDimensionalScrollView, TwoDimensionalScrollable,
+        TwoDimensionalViewport, UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, View,
+        ViewAnchor, Visibility, Widget, WidgetOrderTraversalPolicy, WidgetsApp, Wrap,
     };
+}
+
+/// Opt-in Material convenience imports. Material is intentionally not part of
+/// [`prelude`] so a base Widgets application cannot accidentally depend on a
+/// design system. Enable the `material` feature and import this module when
+/// using Material components.
+#[cfg(feature = "material")]
+pub mod material_prelude {
+    pub use incular_material::prelude::*;
 }
 
 #[cfg(feature = "desktop")]
@@ -211,6 +202,6 @@ pub fn overlay_lines(snapshot: &runtime::PerformanceSnapshot) -> Vec<String> {
 pub fn install_performance_overlay(
     application: &mut runtime::Application,
     window: platform::WindowId,
-) -> Result<(), widgets::TreeError> {
+) -> Result<(), widgets::internal::TreeError> {
     application.install_performance_overlay(window)
 }

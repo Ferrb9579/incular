@@ -20,14 +20,14 @@ impl ControlIcon {
     #[must_use]
     pub fn path(self) -> std::sync::Arc<incular_rendering::Path> {
         match self {
-            Self::Check => incular_widgets::icons::check(),
-            Self::Close => incular_widgets::icons::close(),
-            Self::Plus => incular_widgets::icons::plus(),
-            Self::Minus => incular_widgets::icons::minus(),
-            Self::ChevronDown => incular_widgets::icons::chevron_down(),
-            Self::ChevronUp => incular_widgets::icons::chevron_up(),
-            Self::ChevronLeft => incular_widgets::icons::chevron_left(),
-            Self::ChevronRight => incular_widgets::icons::chevron_right(),
+            Self::Check => incular_widgets::internal::icons::check(),
+            Self::Close => incular_widgets::internal::icons::close(),
+            Self::Plus => incular_widgets::internal::icons::plus(),
+            Self::Minus => incular_widgets::internal::icons::minus(),
+            Self::ChevronDown => incular_widgets::internal::icons::chevron_down(),
+            Self::ChevronUp => incular_widgets::internal::icons::chevron_up(),
+            Self::ChevronLeft => incular_widgets::internal::icons::chevron_left(),
+            Self::ChevronRight => incular_widgets::internal::icons::chevron_right(),
         }
     }
 

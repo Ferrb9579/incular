@@ -1,0 +1,80 @@
+{
+  "application_facing_count": 1171,
+  "artifact": "specs/P0_DEPLOYABLE_WIDGETS.jsonl",
+  "canonical_manifest": "specs/flutter_widgets_3471_parity.jsonl",
+  "canonical_row_count": 1307,
+  "dart_version": "3.13.1",
+  "flutter_commit": "6655482ec06e547f90abf8ae7590466f4415978d",
+  "flutter_tag": "3.47.1",
+  "p0_actionable_count": 207,
+  "p0_application_facing_count": 207,
+  "p0_closure_complete_count": 35,
+  "p0_closure_counts": {
+    "DIRECT_IMPLEMENTED": 3,
+    "MERGED_IMPLEMENTED": 19,
+    "NOT_IN_SCOPE": 172,
+    "RUSTIFIED_IMPLEMENTED": 13
+  },
+  "p0_closure_expected_count": 35,
+  "p0_deployable_count": 207,
+  "p0_port_policy_counts": {
+    "DIRECT": 75,
+    "MERGED_CONTEXT": 5,
+    "MERGED_DOMAIN": 73,
+    "RUSTIFIED": 54
+  },
+  "p0_remaining_deferred_symbols": [],
+  "p0_status_counts": {
+    "MERGED": 75,
+    "RUSTIFIED": 132
+  },
+  "p0_true_deferred_count": 0,
+  "port_policy_counts": {
+    "DEFER_PLATFORM": 28,
+    "DEFER_RENDERER": 640,
+    "DIRECT": 76,
+    "INTERNAL": 7,
+    "MERGED_CONTEXT": 16,
+    "MERGED_DOMAIN": 148,
+    "MERGED_SIGNAL": 6,
+    "MERGED_TOKIO": 6,
+    "RUSTIFIED": 224,
+    "SKIP_DART_MECHANIC": 120,
+    "SKIP_LOW_VALUE": 36
+  },
+  "port_policy_values": [
+    "DEFER_PLATFORM",
+    "DEFER_RENDERER",
+    "DIRECT",
+    "INTERNAL",
+    "MERGED_CONTEXT",
+    "MERGED_DOMAIN",
+    "MERGED_SIGNAL",
+    "MERGED_TOKIO",
+    "RUSTIFIED",
+    "SKIP_DART_MECHANIC",
+    "SKIP_LOW_VALUE"
+  ],
+  "priority_counts": {
+    "NEVER_PORT": 169,
+    "P0_DEPLOYABLE": 207,
+    "P1_COMMON": 42,
+    "P2_ADVANCED": 27,
+    "P3_COMPATIBILITY": 862
+  },
+  "priority_values": [
+    "NEVER_PORT",
+    "P0_DEPLOYABLE",
+    "P1_COMMON",
+    "P2_ADVANCED",
+    "P3_COMPATIBILITY"
+  ],
+  "status_counts": {
+    "DEFERRED_PLATFORM": 28,
+    "DEFERRED_RENDERER": 765,
+    "MERGED": 109,
+    "RUSTIFIED": 269,
+    "SKIPPED_DART_MECHANIC": 121,
+    "SKIPPED_DEPRECATED": 15
+  }
+}

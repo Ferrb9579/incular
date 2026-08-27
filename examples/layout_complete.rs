@@ -1,5 +1,6 @@
 //! Visual coverage for the retained layout-completeness widgets.
 use incular::prelude::*;
+use incular::widgets::internal::ScrollView;
 
 const SURFACE: Color = Color::rgba(37, 45, 64, 255);
 
@@ -62,7 +63,7 @@ fn main() {
             ])),
             panel(Column::new(vec![
                 label("FittedBox + arbitrary retained affine Transform"),
-                SizedBox::from_size(Size::new(360., 115.)).child(FittedBox::new(Transform::rotation(-0.12, tile(Size::new(220., 60.), Color::rgba(81, 169, 137, 255)))).fit(ImageFit::Contain).alignment(Alignment::CENTER)).into(),
+                SizedBox::from_size(Size::new(360., 115.)).child(FittedBox::new(Transform::rotation(-0.12, tile(Size::new(220., 60.), Color::rgba(81, 169, 137, 255)))).fit(BoxFit::Contain).alignment(Alignment::CENTER)).into(),
             ])),
             panel(LayoutBuilder::new(|constraints| {
                 let width = if constraints.max_width.is_finite() { constraints.max_width.round() } else { 0. };

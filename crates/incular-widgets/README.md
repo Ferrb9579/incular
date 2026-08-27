@@ -1,17 +1,42 @@
 # incular-widgets
 
-Widget contracts, the widget tree, built-in renderer-neutral primitives, layout
-integration, build context, lifecycle, and future state handling for Incular.
-Design-system components live in sibling packages. In particular, this crate
-exports `EditableText` for editing and gesture/focus primitives for composing
-custom interactions; Material `ElevatedButton`/`TextField`/`TextFormField` and
-`RawMaterialButton` belong to `incular-material`.
+This crate implements the deployable, curated subset of Flutter 3.47.1
+`widgets.dart` vocabulary:
+declarative widget descriptors, retained reconciliation, renderer-neutral
+layout/composition, editing, scrolling, focus, gestures, navigation, and
+semantics. Design-system components live in sibling packages. In particular,
+this crate exports `EditableText`, `RawRadio`, `RawScrollbar`, and `RawTooltip`
+because Flutter exports those symbols from `widgets.dart`; Material
+`ElevatedButton`/`TextField`/`TextFormField` and `RawMaterialButton` belong to
+`incular-material`.
+
+The public root is curated rather than glob-re-exported. Retained IDs, render
+objects, action surfaces, virtual-list helpers, and other implementation-only
+types are available to sibling framework crates through the hidden
+`incular_widgets::internal` bridge. Applications should use the root Widgets
+surface or `incular::prelude::*`, never that bridge.
+
+## Signals and Tokio replace Dart builders
+
+`Signal<T>` is the sole general reactive primitive. Reading a signal while an
+application build runs records that dependency, so a later `set`/`update`
+rebuilds the affected retained subtree. The Widgets crate deliberately does
+not export Flutter's `Listenable`, `ValueListenable`, `ListenableBuilder`,
+`ValueListenableBuilder`, or `StatefulBuilder` compatibility wrappers.
+
+Asynchronous work belongs to the runtime's Tokio task scopes. Store its
+observable state in a `Signal<AsyncState<T, E>>`, start work with
+`BuildContext::spawn_into`/`TaskScope`, and render the signal normally. The
+Widgets crate likewise does not export `FutureBuilder`, `StreamBuilder`,
+`AsyncSnapshot`, or `ConnectionState`; those Dart snapshot lifecycles are not
+part of Incular's Rust API. `AsyncValue<T>` is the runtime-task alias using
+`TaskFailure`; application code can use the generic `AsyncState<T, E>` when it
+needs a domain-specific error type. Both provide the small
+`Idle`/`Loading`/`Ready`/`Error` state model needed by ordinary applications.
 
 `Image` uses decoded intrinsic dimensions for layout and supports explicit
 width/height plus `Fill`, `Contain`, `Cover`, `None`, and `ScaleDown` fits.
 It stores a shared asset handle, not bytes or GPU resources.
-# incular-widgets
-
 Owns declarative built-in `Widget` descriptions and the persistent
 `WidgetTree`. Elements and render objects reside in separate generational
 arenas. Updating an element reconciles only its direct children: matching
@@ -26,28 +51,20 @@ event values and recognition state are owned by `incular-gestures`.
 
 ## Vector painting
 
-`PathView::new(path).fill(brush).stroke(brush, stroke)` is the public immutable
-path widget. Its default size is the path's intrinsic local bounds; `.size(...)`
-requests a layout size without rewriting path vertices. `Icon` wraps a shared
-immutable path and routes through the same renderer; `icons::{check, close,
-plus, chevron_right}` provide small reusable examples. `DecoratedBox` paints an
-analytic RRect background and optional border behind its child, including
-linear/radial `Brush` gradients. It deliberately provides no child clipping
-promise until true rounded clipping arrives in Phase 9.1C.
-
-The current built-ins include a target-oriented `button` with an `ActionId`.
-Runtime resolves it through persistent render hit testing; widgets never see
-raw OS events.
+`DecoratedBox`, `CustomPaint`, `Icon`, `ImageIcon`, and the decoration/value
+types re-exported by this crate are the renderer-neutral painting vocabulary
+from Flutter's Widgets library. Incular-specific path helpers, effect
+controllers, action surfaces, and icon catalogs are implementation services;
+they are available only through the hidden `incular_widgets::internal` bridge
+for sibling framework crates and are not part of the application Widgets API.
 
 ## Focused editable text
 
-`TextEditingController` owns a UTF-8 buffer, base/extent selection and active
-IME preedit independently of a rebuilt `EditableText` description. Edits use
-extended grapheme cluster boundaries (ICU4X `icu_segmenter` compiled data), while public
-selection offsets remain valid UTF-8 byte offsets for direct Rust slicing.
-`EditableText` is the renderer-neutral primitive: its `.multiline(true)` mode
-inserts hard newlines and uses shaped-line geometry for ArrowUp/Down and
-Home/End. Material `TextField` adds themed chrome and exposes the Flutter-style
+`EditableText` is the renderer-neutral Widgets primitive. Its retained editing
+state is kept by the runtime and the text-domain controller; callers should
+import the authoritative controller from `incular-text` (or use the facade)
+rather than depending on the Widgets crate's hidden retained-tree bridge.
+Material `TextField` adds themed chrome and exposes the Flutter-style
 `max_lines`/`multiline` API. Selection painting is line-by-line. Neither
 control implements bidi visual cursor movement yet.
 
@@ -64,37 +81,35 @@ application code needs the copied selection.
 
 ## Opt-in editor and form restoration
 
-`TextEditingController::restored(scope, key)` creates an empty restored editor;
-alternatively, create a controller with an application default and call
-`bind_restoration(scope, key)`. A valid saved committed buffer and base/extent
-selection replaces the default. IME preedit is transient composition state and
-is never serialized. `Form::register_with_restoration` and
-`FormField::bind_restoration` apply the same binding to a field's editor while
-leaving validation errors derived and non-persistent. Stable scopes and keys
-come from the runtime restoration API; ordinary controllers remain ephemeral.
+Editor restoration is coordinated by the runtime restoration API. A saved
+committed buffer and base/extent selection replace the application default;
+IME preedit is transient composition state and is never serialized.
+`Form::register_with_restoration` and `FormField::bind_restoration` apply the
+same binding to a field's editor while leaving validation errors derived and
+non-persistent. Stable scopes and keys come from the runtime restoration API;
+ordinary controllers remain ephemeral.
 
 `ScrollView::vertical` retains a viewport clip and content translation using a
 persistent `ScrollController`; wheel changes do not rebuild, relayout, or
-repaint unchanged content. `TranslationController` similarly drives a
-compositor transform and supports runtime-ticked animation. Hit testing applies
-the same scroll/translation coordinate changes as painting.
+repaint unchanged content. Hit testing applies the same scroll/translation
+coordinate changes as painting. Incular's controller-backed viewport helpers
+remain internal implementation details while the public API follows Flutter's
+`ScrollView`, `ListView`, `GridView`, and sliver vocabulary.
 
 Scrollable viewports draw a logical-pixel overlay `ScrollbarStyle` by default.
 The proportional vertical thumb reads the shared controller's content/viewport
 extents, captures pointer drags, and track clicks page by one viewport.
-`VirtualList` uses the same path, so a thumb jump computes its destination
-offset directly without materializing intermediate rows.
+The retained viewport implementation keeps materialized rows bounded, so a
+thumb jump computes its destination offset without materializing intermediate
+rows. Incular-specific `VirtualList` and diagnostic types are internal services
+rather than Widgets exports.
 
 ## Lazy fixed-extent viewports
 
 `ScrollView` remains the eager choice for ordinary, arbitrary child trees.
-`VirtualList::fixed_extent(item_count, item_extent, builder)` is the lazy
-vertical alternative for large indexed data. Its builder runs only as an item
-enters the viewport plus a bounded 240 logical-pixel cache before and after it;
-it never expands `0..item_count` into Widget values. `VirtualList::builder`
-uses a 48 logical-pixel default extent, while
-`fixed_extent_with_controller` lets application code retain and `jump_to` a
-`ScrollController`.
+`ListView.builder` and the sliver builders are the lazy vertical vocabulary for
+large indexed data. Their retained implementation builds only the visible
+range plus a bounded cache and never expands `0..item_count` into Widget values.
 
 The fixed path computes content extent as checked/saturating
 `item_count * item_extent`, then derives an exclusive range with direct
@@ -108,8 +123,8 @@ generational lifetime path.
 
 ## Lazy variable-extent viewports
 
-`VirtualList::variable_extent` and `ListView::variable_extent` use that same
-retained viewport for rows whose height is known only after layout. They begin
+The variable-extent list implementation uses that same retained viewport for
+rows whose height is known only after layout. It begins
 with an estimate and update a shared `MeasuredExtentIndex` as cached rows are
 laid out. Offset/index lookup and range selection remain bounded, so jumping
 near row 900,000 of one million items does not construct the preceding rows.
@@ -127,10 +142,10 @@ boundary mounts/unmounts only the changed edge rows and leaves retained rows
 unchanged. Runtime diagnostics expose logical count, range, viewport/cache
 sizes, and live Element/RenderObject/PictureLayer counts for debugging.
 
-Fixed-extent virtualization is implemented. Variable measured extents,
-estimated extent caches, grids, sticky headers, and keep-alive policies remain
-future work. Future semantics can expose logical child count and materialized
-item indices without creating semantic nodes for every logical row.
+Fixed- and variable-extent virtualization are implementation details behind the
+public ListView/sliver surface. Future semantics can expose logical child count
+and materialized item indices without creating semantic nodes for every logical
+row.
 
 ## Retained layout closure
 

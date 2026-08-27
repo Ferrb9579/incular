@@ -1,5 +1,7 @@
 //! Retained vertical scrolling: wheel input changes only the viewport transform.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::ScrollView;
 
 fn main() {
     let controller = ScrollController::new();

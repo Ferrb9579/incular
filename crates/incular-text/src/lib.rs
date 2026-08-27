@@ -16,8 +16,8 @@ pub use spans::{
     InlineSpan, RichText, Text, TextSpan, TextSpanVisitor, WidgetSpan, WidgetSpanAlignment,
 };
 pub use style::{
-    FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, LineHeight, StrutStyle,
-    TextAlign, TextBaseline, TextDecoration, TextDecorationStyle, TextHeightBehavior,
+    FontFamily, FontFeature, FontStyle, FontVariation, FontWeight, IconData, LineHeight,
+    StrutStyle, TextAlign, TextBaseline, TextDecoration, TextDecorationStyle, TextHeightBehavior,
     TextLeadingDistribution, TextOverflow, TextScaler, TextScalerKind, TextShadow, TextStyle,
     TextWidthBasis,
 };
@@ -90,6 +90,18 @@ mod tests {
         );
         assert_eq!(unwrapped.lines.len(), 1);
         assert!(unwrapped.overflowed);
+    }
+
+    #[test]
+    fn icon_data_resolves_font_glyph_through_text_engine() {
+        let icon = IconData::new('A' as u32)
+            .family(FontFamily::SystemUi)
+            .variations([FontVariation::weight(600.)]);
+        let glyph = icon.glyph_text().expect("valid icon code point");
+        let mut engine = TextEngine::new();
+        let layout = engine.layout(&glyph, &icon.text_style(24.), None, TextAlign::Start);
+        assert!(layout.glyph_count() > 0);
+        assert_eq!(icon.font_variations(), &[FontVariation::weight(600.)]);
     }
 
     #[test]

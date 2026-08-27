@@ -164,7 +164,9 @@ impl GestureDetector {
     /// Sets the on_pan_end callback.
     #[must_use]
     pub fn on_pan_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
-        self
+        let mut this = self;
+        this.callbacks.on_pan_end = Some(Rc::new(_callback));
+        this
     }
 
     /// Sets the on_pan_cancel callback.
@@ -195,7 +197,9 @@ impl GestureDetector {
     /// Sets the on_horizontal_drag_end callback.
     #[must_use]
     pub fn on_horizontal_drag_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
-        self
+        let mut this = self;
+        this.callbacks.on_horizontal_drag_end = Some(Rc::new(_callback));
+        this
     }
 
     /// Sets the on_horizontal_drag_cancel callback.
@@ -226,7 +230,9 @@ impl GestureDetector {
     /// Sets the on_vertical_drag_end callback.
     #[must_use]
     pub fn on_vertical_drag_end(self, _callback: impl Fn(DragEndDetails) + 'static) -> Self {
-        self
+        let mut this = self;
+        this.callbacks.on_vertical_drag_end = Some(Rc::new(_callback));
+        this
     }
 
     /// Sets the on_vertical_drag_cancel callback.
@@ -279,6 +285,22 @@ impl GestureDetector {
     #[must_use]
     pub fn callbacks(mut self, callbacks: GestureCallbacks) -> Self {
         self.callbacks = callbacks;
+        self
+    }
+
+    /// Associates a retained focus node with this detector. Focus metadata is
+    /// kept on the gesture callback record so the widget tree can include the
+    /// detector in traversal without introducing a second focus subsystem.
+    #[must_use]
+    pub fn focus_node(mut self, node: crate::FocusNode) -> Self {
+        self.callbacks.focus_node = Some(node);
+        self
+    }
+
+    /// Requests the associated focus node when the retained tree mounts.
+    #[must_use]
+    pub fn autofocus(mut self, autofocus: bool) -> Self {
+        self.callbacks.autofocus = autofocus;
         self
     }
 }

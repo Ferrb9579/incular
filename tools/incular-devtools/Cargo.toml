@@ -9,6 +9,7 @@ publish = false
 [[bin]]
 name = "incular-devtools"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 incular = { workspace = true, features = ["devtools"] }

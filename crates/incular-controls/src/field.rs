@@ -3,7 +3,8 @@
 
 use incular_config::CrossAxisAlignment;
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::{Column, ExplicitSemantics, Text, Widget};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{Column, Text, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]

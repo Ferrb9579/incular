@@ -4,9 +4,8 @@ use crate::{Button, ButtonVariant, ControlTheme};
 use incular_config::Alignment;
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{
-    ExplicitSemantics, OpacityController, Stack, Widget, internal::ActionSurface,
-};
+use incular_widgets::internal::{ActionSurface, ExplicitSemantics, OpacityController};
+use incular_widgets::{Stack, Widget};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -177,8 +176,8 @@ impl From<Toggle> for Widget {
         let value = Rc::new(value);
         let revision = value.revision.clone();
         Widget::stateful_layout_builder(revision, move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

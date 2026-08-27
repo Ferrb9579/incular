@@ -62,8 +62,9 @@ pub use progress::Root as Progress;
 pub use scrollbar::Scrollbar;
 pub use selection::{Checkbox, Radio, Switch};
 pub use styles::{
-    ButtonStyle, ButtonVariant, CardStyle, ControlState, DividerStyle, SelectionStyle, StateColor,
-    StateTable, StateValue, TextFieldStyle,
+    ButtonLayerBuilder, ButtonStyle, ButtonVariant, CardStyle, ControlState, DividerStyle,
+    IconAlignment, SelectionStyle, SplashFactory, StateColor, StateTable, StateValue,
+    TapTargetSize, TextFieldStyle,
 };
 pub use text_input::{Input, TextArea, TextField};
 pub use theme::{

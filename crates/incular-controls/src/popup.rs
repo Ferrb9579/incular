@@ -2,8 +2,8 @@
 
 use crate::overlay::{Align, AnchoredPositioner, OverlayPortal, Side};
 use incular_semantics::{Role as SemanticRole, SemanticState};
-use incular_widgets::ExplicitSemantics;
 use incular_widgets::Widget;
+use incular_widgets::internal::ExplicitSemantics;
 use std::rc::Rc;
 
 #[derive(Clone)]

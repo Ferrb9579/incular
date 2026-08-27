@@ -2,10 +2,12 @@ use crate::theme::ControlTheme;
 use incular_config::Alignment;
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
+use incular_widgets::internal::{
+    ActionSurface, ExplicitSemantics, OpacityController, ScaleController, TranslationController,
+};
 use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Container, ExplicitSemantics, Icon, OpacityController,
-    Positioned, Row, ScaleController, SizedBox, Stack, Text, TranslationController, Widget,
-    internal::ActionSurface,
+    Border, BorderRadius, BoxDecoration, Container, Icon, Positioned, Row, SizedBox, Stack, Text,
+    Widget,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -29,6 +31,12 @@ pub struct Checkbox {
     indeterminate: bool,
     label: Option<String>,
     enabled: bool,
+    active_color: Option<Color>,
+    inactive_color: Option<Color>,
+    check_color: Option<Color>,
+    border_color: Option<Color>,
+    border_width: Option<f32>,
+    radius: Option<f32>,
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -47,6 +55,12 @@ impl Checkbox {
             indeterminate: false,
             label: None,
             enabled: true,
+            active_color: None,
+            inactive_color: None,
+            check_color: None,
+            border_color: None,
+            border_width: None,
+            radius: None,
             on_changed: None,
         }
     }
@@ -60,6 +74,42 @@ impl Checkbox {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn active_color(mut self, color: Color) -> Self {
+        self.active_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn inactive_color(mut self, color: Color) -> Self {
+        self.inactive_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn check_color(mut self, color: Color) -> Self {
+        self.check_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn border_color(mut self, color: Color) -> Self {
+        self.border_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn border_width(mut self, width: f32) -> Self {
+        self.border_width = Some(width.max(0.0));
+        self
+    }
+
+    #[must_use]
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius.max(0.0));
         self
     }
 
@@ -110,30 +160,30 @@ impl Checkbox {
             }
         }
         let box_color = if is_checked {
-            theme.colors.accent
+            self.active_color.unwrap_or(theme.colors.accent)
         } else {
-            theme.colors.surface
+            self.inactive_color.unwrap_or(theme.colors.surface)
         };
         let border = Border::new(
-            1.5,
-            if is_checked {
+            self.border_width.unwrap_or(1.5),
+            self.border_color.unwrap_or(if is_checked {
                 theme.colors.accent
             } else {
                 theme.colors.border_strong
-            },
+            }),
         );
 
         // The default indicator is a retained vector path, not a font glyph.
         // This keeps baselines and fallback-font behavior stable.
         let check_icon: Widget = if self.indeterminate {
-            Icon::new(incular_widgets::icons::minus())
+            Icon::new(incular_widgets::internal::icons::minus())
                 .size(12.0)
-                .brush(theme.colors.accent_foreground)
+                .brush(self.check_color.unwrap_or(theme.colors.accent_foreground))
                 .into()
         } else {
-            Icon::new(incular_widgets::icons::check())
+            Icon::new(incular_widgets::internal::icons::check())
                 .size(12.0)
-                .brush(theme.colors.accent_foreground)
+                .brush(self.check_color.unwrap_or(theme.colors.accent_foreground))
                 .into()
         };
         let check_icon = Widget::controlled_scale(
@@ -148,7 +198,9 @@ impl Checkbox {
                 BoxDecoration::new()
                     .color(box_color)
                     .border(border)
-                    .border_radius(BorderRadius::circular(theme.checkbox.radius)),
+                    .border_radius(BorderRadius::circular(
+                        self.radius.unwrap_or(theme.checkbox.radius),
+                    )),
             )
             .child(check_icon);
 
@@ -219,8 +271,8 @@ impl From<Checkbox> for Widget {
         let value = Rc::new(value);
         let revision = value.revision.clone();
         Widget::stateful_layout_builder(revision, move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
@@ -231,7 +283,14 @@ impl From<Checkbox> for Widget {
 pub struct Radio<T: PartialEq + Clone + 'static> {
     value: T,
     group_value: Option<T>,
+    enabled: bool,
+    toggleable: bool,
     label: Option<String>,
+    active_color: Option<Color>,
+    inactive_color: Option<Color>,
+    dot_color: Option<Color>,
+    border_color: Option<Color>,
+    border_width: Option<f32>,
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
 }
 
@@ -241,7 +300,14 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
         Self {
             value,
             group_value,
+            enabled: true,
+            toggleable: false,
             label: None,
+            active_color: None,
+            inactive_color: None,
+            dot_color: None,
+            border_color: None,
+            border_width: None,
             on_changed: None,
         }
     }
@@ -249,6 +315,49 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
     #[must_use]
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Allows an already selected radio to invoke its callback again.
+    #[must_use]
+    pub fn toggleable(mut self, toggleable: bool) -> Self {
+        self.toggleable = toggleable;
+        self
+    }
+
+    #[must_use]
+    pub fn active_color(mut self, color: Color) -> Self {
+        self.active_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn inactive_color(mut self, color: Color) -> Self {
+        self.inactive_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn dot_color(mut self, color: Color) -> Self {
+        self.dot_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn border_color(mut self, color: Color) -> Self {
+        self.border_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn border_width(mut self, width: f32) -> Self {
+        self.border_width = Some(width.max(0.0));
         self
     }
 
@@ -261,13 +370,15 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
         let is_selected = self.group_value.as_ref() == Some(&self.value);
+        let active_color = self.active_color.unwrap_or(theme.colors.accent);
+        let inactive_color = self.inactive_color.unwrap_or(theme.colors.surface);
         let dot: Widget = if is_selected {
             Container::new()
                 .width(theme.radio.indicator_size * 0.44)
                 .height(theme.radio.indicator_size * 0.44)
                 .decoration(
                     BoxDecoration::new()
-                        .color(theme.colors.accent)
+                        .color(self.dot_color.unwrap_or(theme.colors.accent_foreground))
                         .border_radius(BorderRadius::circular(4.0)),
                 )
                 .into()
@@ -281,14 +392,18 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
             .alignment(Alignment::CENTER)
             .decoration(
                 BoxDecoration::new()
-                    .color(theme.colors.surface)
+                    .color(if is_selected {
+                        active_color
+                    } else {
+                        inactive_color
+                    })
                     .border(Border::new(
-                        1.5,
-                        if is_selected {
-                            theme.colors.accent
+                        self.border_width.unwrap_or(1.5),
+                        self.border_color.unwrap_or(if is_selected {
+                            active_color
                         } else {
                             theme.colors.border_strong
-                        },
+                        }),
                     ))
                     .border_radius(BorderRadius::circular(theme.radio.indicator_size * 0.5)),
             )
@@ -308,10 +423,17 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
         };
         let mut button = ActionSurface::with_child(content)
             .color(Color::TRANSPARENT)
-            .enabled(true);
+            .enabled(self.enabled);
 
-        if let Some(cb) = self.on_changed.clone() {
-            button = button.on_click(move || cb(target_val.clone()));
+        if self.enabled {
+            if let Some(cb) = self.on_changed.clone() {
+                let toggleable = self.toggleable;
+                button = button.on_click(move || {
+                    if !is_selected || toggleable {
+                        cb(target_val.clone());
+                    }
+                });
+            }
         }
 
         let raw: Widget = button.into();
@@ -319,15 +441,16 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
             ExplicitSemantics::new(SemanticRole::Radio)
                 .label(self.label.clone().unwrap_or_default())
                 .state(SemanticState {
-                    enabled: true,
-                    focusable: true,
+                    enabled: self.enabled,
+                    focusable: self.enabled,
                     checked: Some(is_selected),
                     ..SemanticState::default()
                 })
-                .actions(vec![
-                    SemanticActionKind::Focus,
-                    SemanticActionKind::Activate,
-                ]),
+                .actions(if self.enabled {
+                    vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+                } else {
+                    Vec::new()
+                }),
         )
     }
 }
@@ -336,8 +459,8 @@ impl<T: PartialEq + Clone + 'static> From<Radio<T>> for Widget {
     fn from(value: Radio<T>) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
@@ -351,6 +474,12 @@ pub struct Switch {
     thumb_translation: TranslationController,
     thumb_initialized: Rc<Cell<bool>>,
     enabled: bool,
+    active_track_color: Option<Color>,
+    inactive_track_color: Option<Color>,
+    active_thumb_color: Option<Color>,
+    inactive_thumb_color: Option<Color>,
+    outline_color: Option<Color>,
+    outline_width: Option<f32>,
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -363,6 +492,12 @@ impl Switch {
             thumb_translation: TranslationController::new(),
             thumb_initialized: Rc::new(Cell::new(false)),
             enabled: true,
+            active_track_color: None,
+            inactive_track_color: None,
+            active_thumb_color: None,
+            inactive_thumb_color: None,
+            outline_color: None,
+            outline_width: None,
             on_changed: None,
         }
     }
@@ -370,6 +505,42 @@ impl Switch {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn active_track_color(mut self, color: Color) -> Self {
+        self.active_track_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn inactive_track_color(mut self, color: Color) -> Self {
+        self.inactive_track_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn active_thumb_color(mut self, color: Color) -> Self {
+        self.active_thumb_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn inactive_thumb_color(mut self, color: Color) -> Self {
+        self.inactive_thumb_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn outline_color(mut self, color: Color) -> Self {
+        self.outline_color = Some(color);
+        self
+    }
+
+    #[must_use]
+    pub fn outline_width(mut self, width: f32) -> Self {
+        self.outline_width = Some(width.max(0.0));
         self
     }
 
@@ -400,14 +571,17 @@ impl Switch {
             }
         }
         let track_color = if is_on {
-            theme.colors.accent
+            self.active_track_color.unwrap_or(theme.colors.accent)
         } else {
-            theme.colors.surface_variant
+            self.inactive_track_color
+                .unwrap_or(theme.colors.surface_variant)
         };
         let thumb_color = if is_on {
-            theme.colors.accent_foreground
+            self.active_thumb_color
+                .unwrap_or(theme.colors.accent_foreground)
         } else {
-            theme.colors.foreground_muted
+            self.inactive_thumb_color
+                .unwrap_or(theme.colors.foreground_muted)
         };
 
         let thumb = Container::new()
@@ -433,7 +607,10 @@ impl Switch {
             .decoration(
                 BoxDecoration::new()
                     .color(track_color)
-                    .border(Border::new(1.0, theme.colors.border))
+                    .border(Border::new(
+                        self.outline_width.unwrap_or(1.0),
+                        self.outline_color.unwrap_or(theme.colors.border),
+                    ))
                     .border_radius(BorderRadius::circular(theme.switch.height * 0.5)),
             )
             .child(Stack::new([Widget::from(thumb)]));
@@ -464,7 +641,7 @@ impl Switch {
 
         let raw: Widget = button.into();
         raw.semantics(
-            ExplicitSemantics::new(SemanticRole::Button)
+            ExplicitSemantics::new(SemanticRole::Switch)
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
@@ -485,8 +662,8 @@ impl From<Switch> for Widget {
         let value = Rc::new(value);
         let revision = value.revision.clone();
         Widget::stateful_layout_builder(revision, move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }

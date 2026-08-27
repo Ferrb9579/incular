@@ -6,7 +6,7 @@ use incular_scroll::{
     ScrollViewKeyboardDismissBehavior,
 };
 
-use crate::{Column, DecoratedBox, Padding, Row, VirtualList, Widget, WidgetKind};
+use crate::{Column, DecoratedBox, Padding, Row, SizedBox, VirtualList, Widget};
 
 /// A first-class scrollable box that scrolls a single child.
 #[derive(Clone)]
@@ -40,6 +40,12 @@ impl SingleChildScrollView {
     pub fn scroll_direction(mut self, direction: Axis) -> Self {
         self.scroll_direction = direction;
         self
+    }
+
+    /// Returns the configured scroll axis.
+    #[must_use]
+    pub fn get_scroll_direction(&self) -> Axis {
+        self.scroll_direction
     }
 
     /// Sets whether the scroll view scrolls in reverse.
@@ -113,10 +119,13 @@ impl From<SingleChildScrollView> for Widget {
             value.child
         };
         let controller = value.controller.unwrap_or_default();
-        Widget::from_kind(WidgetKind::Scroll {
+        Widget::scroll_view_with_config(
             controller,
-            child: Box::new(child),
-        })
+            child,
+            value.scroll_direction,
+            value.reverse,
+            value.physics.unwrap_or_default(),
+        )
     }
 }
 
@@ -360,6 +369,12 @@ impl ListView {
         self
     }
 
+    /// Returns the configured scroll axis.
+    #[must_use]
+    pub fn get_scroll_direction(&self) -> Axis {
+        self.scroll_direction
+    }
+
     /// Sets reverse scrolling.
     #[must_use]
     pub fn reverse(mut self, reverse: bool) -> Self {
@@ -481,26 +496,40 @@ impl From<ListView> for Widget {
                 };
                 SingleChildScrollView::new(content)
                     .scroll_direction(value.scroll_direction)
+                    .reverse(value.reverse)
                     .controller(controller)
+                    .physics(value.physics.unwrap_or_default())
+                    .clip_behavior(value.clip_behavior)
                     .into()
             }
             ListViewStrategy::Builder {
                 item_count,
                 builder,
-            } => VirtualList::fixed_extent_with_controller(
-                item_count,
-                VirtualList::DEFAULT_ITEM_EXTENT,
+            } => VirtualList::variable_extent_with_index_and_cache_config(
+                MeasuredExtentIndex::new(item_count, VirtualList::DEFAULT_ITEM_EXTENT),
+                value
+                    .cache_extent
+                    .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
                 controller,
+                value.scroll_direction,
+                value.reverse,
+                value.physics.unwrap_or_default(),
                 move |i| builder(i),
             ),
             ListViewStrategy::FixedExtent {
                 item_count,
                 item_extent,
                 builder,
-            } => VirtualList::fixed_extent_with_controller(
+            } => VirtualList::fixed_extent_with_controller_and_cache_config(
                 item_count,
                 item_extent,
+                value
+                    .cache_extent
+                    .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
                 controller,
+                value.scroll_direction,
+                value.reverse,
+                value.physics.unwrap_or_default(),
                 move |i| builder(i),
             ),
             ListViewStrategy::VariableExtent {
@@ -510,12 +539,27 @@ impl From<ListView> for Widget {
                 builder,
             } => {
                 if let Some(idx) = index {
-                    VirtualList::variable_extent_with_index(idx, controller, move |i| builder(i))
-                } else {
-                    VirtualList::variable_extent_with_controller(
-                        item_count,
-                        estimated_extent,
+                    VirtualList::variable_extent_with_index_and_cache_config(
+                        idx,
+                        value
+                            .cache_extent
+                            .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
                         controller,
+                        value.scroll_direction,
+                        value.reverse,
+                        value.physics.unwrap_or_default(),
+                        move |i| builder(i),
+                    )
+                } else {
+                    VirtualList::variable_extent_with_index_and_cache_config(
+                        MeasuredExtentIndex::new(item_count, estimated_extent),
+                        value
+                            .cache_extent
+                            .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
+                        controller,
+                        value.scroll_direction,
+                        value.reverse,
+                        value.physics.unwrap_or_default(),
                         move |i| builder(i),
                     )
                 }
@@ -554,6 +598,7 @@ pub struct GridView {
     reverse: bool,
     controller: Option<ScrollController>,
     padding: Option<EdgeInsets>,
+    physics: Option<ScrollPhysics>,
 }
 
 impl GridView {
@@ -573,6 +618,7 @@ impl GridView {
             reverse: false,
             controller: None,
             padding: None,
+            physics: None,
         }
     }
 
@@ -598,6 +644,7 @@ impl GridView {
             reverse: false,
             controller: None,
             padding: None,
+            physics: None,
         }
     }
 
@@ -629,6 +676,13 @@ impl GridView {
         self
     }
 
+    /// Sets scroll physics for the retained grid viewport.
+    #[must_use]
+    pub fn physics(mut self, physics: ScrollPhysics) -> Self {
+        self.physics = Some(physics);
+        self
+    }
+
     #[must_use]
     pub fn get_scroll_direction(&self) -> Axis {
         self.scroll_direction
@@ -653,11 +707,20 @@ impl From<GridView> for Widget {
                 let rows = children.len().div_ceil(columns);
                 let children = Rc::new(children);
                 let extent = row_extent.unwrap_or(80.0);
-                VirtualList::fixed_extent_with_controller(rows, extent, controller, move |row| {
-                    let start = row * columns;
-                    let end = (start + columns).min(children.len());
-                    Widget::from(Row::new(children[start..end].iter().cloned()))
-                })
+                VirtualList::fixed_extent_with_controller_and_cache_config(
+                    rows,
+                    extent,
+                    VirtualList::DEFAULT_CACHE_EXTENT,
+                    controller,
+                    value.scroll_direction,
+                    value.reverse,
+                    value.physics.unwrap_or_default(),
+                    move |row| {
+                        let start = row * columns;
+                        let end = (start + columns).min(children.len());
+                        Widget::from(Row::new(children[start..end].iter().cloned()))
+                    },
+                )
             }
             GridViewStrategy::Builder {
                 item_count,
@@ -667,10 +730,14 @@ impl From<GridView> for Widget {
             } => {
                 let columns = cross_axis_count.max(1);
                 let rows = item_count.div_ceil(columns);
-                VirtualList::fixed_extent_with_controller(
+                VirtualList::fixed_extent_with_controller_and_cache_config(
                     rows,
                     row_extent,
+                    VirtualList::DEFAULT_CACHE_EXTENT,
                     controller,
+                    value.scroll_direction,
+                    value.reverse,
+                    value.physics.unwrap_or_default(),
                     move |row| {
                         let start = row * columns;
                         Widget::from(Row::new(
@@ -711,6 +778,8 @@ pub struct PageView {
     scroll_direction: Axis,
     reverse: bool,
     page_snapping: bool,
+    viewport_fraction: f32,
+    physics: Option<ScrollPhysics>,
 }
 
 impl PageView {
@@ -720,9 +789,11 @@ impl PageView {
         Self {
             strategy: PageViewStrategy::Children(children.into_iter().map(Into::into).collect()),
             controller: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: Axis::Horizontal,
             reverse: false,
             page_snapping: true,
+            viewport_fraction: 1.0,
+            physics: None,
         }
     }
 
@@ -743,9 +814,11 @@ impl PageView {
                 builder: Rc::new(move |i| builder(i).into()),
             },
             controller: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: Axis::Horizontal,
             reverse: false,
             page_snapping: true,
+            viewport_fraction: 1.0,
+            physics: None,
         }
     }
 
@@ -777,6 +850,20 @@ impl PageView {
         self
     }
 
+    /// Sets the fraction of the viewport occupied by each page.
+    #[must_use]
+    pub fn viewport_fraction(mut self, value: f32) -> Self {
+        self.viewport_fraction = value.max(0.01);
+        self
+    }
+
+    /// Installs the scroll physics used by the retained page viewport.
+    #[must_use]
+    pub fn physics(mut self, value: ScrollPhysics) -> Self {
+        self.physics = Some(value);
+        self
+    }
+
     #[must_use]
     pub fn is_reverse(&self) -> bool {
         self.reverse
@@ -786,19 +873,44 @@ impl PageView {
     pub fn is_page_snapping(&self) -> bool {
         self.page_snapping
     }
+
+    #[must_use]
+    pub fn viewport_fraction_value(&self) -> f32 {
+        self.viewport_fraction
+    }
+
+    /// Returns the configured page axis.
+    #[must_use]
+    pub fn get_scroll_direction(&self) -> Axis {
+        self.scroll_direction
+    }
 }
 
 impl From<PageView> for Widget {
     fn from(value: PageView) -> Self {
         let controller = value.controller.unwrap_or_default();
+        let fraction = value.viewport_fraction.max(0.01);
+        let physics_for_extent = |extent: f32| {
+            if let Some(physics) = value.physics {
+                physics
+            } else if value.page_snapping {
+                ScrollPhysics::clamping().page_snapping(extent)
+            } else {
+                ScrollPhysics::clamping()
+            }
+        };
         match value.strategy {
             PageViewStrategy::Children(children) => {
                 let page_count = children.len();
                 let children = Rc::new(children);
-                VirtualList::fixed_extent_with_controller(
+                VirtualList::viewport_extent_with_controller_and_cache_config(
                     page_count,
-                    600.0,
+                    600.0 * fraction,
+                    VirtualList::DEFAULT_CACHE_EXTENT,
                     controller,
+                    value.scroll_direction,
+                    value.reverse,
+                    physics_for_extent(600.0 * fraction),
                     move |index| children[index].clone(),
                 )
             }
@@ -806,12 +918,19 @@ impl From<PageView> for Widget {
                 page_count,
                 page_extent,
                 builder,
-            } => VirtualList::fixed_extent_with_controller(
-                page_count,
-                page_extent,
-                controller,
-                move |i| builder(i),
-            ),
+            } => {
+                let page_extent = page_extent * fraction;
+                VirtualList::fixed_extent_with_controller_and_cache_config(
+                    page_count,
+                    page_extent,
+                    VirtualList::DEFAULT_CACHE_EXTENT,
+                    controller,
+                    value.scroll_direction,
+                    value.reverse,
+                    physics_for_extent(page_extent),
+                    move |i| builder(i),
+                )
+            }
         }
     }
 }
@@ -819,6 +938,19 @@ impl From<PageView> for Widget {
 /// Unified sliver protocol. A sliver returns a normal retained widget.
 pub trait Sliver {
     fn build(&self, controller: &ScrollController) -> Widget;
+
+    /// Builds a sliver with the owning viewport's axis and direction.  The
+    /// default keeps existing custom slivers source-compatible; built-in
+    /// headers override it so pinning also works in horizontal/reversed
+    /// viewports.
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Widget {
+        self.build(controller)
+    }
 }
 
 /// Adapts an ordinary box widget into a sliver.
@@ -982,10 +1114,33 @@ impl SliverPersistentHeader {
 
 impl Sliver for SliverPersistentHeader {
     fn build(&self, controller: &ScrollController) -> Widget {
-        Widget::from_kind(WidgetKind::PersistentHeader {
-            controller: controller.clone(),
-            child: Box::new(self.child.clone()),
-        })
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
+        // Persistent headers have a stable sliver extent.  Keep the supplied
+        // child as the retained subtree while constraining only its main-axis
+        // extent; this makes `height()` affect real layout instead of being a
+        // descriptor-only value.
+        let child = if axis.is_horizontal() {
+            SizedBox::new().width(self.height).child(self.child.clone())
+        } else {
+            SizedBox::new()
+                .height(self.height)
+                .child(self.child.clone())
+        };
+        Widget::persistent_header_with_config(
+            controller.clone(),
+            child.into(),
+            axis,
+            reverse,
+            self.pinned,
+        )
     }
 }
 
@@ -1021,9 +1176,18 @@ impl SliverAppBar {
 
 impl Sliver for SliverAppBar {
     fn build(&self, controller: &ScrollController) -> Widget {
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
         SliverPersistentHeader::new(self.expanded_height, self.title.clone())
             .pinned(self.pinned)
-            .build(controller)
+            .build_with_config(controller, axis, reverse)
     }
 }
 
@@ -1103,10 +1267,18 @@ impl From<CustomScrollView> for Widget {
         let built_children: Vec<Widget> = value
             .slivers
             .into_iter()
-            .map(|sliver| sliver.build(&controller))
+            .map(|sliver| {
+                sliver.build_with_config(&controller, value.scroll_direction, value.reverse)
+            })
             .collect();
-        SingleChildScrollView::new(Column::new(built_children))
+        let content: Widget = match value.scroll_direction {
+            Axis::Horizontal => Row::new(built_children).into(),
+            Axis::Vertical => Column::new(built_children).into(),
+        };
+        SingleChildScrollView::new(content)
             .scroll_direction(value.scroll_direction)
+            .reverse(value.reverse)
+            .physics(value.physics.unwrap_or_default())
             .controller(controller)
             .into()
     }
@@ -2008,7 +2180,24 @@ impl PinnedHeaderSliver {
 
 impl Sliver for PinnedHeaderSliver {
     fn build(&self, controller: &ScrollController) -> Widget {
-        SliverPersistentHeader::new(48.0, self.child.clone()).build(controller)
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
+        // Flutter's PinnedHeaderSliver derives its extent from the child's
+        // laid-out size.  Do not impose the old arbitrary 48px extent here.
+        Widget::persistent_header_with_config(
+            controller.clone(),
+            self.child.clone(),
+            axis,
+            reverse,
+            true,
+        )
     }
 }
 
@@ -2028,9 +2217,18 @@ impl SliverFloatingHeader {
 
 impl Sliver for SliverFloatingHeader {
     fn build(&self, controller: &ScrollController) -> Widget {
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
         SliverPersistentHeader::new(48.0, self.child.clone())
             .pinned(false)
-            .build(controller)
+            .build_with_config(controller, axis, reverse)
     }
 }
 
@@ -2064,7 +2262,17 @@ impl SliverResizingHeader {
 
 impl Sliver for SliverResizingHeader {
     fn build(&self, controller: &ScrollController) -> Widget {
-        SliverPersistentHeader::new(self.max_extent, self.child.clone()).build(controller)
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
+        SliverPersistentHeader::new(self.max_extent, self.child.clone())
+            .build_with_config(controller, axis, reverse)
     }
 }
 

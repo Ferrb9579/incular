@@ -2,7 +2,8 @@
 //! controls. These types intentionally do not paint anything.
 
 use incular_config::Axis;
-use incular_widgets::{ExplicitSemantics, Widget, WidgetKind};
+use incular_widgets::Widget;
+use incular_widgets::internal::{ExplicitSemantics, WidgetKind};
 use std::cell::Cell;
 use std::rc::Rc;
 

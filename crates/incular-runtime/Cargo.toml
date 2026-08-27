@@ -19,6 +19,7 @@ incular-core = { workspace = true }
 incular-config = { workspace = true }
 incular-layout = { workspace = true }
 incular-rendering = { workspace = true }
+incular-text = { workspace = true }
 incular-platform = { workspace = true }
 incular-widgets = { workspace = true }
 tokio = { workspace = true }

@@ -1,6 +1,7 @@
 //! Native multi-window retained roots sharing one Signal, Tokio runtime, and
 //! GPU device. Close and reopen the auxiliary windows to exercise generation
 //! checks and independent environments.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
 
 fn main() {

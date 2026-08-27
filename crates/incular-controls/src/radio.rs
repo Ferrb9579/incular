@@ -3,7 +3,7 @@
 use crate::{ControlTheme, Radio};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{internal::ActionSurface, ExplicitSemantics, Widget};
+use incular_widgets::{Border, internal::ActionSurface, ExplicitSemantics, Widget};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -34,11 +34,15 @@ pub struct Root<T: Clone + PartialEq + 'static> {
     label: Option<String>,
     enabled: bool,
     child: Option<Widget>,
+    active_color: Option<Color>,
+    inactive_color: Option<Color>,
+    dot_color: Option<Color>,
+    side: Option<Border>,
     on_change: Option<Rc<dyn Fn(T) + 'static>>,
 }
 impl<T: Clone + PartialEq + 'static> Root<T> {
     #[must_use]
-    pub fn new(value: T) -> Self { Self { value, selected: None, label: None, enabled: true, child: None, on_change: None } }
+    pub fn new(value: T) -> Self { Self { value, selected: None, label: None, enabled: true, child: None, active_color: None, inactive_color: None, dot_color: None, side: None, on_change: None } }
     #[must_use]
     pub fn selected(mut self, value: T) -> Self { self.selected = Some(value); self }
     #[must_use]
@@ -47,6 +51,14 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
     pub fn disabled(mut self, value: bool) -> Self { self.enabled = !value; self }
     #[must_use]
     pub fn child(mut self, value: impl Into<Widget>) -> Self { self.child = Some(value.into()); self }
+    #[must_use]
+    pub fn active_color(mut self, value: Color) -> Self { self.active_color = Some(value); self }
+    #[must_use]
+    pub fn inactive_color(mut self, value: Color) -> Self { self.inactive_color = Some(value); self }
+    #[must_use]
+    pub fn dot_color(mut self, value: Color) -> Self { self.dot_color = Some(value); self }
+    #[must_use]
+    pub fn side(mut self, value: Border) -> Self { self.side = Some(value); self }
     #[must_use]
     pub fn on_value_change(mut self, callback: impl Fn(T) + 'static) -> Self { self.on_change = Some(Rc::new(callback)); self }
     #[must_use]
@@ -81,6 +93,10 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
         }
         let mut radio = Radio::new(self.value.clone(), self.selected.clone())
             .label(self.label.clone().unwrap_or_default());
+        if let Some(color) = self.active_color { radio = radio.active_color(color); }
+        if let Some(color) = self.inactive_color { radio = radio.inactive_color(color); }
+        if let Some(color) = self.dot_color { radio = radio.dot_color(color); }
+        if let Some(side) = self.side { radio = radio.border_color(side.top.color).border_width(side.top.width); }
         if self.enabled {
             if let Some(callback) = self.on_change.clone() {
                 radio = radio.on_changed(move |value| callback(value));
@@ -93,7 +109,7 @@ impl<T: Clone + PartialEq + 'static> From<Root<T>> for Widget {
     fn from(value: Root<T>) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme = incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>().unwrap_or_default();
             value.build(&theme)
         })
     }

@@ -2,7 +2,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use incular_config::Constraints;
 use incular_core::Size;
-use incular_widgets::{Text, Widget, WidgetTree, internal::ActionSurface};
+use incular_widgets::internal::{ActionSurface, WidgetTree};
+use incular_widgets::{Text, Widget};
 
 fn semantic_tree(width: usize) -> Widget {
     let mut children = Vec::with_capacity(width);

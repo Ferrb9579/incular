@@ -42,8 +42,8 @@ owns the event loop/window, `wgpu` owns an instanced rectangle surface renderer,
 and a locally reactive counter button updates only its subscribed subtree. Run
 the proof program with `cargo run -p incular --example counter`.
 
-See [the architecture document](docs/ARCHITECTURE.md) for the implemented
-boundaries and intentionally deferred native-surface work.
+The crate READMEs describe the implemented ownership boundaries and the
+intentionally deferred native-surface work.
 # Incular
 
 ## Platform support

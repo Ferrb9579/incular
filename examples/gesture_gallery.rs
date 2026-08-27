@@ -3,7 +3,9 @@
 //! Tap the panel, drag with one pointer, or use a touchscreen to pinch with
 //! two contacts. The status labels and the translated card are rebuilt from
 //! the callbacks owned by `GestureDetector`.
+use incular::material::RawMaterialButton;
 use incular::prelude::*;
+use incular::widgets::internal::{GestureCallbacks, TranslationController};
 use std::rc::Rc;
 
 fn label(value: impl Into<String>) -> Widget {

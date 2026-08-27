@@ -4,7 +4,7 @@ pub use crate::popup::{Arrow, Popup, Portal, Positioner, Trigger};
 pub use crate::select::{Item, List};
 use crate::{Button, ControlTheme};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{ExplicitSemantics, Widget};
+use incular_widgets::{Widget, internal::ExplicitSemantics};
 use std::rc::Rc;
 
 #[derive(Clone)]

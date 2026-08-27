@@ -1,12 +1,11 @@
 use crate::styles::{ButtonStyle, ButtonVariant, ControlState};
 use crate::theme::ControlTheme;
-use incular_config::EdgeInsets;
+use incular_config::{Alignment, EdgeInsets};
 use incular_core::Color;
+use incular_core::Offset;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{
-    Border, BorderRadius, BoxDecoration, Container, ExplicitSemantics, Text, Widget,
-    internal::ActionSurface,
-};
+use incular_widgets::internal::{ActionSurface, DropShadow, ExplicitSemantics};
+use incular_widgets::{Border, BorderRadius, BoxDecoration, Container, Text, Widget};
 use std::rc::Rc;
 
 /// Platform-neutral styled push button.
@@ -100,25 +99,44 @@ impl Button {
         let state = ControlState::from_enabled(effective_enabled);
 
         let bg = self.style.resolve_background(state, theme);
-        let hover_bg = self
-            .style
-            .resolve_background(state.with(ControlState::HOVERED), theme);
-        let pressed_bg = self
-            .style
-            .resolve_background(state.with(ControlState::PRESSED), theme);
-        let focused_bg = self
-            .style
-            .resolve_background(state.with(ControlState::FOCUSED), theme);
+        let hover_state = state.with(ControlState::HOVERED);
+        let pressed_state = state.with(ControlState::PRESSED);
+        let focused_state = state.with(ControlState::FOCUSED);
+        let hover_bg = blend_overlay(
+            self.style.resolve_background(hover_state, theme),
+            self.style.resolve_overlay_color(hover_state, theme),
+        );
+        let pressed_bg = blend_overlay(
+            self.style.resolve_background(pressed_state, theme),
+            self.style.resolve_overlay_color(pressed_state, theme),
+        );
+        let focused_bg = blend_overlay(
+            self.style.resolve_background(focused_state, theme),
+            self.style.resolve_overlay_color(focused_state, theme),
+        );
         let disabled_bg = self.style.resolve_background(ControlState::DISABLED, theme);
         let fg = self.style.resolve_foreground(state, theme);
-        let radius = self.style.border_radius.unwrap_or(theme.button.radius);
+        let radius = self
+            .style
+            .shape
+            .as_ref()
+            .map(|shape| {
+                shape
+                    .resolve(state)
+                    .top_left
+                    .x
+                    .max(shape.resolve(state).top_left.y)
+            })
+            .or(self.style.border_radius)
+            .unwrap_or(theme.button.radius);
         let padding = self
             .style
             .padding
             .unwrap_or_else(|| theme.density.padding());
         let height = self.style.height.unwrap_or(theme.button.height);
+        let elevation = self.style.resolve_elevation(state, theme);
 
-        let content: Widget = if let Some(label) = self.label.as_ref() {
+        let mut content: Widget = if let Some(label) = self.label.as_ref() {
             Text::new(label.clone())
                 .style(
                     self.style
@@ -134,17 +152,28 @@ impl Button {
             incular_widgets::SizedBox::shrink().into()
         };
 
-        let border = self.style.border.unwrap_or_else(|| {
-            if self.style.variant == ButtonVariant::Ghost {
-                Border::new(0.0, Color::TRANSPARENT)
-            } else {
-                Border::new(theme.button.border_width, theme.colors.border)
-            }
-        });
+        if let Some(builder) = self.style.foreground_builder.as_ref() {
+            content = builder.build(content, state);
+        }
 
-        let decorated = Container::new()
+        let border = self
+            .style
+            .side
+            .as_ref()
+            .map(|side| side.resolve(state))
+            .or(self.style.border)
+            .unwrap_or_else(|| {
+                if self.style.variant == ButtonVariant::Ghost {
+                    Border::new(0.0, Color::TRANSPARENT)
+                } else {
+                    Border::new(theme.button.border_width, theme.colors.border)
+                }
+            });
+
+        let mut decorated = Container::new()
             .height(height)
             .padding(padding)
+            .alignment(self.style.alignment.unwrap_or(Alignment::CENTER))
             .decoration(
                 BoxDecoration::new()
                     // The retained action surface owns the state-aware surface;
@@ -156,6 +185,26 @@ impl Button {
                     .border_radius(BorderRadius::circular(radius)),
             )
             .child(content);
+
+        if let Some(builder) = self.style.background_builder.as_ref() {
+            decorated = Container::with_child(builder.build(decorated.into(), state));
+        }
+
+        // Elevation is a paint/composite concern. Keep it outside the action
+        // surface so hover/press state can change without rebuilding the
+        // button's content, while still reaching the retained drop-shadow
+        // renderer instead of remaining metadata-only.
+        let decorated: Widget = if elevation > 0.0 {
+            DropShadow::new(
+                Offset::new(0.0, elevation * 0.18),
+                (elevation * 0.55).max(1.0),
+                self.style.resolve_shadow_color(state, theme),
+                decorated,
+            )
+            .into()
+        } else {
+            decorated.into()
+        };
 
         let mut raw = ActionSurface::with_child(decorated)
             .color(bg)
@@ -188,12 +237,37 @@ impl Button {
     }
 }
 
+fn blend_overlay(base: Color, overlay: Color) -> Color {
+    let source_alpha = overlay.alpha as f32 / 255.0;
+    if source_alpha <= 0.0 {
+        return base;
+    }
+    let destination_alpha = base.alpha as f32 / 255.0;
+    let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+    if output_alpha <= f32::EPSILON {
+        return Color::TRANSPARENT;
+    }
+    let channel = |source: u8, destination: u8| {
+        ((source as f32 * source_alpha
+            + destination as f32 * destination_alpha * (1.0 - source_alpha))
+            / output_alpha)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::rgba(
+        channel(overlay.red, base.red),
+        channel(overlay.green, base.green),
+        channel(overlay.blue, base.blue),
+        (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8,
+    )
+}
+
 impl From<Button> for Widget {
     fn from(value: Button) -> Self {
         let value = Rc::new(value);
         Widget::layout_builder(move |_| {
-            let theme =
-                incular_widgets::current_build_environment::<ControlTheme>().unwrap_or_default();
+            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
+                .unwrap_or_default();
             value.build(&theme)
         })
     }
