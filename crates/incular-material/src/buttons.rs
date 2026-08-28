@@ -15,6 +15,7 @@ use incular_text::TextStyle;
 use incular_widgets::{Border, BorderRadius, Container, Row, SizedBox, Widget};
 use std::rc::Rc;
 use std::time::Duration;
+use typed_builder::TypedBuilder;
 
 pub use incular_controls::{
     ButtonLayerBuilder, ButtonStyle, ButtonVariant, ControlDensity, ControlState, IconAlignment,
@@ -27,32 +28,77 @@ pub use incular_controls::{
 /// supplies a component variant and leaves all unspecified values unset;
 /// resolution can then apply component theme values and explicit overrides in
 /// the same order as Flutter's `ButtonStyleButton`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct ButtonStyleConfig {
+    #[builder(default, setter(strip_option, into))]
     pub background_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub foreground_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub overlay_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub shadow_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub surface_tint_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub elevation: Option<StateValue<f32>>,
+    #[builder(default, setter(strip_option, into))]
     pub padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option, into))]
     pub minimum_size: Option<Size>,
+    #[builder(default, setter(strip_option, into))]
     pub fixed_size: Option<Size>,
+    #[builder(default, setter(strip_option, into))]
     pub maximum_size: Option<Size>,
+    #[builder(default, setter(strip_option, into))]
     pub icon_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub icon_size: Option<StateValue<f32>>,
+    #[builder(default, setter(strip_option, into))]
     pub icon_alignment: Option<IconAlignment>,
+    #[builder(default, setter(strip_option, into))]
     pub side: Option<StateValue<Border>>,
+    #[builder(default, setter(strip_option, into))]
     pub shape: Option<StateValue<BorderRadius>>,
+    #[builder(default, setter(strip_option, into))]
     pub mouse_cursor: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub visual_density: Option<ControlDensity>,
+    #[builder(default, setter(strip_option, into))]
     pub tap_target_size: Option<TapTargetSize>,
+    #[builder(default, setter(strip_option, into))]
     pub animation_duration: Option<Duration>,
+    #[builder(default, setter(strip_option, into))]
     pub enable_feedback: Option<bool>,
+    #[builder(default, setter(strip_option, into))]
     pub alignment: Option<Alignment>,
+    #[builder(default, setter(strip_option, into))]
     pub splash_factory: Option<SplashFactory>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(value: F) -> Option<ButtonLayerBuilder>
+            where
+                F: Fn(Widget, ControlState) -> Widget + 'static,
+            {
+                Some(ButtonLayerBuilder::new(value))
+            }
+        )
+    )]
     pub background_builder: Option<ButtonLayerBuilder>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(value: F) -> Option<ButtonLayerBuilder>
+            where
+                F: Fn(Widget, ControlState) -> Widget + 'static,
+            {
+                Some(ButtonLayerBuilder::new(value))
+            }
+        )
+    )]
     pub foreground_builder: Option<ButtonLayerBuilder>,
+    #[builder(default, setter(strip_option, into))]
     pub text_style: Option<TextStyle>,
 }
 
@@ -454,6 +500,21 @@ impl ButtonSpec {
         }
     }
 
+    fn set_label(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
+        self.label = Some(label.clone());
+        self.child = None;
+        self.semantic_label = Some(label);
+        self
+    }
+
+    fn set_child(mut self, child: impl Into<Widget>) -> Self {
+        self.label = None;
+        self.child = Some(child.into());
+        self.semantic_label = None;
+        self
+    }
+
     fn icon_label(kind: ButtonKind, icon: impl Into<Widget>, label: impl Into<String>) -> Self {
         let label = label.into();
         let child: Widget = Row::new([
@@ -690,9 +751,48 @@ fn apply_constraints(widget: Widget, style: &ButtonStyle, theme: &ThemeData) -> 
 }
 
 /// High-emphasis Material elevated button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.spec = self.spec.clone().set_label(label);
+    }
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct ElevatedButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Elevated, SizedBox::shrink()))]
     spec: ButtonSpec,
+}
+
+impl Default for ElevatedButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl ElevatedButton {
@@ -724,19 +824,19 @@ impl ElevatedButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -747,13 +847,13 @@ impl ElevatedButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 }
@@ -765,9 +865,48 @@ impl From<ElevatedButton> for Widget {
 }
 
 /// Filled Material button, including the Material 3 tonal variant.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.spec = self.spec.clone().set_label(label);
+    }
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct FilledButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Filled, SizedBox::shrink()))]
     spec: ButtonSpec,
+}
+
+impl Default for FilledButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl FilledButton {
@@ -825,19 +964,19 @@ impl FilledButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -848,13 +987,13 @@ impl FilledButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 }
@@ -866,9 +1005,48 @@ impl From<FilledButton> for Widget {
 }
 
 /// Medium-emphasis outlined Material button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.spec = self.spec.clone().set_label(label);
+    }
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct OutlinedButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Outlined, SizedBox::shrink()))]
     spec: ButtonSpec,
+}
+
+impl Default for OutlinedButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl OutlinedButton {
@@ -900,19 +1078,19 @@ impl OutlinedButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -923,13 +1101,13 @@ impl OutlinedButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 }
@@ -941,9 +1119,48 @@ impl From<OutlinedButton> for Widget {
 }
 
 /// Low-emphasis text Material button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.spec = self.spec.clone().set_label(label);
+    }
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct TextButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Text, SizedBox::shrink()))]
     spec: ButtonSpec,
+}
+
+impl Default for TextButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl TextButton {
@@ -975,19 +1192,19 @@ impl TextButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -998,13 +1215,13 @@ impl TextButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 }
@@ -1016,11 +1233,52 @@ impl From<TextButton> for Widget {
 }
 
 /// Material icon-only action button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn icon(self, icon: impl Into<String>) {
+        self.spec = self.spec.clone().set_child(incular_widgets::Text::new(icon));
+    }
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct IconButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Icon, SizedBox::shrink()))]
     spec: ButtonSpec,
+    #[builder(default)]
     selected: bool,
+    #[builder(default, setter(strip_option, into))]
     tooltip: Option<String>,
+}
+
+impl Default for IconButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl IconButton {
@@ -1071,19 +1329,19 @@ impl IconButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -1094,13 +1352,13 @@ impl IconButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 }
@@ -1117,12 +1375,79 @@ impl From<IconButton> for Widget {
 }
 
 /// Material floating action button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn child(self, child: impl Into<Widget>) {
+        self.spec = self.spec.clone().set_child(child);
+    }
+    pub fn small(self) {
+        self.size = FloatingActionButtonSize::Small;
+    }
+    pub fn large(self) {
+        self.size = FloatingActionButtonSize::Large;
+    }
+    pub fn extended(self, label: impl Into<String>) {
+        let label = label.into();
+        self.size = FloatingActionButtonSize::Extended;
+        self.spec = self
+            .spec
+            .clone()
+            .set_child(incular_widgets::Text::new(label.clone()));
+        self.spec.semantic_label = Some(label);
+    }
+    pub fn extended_with_icon(self, icon: impl Into<Widget>, label: impl Into<String>) {
+        let label = label.into();
+        self.size = FloatingActionButtonSize::Extended;
+        self.spec = self.spec.clone().set_child(
+            Row::new([
+                icon.into(),
+                SizedBox::new().width(8.0).into(),
+                incular_widgets::Text::new(label.clone()).into(),
+            ])
+            .alignment(CrossAxisAlignment::Center),
+        );
+        self.spec.semantic_label = Some(label);
+    }
+    pub fn style(self, style: ButtonStyle) {
+        self.spec = self.spec.clone().style(style);
+    }
+    pub fn on_click<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.spec = self.spec.clone().on_click(callback);
+    }
+    pub fn enabled(self, value: bool) {
+        self.spec = self.spec.clone().enabled(value);
+    }
+    pub fn focusable_when_disabled(self, value: bool) {
+        self.spec = self.spec.clone().focusable_when_disabled(value);
+    }
+    pub fn loading(self, value: bool) {
+        self.spec = self.spec.clone().loading(value);
+    }
+))]
 pub struct FloatingActionButton {
+    #[builder(via_mutators = ButtonSpec::child(ButtonKind::Floating, SizedBox::shrink()))]
     spec: ButtonSpec,
+    #[builder(via_mutators = FloatingActionButtonSize::Regular)]
     size: FloatingActionButtonSize,
+    #[builder(default, setter(strip_option, into))]
     tooltip: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     hero_tag: Option<String>,
+}
+
+impl Default for FloatingActionButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1192,7 +1517,7 @@ impl FloatingActionButton {
 
     #[must_use]
     pub fn style(mut self, value: ButtonStyle) -> Self {
-        self.spec = self.spec.style(value);
+        self.spec = self.spec.clone().style(value);
         self
     }
 
@@ -1210,13 +1535,13 @@ impl FloatingActionButton {
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.enabled(value);
+        self.spec = self.spec.clone().enabled(value);
         self
     }
 
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.spec = self.spec.on_click(callback);
+        self.spec = self.spec.clone().on_click(callback);
         self
     }
 
@@ -1227,13 +1552,13 @@ impl FloatingActionButton {
 
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.spec = self.spec.focusable_when_disabled(value);
+        self.spec = self.spec.clone().focusable_when_disabled(value);
         self
     }
 
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.spec = self.spec.loading(value);
+        self.spec = self.spec.clone().loading(value);
         self
     }
 

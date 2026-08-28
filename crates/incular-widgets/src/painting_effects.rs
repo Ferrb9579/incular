@@ -5,6 +5,7 @@ use incular_core::{Color, Offset};
 use incular_image::ImageHandle;
 use incular_rendering::{BlendMode, Brush, CornerRadii, Path};
 use std::sync::Arc;
+use typed_builder::TypedBuilder;
 
 use crate::tree::ImageFit;
 use crate::{
@@ -12,14 +13,30 @@ use crate::{
 };
 
 /// Renders a raw raster image buffer directly without asset caching.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RawImage {
+    #[builder(default, setter(strip_option))]
     image: Option<ImageHandle>,
+    #[builder(
+        default,
+        setter(transform = |width: f32| Some(width.max(0.0)))
+    )]
     width: Option<f32>,
+    #[builder(
+        default,
+        setter(transform = |height: f32| Some(height.max(0.0)))
+    )]
     height: Option<f32>,
+    #[builder(
+        default = 1.0,
+        setter(transform = |scale: f32| scale.max(0.001))
+    )]
     scale: f32,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default = ImageFit::Contain)]
     fit: ImageFit,
+    #[builder(default = ImageRepeat::NoRepeat)]
     repeat: ImageRepeat,
 }
 
@@ -108,10 +125,15 @@ impl From<RawImage> for Widget {
 }
 
 /// An icon that comes from an [`ImageHandle`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ImageIcon {
     image: ImageHandle,
+    #[builder(
+        default,
+        setter(transform = |size: f32| Some(size.max(0.0)))
+    )]
     size: Option<f32>,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
 }
 
@@ -150,10 +172,12 @@ impl From<ImageIcon> for Widget {
 }
 
 /// An image filter applied directly to its child subtree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ImageFiltered {
     sigma: f32,
+    #[builder(default, setter(skip))]
     controller: Option<BlurController>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -187,9 +211,11 @@ impl From<ImageFiltered> for Widget {
 }
 
 /// Applies a shader / gradient mask over its child widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ShaderMask {
+    #[builder(default = BlendMode::Multiply)]
     blend_mode: BlendMode,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -216,8 +242,9 @@ impl From<ShaderMask> for Widget {
 }
 
 /// Injects system UI / status bar annotations into the tree hierarchy.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnnotatedRegion {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -237,8 +264,9 @@ impl From<AnnotatedRegion> for Widget {
 }
 
 /// Renders its child into a retained raster snapshot for performance optimization.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SnapshotWidget {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -258,10 +286,13 @@ impl From<SnapshotWidget> for Widget {
 }
 
 /// Clips its child using a rounded superellipse (squircle) shape.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipRSuperellipse {
+    #[builder(setter(transform = |radius: f32| radius.max(0.0)))]
     radius: f32,
+    #[builder(default = Clip::AntiAlias)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -291,13 +322,21 @@ impl From<ClipRSuperellipse> for Widget {
 }
 
 /// A physical layer widget with elevation, shadow, and corner radius.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PhysicalModel {
     color: Color,
+    #[builder(default = Color::rgba(0, 0, 0, 100))]
     shadow_color: Color,
+    #[builder(
+        default = 0.0,
+        setter(transform = |elevation: f32| elevation.max(0.0))
+    )]
     elevation: f32,
+    #[builder(default = CornerRadii::default())]
     border_radius: CornerRadii,
+    #[builder(default = Clip::None)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -359,12 +398,19 @@ impl From<PhysicalModel> for Widget {
 }
 
 /// A physical layer widget with custom path shape and elevation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PhysicalShape {
+    #[builder(setter(into))]
     clipper: Arc<Path>,
     color: Color,
+    #[builder(default = Color::rgba(0, 0, 0, 100))]
     shadow_color: Color,
+    #[builder(
+        default = 0.0,
+        setter(transform = |elevation: f32| elevation.max(0.0))
+    )]
     elevation: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -400,12 +446,20 @@ impl From<PhysicalShape> for Widget {
 }
 
 /// Draws an engineering grid paper over its background.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct GridPaper {
+    #[builder(default = Color::rgba(120, 160, 240, 60))]
     color: Color,
+    #[builder(
+        default = 100.0,
+        setter(transform = |interval: f32| interval.max(1.0))
+    )]
     interval: f32,
+    #[builder(default = 2)]
     divisions: usize,
+    #[builder(default = 5)]
     subdivisions: usize,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -455,9 +509,11 @@ impl From<GridPaper> for Widget {
 }
 
 /// A 2D radius for rounded corners.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct Radius {
+    #[builder(default = 0.0)]
     pub x: f32,
+    #[builder(default = 0.0)]
     pub y: f32,
 }
 
@@ -493,11 +549,15 @@ impl incular_core::Lerp for Radius {
 }
 
 /// An immutable set of radii for each of the four corners of a box.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct BorderRadius {
+    #[builder(default = Radius::ZERO)]
     pub top_left: Radius,
+    #[builder(default = Radius::ZERO)]
     pub top_right: Radius,
+    #[builder(default = Radius::ZERO)]
     pub bottom_right: Radius,
+    #[builder(default = Radius::ZERO)]
     pub bottom_left: Radius,
 }
 
@@ -598,11 +658,15 @@ impl From<BorderRadius> for CornerRadii {
 }
 
 /// An immutable set of directional radii for the four corners of a box.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct BorderRadiusDirectional {
+    #[builder(default = Radius::ZERO)]
     pub top_start: Radius,
+    #[builder(default = Radius::ZERO)]
     pub top_end: Radius,
+    #[builder(default = Radius::ZERO)]
     pub bottom_end: Radius,
+    #[builder(default = Radius::ZERO)]
     pub bottom_start: Radius,
 }
 
@@ -708,11 +772,18 @@ pub enum BorderStyle {
 }
 
 /// One side of a border.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct BorderSide {
+    #[builder(default = Color::BLACK)]
     pub color: Color,
+    #[builder(
+        default = 1.0,
+        setter(transform = |width: f32| width.max(0.0))
+    )]
     pub width: f32,
+    #[builder(default = BorderStyle::Solid)]
     pub style: BorderStyle,
+    #[builder(default = -1.0)]
     pub stroke_align: f32,
 }
 
@@ -772,7 +843,7 @@ impl incular_core::Lerp for BorderSide {
 }
 
 /// A box border configuration specifying stroke properties on all four sides.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct Border {
     pub top: BorderSide,
     pub right: BorderSide,
@@ -858,11 +929,15 @@ impl From<Border> for incular_rendering::Border {
 }
 
 /// Directional border with start and end sides.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct BorderDirectional {
+    #[builder(default = BorderSide::default())]
     pub top: BorderSide,
+    #[builder(default = BorderSide::default())]
     pub start: BorderSide,
+    #[builder(default = BorderSide::default())]
     pub end: BorderSide,
+    #[builder(default = BorderSide::default())]
     pub bottom: BorderSide,
 }
 
@@ -931,12 +1006,17 @@ pub enum BlurStyle {
 }
 
 /// A shadow cast by a box.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct BoxShadow {
+    #[builder(default = Color::default())]
     pub color: Color,
+    #[builder(default = Offset::default())]
     pub offset: incular_core::Offset,
+    #[builder(default = 0.0)]
     pub blur_radius: f32,
+    #[builder(default = 0.0)]
     pub spread_radius: f32,
+    #[builder(default = BlurStyle::Normal)]
     pub blur_style: BlurStyle,
 }
 
@@ -985,15 +1065,22 @@ pub enum TileMode {
 }
 
 /// An image configuration drawn inside a box decoration.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DecorationImage {
     pub image: ImageHandle,
+    #[builder(default = ImageFit::Cover)]
     pub fit: ImageFit,
+    #[builder(default = incular_config::Alignment::CENTER)]
     pub alignment: incular_config::Alignment,
+    #[builder(default, setter(strip_option))]
     pub center_slice: Option<incular_core::Rect>,
+    #[builder(default = ImageRepeat::NoRepeat)]
     pub repeat: ImageRepeat,
+    #[builder(default = false)]
     pub match_text_direction: bool,
+    #[builder(default = 1.0)]
     pub scale: f32,
+    #[builder(default = 1.0)]
     pub opacity: f32,
 }
 
@@ -1014,15 +1101,28 @@ impl DecorationImage {
 }
 
 /// An immutable description of how to paint a box.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct BoxDecoration {
+    #[builder(default, setter(strip_option))]
     pub color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub image: Option<DecorationImage>,
+    #[builder(default, setter(strip_option))]
     pub border: Option<Border>,
+    #[builder(default, setter(strip_option))]
     pub border_radius: Option<BorderRadius>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |shadows: impl IntoIterator<Item = BoxShadow>| {
+            shadows.into_iter().collect::<Vec<BoxShadow>>()
+        })
+    )]
     pub box_shadow: Vec<BoxShadow>,
+    #[builder(default, setter(strip_option, into))]
     pub gradient: Option<Brush>,
+    #[builder(default, setter(strip_option))]
     pub background_blend_mode: Option<BlendMode>,
+    #[builder(default = BoxShape::Rectangle)]
     pub shape: BoxShape,
 }
 
@@ -1214,4 +1314,140 @@ pub trait CustomPainter {
     fn should_repaint(&self, old: &Self) -> bool
     where
         Self: Sized;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Text;
+
+    fn image_handle() -> ImageHandle {
+        ImageHandle::from_rgba8(1, 1, vec![255, 255, 255, 255]).unwrap()
+    }
+
+    #[test]
+    fn effect_builders_preserve_defaults_and_normalize_values() {
+        let raw = RawImage::builder()
+            .width(-4.0)
+            .height(-8.0)
+            .scale(0.0)
+            .build();
+        assert_eq!(raw.width, Some(0.0));
+        assert_eq!(raw.height, Some(0.0));
+        assert_eq!(raw.scale, 0.001);
+        assert_eq!(raw.fit, ImageFit::Contain);
+        assert_eq!(raw.repeat, ImageRepeat::NoRepeat);
+
+        let icon = ImageIcon::builder()
+            .image(image_handle())
+            .size(-2.0)
+            .build();
+        assert_eq!(icon.size, Some(0.0));
+        assert_eq!(icon.color, None);
+
+        let grid = GridPaper::builder().build();
+        assert_eq!(grid, GridPaper::default());
+
+        let decoration = BoxDecoration::builder().build();
+        assert_eq!(decoration, BoxDecoration::default());
+    }
+
+    #[test]
+    fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
+        let annotated = AnnotatedRegion::builder()
+            .child(Text::new("annotated"))
+            .build();
+        assert_eq!(annotated.child.text_if_any().as_deref(), Some("annotated"));
+        assert_eq!(
+            Widget::from(annotated).text_if_any().as_deref(),
+            Some("annotated")
+        );
+
+        let filtered = ImageFiltered::builder()
+            .sigma(3.0)
+            .child(Text::new("filtered"))
+            .build();
+        assert_eq!(filtered.controller, None);
+        let _: Widget = filtered.into();
+
+        let shader = ShaderMask::builder().child(Text::new("shader")).build();
+        assert_eq!(shader.blend_mode, BlendMode::Multiply);
+        let _: Widget = shader.into();
+
+        let snapshot = SnapshotWidget::builder()
+            .child(Text::new("snapshot"))
+            .build();
+        let _: Widget = snapshot.into();
+
+        let clip = ClipRSuperellipse::builder()
+            .radius(-4.0)
+            .child(Text::new("clip"))
+            .build();
+        assert_eq!(clip.radius, 0.0);
+        assert_eq!(clip.clip_behavior, Clip::AntiAlias);
+        let _: Widget = clip.into();
+
+        let physical = PhysicalModel::builder()
+            .color(Color::WHITE)
+            .elevation(-2.0)
+            .child(Text::new("physical"))
+            .build();
+        assert_eq!(physical.elevation, 0.0);
+        assert_eq!(physical.shadow_color, Color::rgba(0, 0, 0, 100));
+        let _: Widget = physical.into();
+
+        let physical_shape = PhysicalShape::builder()
+            .clipper(Arc::new(Path::builder().build()))
+            .color(Color::WHITE)
+            .elevation(-2.0)
+            .child(Text::new("shape"))
+            .build();
+        assert_eq!(physical_shape.elevation, 0.0);
+        let _: Widget = physical_shape.into();
+
+        let grid = GridPaper::builder().child(Text::new("grid")).build();
+        let _: Widget = grid.into();
+    }
+
+    #[test]
+    fn painting_data_builders_match_existing_defaults_and_conversions() {
+        let radius = Radius::builder().x(4.0).build();
+        assert_eq!(radius, Radius::elliptical(4.0, 0.0));
+
+        let border_radius = BorderRadius::builder().top_left(radius).build();
+        assert_eq!(border_radius.top_right, Radius::ZERO);
+
+        let directional = BorderRadiusDirectional::builder().top_start(radius).build();
+        assert_eq!(directional.top_end, Radius::ZERO);
+
+        let side = BorderSide::builder().width(-2.0).build();
+        assert_eq!(side.width, 0.0);
+        assert_eq!(side, BorderSide::new(Color::BLACK, 0.0, BorderStyle::Solid));
+
+        let border = Border::builder()
+            .top(side)
+            .right(side)
+            .bottom(side)
+            .left(side)
+            .build();
+        assert_eq!(border, Border::all(side));
+
+        let directional_border = BorderDirectional::builder().build();
+        assert_eq!(directional_border, BorderDirectional::default());
+
+        let shadow = BoxShadow::builder().color(Color::BLACK).build();
+        assert_eq!(shadow.blur_radius, 0.0);
+
+        let image = DecorationImage::builder().image(image_handle()).build();
+        assert_eq!(image.fit, ImageFit::Cover);
+        assert_eq!(image.repeat, ImageRepeat::NoRepeat);
+
+        let decoration = BoxDecoration::builder()
+            .color(Color::WHITE)
+            .image(image)
+            .box_shadow([shadow])
+            .build();
+        assert!(decoration.is_valid());
+        assert_eq!(decoration.box_shadow.len(), 1);
+    }
 }

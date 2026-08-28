@@ -8,24 +8,48 @@ use incular_config::{
     Axis, CrossAxisAlignment, FlexFit, MainAxisAlignment, MainAxisSize, TextDirection,
     VerticalDirection,
 };
+use typed_builder::TypedBuilder;
 
 use crate::{SizedBox, Widget, WidgetKind};
 
 /// A horizontal flex container.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Row {
-    children: Vec<Widget>,
-    main_axis_alignment: MainAxisAlignment,
-    main_axis_size: MainAxisSize,
-    cross_axis_alignment: CrossAxisAlignment,
-    text_direction: Option<TextDirection>,
-    vertical_direction: VerticalDirection,
-    spacing: f32,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
+    pub children: Vec<Widget>,
+    #[builder(default = MainAxisAlignment::Start)]
+    pub main_axis_alignment: MainAxisAlignment,
+    #[builder(default = MainAxisSize::Max)]
+    pub main_axis_size: MainAxisSize,
+    #[builder(default = CrossAxisAlignment::Center)]
+    pub cross_axis_alignment: CrossAxisAlignment,
+    #[builder(default = None, setter(strip_option))]
+    pub text_direction: Option<TextDirection>,
+    #[builder(default = VerticalDirection::Down)]
+    pub vertical_direction: VerticalDirection,
+    #[builder(
+        default = 0.0,
+        setter(transform = |spacing: f32| spacing.max(0.0))
+    )]
+    pub spacing: f32,
 }
 
 impl Default for Row {
     fn default() -> Self {
-        Self::new(Vec::<Widget>::new())
+        Self {
+            children: Vec::new(),
+            main_axis_alignment: MainAxisAlignment::Start,
+            main_axis_size: MainAxisSize::Max,
+            cross_axis_alignment: CrossAxisAlignment::Center,
+            text_direction: None,
+            vertical_direction: VerticalDirection::Down,
+            spacing: 0.0,
+        }
     }
 }
 
@@ -35,12 +59,7 @@ impl Row {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
-            main_axis_alignment: MainAxisAlignment::Start,
-            main_axis_size: MainAxisSize::Max,
-            cross_axis_alignment: CrossAxisAlignment::Center,
-            text_direction: None,
-            vertical_direction: VerticalDirection::Down,
-            spacing: 0.0,
+            ..Self::default()
         }
     }
 
@@ -116,7 +135,7 @@ impl Row {
 
     #[must_use]
     pub fn get_spacing(&self) -> f32 {
-        self.spacing
+        self.spacing.max(0.0)
     }
 }
 
@@ -129,27 +148,50 @@ impl From<Row> for Widget {
             cross_axis_alignment: value.cross_axis_alignment,
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
-            spacing: value.spacing,
+            spacing: value.spacing.max(0.0),
             children: value.children,
         })
     }
 }
 
 /// A vertical flex container.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Column {
-    children: Vec<Widget>,
-    main_axis_alignment: MainAxisAlignment,
-    main_axis_size: MainAxisSize,
-    cross_axis_alignment: CrossAxisAlignment,
-    text_direction: Option<TextDirection>,
-    vertical_direction: VerticalDirection,
-    spacing: f32,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
+    pub children: Vec<Widget>,
+    #[builder(default = MainAxisAlignment::Start)]
+    pub main_axis_alignment: MainAxisAlignment,
+    #[builder(default = MainAxisSize::Max)]
+    pub main_axis_size: MainAxisSize,
+    #[builder(default = CrossAxisAlignment::Center)]
+    pub cross_axis_alignment: CrossAxisAlignment,
+    #[builder(default = None, setter(strip_option))]
+    pub text_direction: Option<TextDirection>,
+    #[builder(default = VerticalDirection::Down)]
+    pub vertical_direction: VerticalDirection,
+    #[builder(
+        default = 0.0,
+        setter(transform = |spacing: f32| spacing.max(0.0))
+    )]
+    pub spacing: f32,
 }
 
 impl Default for Column {
     fn default() -> Self {
-        Self::new(Vec::<Widget>::new())
+        Self {
+            children: Vec::new(),
+            main_axis_alignment: MainAxisAlignment::Start,
+            main_axis_size: MainAxisSize::Max,
+            cross_axis_alignment: CrossAxisAlignment::Center,
+            text_direction: None,
+            vertical_direction: VerticalDirection::Down,
+            spacing: 0.0,
+        }
     }
 }
 
@@ -159,12 +201,7 @@ impl Column {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
-            main_axis_alignment: MainAxisAlignment::Start,
-            main_axis_size: MainAxisSize::Max,
-            cross_axis_alignment: CrossAxisAlignment::Center,
-            text_direction: None,
-            vertical_direction: VerticalDirection::Down,
-            spacing: 0.0,
+            ..Self::default()
         }
     }
 
@@ -240,7 +277,7 @@ impl Column {
 
     #[must_use]
     pub fn get_spacing(&self) -> f32 {
-        self.spacing
+        self.spacing.max(0.0)
     }
 }
 
@@ -253,23 +290,54 @@ impl From<Column> for Widget {
             cross_axis_alignment: value.cross_axis_alignment,
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
-            spacing: value.spacing,
+            spacing: value.spacing.max(0.0),
             children: value.children,
         })
     }
 }
 
 /// A direction-configurable flex container.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Flex {
-    direction: Axis,
-    children: Vec<Widget>,
-    main_axis_alignment: MainAxisAlignment,
-    main_axis_size: MainAxisSize,
-    cross_axis_alignment: CrossAxisAlignment,
-    text_direction: Option<TextDirection>,
-    vertical_direction: VerticalDirection,
-    spacing: f32,
+    #[builder(default = Axis::Horizontal)]
+    pub direction: Axis,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
+    pub children: Vec<Widget>,
+    #[builder(default = MainAxisAlignment::Start)]
+    pub main_axis_alignment: MainAxisAlignment,
+    #[builder(default = MainAxisSize::Max)]
+    pub main_axis_size: MainAxisSize,
+    #[builder(default = CrossAxisAlignment::Center)]
+    pub cross_axis_alignment: CrossAxisAlignment,
+    #[builder(default = None, setter(strip_option))]
+    pub text_direction: Option<TextDirection>,
+    #[builder(default = VerticalDirection::Down)]
+    pub vertical_direction: VerticalDirection,
+    #[builder(
+        default = 0.0,
+        setter(transform = |spacing: f32| spacing.max(0.0))
+    )]
+    pub spacing: f32,
+}
+
+impl Default for Flex {
+    fn default() -> Self {
+        Self {
+            direction: Axis::Horizontal,
+            children: Vec::new(),
+            main_axis_alignment: MainAxisAlignment::Start,
+            main_axis_size: MainAxisSize::Max,
+            cross_axis_alignment: CrossAxisAlignment::Center,
+            text_direction: None,
+            vertical_direction: VerticalDirection::Down,
+            spacing: 0.0,
+        }
+    }
 }
 
 impl Flex {
@@ -279,12 +347,7 @@ impl Flex {
         Self {
             direction,
             children: children.into_iter().map(Into::into).collect(),
-            main_axis_alignment: MainAxisAlignment::Start,
-            main_axis_size: MainAxisSize::Max,
-            cross_axis_alignment: CrossAxisAlignment::Center,
-            text_direction: None,
-            vertical_direction: VerticalDirection::Down,
-            spacing: 0.0,
+            ..Self::default()
         }
     }
 
@@ -350,18 +413,24 @@ impl From<Flex> for Widget {
             cross_axis_alignment: value.cross_axis_alignment,
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
-            spacing: value.spacing,
+            spacing: value.spacing.max(0.0),
             children: value.children,
         })
     }
 }
 
 /// Allocates a proportional share of a bounded `Row` or `Column` main axis.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Flexible {
-    flex: u32,
-    fit: FlexFit,
-    child: Widget,
+    #[builder(
+        default = 1,
+        setter(transform = |flex: u32| flex.max(1))
+    )]
+    pub flex: u32,
+    #[builder(default = FlexFit::Loose)]
+    pub fit: FlexFit,
+    #[builder(setter(into))]
+    pub child: Widget,
 }
 
 impl Flexible {
@@ -410,7 +479,7 @@ impl Flexible {
 impl From<Flexible> for Widget {
     fn from(value: Flexible) -> Self {
         Widget::from_kind(WidgetKind::Flexible {
-            flex: value.flex,
+            flex: value.flex.max(1),
             fit: value.fit,
             child: Box::new(value.child),
         })
@@ -418,10 +487,15 @@ impl From<Flexible> for Widget {
 }
 
 /// A tight flexible child occupying its proportional share of available flex space.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Expanded {
-    flex: u32,
-    child: Widget,
+    #[builder(
+        default = 1,
+        setter(transform = |flex: u32| flex.max(1))
+    )]
+    pub flex: u32,
+    #[builder(setter(into))]
+    pub child: Widget,
 }
 
 impl Expanded {
@@ -454,7 +528,7 @@ impl Expanded {
 impl From<Expanded> for Widget {
     fn from(value: Expanded) -> Self {
         Widget::from_kind(WidgetKind::Flexible {
-            flex: value.flex,
+            flex: value.flex.max(1),
             fit: FlexFit::Tight,
             child: Box::new(value.child),
         })
@@ -462,9 +536,13 @@ impl From<Expanded> for Widget {
 }
 
 /// An empty flexible space on a flex axis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TypedBuilder)]
 pub struct Spacer {
-    flex: u32,
+    #[builder(
+        default = 1,
+        setter(transform = |flex: u32| flex.max(1))
+    )]
+    pub flex: u32,
 }
 
 impl Default for Spacer {
@@ -498,6 +576,142 @@ impl Spacer {
 
 impl From<Spacer> for Widget {
     fn from(value: Spacer) -> Self {
-        Expanded::new(SizedBox::shrink()).flex(value.flex).into()
+        Expanded::new(SizedBox::shrink())
+            .flex(value.flex.max(1))
+            .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_config::{
+        Axis, CrossAxisAlignment, FlexFit, MainAxisAlignment, MainAxisSize, TextDirection,
+        VerticalDirection,
+    };
+
+    #[test]
+    fn builders_match_explicit_defaults() {
+        assert_eq!(Row::builder().build(), Row::default());
+        assert_eq!(Column::builder().build(), Column::default());
+        assert_eq!(Flex::builder().build(), Flex::default());
+        assert_eq!(Spacer::builder().build(), Spacer::default());
+
+        let child = Widget::text("child");
+        assert_eq!(
+            Flexible::builder().child(child.clone()).build(),
+            Flexible::new(child.clone())
+        );
+        assert_eq!(
+            Expanded::builder().child(child.clone()).build(),
+            Expanded::new(child)
+        );
+    }
+
+    #[test]
+    fn builders_convert_widget_children_and_normalize_values() {
+        let row = Row::builder()
+            .children([SizedBox::shrink(), SizedBox::shrink()])
+            .spacing(-8.0)
+            .build();
+        assert_eq!(row.children.len(), 2);
+        assert_eq!(row.spacing, 0.0);
+
+        let column = Column::builder()
+            .children(vec![Widget::text("first"), Widget::text("second")])
+            .build();
+        assert_eq!(column.children.len(), 2);
+
+        let flexible = Flexible::builder()
+            .child(SizedBox::shrink())
+            .flex(0)
+            .fit(FlexFit::Tight)
+            .build();
+        assert_eq!(flexible.flex, 1);
+        assert_eq!(flexible.fit, FlexFit::Tight);
+
+        let expanded = Expanded::builder()
+            .child(SizedBox::shrink())
+            .flex(0)
+            .build();
+        assert_eq!(expanded.flex, 1);
+
+        assert_eq!(Spacer::builder().flex(0).build().flex, 1);
+    }
+
+    #[test]
+    fn builder_preserves_flex_lowering() {
+        let row = Row::builder()
+            .children([Widget::text("first"), Widget::text("second")])
+            .main_axis_alignment(MainAxisAlignment::SpaceEvenly)
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::End)
+            .text_direction(TextDirection::Rtl)
+            .vertical_direction(VerticalDirection::Up)
+            .spacing(12.0)
+            .build();
+
+        match Widget::from(row).kind {
+            WidgetKind::Flex {
+                axis,
+                main_axis_alignment,
+                main_axis_size,
+                cross_axis_alignment,
+                text_direction,
+                vertical_direction,
+                spacing,
+                children,
+            } => {
+                assert_eq!(axis, Axis::Horizontal);
+                assert_eq!(main_axis_alignment, MainAxisAlignment::SpaceEvenly);
+                assert_eq!(main_axis_size, MainAxisSize::Min);
+                assert_eq!(cross_axis_alignment, CrossAxisAlignment::End);
+                assert_eq!(text_direction, TextDirection::Rtl);
+                assert_eq!(vertical_direction, VerticalDirection::Up);
+                assert_eq!(spacing, 12.0);
+                assert_eq!(children.len(), 2);
+            }
+            _ => panic!("Row did not lower to a flex widget"),
+        }
+
+        let flex = Flex::builder()
+            .direction(Axis::Vertical)
+            .children([Widget::text("child")])
+            .build();
+        match Widget::from(flex).kind {
+            WidgetKind::Flex { axis, children, .. } => {
+                assert_eq!(axis, Axis::Vertical);
+                assert_eq!(children.len(), 1);
+            }
+            _ => panic!("Flex did not lower to a flex widget"),
+        }
+    }
+
+    #[test]
+    fn flexible_and_expanded_preserve_lowering() {
+        let flexible = Flexible::builder()
+            .child(Widget::text("flexible"))
+            .flex(3)
+            .fit(FlexFit::Loose)
+            .build();
+        match Widget::from(flexible).kind {
+            WidgetKind::Flexible { flex, fit, .. } => {
+                assert_eq!(flex, 3);
+                assert_eq!(fit, FlexFit::Loose);
+            }
+            _ => panic!("Flexible did not lower to a flexible widget"),
+        }
+
+        let expanded = Expanded::builder()
+            .child(Widget::text("expanded"))
+            .flex(2)
+            .build();
+        match Widget::from(expanded).kind {
+            WidgetKind::Flexible { flex, fit, .. } => {
+                assert_eq!(flex, 2);
+                assert_eq!(fit, FlexFit::Tight);
+            }
+            _ => panic!("Expanded did not lower to a flexible widget"),
+        }
     }
 }

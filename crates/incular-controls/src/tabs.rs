@@ -3,30 +3,40 @@
 use crate::{CompositeController, CompositeOrientation};
 use incular_widgets::Widget;
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default, setter(strip_option, into))]
     value: Option<String>,
+    #[builder(default)]
     orientation: CompositeOrientation,
+    #[builder(default = true)]
     automatic: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(String) + 'static>>
+            where
+                F: Fn(String) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change: Option<Rc<dyn Fn(String) + 'static>>,
 }
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            value: None,
-            orientation: CompositeOrientation::Horizontal,
-            automatic: true,
-            child: None,
-            on_change: None,
-        }
+        Self::builder().build()
     }
     #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -70,8 +80,9 @@ impl From<Root> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct List {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl List {
@@ -87,10 +98,13 @@ impl From<List> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Tab {
+    #[builder(setter(into))]
     value: String,
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default)]
     disabled: bool,
 }
 impl Tab {
@@ -121,8 +135,9 @@ impl From<Tab> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Panel {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Panel {
@@ -138,14 +153,15 @@ impl From<Panel> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Indicator {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 impl Indicator {
     #[must_use]
     pub fn new() -> Self {
-        Self { child: None }
+        Self::builder().build()
     }
     #[must_use]
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
@@ -155,7 +171,7 @@ impl Indicator {
 }
 impl Default for Indicator {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl From<Indicator> for Widget {
@@ -163,5 +179,53 @@ impl From<Indicator> for Widget {
         value
             .child
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builders_use_tabs_defaults() {
+        let root = Root::builder().build();
+        assert!(root.value.is_none());
+        assert_eq!(root.orientation, CompositeOrientation::Horizontal);
+        assert!(root.automatic);
+        assert!(root.child.is_none());
+        assert!(root.on_change.is_none());
+
+        let indicator = Indicator::builder().build();
+        assert!(indicator.child.is_none());
+    }
+
+    #[test]
+    fn builders_preserve_required_parts_and_widget_composition() {
+        let root = Root::builder()
+            .value("overview")
+            .orientation(CompositeOrientation::Vertical)
+            .automatic(false)
+            .child(Text::new("Tabs"))
+            .on_change(|_| {})
+            .build();
+        assert_eq!(root.orientation, CompositeOrientation::Vertical);
+        assert!(!root.automatic);
+        assert!(root.child.is_some());
+        assert!(root.on_change.is_some());
+        assert_eq!(
+            root.navigation().orientation(),
+            CompositeOrientation::Vertical
+        );
+
+        let list = List::builder().child(Text::new("List")).build();
+        let tab = Tab::builder()
+            .value("overview")
+            .child(Text::new("Overview"))
+            .build();
+        let panel = Panel::builder().child(Text::new("Panel")).build();
+        let _: Widget = list.into();
+        let _: Widget = tab.into();
+        let _: Widget = panel.into();
     }
 }

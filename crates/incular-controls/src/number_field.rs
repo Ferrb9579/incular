@@ -1,31 +1,32 @@
 //! Number-field constraints and anatomy.
 use incular_widgets::Widget;
 use std::rc::Rc;
-#[derive(Clone)]
+use typed_builder::TypedBuilder;
+
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default = 0.)]
     value: f64,
+    #[builder(default, setter(strip_option))]
     min: Option<f64>,
+    #[builder(default, setter(strip_option))]
     max: Option<f64>,
+    #[builder(default = 1., setter(transform = |value: f64| value.abs().max(f64::EPSILON)))]
     step: f64,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(skip))]
     on_change: Option<Rc<dyn Fn(f64) + 'static>>,
 }
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            value: 0.,
-            min: None,
-            max: None,
-            step: 1.,
-            child: None,
-            on_change: None,
-        }
+        Self::default()
     }
     #[must_use]
     pub fn value(mut self, value: f64) -> Self {
@@ -72,16 +73,15 @@ impl From<Root> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Group {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Group {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 }
 impl From<Group> for Widget {
@@ -89,16 +89,15 @@ impl From<Group> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Input {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Input {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 }
 impl From<Input> for Widget {
@@ -106,16 +105,15 @@ impl From<Input> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Increment {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Increment {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 }
 impl From<Increment> for Widget {
@@ -123,20 +121,60 @@ impl From<Increment> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Decrement {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Decrement {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 }
 impl From<Decrement> for Widget {
     fn from(value: Decrement) -> Self {
         value.child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builders_use_explicit_defaults_and_widget_children() {
+        let default = Root::builder().build();
+        assert_eq!(default.value, 0.);
+        assert!(default.min.is_none());
+        assert!(default.max.is_none());
+        assert_eq!(default.step, 1.);
+        assert!(default.child.is_none());
+        assert!(default.on_change.is_none());
+
+        let root = Root::builder()
+            .value(4.)
+            .min(1.)
+            .max(8.)
+            .step(-2.)
+            .child(Text::new("number"))
+            .build();
+        assert_eq!(root.value, 4.);
+        assert_eq!(root.min, Some(1.));
+        assert_eq!(root.max, Some(8.));
+        assert_eq!(root.step, 2.);
+        assert!(root.child.is_some());
+
+        let _: Widget = Group::builder().child(Text::new("group")).build().into();
+        let _: Widget = Input::builder().child(Text::new("input")).build().into();
+        let _: Widget = Increment::builder()
+            .child(Text::new("increment"))
+            .build()
+            .into();
+        let _: Widget = Decrement::builder()
+            .child(Text::new("decrement"))
+            .build()
+            .into();
     }
 }

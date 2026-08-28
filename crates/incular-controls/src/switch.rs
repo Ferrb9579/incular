@@ -8,45 +8,55 @@ use incular_widgets::{
     internal::{ActionSurface, ExplicitSemantics},
 };
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
-    checked: bool,
+    #[builder(default)]
     default_checked: bool,
+    #[builder(default = *default_checked)]
+    checked: bool,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     read_only: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     active_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     active_thumb_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_thumb_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     outline_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     outline_width: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            checked: false,
-            default_checked: false,
-            enabled: true,
-            read_only: false,
-            child: None,
-            active_track_color: None,
-            inactive_track_color: None,
-            active_thumb_color: None,
-            inactive_thumb_color: None,
-            outline_color: None,
-            outline_width: None,
-            on_change: None,
-        }
+        Self::default()
     }
     #[must_use]
     pub fn checked(mut self, value: bool) -> Self {
@@ -184,19 +194,20 @@ impl From<Root> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Thumb {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 impl Default for Thumb {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Thumb {
     #[must_use]
     pub fn new() -> Self {
-        Self { child: None }
+        Self::default()
     }
     #[must_use]
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
@@ -209,5 +220,35 @@ impl From<Thumb> for Widget {
         value
             .child
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn anatomy_builders_keep_switch_defaults_and_generic_children() {
+        let root = Root::builder().child(Text::new("Toggle")).build();
+        assert!(!root.checked);
+        assert!(!root.default_checked);
+        assert!(root.enabled);
+        assert!(!root.read_only);
+        assert!(root.child.is_some());
+        assert!(root.on_change.is_none());
+
+        let default_checked = Root::builder().default_checked(true).build();
+        assert!(default_checked.checked);
+        assert!(default_checked.default_checked);
+
+        let thumb = Thumb::builder().child(Text::new("thumb")).build();
+        assert!(thumb.child.is_some());
+    }
+
+    #[test]
+    fn anatomy_compatibility_constructors_use_builder_defaults() {
+        assert!(Root::new().is_checked() == Root::default().is_checked());
+        assert!(Thumb::new().child.is_none());
     }
 }

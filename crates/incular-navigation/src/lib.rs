@@ -16,6 +16,7 @@ use incular_widgets::internal::{OpacityController, TranslationController};
 use incular_widgets::{FadeTransition, SlideTransition, Widget};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use typed_builder::TypedBuilder;
 
 /// Stable identity for a route in a [`Navigator`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -362,9 +363,12 @@ pub struct NavigationRestoreReport {
 ///
 /// Unlike [`Route`], a page has no runtime identity, allowing the same page
 /// description to be placed in multiple navigators.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_type(name = PageDescriptorBuilder))]
 pub struct Page {
+    #[builder(setter(into))]
     pub name: String,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -567,13 +571,22 @@ impl Page {
 }
 
 /// A declarative route: an application name and the widget it displays.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Route {
+    /// Session-local identity assigned by [`Navigator::push`].
+    #[builder(default = RouteId(0), setter(skip))]
     pub id: RouteId,
+    #[builder(setter(into))]
     pub name: String,
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default = RouteTransition::None)]
     pub transition: RouteTransition,
+    /// Route metadata is initialized from `name` and can be changed through
+    /// [`Route::settings`], which keeps the legacy name mirror synchronized.
+    #[builder(default = RouteSettings::new((*name).clone()), setter(skip))]
     pub settings: RouteSettings,
+    #[builder(default)]
     pub presentation: RoutePresentation,
 }
 
@@ -707,34 +720,59 @@ impl Route {
 }
 
 /// Ergonomic builder for a page route with a custom transition.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_type(name = PageRouteDescriptorBuilder))]
 pub struct PageRouteBuilder {
-    route: Route,
+    #[builder(setter(into))]
+    name: String,
+    #[builder(setter(into))]
+    child: Widget,
+    #[builder(default = RouteTransition::None)]
+    transition: RouteTransition,
+    #[builder(default)]
+    presentation: RoutePresentation,
+    #[builder(default = RouteSettings::new((*name).clone()), setter(skip))]
+    settings: RouteSettings,
 }
 
 impl PageRouteBuilder {
     #[must_use]
     pub fn new(name: impl Into<String>, child: impl Into<Widget>) -> Self {
+        let name = name.into();
         Self {
-            route: Route::new(name, child),
+            settings: RouteSettings::new(name.clone()),
+            name,
+            child: child.into(),
+            transition: RouteTransition::None,
+            presentation: RoutePresentation::default(),
         }
     }
 
     #[must_use]
     pub fn settings(mut self, settings: RouteSettings) -> Self {
-        self.route = self.route.settings(settings);
+        self.name = settings.name.clone();
+        self.settings = settings;
+        self
+    }
+
+    #[must_use]
+    pub fn presentation(mut self, presentation: RoutePresentation) -> Self {
+        self.presentation = presentation;
         self
     }
 
     #[must_use]
     pub fn transition(mut self, transition: RouteTransition) -> Self {
-        self.route = self.route.transition(transition);
+        self.transition = transition;
         self
     }
 
     #[must_use]
     pub fn build(self) -> Route {
-        self.route
+        Route::new(self.name, self.child)
+            .settings(self.settings)
+            .transition(self.transition)
+            .presentation(self.presentation)
     }
 }
 impl From<Page> for Route {
@@ -1516,10 +1554,13 @@ impl BackDispatcher {
 }
 
 /// Modal overlay configuration. The barrier is input-blocking by default.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, TypedBuilder)]
 pub struct ModalBarrier {
+    #[builder(default = Color::rgba(0, 0, 0, 128))]
     pub color: Color,
+    #[builder(default = true)]
     pub dismissible: bool,
+    #[builder(default, setter(strip_option, into))]
     pub label: Option<String>,
 }
 impl Default for ModalBarrier {
@@ -1533,9 +1574,11 @@ impl Default for ModalBarrier {
 }
 
 /// An entry in painter-ordered overlay state.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct OverlayEntry {
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default, setter(strip_option))]
     pub barrier: Option<ModalBarrier>,
 }
 impl OverlayEntry {
@@ -1566,9 +1609,11 @@ impl OverlayEntry {
 }
 
 /// A modal dialog presentation owned by application overlay state.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Dialog {
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default)]
     pub barrier: ModalBarrier,
 }
 impl Dialog {
@@ -1591,9 +1636,11 @@ impl Dialog {
 }
 
 /// A modal bottom-sheet presentation. Positioning remains a widget concern.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct BottomSheet {
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default)]
     pub barrier: ModalBarrier,
 }
 impl BottomSheet {
@@ -1668,6 +1715,7 @@ impl Overlay {
 mod tests {
     use super::*;
     use incular_core::Size;
+    use incular_widgets::Text;
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
 
@@ -1689,6 +1737,41 @@ mod tests {
         assert_eq!(settings.name(), "/editor");
         assert_eq!(settings.arguments::<Args>().unwrap(), Args { document: 7 });
         assert_eq!(settings.restoration_scope_key(), Some(&scope));
+    }
+
+    #[test]
+    fn declarative_navigation_builders_accept_generic_widgets() {
+        let page = Page::builder()
+            .name("home")
+            .child(Text::new("Home"))
+            .build();
+        let entry = OverlayEntry::builder().child(Text::new("Overlay")).build();
+        let dialog = Dialog::builder().child(Text::new("Dialog")).build();
+        let sheet = BottomSheet::builder()
+            .child(Text::new("Bottom sheet"))
+            .build();
+        let barrier = ModalBarrier::builder().build();
+        let route = Route::builder()
+            .name("route")
+            .child(Text::new("Route"))
+            .build();
+        let page_route = PageRouteBuilder::builder()
+            .name("settings")
+            .child(Text::new("Settings"))
+            .presentation(RoutePresentation::popup(None))
+            .build()
+            .settings(RouteSettings::new("renamed"))
+            .build();
+
+        assert_eq!(page.name, "home");
+        assert!(!entry.blocks_background_input());
+        assert!(dialog.barrier.dismissible);
+        assert!(sheet.barrier.dismissible);
+        assert_eq!(barrier.color, Color::rgba(0, 0, 0, 128));
+        assert_eq!(route.settings.name(), "route");
+        assert_eq!(page_route.name, "renamed");
+        assert_eq!(page_route.settings.name(), "renamed");
+        assert!(!page_route.presentation.is_opaque());
     }
 
     #[test]

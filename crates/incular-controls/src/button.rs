@@ -7,46 +7,84 @@ use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState}
 use incular_widgets::internal::{ActionSurface, DropShadow, ExplicitSemantics};
 use incular_widgets::{Align, Border, BorderRadius, BoxDecoration, Container, Text, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 /// Platform-neutral styled push button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Button {
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default)]
     style: ButtonStyle,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     focusable_when_disabled: bool,
+    #[builder(default)]
     loading: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_click: Option<Rc<dyn Fn() + 'static>>,
 }
 
-impl Button {
-    /// Creates a button with a text label.
-    #[must_use]
-    pub fn new(label: impl Into<String>) -> Self {
+impl Default for Button {
+    fn default() -> Self {
         Self {
-            label: Some(label.into()),
+            label: None,
             child: None,
-            style: ButtonStyle::new(),
+            style: ButtonStyle::default(),
             enabled: true,
             focusable_when_disabled: false,
             loading: false,
             on_click: None,
         }
     }
+}
+
+impl Button {
+    /// Creates a button with a text label.
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        Self::builder().label(label).build()
+    }
 
     /// Creates a button with a custom child widget.
     #[must_use]
     pub fn with_child(child: impl Into<Widget>) -> Self {
-        Self {
-            label: None,
-            child: Some(child.into()),
-            style: ButtonStyle::new(),
-            enabled: true,
-            focusable_when_disabled: false,
-            loading: false,
-            on_click: None,
-        }
+        Self::builder().child(child).build()
+    }
+
+    /// Replaces the button's text label and clears any custom child.
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self.child = None;
+        self
+    }
+
+    /// Replaces the button's content with an arbitrary widget.
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self.label = None;
+        self
+    }
+
+    /// Content-oriented alias for [`Button::child`].
+    #[must_use]
+    pub fn content(self, content: impl Into<Widget>) -> Self {
+        self.child(content)
     }
 
     /// Sets the button visual variant.
@@ -133,7 +171,11 @@ impl Button {
             .style
             .padding
             .unwrap_or_else(|| theme.density.padding());
-        let height = self.style.height.unwrap_or(theme.button.height);
+        let fixed_size = self.style.fixed_size;
+        let height = fixed_size
+            .map(|size| size.height)
+            .or(self.style.height)
+            .unwrap_or(theme.button.height);
         let elevation = self.style.resolve_elevation(state, theme);
 
         let mut content: Widget = if let Some(label) = self.label.as_ref() {
@@ -190,20 +232,21 @@ impl Button {
             content
         };
 
+        let mut decoration = BoxDecoration::new().border_radius(BorderRadius::circular(radius));
+        if has_visible_border(&border) {
+            decoration = decoration.border(border);
+        }
+        // The retained action surface owns the state-aware surface. Keep this
+        // wrapper free of a second background/border so focus rings remain a
+        // separate interaction layer instead of becoming decoration.
         let mut decorated = Container::new()
             .height(height)
             .padding(padding)
-            .decoration(
-                BoxDecoration::new()
-                    // The retained action surface owns the state-aware surface;
-                    // keeping this wrapper transparent lets hover/pressed
-                    // paint updates remain visible instead of being covered
-                    // by a second opaque decoration.
-                    .color(Color::TRANSPARENT)
-                    .border(border)
-                    .border_radius(BorderRadius::circular(radius)),
-            )
+            .decoration(decoration)
             .child(content);
+        if let Some(size) = fixed_size {
+            decorated = decorated.width(size.width);
+        }
         if !shrink_wrap {
             decorated = decorated.alignment(self.style.alignment.unwrap_or(Alignment::CENTER));
         }
@@ -284,6 +327,12 @@ fn blend_overlay(base: Color, overlay: Color) -> Color {
     )
 }
 
+fn has_visible_border(border: &Border) -> bool {
+    [border.top, border.right, border.bottom, border.left]
+        .into_iter()
+        .any(|side| side.width > 0.0 && side.color.alpha > 0)
+}
+
 impl From<Button> for Widget {
     fn from(value: Button) -> Self {
         let value = Rc::new(value);
@@ -296,173 +345,432 @@ impl From<Button> for Widget {
 }
 
 /// Primary high-emphasis action button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct PrimaryButton {
-    inner: Button,
+    #[builder(default, setter(strip_option, into))]
+    label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
+    #[builder(default = ButtonStyle::new().variant(ButtonVariant::Primary))]
+    style: ButtonStyle,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default)]
+    focusable_when_disabled: bool,
+    #[builder(default)]
+    loading: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_click: Option<Rc<dyn Fn() + 'static>>,
+}
+
+impl Default for PrimaryButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl PrimaryButton {
     #[must_use]
     pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            inner: Button::new(label).variant(ButtonVariant::Primary),
-        }
+        Self::builder().label(label).build()
     }
 
     #[must_use]
     pub fn with_child(child: impl Into<Widget>) -> Self {
-        Self {
-            inner: Button::with_child(child).variant(ButtonVariant::Primary),
-        }
+        Self::builder().child(child).build()
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self.child = None;
+        self
+    }
+
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self.label = None;
+        self
+    }
+
+    #[must_use]
+    pub fn content(self, content: impl Into<Widget>) -> Self {
+        self.child(content)
     }
 
     #[must_use]
     pub fn style(mut self, style: ButtonStyle) -> Self {
-        self.inner = self.inner.style(style);
+        self.style = style;
         self
     }
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.inner = self.inner.enabled(enabled);
+        self.enabled = enabled;
         self
     }
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.inner = self.inner.on_click(callback);
+        self.on_click = Some(Rc::new(callback));
         self
     }
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.inner = self.inner.focusable_when_disabled(value);
+        self.focusable_when_disabled = value;
         self
     }
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.inner = self.inner.loading(value);
+        self.loading = value;
         self
+    }
+
+    fn into_button(self) -> Button {
+        Button {
+            label: self.label,
+            child: self.child,
+            style: self.style,
+            enabled: self.enabled,
+            focusable_when_disabled: self.focusable_when_disabled,
+            loading: self.loading,
+            on_click: self.on_click,
+        }
     }
 }
 
 impl From<PrimaryButton> for Widget {
     fn from(value: PrimaryButton) -> Self {
-        value.inner.into()
+        value.into_button().into()
     }
 }
 
 /// Ghost/flat button for toolbars and lightweight actions.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct GhostButton {
-    inner: Button,
+    #[builder(default, setter(strip_option, into))]
+    label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
+    #[builder(default = ButtonStyle::new().variant(ButtonVariant::Ghost))]
+    style: ButtonStyle,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default)]
+    focusable_when_disabled: bool,
+    #[builder(default)]
+    loading: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_click: Option<Rc<dyn Fn() + 'static>>,
+}
+
+impl Default for GhostButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl GhostButton {
     #[must_use]
     pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            inner: Button::new(label).variant(ButtonVariant::Ghost),
-        }
+        Self::builder().label(label).build()
     }
 
     #[must_use]
     pub fn with_child(child: impl Into<Widget>) -> Self {
-        Self {
-            inner: Button::with_child(child).variant(ButtonVariant::Ghost),
-        }
+        Self::builder().child(child).build()
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self.child = None;
+        self
+    }
+
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self.label = None;
+        self
+    }
+
+    #[must_use]
+    pub fn content(self, content: impl Into<Widget>) -> Self {
+        self.child(content)
     }
 
     #[must_use]
     pub fn style(mut self, style: ButtonStyle) -> Self {
-        self.inner = self.inner.style(style);
+        self.style = style;
         self
     }
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.inner = self.inner.enabled(enabled);
+        self.enabled = enabled;
         self
     }
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.inner = self.inner.on_click(callback);
+        self.on_click = Some(Rc::new(callback));
         self
     }
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.inner = self.inner.focusable_when_disabled(value);
+        self.focusable_when_disabled = value;
         self
     }
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.inner = self.inner.loading(value);
+        self.loading = value;
         self
+    }
+
+    fn into_button(self) -> Button {
+        Button {
+            label: self.label,
+            child: self.child,
+            style: self.style,
+            enabled: self.enabled,
+            focusable_when_disabled: self.focusable_when_disabled,
+            loading: self.loading,
+            on_click: self.on_click,
+        }
     }
 }
 
 impl From<GhostButton> for Widget {
     fn from(value: GhostButton) -> Self {
-        value.inner.into()
+        value.into_button().into()
     }
 }
 
 /// Compact square icon button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct IconButton {
-    inner: Button,
+    #[builder(default, setter(strip_option, into))]
+    label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
+    #[builder(
+        default = ButtonStyle::new()
+            .variant(ButtonVariant::Ghost)
+            .padding(EdgeInsets::all(4.0))
+            .height(28.0)
+    )]
+    style: ButtonStyle,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default)]
+    focusable_when_disabled: bool,
+    #[builder(default)]
+    loading: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_click: Option<Rc<dyn Fn() + 'static>>,
+}
+
+impl Default for IconButton {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl IconButton {
     #[must_use]
     pub fn new(icon: impl Into<String>) -> Self {
-        Self {
-            inner: Button::new(icon).variant(ButtonVariant::Ghost).style(
-                ButtonStyle::new()
-                    .padding(EdgeInsets::all(4.0))
-                    .height(28.0),
-            ),
-        }
+        Self::builder().label(icon).build()
     }
 
     #[must_use]
     pub fn with_child(child: impl Into<Widget>) -> Self {
-        Self {
-            inner: Button::with_child(child)
-                .variant(ButtonVariant::Ghost)
-                .style(
-                    ButtonStyle::new()
-                        .padding(EdgeInsets::all(4.0))
-                        .height(28.0),
-                ),
-        }
+        Self::builder().child(child).build()
+    }
+
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self.child = None;
+        self
+    }
+
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
+        self.label = None;
+        self
+    }
+
+    #[must_use]
+    pub fn content(self, content: impl Into<Widget>) -> Self {
+        self.child(content)
     }
 
     #[must_use]
     pub fn style(mut self, style: ButtonStyle) -> Self {
-        self.inner = self.inner.style(style);
+        self.style = style;
         self
     }
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.inner = self.inner.enabled(enabled);
+        self.enabled = enabled;
         self
     }
     #[must_use]
     pub fn on_click(mut self, callback: impl Fn() + 'static) -> Self {
-        self.inner = self.inner.on_click(callback);
+        self.on_click = Some(Rc::new(callback));
         self
     }
     #[must_use]
     pub fn focusable_when_disabled(mut self, value: bool) -> Self {
-        self.inner = self.inner.focusable_when_disabled(value);
+        self.focusable_when_disabled = value;
         self
     }
     #[must_use]
     pub fn loading(mut self, value: bool) -> Self {
-        self.inner = self.inner.loading(value);
+        self.loading = value;
         self
+    }
+
+    fn into_button(self) -> Button {
+        Button {
+            label: self.label,
+            child: self.child,
+            style: self.style,
+            enabled: self.enabled,
+            focusable_when_disabled: self.focusable_when_disabled,
+            loading: self.loading,
+            on_click: self.on_click,
+        }
     }
 }
 
 impl From<IconButton> for Widget {
     fn from(value: IconButton) -> Self {
-        value.inner.into()
+        value.into_button().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_config::Constraints;
+    use incular_core::Size;
+    use incular_rendering::PaintCommand;
+    use incular_widgets::internal::WidgetTree;
+
+    #[test]
+    fn button_builder_defaults_and_accepts_generic_children() {
+        let default = Button::default();
+        let built = Button::builder().build();
+
+        assert!(default.label.is_none());
+        assert!(default.child.is_none());
+        assert_eq!(default.style, built.style);
+        assert!(built.enabled);
+        assert!(!built.focusable_when_disabled);
+        assert!(!built.loading);
+        assert!(built.on_click.is_none());
+
+        let button = Button::builder()
+            .child(Text::new("Save"))
+            .enabled(false)
+            .on_click(|| ())
+            .build();
+        assert!(button.label.is_none());
+        assert!(button.child.is_some());
+        assert!(!button.enabled);
+        assert!(button.on_click.is_some());
+    }
+
+    #[test]
+    fn specialized_button_builders_keep_variant_presets() {
+        let primary = PrimaryButton::builder()
+            .child(Text::new("Save"))
+            .on_click(|| ())
+            .build();
+        assert_eq!(primary.style.variant, ButtonVariant::Primary);
+        assert!(primary.child.is_some());
+
+        let ghost = GhostButton::builder().label("Cancel").build();
+        assert_eq!(ghost.style.variant, ButtonVariant::Ghost);
+        assert_eq!(ghost.label.as_deref(), Some("Cancel"));
+
+        let icon = IconButton::builder().build();
+        assert_eq!(icon.style.variant, ButtonVariant::Ghost);
+        assert_eq!(icon.style.padding, Some(EdgeInsets::all(4.0)));
+        assert_eq!(icon.style.height, Some(28.0));
+
+        let _: Widget = PrimaryButton::builder().label("Save").build().into();
+        let _: Widget = GhostButton::builder().label("Cancel").build().into();
+        let _: Widget = IconButton::builder().label("Close").build().into();
+    }
+
+    #[test]
+    fn button_defaults_shrink_wrap_and_fixed_size_is_honored() {
+        let mut tree = WidgetTree::new();
+        let root = tree.mount(Button::new("OK").into()).unwrap();
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        let size = tree.render_size(tree.render_id(root).unwrap()).unwrap();
+        assert!(size.width > 0.0 && size.width < 400.0);
+        assert_eq!(size.height, 32.0);
+
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                Button::new("OK")
+                    .style(ButtonStyle::new().fixed_size(Size::new(180.0, 48.0)))
+                    .into(),
+            )
+            .unwrap();
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        let size = tree.render_size(tree.render_id(root).unwrap()).unwrap();
+        assert_eq!(size, Size::new(180.0, 48.0));
+    }
+
+    #[test]
+    fn primary_button_has_no_decorative_default_border() {
+        let mut tree = WidgetTree::new();
+        let root = tree.mount(PrimaryButton::new("Save").into()).unwrap();
+        tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        let _ = tree.render_id(root).unwrap();
+        let list = tree.paint();
+
+        assert!(
+            !list
+                .commands()
+                .iter()
+                .any(|command| matches!(command, PaintCommand::Border { .. }))
+        );
+        assert!(!has_visible_border(&Border::new(0.0, Color::TRANSPARENT)));
+        assert!(has_visible_border(&Border::new(1.0, Color::WHITE)));
     }
 }

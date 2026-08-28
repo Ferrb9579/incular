@@ -9,6 +9,7 @@
 
 use incular_core::Color;
 use std::time::Duration;
+use typed_builder::TypedBuilder;
 
 /// Selects which theme a Material application follows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -325,11 +326,15 @@ pub enum ScriptCategory {
 }
 
 /// A named timing curve represented by its cubic-bezier control points.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct EasingCurve {
+    #[builder(setter(into))]
     pub x1: f32,
+    #[builder(setter(into))]
     pub y1: f32,
+    #[builder(setter(into))]
     pub x2: f32,
+    #[builder(setter(into))]
     pub y2: f32,
 }
 
@@ -376,9 +381,11 @@ impl Durations {
 }
 
 /// A Material swatch with a primary color and optional numeric shades.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TypedBuilder)]
 pub struct MaterialColor {
+    #[builder(setter(into))]
     pub primary: Color,
+    #[builder(setter(into))]
     pub shades: [Color; 10],
 }
 

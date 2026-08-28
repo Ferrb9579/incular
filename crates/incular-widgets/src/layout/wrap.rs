@@ -1,27 +1,47 @@
 //! Flutter-style multi-run Wrap layout descriptor.
 
 use incular_config::{Axis, TextDirection, VerticalDirection, WrapAlignment, WrapCrossAlignment};
+use typed_builder::TypedBuilder;
 
 use crate::{Widget, WidgetKind};
 
 /// A multi-run layout widget that places children sequentially, wrapping onto
 /// new runs when exceeding available main-axis extent.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Wrap {
+    #[builder(default, setter(into))]
     children: Vec<Widget>,
+    #[builder(default = Axis::Horizontal)]
     direction: Axis,
+    #[builder(default = WrapAlignment::Start)]
     alignment: WrapAlignment,
+    #[builder(default, setter(transform = |spacing: f32| spacing.max(0.0)))]
     spacing: f32,
+    #[builder(default = WrapAlignment::Start)]
     run_alignment: WrapAlignment,
+    #[builder(default, setter(transform = |spacing: f32| spacing.max(0.0)))]
     run_spacing: f32,
+    #[builder(default = WrapCrossAlignment::Start)]
     cross_axis_alignment: WrapCrossAlignment,
+    #[builder(default, setter(strip_option))]
     text_direction: Option<TextDirection>,
+    #[builder(default = VerticalDirection::Down)]
     vertical_direction: VerticalDirection,
 }
 
 impl Default for Wrap {
     fn default() -> Self {
-        Self::new(Vec::<Widget>::new())
+        Self {
+            children: Vec::new(),
+            direction: Axis::Horizontal,
+            alignment: WrapAlignment::Start,
+            spacing: 0.0,
+            run_alignment: WrapAlignment::Start,
+            run_spacing: 0.0,
+            cross_axis_alignment: WrapCrossAlignment::Start,
+            text_direction: None,
+            vertical_direction: VerticalDirection::Down,
+        }
     }
 }
 
@@ -31,14 +51,7 @@ impl Wrap {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
-            direction: Axis::Horizontal,
-            alignment: WrapAlignment::Start,
-            spacing: 0.0,
-            run_alignment: WrapAlignment::Start,
-            run_spacing: 0.0,
-            cross_axis_alignment: WrapCrossAlignment::Start,
-            text_direction: None,
-            vertical_direction: VerticalDirection::Down,
+            ..Self::default()
         }
     }
 
@@ -127,5 +140,65 @@ impl From<Wrap> for Widget {
             vertical_direction: value.vertical_direction,
             children: value.children,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_builder_defaults_match_default() {
+        assert_eq!(Wrap::builder().build(), Wrap::default());
+    }
+
+    #[test]
+    fn wrap_builder_preserves_normalization_and_lowering() {
+        let wrap = Wrap::builder()
+            .children(vec![Widget::text("child")])
+            .direction(Axis::Vertical)
+            .alignment(WrapAlignment::Center)
+            .spacing(-2.0)
+            .run_alignment(WrapAlignment::SpaceBetween)
+            .run_spacing(-4.0)
+            .cross_axis_alignment(WrapCrossAlignment::End)
+            .text_direction(TextDirection::Rtl)
+            .vertical_direction(VerticalDirection::Up)
+            .build();
+
+        let WidgetKind::Wrap {
+            axis,
+            alignment,
+            spacing,
+            run_alignment,
+            run_spacing,
+            cross_axis_alignment,
+            text_direction,
+            vertical_direction,
+            children,
+        } = Widget::from(wrap).kind
+        else {
+            panic!("expected Wrap widget kind")
+        };
+
+        assert_eq!(axis, Axis::Vertical);
+        assert_eq!(alignment, WrapAlignment::Center);
+        assert_eq!(spacing, 0.0);
+        assert_eq!(run_alignment, WrapAlignment::SpaceBetween);
+        assert_eq!(run_spacing, 0.0);
+        assert_eq!(cross_axis_alignment, WrapCrossAlignment::End);
+        assert_eq!(text_direction, TextDirection::Rtl);
+        assert_eq!(vertical_direction, VerticalDirection::Up);
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn constructor_accepts_arbitrary_widget_descriptors() {
+        let wrap = Wrap::new([crate::Text::new("child")]);
+        let WidgetKind::Wrap { children, .. } = Widget::from(wrap).kind else {
+            panic!("expected Wrap widget kind")
+        };
+
+        assert_eq!(children.len(), 1);
     }
 }

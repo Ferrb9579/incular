@@ -4,6 +4,7 @@
 use crate::ControlTheme;
 use incular_widgets::{Container, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Orientation {
@@ -12,25 +13,28 @@ pub enum Orientation {
     Vertical,
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Separator {
+    #[builder(default = Orientation::Horizontal)]
     orientation: Orientation,
+    #[builder(default = 1., setter(transform = |thickness: f32| thickness.max(0.)))]
     thickness: f32,
+    #[builder(default)]
     decorative: bool,
 }
 impl Default for Separator {
     fn default() -> Self {
-        Self::new()
-    }
-}
-impl Separator {
-    #[must_use]
-    pub fn new() -> Self {
         Self {
             orientation: Orientation::Horizontal,
             thickness: 1.,
             decorative: false,
         }
+    }
+}
+impl Separator {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
     #[must_use]
     pub fn orientation(mut self, value: Orientation) -> Self {
@@ -74,5 +78,35 @@ impl From<Separator> for Widget {
                 .unwrap_or_default();
             value.build(&theme)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_defaults_match_new() {
+        let new = Separator::new();
+        let built = Separator::builder().build();
+
+        assert_eq!(new.orientation, Orientation::Horizontal);
+        assert_eq!(new.orientation, built.orientation);
+        assert_eq!(new.thickness, 1.);
+        assert_eq!(new.thickness, built.thickness);
+        assert!(!new.decorative && !built.decorative);
+    }
+
+    #[test]
+    fn builder_preserves_orientation_and_thickness_behavior() {
+        let separator = Separator::builder()
+            .orientation(Orientation::Vertical)
+            .thickness(-2.)
+            .decorative(true)
+            .build();
+
+        assert_eq!(separator.orientation, Orientation::Vertical);
+        assert_eq!(separator.thickness, 0.);
+        assert!(separator.decorative);
     }
 }

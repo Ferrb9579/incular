@@ -7,6 +7,22 @@ They remain registered with the `incular` package and can be run with:
 cargo run -p incular --example counter
 ```
 
+The API-focused examples demonstrate both construction styles:
+
+- `core_defaults` uses `Container::new()` with fluent setters alongside
+  `Container::builder()` and explicit defaults.
+- `widget_basics.rs` shows a generic `Container` child containing `Text`, a
+  feature-gated Controls button, and a feature-gated Material action surface.
+- `counter` keeps its increment surface compact: the raw Material hit target
+  has a transparent interaction layer, while the visible child owns its color
+  and padding without an extra border or focus ring.
+
+The facade exposes optional imports through `incular::controls_prelude` and
+`incular::material_prelude`; both are available only when their corresponding
+features are enabled. Generic children are ordinary `Widget` values, so a
+builder can accept `Text`, controls, and Material components through
+`Into<Widget>`.
+
 The newer visual integration galleries are:
 
 - `canvas_layers` — direct `Canvas` commands, clips, transforms, generated

@@ -24,6 +24,7 @@ use incular_widgets::{
     Border, BorderRadius, BoxDecoration, Column, Container, GestureDetector, HitTestBehavior,
     ListView, Positioned, Row, SizedBox, Stack, Text, Widget,
 };
+use typed_builder::TypedBuilder;
 
 type DropdownValidator<T> = Rc<dyn Fn(Option<&T>) -> Option<String> + 'static>;
 type DropdownSaved<T> = Rc<dyn Fn(Option<&T>) + 'static>;
@@ -33,19 +34,31 @@ type DropdownSaved<T> = Rc<dyn Fn(Option<&T>) + 'static>;
 /// This mirrors Flutter's `MenuStyle` property surface while using the shared
 /// `StateValue` resolver from `incular-controls`.  The fields remain sparse so
 /// component themes can be merged without replacing unrelated defaults.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct MenuStyle {
+    #[builder(default, setter(strip_option, into))]
     pub background_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub shadow_color: Option<StateValue<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub surface_tint_color: Option<StateValue<Color>>,
+    #[builder(default, setter(transform = |value: impl Into<StateValue<f32>>| Some(value.into())))]
     pub elevation: Option<StateValue<f32>>,
+    #[builder(default, setter(strip_option))]
     pub padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     pub minimum_size: Option<Size>,
+    #[builder(default, setter(strip_option))]
     pub fixed_size: Option<Size>,
+    #[builder(default, setter(strip_option))]
     pub maximum_size: Option<Size>,
+    #[builder(default, setter(strip_option, into))]
     pub side: Option<StateValue<Border>>,
+    #[builder(default, setter(strip_option, into))]
     pub shape: Option<StateValue<BorderRadius>>,
+    #[builder(default, setter(strip_option, into))]
     pub mouse_cursor: Option<String>,
+    #[builder(default, setter(strip_option))]
     pub alignment: Option<Alignment>,
 }
 
@@ -222,9 +235,11 @@ impl MenuStyle {
 }
 
 /// Theme data for `MenuAnchor`, `MenuItemButton`, and `SubmenuButton`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct MenuThemeData {
+    #[builder(default, setter(strip_option))]
     pub style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub submenu_icon: Option<StateValue<Widget>>,
 }
 
@@ -260,20 +275,33 @@ impl MenuThemeData {
 }
 
 /// Theme data for `PopupMenuButton` and popup menu entries.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct PopupMenuThemeData {
+    #[builder(default, setter(strip_option))]
     pub color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub shape: Option<BorderRadius>,
+    #[builder(default, setter(strip_option))]
     pub menu_padding: Option<EdgeInsets>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     pub elevation: Option<f32>,
+    #[builder(default, setter(strip_option))]
     pub shadow_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub surface_tint_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub label_text_style: Option<StateValue<TextStyle>>,
+    #[builder(default, setter(strip_option))]
     pub enable_feedback: Option<bool>,
+    #[builder(default, setter(strip_option, into))]
     pub mouse_cursor: Option<String>,
+    #[builder(default, setter(strip_option))]
     pub position: Option<PopupMenuPosition>,
+    #[builder(default, setter(strip_option))]
     pub icon_color: Option<Color>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     pub icon_size: Option<f32>,
 }
 
@@ -363,11 +391,15 @@ impl PopupMenuThemeData {
 }
 
 /// Theme data for `DropdownMenu`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct DropdownMenuThemeData {
+    #[builder(default, setter(strip_option))]
     pub text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option))]
     pub input_decoration_theme: Option<InputDecorationThemeData>,
+    #[builder(default, setter(strip_option))]
     pub menu_style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option))]
     pub disabled_color: Option<Color>,
 }
 
@@ -451,16 +483,35 @@ impl MenuController {
 /// menu entries. The retained row/surface is shared with the menu anchor
 /// implementation and keeps the menu API independent of a platform window
 /// menu implementation.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct MenuBar {
+    #[builder(
+        default,
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     children: Vec<Widget>,
+    #[builder(default, setter(strip_option))]
     style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option))]
     item_style: Option<ButtonStyle>,
+    #[builder(default, setter(transform = |value: f32| value.max(0.0)))]
     spacing: f32,
+    #[builder(default = EdgeInsets::symmetric(4.0, 4.0))]
     padding: EdgeInsets,
+    #[builder(default = Alignment::TOP_LEFT)]
     alignment: Alignment,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+    #[builder(default = true)]
     enabled: bool,
+}
+
+impl Default for MenuBar {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl MenuBar {
@@ -584,18 +635,49 @@ impl From<MenuBar> for Widget {
 }
 
 /// A leaf menu item used by menu anchors and menu bars.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct MenuItemButton {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default, setter(strip_option, into))]
     leading_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing_icon: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default = true)]
     request_focus_on_hover: bool,
+    #[builder(default = true)]
     close_on_activate: bool,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     semantics_label: Option<String>,
+    #[builder(default, setter(strip_option))]
     style: Option<ButtonStyle>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_pressed: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_hover: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -772,19 +854,58 @@ impl From<MenuItemButton> for Widget {
 }
 
 /// An item that owns a cascading submenu.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SubmenuButton {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(
+        setter(transform = |menu_children: impl IntoIterator<Item = impl Into<Widget>>| {
+            menu_children
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<Widget>>()
+        })
+    )]
     menu_children: Vec<Widget>,
+    #[builder(default, setter(strip_option, into))]
     leading_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     submenu_icon: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option))]
     style: Option<ButtonStyle>,
+    #[builder(default, setter(strip_option))]
     menu_style: Option<MenuStyle>,
+    #[builder(default = Offset::new(4.0, 0.0))]
     alignment_offset: Offset,
+    #[builder(default)]
     controller: MenuController,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_open: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_close: Option<Rc<dyn Fn() + 'static>>,
 }
 
@@ -902,23 +1023,84 @@ impl From<SubmenuButton> for Widget {
 }
 
 /// An anchor and a retained popup menu.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct MenuAnchor {
+    #[builder(
+        setter(transform = |menu_children: impl IntoIterator<Item = impl Into<Widget>>| {
+            menu_children
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<Widget>>()
+        })
+    )]
     menu_children: Vec<Widget>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(builder: F) -> Option<Rc<dyn Fn(bool) -> Widget + 'static>>
+            where
+                F: Fn(bool) -> Widget + 'static,
+            {
+                Some(Rc::new(builder))
+            }
+        )
+    )]
     builder: Option<Rc<dyn Fn(bool) -> Widget + 'static>>,
+    #[builder(default, setter(strip_option))]
     style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option))]
     item_style: Option<ButtonStyle>,
+    #[builder(default)]
     alignment_offset: Offset,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+    #[builder(default)]
     consume_outside_tap: bool,
+    #[builder(default = true)]
     cross_axis_unconstrained: bool,
+    #[builder(default)]
     use_root_overlay: bool,
+    #[builder(default)]
     animated: bool,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     controller: MenuController,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_open: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_close: Option<Rc<dyn Fn() + 'static>>,
+}
+
+impl Default for MenuAnchor {
+    fn default() -> Self {
+        Self::typed_builder()
+            .menu_children(Vec::<Widget>::new())
+            .build()
+    }
 }
 
 impl MenuAnchor {
@@ -1142,15 +1324,33 @@ impl From<MenuAnchor> for Widget {
 }
 
 /// A popup menu entry which returns an optional typed value.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct PopupMenuItem<T> {
+    #[builder(default, setter(strip_option))]
     value: Option<T>,
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default = 48.0, setter(transform = |value: f32| value.max(0.0)))]
     height: f32,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     label_text_style: Option<StateValue<TextStyle>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn() + 'static>>,
 }
 
@@ -1303,19 +1503,42 @@ impl<T: Clone + 'static> From<PopupMenuItem<T>> for Widget {
 }
 
 /// A popup entry with an animated-compatible checkmark slot.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct CheckedPopupMenuItem<T> {
-    item: PopupMenuItem<T>,
+    #[builder(setter(into))]
+    child: Widget,
+    #[builder(default, setter(strip_option))]
+    value: Option<T>,
+    #[builder(default = true)]
+    enabled: bool,
+    #[builder(default = 48.0, setter(transform = |value: f32| value.max(0.0)))]
+    height: f32,
+    #[builder(default, setter(strip_option))]
+    padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
+    text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
+    label_text_style: Option<StateValue<TextStyle>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
     checked: bool,
 }
 
 impl<T> CheckedPopupMenuItem<T> {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            item: PopupMenuItem::new(child),
-            checked: false,
-        }
+        Self::builder().child(child).build()
     }
 
     #[must_use]
@@ -1331,20 +1554,36 @@ impl<T> CheckedPopupMenuItem<T> {
 
     #[must_use]
     pub fn value(mut self, value: T) -> Self {
-        self.item = self.item.value(value);
+        self.value = Some(value);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, value: bool) -> Self {
-        self.item = self.item.enabled(value);
+        self.enabled = value;
         self
     }
 
     #[must_use]
     pub fn on_tap(mut self, value: impl Fn() + 'static) -> Self {
-        self.item = self.item.on_tap(value);
+        self.on_tap = Some(Rc::new(value));
         self
+    }
+
+    fn popup_item(&self, child: impl Into<Widget>) -> PopupMenuItem<T>
+    where
+        T: Clone,
+    {
+        PopupMenuItem {
+            value: self.value.clone(),
+            child: child.into(),
+            enabled: self.enabled,
+            height: self.height,
+            padding: self.padding,
+            text_style: self.text_style.clone(),
+            label_text_style: self.label_text_style.clone(),
+            on_tap: self.on_tap.clone(),
+        }
     }
 
     fn build_with_selection_and_close(
@@ -1360,10 +1599,8 @@ impl<T> CheckedPopupMenuItem<T> {
         } else {
             SizedBox::new().width(16.0).into()
         };
-        let child = Row::new([mark, self.item.child.clone()]).spacing(8.0);
-        self.item
-            .clone()
-            .child(child)
+        let child = Row::new([mark, self.child.clone()]).spacing(8.0);
+        self.popup_item(child)
             .build_with_selection_and_close(on_selected, close)
     }
 
@@ -1382,31 +1619,30 @@ impl<T: Clone + 'static> From<CheckedPopupMenuItem<T>> for Widget {
 }
 
 /// A horizontal separator entry for popup menus.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PopupMenuDivider {
+    #[builder(default = 16.0, setter(transform = |value: f32| value.max(0.0)))]
     height: f32,
+    #[builder(default = 0.0, setter(transform = |value: f32| value.max(0.0)))]
     indent: f32,
+    #[builder(default = 0.0, setter(transform = |value: f32| value.max(0.0)))]
     end_indent: f32,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default = 1.0, setter(transform = |value: f32| value.max(0.0)))]
     thickness: f32,
 }
 
 impl Default for PopupMenuDivider {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 
 impl PopupMenuDivider {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            height: 16.0,
-            indent: 0.0,
-            end_indent: 0.0,
-            color: None,
-            thickness: 1.0,
-        }
+        Self::builder().build()
     }
 
     #[must_use]
@@ -1514,28 +1750,104 @@ impl<T: Clone + 'static> PopupMenuEntry<T> {
 }
 
 /// A button which opens a typed popup menu.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct PopupMenuButton<T> {
+    #[builder(
+        setter(
+            fn transform<F, E>(item_builder: F) -> Rc<dyn Fn() -> Vec<PopupMenuEntry<T>> + 'static>
+            where
+                F: Fn() -> Vec<E> + 'static,
+                E: Into<PopupMenuEntry<T>> + 'static,
+            {
+                Rc::new(move || {
+                    item_builder()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<_>>()
+                })
+            }
+        )
+    )]
     item_builder: Rc<dyn Fn() -> Vec<PopupMenuEntry<T>> + 'static>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     icon: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     initial_value: Option<T>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     tooltip: Option<String>,
+    #[builder(default = EdgeInsets::all(8.0))]
     padding: EdgeInsets,
+    #[builder(default, setter(strip_option))]
     menu_padding: Option<EdgeInsets>,
+    #[builder(default)]
     offset: Offset,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     elevation: Option<f32>,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     shadow_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     menu_style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option))]
     button_style: Option<ButtonStyle>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_opened: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(T) + 'static>>
+            where
+                F: Fn(T) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_selected: Option<Rc<dyn Fn(T) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_canceled: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
     controller: MenuController,
+    #[builder(default = true)]
     barrier_dismissible: bool,
 }
 
@@ -1545,35 +1857,7 @@ impl<T> PopupMenuButton<T> {
     where
         E: Into<PopupMenuEntry<T>> + 'static,
     {
-        let item_builder = Rc::new(move || {
-            item_builder()
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<_>>()
-        });
-        Self {
-            item_builder,
-            child: None,
-            icon: None,
-            initial_value: None,
-            enabled: true,
-            tooltip: None,
-            padding: EdgeInsets::all(8.0),
-            menu_padding: None,
-            offset: Offset::ZERO,
-            elevation: None,
-            color: None,
-            shadow_color: None,
-            surface_tint_color: None,
-            menu_style: None,
-            button_style: None,
-            on_opened: None,
-            on_selected: None,
-            on_canceled: None,
-            on_tap: None,
-            controller: MenuController::new(),
-            barrier_dismissible: true,
-        }
+        Self::builder().item_builder(item_builder).build()
     }
 
     #[must_use]
@@ -1835,17 +2119,16 @@ pub type FilterCallback<T> = Rc<dyn Fn(&str, &DropdownMenuEntry<T>) -> bool + 's
 pub type SearchCallback<T> = Rc<dyn Fn(&str, &[DropdownMenuEntry<T>]) -> Option<usize> + 'static>;
 
 /// Material wrapper that suppresses the legacy dropdown underline.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DropdownButtonHideUnderline {
+    #[builder(setter(into))]
     child: Widget,
 }
 
 impl DropdownButtonHideUnderline {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 
     #[must_use]
@@ -1862,55 +2145,79 @@ impl From<DropdownButtonHideUnderline> for Widget {
 }
 
 /// The original Material dropdown button API.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_type(name = DropdownButtonTypedBuilder))]
 pub struct DropdownButton<T> {
+    #[builder(
+        setter(transform = |items: impl IntoIterator<Item = DropdownMenuItem<T>>| {
+            items.into_iter().collect::<Vec<DropdownMenuItem<T>>>()
+        })
+    )]
     items: Vec<DropdownMenuItem<T>>,
+    #[builder(default, setter(strip_option))]
     value: Option<T>,
+    #[builder(default, setter(strip_option, into))]
     hint: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     disabled_hint: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(Option<T>) + 'static>>
+            where
+                F: Fn(Option<T>) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(Option<T>) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     icon: Option<Widget>,
+    #[builder(default)]
     is_dense: bool,
+    #[builder(default)]
     is_expanded: bool,
+    #[builder(default = Some(48.0), setter(transform = |value: f32| Some(value.max(48.0))))]
     item_height: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     menu_width: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     menu_max_height: Option<f32>,
+    #[builder(default, setter(strip_option))]
     dropdown_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     style: Option<ButtonStyle>,
+    #[builder(default, setter(strip_option))]
     menu_style: Option<MenuStyle>,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default = Alignment::TOP_LEFT)]
     alignment: Alignment,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default = true)]
     barrier_dismissible: bool,
 }
 
 impl<T> DropdownButton<T> {
     #[must_use]
     pub fn new(items: impl IntoIterator<Item = DropdownMenuItem<T>>) -> Self {
-        Self {
-            items: items.into_iter().collect(),
-            value: None,
-            hint: None,
-            disabled_hint: None,
-            on_changed: None,
-            on_tap: None,
-            child: None,
-            icon: None,
-            is_dense: false,
-            is_expanded: false,
-            item_height: Some(48.0),
-            menu_width: None,
-            menu_max_height: None,
-            dropdown_color: None,
-            style: None,
-            menu_style: None,
-            padding: None,
-            alignment: Alignment::TOP_LEFT,
-            autofocus: false,
-            barrier_dismissible: true,
-        }
+        Self::builder().items(items).build()
     }
 
     #[must_use]
@@ -2117,25 +2424,44 @@ impl<T: Clone + PartialEq + 'static> From<DropdownButton<T>> for Widget {
 }
 
 /// Form-aware wrapper around `DropdownButton`.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct DropdownButtonFormField<T> {
+    #[builder(setter(into))]
     dropdown: DropdownButton<T>,
+    #[builder(default, setter(strip_option))]
     decoration: Option<InputDecoration>,
+    #[builder(default, setter(strip_option, into))]
     error_text: Option<String>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<DropdownValidator<T>>
+            where
+                F: Fn(Option<&T>) -> Option<String> + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     validator: Option<DropdownValidator<T>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<DropdownSaved<T>>
+            where
+                F: Fn(Option<&T>) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_saved: Option<DropdownSaved<T>>,
 }
 
 impl<T> DropdownButtonFormField<T> {
     #[must_use]
     pub fn new(items: impl IntoIterator<Item = DropdownMenuItem<T>>) -> Self {
-        Self {
-            dropdown: DropdownButton::new(items),
-            decoration: None,
-            error_text: None,
-            validator: None,
-            on_saved: None,
-        }
+        Self::builder().dropdown(DropdownButton::new(items)).build()
     }
 
     #[must_use]
@@ -2216,31 +2542,71 @@ impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget
 pub type DropdownMenuFormField<T> = DropdownMenu<T>;
 
 /// A searchable/filterable Material 3 dropdown menu.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct DropdownMenu<T> {
+    #[builder(
+        setter(transform = |entries: impl IntoIterator<Item = DropdownMenuEntry<T>>| {
+            entries.into_iter().collect::<Vec<DropdownMenuEntry<T>>>()
+        })
+    )]
     entries: Vec<DropdownMenuEntry<T>>,
+    #[builder(default = TextEditingController::new())]
     controller: TextEditingController,
+    #[builder(default = Rc::new(Cell::new(0)), setter(skip))]
     revision: Rc<Cell<u64>>,
+    #[builder(default = Rc::new(Cell::new(false)), setter(skip))]
     open: Rc<Cell<bool>>,
+    #[builder(default = Rc::new(Cell::new(None)), setter(skip))]
     selected: Rc<Cell<Option<usize>>>,
+    #[builder(default = Cell::new(false), setter(skip))]
+    controller_listener_attached: Cell<bool>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     width: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     menu_height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     leading_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     selected_trailing_icon: Option<Widget>,
+    #[builder(default = true)]
     show_trailing_icon: bool,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     hint_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     helper_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     error_text: Option<String>,
+    #[builder(default)]
     enable_filter: bool,
+    #[builder(default = true)]
     enable_search: bool,
+    #[builder(default)]
     select_only: bool,
+    #[builder(default, setter(strip_option))]
     request_focus_on_tap: Option<bool>,
+    #[builder(default, setter(strip_option))]
     input_decoration_theme: Option<InputDecorationThemeData>,
+    #[builder(default, setter(strip_option))]
     menu_style: Option<MenuStyle>,
+    #[builder(default = DropdownMenuCloseBehavior::All)]
     close_behavior: DropdownMenuCloseBehavior,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(Option<T>) + 'static>>
+            where
+                F: Fn(Option<T>) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
 }
 
@@ -2253,12 +2619,13 @@ impl<T> DropdownMenu<T> {
         controller.add_listener(move |_| {
             observed.set(observed.get().wrapping_add(1));
         });
-        Self {
+        let menu = Self {
             entries: entries.into_iter().collect(),
             controller,
             revision,
             open: Rc::new(Cell::new(false)),
             selected: Rc::new(Cell::new(None)),
+            controller_listener_attached: Cell::new(false),
             enabled: true,
             width: None,
             menu_height: None,
@@ -2278,17 +2645,28 @@ impl<T> DropdownMenu<T> {
             menu_style: None,
             close_behavior: DropdownMenuCloseBehavior::All,
             on_selected: None,
-        }
+        };
+        menu.controller_listener_attached.set(true);
+        menu
     }
 
     #[must_use]
     pub fn controller(mut self, value: TextEditingController) -> Self {
+        self.controller = value;
+        self.controller_listener_attached.set(false);
+        self.attach_controller_listener();
+        self
+    }
+
+    fn attach_controller_listener(&self) {
+        if self.controller_listener_attached.get() {
+            return;
+        }
         let revision = self.revision.clone();
-        value.add_listener(move |_| {
+        self.controller.add_listener(move |_| {
             revision.set(revision.get().wrapping_add(1));
         });
-        self.controller = value;
-        self
+        self.controller_listener_attached.set(true);
     }
 
     #[must_use]
@@ -2425,6 +2803,7 @@ impl<T> DropdownMenu<T> {
 
 impl<T: Clone + PartialEq + 'static> From<DropdownMenu<T>> for Widget {
     fn from(value: DropdownMenu<T>) -> Self {
+        value.attach_controller_listener();
         let value = Rc::new(value);
         Widget::stateful_layout_builder(value.revision.clone(), move |_| value.build())
     }
@@ -2573,29 +2952,28 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
 }
 
 /// A declarative entry for `DropdownMenu`.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct DropdownMenuEntry<T> {
+    #[builder(setter(into))]
     pub value: T,
+    #[builder(setter(into))]
     pub label: String,
+    #[builder(default, setter(strip_option, into))]
     pub label_widget: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub leading_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub trailing_icon: Option<Widget>,
+    #[builder(default = true)]
     pub enabled: bool,
+    #[builder(default, setter(strip_option))]
     pub style: Option<ButtonStyle>,
 }
 
 impl<T> DropdownMenuEntry<T> {
     #[must_use]
     pub fn new(value: T, label: impl Into<String>) -> Self {
-        Self {
-            value,
-            label: label.into(),
-            label_widget: None,
-            leading_icon: None,
-            trailing_icon: None,
-            enabled: true,
-            style: None,
-        }
+        Self::builder().value(value).label(label).build()
     }
 
     #[must_use]
@@ -2716,5 +3094,70 @@ mod tests {
             SubmenuButton::new(Text::new("Edit"), [MenuItemButton::label("Undo")]).into(),
         ];
         let _: Widget = MenuBar::new(children).spacing(4.0).into();
+    }
+
+    #[test]
+    fn typed_builders_keep_menu_defaults_and_widget_composition() {
+        let style = MenuStyle::builder()
+            .background_color(Color::WHITE)
+            .padding(EdgeInsets::all(4.0))
+            .build();
+        assert_eq!(style.padding, Some(EdgeInsets::all(4.0)));
+
+        let item = MenuItemButton::builder()
+            .child(Text::new("Open"))
+            .leading_icon(Text::new("+"))
+            .enabled(false)
+            .build();
+        assert!(!item.enabled);
+        let _: Widget = item.into();
+
+        let submenu = SubmenuButton::builder()
+            .child(Text::new("Edit"))
+            .menu_children([MenuItemButton::label("Undo")])
+            .build();
+        let _: Widget = submenu.into();
+
+        let anchor = MenuAnchor::typed_builder()
+            .menu_children([MenuItemButton::label("Close")])
+            .child(Text::new("Menu"))
+            .build();
+        let _: Widget = anchor.into();
+
+        let popup_item = PopupMenuItem::<u32>::builder()
+            .child(Text::new("One"))
+            .value(1)
+            .height(-1.0)
+            .build();
+        assert_eq!(popup_item.height, 0.0);
+        let checked = CheckedPopupMenuItem::<u32>::builder()
+            .child(Text::new("Checked"))
+            .checked(true)
+            .value(2)
+            .build();
+        let _: Widget = checked.into();
+
+        let popup = PopupMenuButton::<u32>::builder()
+            .item_builder(|| vec![PopupMenuItem::label("One").value(1)])
+            .child(Text::new("More"))
+            .build();
+        let _: Widget = popup.into();
+
+        let dropdown = DropdownButton::<u32>::builder()
+            .items([DropdownMenuItem::label("One").value(1)])
+            .hint(Text::new("Choose"))
+            .build();
+        let _: Widget = dropdown.into();
+
+        let entry = DropdownMenuEntry::<u32>::builder()
+            .value(1_u32)
+            .label("One")
+            .label_widget(Text::new("Custom"))
+            .build();
+        let menu = DropdownMenu::builder()
+            .entries([entry])
+            .leading_icon(Text::new("+"))
+            .build();
+        let _: Widget = menu.into();
     }
 }

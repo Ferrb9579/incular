@@ -3,7 +3,8 @@
 //! Demonstrates Flutter-like structural, layout, and behavioral defaults
 //! on unstyled core primitives without arbitrary injected styling.
 
-use incular::material::RawMaterialButton;
+#[cfg(feature = "material")]
+use incular::material_prelude::RawMaterialButton;
 use incular::prelude::*;
 
 fn main() {
@@ -21,14 +22,19 @@ fn main() {
             Widget::from(Text::new("1. Container Expansion in Bounded Parent").style(TextStyle::new().bold())),
             Widget::from(Text::new("Empty Container() fills available bounded width/height with 0 visual paint commands.")
                 .style(TextStyle::new().font_size(12.0))),
-            Widget::from(Container::new()
-                .height(60.0)
-                .color(Color::rgba(45, 52, 70, 255))
-                .alignment(Alignment::CENTER)
-                .child(
-                    Text::new("Container fills width, aligns child to center")
-                        .style(TextStyle::new().font_size(12.0).color(Color::WHITE)),
-                )),
+            // TypedBuilder and the fluent API lower to the same Container
+            // widget; this child accepts Text directly through Into<Widget>.
+            Widget::from(
+                Container::builder()
+                    .height(60.0)
+                    .color(Color::rgba(45, 52, 70, 255))
+                    .alignment(Alignment::CENTER)
+                    .child(
+                        Text::new("Container fills width, aligns child to center")
+                            .style(TextStyle::new().font_size(12.0).color(Color::WHITE)),
+                    )
+                    .build(),
+            ),
         ])
         .spacing(6.0);
 
@@ -87,7 +93,8 @@ fn main() {
         ])
         .spacing(6.0);
 
-        // 4. Low-level Material action surface
+        // 4. Low-level Material action surface, when the optional feature is enabled.
+        #[cfg(feature = "material")]
         let action_surface_demo = Column::new([
             Widget::from(Text::new("4. RawMaterialButton (Zero Injected Paint)").style(TextStyle::new().bold())),
             Widget::from(Text::new("RawMaterialButton::with_child wraps hit test and tap dispatch without injecting colors or padding.")
@@ -99,6 +106,21 @@ fn main() {
                     .child(Text::new("Explicitly Styled Container in Material action surface").style(TextStyle::new().color(Color::WHITE))),
             )
             .on_click(|| println!("Material action surface clicked!"))),
+        ])
+        .spacing(6.0);
+
+        #[cfg(not(feature = "material"))]
+        let action_surface_demo = Column::new([
+            Widget::from(
+                Text::new("4. RawMaterialButton (material feature disabled)")
+                    .style(TextStyle::new().bold()),
+            ),
+            Widget::from(
+                Text::new(
+                    "Enable the material feature to include the low-level Material action surface.",
+                )
+                .style(TextStyle::new().font_size(12.0)),
+            ),
         ])
         .spacing(6.0);
 

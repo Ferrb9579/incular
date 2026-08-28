@@ -65,6 +65,7 @@ use incular_widgets::{
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 type Validator = Rc<dyn Fn(&str) -> Option<String>>;
 type ChangedCallback = Rc<dyn Fn(&str)>;
@@ -132,21 +133,30 @@ pub type Toolbar = incular_controls::toolbar::Root;
 pub type TooltipProvider = incular_controls::tooltip::Provider;
 
 /// Read-only text with Material selection behavior.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SelectableText {
+    #[builder(setter(into))]
     text: String,
+    #[builder(default)]
     style: TextStyle,
+    #[builder(default = incular_text::TextAlign::Start)]
     align: incular_text::TextAlign,
+}
+
+impl Default for SelectableText {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            style: TextStyle::default(),
+            align: incular_text::TextAlign::Start,
+        }
+    }
 }
 
 impl SelectableText {
     #[must_use]
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            style: TextStyle::default(),
-            align: incular_text::TextAlign::Start,
-        }
+        Self::builder().text(text).build()
     }
 
     #[must_use]

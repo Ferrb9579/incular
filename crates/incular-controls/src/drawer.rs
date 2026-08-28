@@ -7,36 +7,36 @@ use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
 use incular_widgets::{BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default = false)]
     open: bool,
+    #[builder(default = Side::Right)]
     side: Side,
+    #[builder(default = 320., setter(transform = |value: f32| value.max(1.)))]
     width: f32,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     panel: Option<Widget>,
+    #[builder(default = true)]
     modal: bool,
+    #[builder(default, setter(skip))]
     on_open_change: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            open: false,
-            side: Side::Right,
-            width: 320.,
-            child: None,
-            panel: None,
-            modal: true,
-            on_open_change: None,
-        }
+        Self::default()
     }
 
     #[must_use]
@@ -145,3 +145,36 @@ impl From<Root> for Widget {
 pub type Trigger = crate::popup::Trigger;
 pub type Portal = crate::popup::Portal;
 pub type Popup = crate::popup::Popup;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::{Text, Widget};
+
+    #[test]
+    fn builder_uses_explicit_defaults_and_generic_children() {
+        let default = Root::builder().build();
+        assert!(!default.open);
+        assert_eq!(default.side, Side::Right);
+        assert_eq!(default.width, 320.);
+        assert!(default.child.is_none());
+        assert!(default.panel.is_none());
+        assert!(default.modal);
+        assert!(default.on_open_change.is_none());
+
+        let drawer = Root::builder()
+            .open(true)
+            .side(Side::Left)
+            .width(0.)
+            .child(Text::new("page"))
+            .panel(Text::new("drawer"))
+            .modal(false)
+            .build();
+        assert_eq!(drawer.width, 1.);
+        assert!(drawer.child.is_some());
+        assert!(drawer.panel.is_some());
+        assert!(!drawer.modal);
+
+        let _: Widget = Root::new().child(Text::new("legacy")).into();
+    }
+}

@@ -6,32 +6,27 @@ use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{Column, Text, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct Root {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     description: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     error: Option<String>,
+    #[builder(default = false)]
     disabled: bool,
-    invalid: bool,
-}
-impl Default for Root {
-    fn default() -> Self {
-        Self::new()
-    }
+    #[builder(default, setter(strip_option))]
+    invalid: Option<bool>,
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            child: None,
-            label: None,
-            description: None,
-            error: None,
-            disabled: false,
-            invalid: false,
-        }
+        Self::default()
     }
     #[must_use]
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
@@ -51,7 +46,7 @@ impl Root {
     #[must_use]
     pub fn error(mut self, error: impl Into<String>) -> Self {
         self.error = Some(error.into());
-        self.invalid = true;
+        self.invalid = Some(true);
         self
     }
     #[must_use]
@@ -61,12 +56,12 @@ impl Root {
     }
     #[must_use]
     pub fn invalid(mut self, value: bool) -> Self {
-        self.invalid = value;
+        self.invalid = Some(value);
         self
     }
     #[must_use]
     pub fn is_invalid(&self) -> bool {
-        self.invalid
+        self.invalid.unwrap_or_else(|| self.error.is_some())
     }
     #[must_use]
     pub fn is_disabled(&self) -> bool {
@@ -96,6 +91,7 @@ impl Root {
             .spacing(4.)
             .cross_axis_alignment(CrossAxisAlignment::Start)
             .into();
+        let invalid = self.is_invalid();
         visual.semantics(
             ExplicitSemantics::new(SemanticRole::GenericContainer)
                 .label(self.label.clone().unwrap_or_default())
@@ -107,7 +103,7 @@ impl Root {
                 )
                 .state(SemanticState {
                     enabled: !self.disabled,
-                    read_only: self.invalid,
+                    read_only: invalid,
                     ..SemanticState::default()
                 }),
         )
@@ -119,22 +115,25 @@ impl From<Root> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Label {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Label {
     #[must_use]
     pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            child: incular_widgets::Text::new(label).into(),
-        }
+        Self::builder()
+            .child(incular_widgets::Text::new(label))
+            .build()
     }
     #[must_use]
     pub fn child(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
+    }
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::builder().child(child).build()
     }
 }
 impl From<Label> for Widget {
@@ -143,21 +142,25 @@ impl From<Label> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Description {
+    #[builder(setter(into))]
     child: Widget,
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Control {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Control {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
+    }
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::builder().child(child).build()
     }
 }
 impl From<Control> for Widget {
@@ -168,9 +171,13 @@ impl From<Control> for Widget {
 impl Description {
     #[must_use]
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            child: incular_widgets::Text::new(text).into(),
-        }
+        Self::builder()
+            .child(incular_widgets::Text::new(text))
+            .build()
+    }
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::builder().child(child).build()
     }
 }
 impl From<Description> for Widget {
@@ -179,16 +186,21 @@ impl From<Description> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Error {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Error {
     #[must_use]
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            child: incular_widgets::Text::new(text).into(),
-        }
+        Self::builder()
+            .child(incular_widgets::Text::new(text))
+            .build()
+    }
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::builder().child(child).build()
     }
 }
 impl From<Error> for Widget {
@@ -214,5 +226,74 @@ impl ValidationState {
     }
     pub fn set_invalid(&self, value: bool) {
         self.invalid.set(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_builder_matches_semantic_defaults_and_composes_widgets() {
+        let default = Root::default();
+        assert_eq!(Root::new().is_disabled(), default.is_disabled());
+        assert_eq!(Root::new().is_invalid(), default.is_invalid());
+
+        let root = Root::builder()
+            .child(Text::new("control"))
+            .label("Name")
+            .description("Your display name")
+            .error("Required")
+            .disabled(true)
+            .build();
+
+        assert!(root.is_disabled());
+        assert!(root.is_invalid());
+        assert_eq!(
+            root.child.as_ref().and_then(Widget::text_if_any).as_deref(),
+            Some("control")
+        );
+
+        let _: Widget = root.into();
+    }
+
+    #[test]
+    fn explicit_invalid_override_remains_stronger_than_error_inference() {
+        assert!(Root::new().error("invalid").is_invalid());
+        assert!(!Root::new().error("invalid").invalid(false).is_invalid());
+        assert!(
+            !Root::builder()
+                .error("invalid")
+                .invalid(false)
+                .build()
+                .is_invalid()
+        );
+    }
+
+    #[test]
+    fn required_child_descriptors_accept_arbitrary_widgets() {
+        let label = Label::builder().child(Text::new("Label")).build();
+        let description = Description::builder()
+            .child(Text::new("Description"))
+            .build();
+        let control = Control::builder().child(Text::new("Control")).build();
+        let error = Error::builder().child(Text::new("Error")).build();
+
+        assert_eq!(label.child.text_if_any().as_deref(), Some("Label"));
+        assert_eq!(
+            description.child.text_if_any().as_deref(),
+            Some("Description")
+        );
+        assert_eq!(control.child.text_if_any().as_deref(), Some("Control"));
+        assert_eq!(error.child.text_if_any().as_deref(), Some("Error"));
+    }
+
+    #[test]
+    fn legacy_constructors_and_widget_conversions_remain_available() {
+        let _: Widget = Label::new("Label").into();
+        let _: Widget = Label::child(Text::new("Label")).into();
+        let _: Widget = Description::new("Description").into();
+        let _: Widget = Control::new(Text::new("Control")).into();
+        let _: Widget = Error::new("Error").into();
     }
 }

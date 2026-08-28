@@ -18,20 +18,47 @@ use incular_widgets::{
 };
 use std::cell::Cell;
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 /// Material checkbox with a controlled nullable value.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Checkbox {
+    #[builder(default, setter(strip_option))]
     value: Option<bool>,
+    #[builder(default)]
     tristate: bool,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default)]
     is_error: bool,
+    #[builder(default, setter(strip_option, into))]
     fill_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     check_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option))]
     side: Option<Border>,
+    #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(Option<bool>) + 'static>>
+            where
+                F: Fn(Option<bool>) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(Option<bool>) + 'static>>,
+}
+
+impl Default for Checkbox {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Checkbox {
@@ -190,16 +217,35 @@ impl From<Checkbox> for Widget {
 }
 
 /// Material radio with a typed group value.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Radio<T: Clone + PartialEq + 'static> {
+    #[builder(setter(into))]
     value: T,
+    #[builder(default, setter(strip_option))]
     group_value: Option<T>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     toggleable: bool,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default, setter(strip_option, into))]
     fill_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     check_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option))]
     side: Option<Border>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(T) + 'static>>
+            where
+                F: Fn(T) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
 }
 
@@ -383,16 +429,40 @@ impl<T: Clone + PartialEq + 'static> Default for RadioGroup<T> {
 }
 
 /// Material switch adapter over the shared switch mechanics.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Switch {
+    #[builder(default)]
     value: bool,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default, setter(strip_option, into))]
     thumb_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     track_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     track_outline_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     track_outline_width: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
+}
+
+impl Default for Switch {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Switch {
@@ -513,9 +583,11 @@ impl From<Switch> for Widget {
 }
 
 /// Slider range value used by both single and range sliders.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct RangeValues {
+    #[builder(setter(into))]
     pub start: f32,
+    #[builder(setter(into))]
     pub end: f32,
 }
 
@@ -535,9 +607,11 @@ impl RangeValues {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, TypedBuilder)]
 pub struct RangeLabels {
+    #[builder(setter(into))]
     pub start: String,
+    #[builder(setter(into))]
     pub end: String,
 }
 
@@ -554,23 +628,39 @@ impl RangeLabels {
 /// P0 Material slider theme data. Shape objects remain renderer-neutral; the
 /// optional state properties are resolved by the Material wrapper before it
 /// enters the controls slider.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct SliderThemeData {
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     pub track_height: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(1.0))))]
     pub thumb_size: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     pub active_track_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub inactive_track_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub secondary_active_track_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option))]
     pub disabled_active_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub disabled_inactive_track_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub thumb_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub overlay_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option, into))]
     pub tick_mark_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option))]
     pub value_indicator_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub value_indicator_text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option))]
     pub show_value_indicator: Option<bool>,
+    #[builder(default, setter(strip_option))]
     pub padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     pub min: Option<f32>,
+    #[builder(default, setter(strip_option))]
     pub max: Option<f32>,
 }
 
@@ -680,22 +770,72 @@ impl SliderThemeData {
 
 /// Controlled Material slider. The controls slider owns pointer anatomy and
 /// semantics; this wrapper maps Material's range/division/callback vocabulary.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Slider {
+    #[builder(default = 0.0)]
     value: f32,
+    #[builder(default = 0.0)]
     min: f32,
+    #[builder(default = 1.0)]
     max: f32,
+    #[builder(default, setter(strip_option))]
     divisions: Option<usize>,
+    #[builder(default, setter(strip_option))]
     secondary_track_value: Option<f32>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default = SliderInteraction::TapAndSlide)]
     interaction: SliderInteraction,
+    #[builder(default)]
     rtl: bool,
+    #[builder(default, setter(strip_option))]
     focus_node: Option<FocusNode>,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(f32) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_start: Option<Rc<dyn Fn(f32) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_end: Option<Rc<dyn Fn(f32) + 'static>>,
+}
+
+impl Default for Slider {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Slider {
@@ -912,20 +1052,63 @@ impl From<Slider> for Widget {
 }
 
 /// Material range slider with two controlled thumbs.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct RangeSlider {
+    #[builder(setter(transform = |values: RangeValues| values.normalized()))]
     values: RangeValues,
+    #[builder(default = 0.0)]
     min: f32,
+    #[builder(default = 1.0)]
     max: f32,
+    #[builder(default, setter(strip_option))]
     divisions: Option<usize>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     minimum_separation: Option<f32>,
+    #[builder(default, setter(strip_option))]
     labels: Option<RangeLabels>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     rtl: bool,
+    #[builder(default, setter(strip_option))]
     focus_node: Option<FocusNode>,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(RangeValues) + 'static>>
+            where
+                F: Fn(RangeValues) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(RangeValues) + 'static>>
+            where
+                F: Fn(RangeValues) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_start: Option<Rc<dyn Fn(RangeValues) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(RangeValues) + 'static>>
+            where
+                F: Fn(RangeValues) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_end: Option<Rc<dyn Fn(RangeValues) + 'static>>,
 }
 
@@ -1381,11 +1564,15 @@ impl From<RangeSlider> for Widget {
 
 /// A Material tab descriptor. `text` and `icon` are convenience constructors;
 /// a tab may also contain an arbitrary retained widget.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Tab {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default, setter(strip_option, into))]
     icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     text: Option<String>,
+    #[builder(default = true)]
     enabled: bool,
 }
 
@@ -1543,16 +1730,45 @@ impl Default for TabController {
 
 /// Material tab bar. It deliberately uses ordinary buttons and a retained
 /// controller; no second tab navigation engine is introduced.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct TabBar {
+    #[builder(
+        default,
+        setter(transform = |tabs: impl IntoIterator<Item = Tab>| {
+            tabs.into_iter().collect::<Vec<Tab>>()
+        })
+    )]
     tabs: Vec<Tab>,
+    #[builder(default, setter(strip_option))]
     controller: Option<TabController>,
+    #[builder(default)]
     selected_index: usize,
+    #[builder(default)]
     scrollable: bool,
+    #[builder(default = TabAlignment::Center)]
     alignment: TabAlignment,
+    #[builder(default = TabBarIndicatorSize::Tab)]
     indicator_size: TabBarIndicatorSize,
+    #[builder(default, setter(strip_option))]
     indicator_color: Option<Color>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(usize) + 'static>>
+            where
+                F: Fn(usize) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn(usize) + 'static>>,
+}
+
+impl Default for TabBar {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl TabBar {
@@ -1695,12 +1911,27 @@ impl From<TabBar> for Widget {
 }
 
 /// Tab content backed by the core `PageView` implementation.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct TabBarView {
+    #[builder(
+        default,
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     children: Vec<Widget>,
+    #[builder(default, setter(strip_option))]
     controller: Option<TabController>,
+    #[builder(default = 1.0, setter(transform = |value: f32| value.max(0.01)))]
     viewport_fraction: f32,
+    #[builder(default, setter(strip_option))]
     physics: Option<incular_scroll::ScrollPhysics>,
+}
+
+impl Default for TabBarView {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl TabBarView {
@@ -1752,16 +1983,25 @@ impl From<TabBarView> for Widget {
 
 /// A small theme descriptor for tab bars. The full component theme is kept in
 /// the Material foundation and this value is useful for explicit overrides.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct TabBarThemeData {
+    #[builder(default, setter(strip_option))]
     pub label_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub unselected_label_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub indicator_color: Option<Color>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     pub indicator_weight: Option<f32>,
+    #[builder(default, setter(strip_option))]
     pub divider_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub label_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option))]
     pub unselected_label_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub overlay_color: Option<StateProperty<Color>>,
+    #[builder(default, setter(strip_option))]
     pub tab_alignment: Option<TabAlignment>,
 }
 
@@ -1839,6 +2079,45 @@ mod tests {
             .into();
         let _: Widget = TabBarView::new([Text::new("One"), Text::new("Two")])
             .controller(controller)
+            .into();
+    }
+
+    #[test]
+    fn typed_builders_keep_material_defaults_and_accept_widgets() {
+        let checkbox = Checkbox::builder().build();
+        assert_eq!(checkbox.value, None);
+        assert!(checkbox.enabled);
+
+        let switch = Switch::builder().value(true).build();
+        assert!(switch.value);
+        let _: Widget = switch.into();
+
+        let radio = Radio::builder()
+            .value("option")
+            .group_value("option")
+            .build();
+        let _: Widget = radio.into();
+
+        let range_values = RangeValues::builder().start(0.8_f32).end(0.2_f32).build();
+        let range = RangeSlider::builder()
+            .values(range_values)
+            .minimum_separation(-1.0)
+            .build();
+        assert_eq!(range.values, RangeValues::new(0.2, 0.8));
+        assert_eq!(range.minimum_separation, Some(0.0));
+
+        let slider_theme = SliderThemeData::builder()
+            .track_height(-1.0)
+            .thumb_size(0.0)
+            .build();
+        assert_eq!(slider_theme.track_height, Some(0.0));
+        assert_eq!(slider_theme.thumb_size, Some(1.0));
+
+        let tab = Tab::builder().child(Text::new("First")).build();
+        let _: Widget = TabBar::builder().tabs([tab]).build().into();
+        let _: Widget = TabBarView::builder()
+            .children([Text::new("First"), Text::new("Second")])
+            .build()
             .into();
     }
 }

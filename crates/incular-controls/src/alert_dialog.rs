@@ -7,30 +7,40 @@ pub use crate::popup::{Arrow, Close, Description, Popup, Positioner, Title, Trig
 use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::{Widget, internal::ExplicitSemantics};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 pub use crate::popup::Portal;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default = false)]
     open: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_open_change: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            open: false,
-            child: None,
-            on_open_change: None,
-        }
+        Self::default()
     }
 
     #[must_use]
@@ -82,3 +92,30 @@ impl From<Root> for Widget {
 
 pub type Viewport = Popup;
 pub type Backdrop = Portal;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builder_preserves_alert_dialog_defaults_and_accepts_widgets() {
+        let default = Root::default();
+        let built = Root::builder().build();
+
+        assert_eq!(default.is_open(), built.is_open());
+        assert!(default.child.is_none());
+        assert!(built.child.is_none());
+        assert!(built.on_open_change.is_none());
+
+        let root = Root::builder()
+            .child(Text::new("Alert"))
+            .open(true)
+            .on_open_change(|_| {})
+            .build();
+        assert!(root.is_open());
+        assert!(root.child.is_some());
+        assert!(root.on_open_change.is_some());
+        let _: Widget = root.into();
+    }
+}

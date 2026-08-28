@@ -2,12 +2,16 @@
 
 use crate::{Center, ColoredBox, Column, SizedBox, Text, Widget};
 use incular_core::Color;
+use typed_builder::TypedBuilder;
 
 /// An expandable/collapsible container widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Expansible {
+    #[builder(default = false)]
     expanded: bool,
+    #[builder(setter(into))]
     header: Widget,
+    #[builder(setter(into))]
     body: Widget,
 }
 
@@ -39,9 +43,11 @@ impl From<Expansible> for Widget {
 }
 
 /// A raw hover/focus tooltip presentation widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RawTooltip {
+    #[builder(setter(into))]
     message: String,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -62,12 +68,24 @@ impl From<RawTooltip> for Widget {
 }
 
 /// Displays framework build or layout runtime errors cleanly on screen.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ErrorWidget {
+    #[builder(default = String::new(), setter(into))]
     message: String,
 }
 
+impl Default for ErrorWidget {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
 impl ErrorWidget {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     #[must_use]
     pub fn with_message(message: impl Into<String>) -> Self {
         Self {
@@ -87,10 +105,13 @@ impl From<ErrorWidget> for Widget {
 }
 
 /// A corner diagnostic message banner.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Banner {
+    #[builder(setter(into))]
     message: String,
+    #[builder(default = Color::rgba(200, 30, 30, 255))]
     color: Color,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -118,8 +139,9 @@ impl From<Banner> for Widget {
 }
 
 /// Standard debug mode corner banner.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct CheckedModeBanner {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -139,8 +161,9 @@ impl From<CheckedModeBanner> for Widget {
 }
 
 /// Overlays real-time GPU and UI frame statistics.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PerformanceOverlay {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -170,9 +193,11 @@ impl From<PerformanceOverlay> for Widget {
 }
 
 /// Tells lazy list viewports to keep its subtree element alive when scrolled offscreen.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct KeepAlive {
+    #[builder(default = true)]
     keep_alive: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -199,8 +224,9 @@ impl From<KeepAlive> for Widget {
 }
 
 /// Automatic client keep-alive wrapper.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AutomaticKeepAlive {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -220,9 +246,10 @@ impl From<AutomaticKeepAlive> for Widget {
 }
 
 /// Annotates a widget with its zero-based index in a collection for accessibility clients.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct IndexedSemantics {
     index: usize,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -248,8 +275,9 @@ impl From<IndexedSemantics> for Widget {
 }
 
 /// Visual debugging overlay that renders semantic boundaries and labels.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SemanticsDebugger {
+    #[builder(setter(into))]
     child: Widget,
 }
 

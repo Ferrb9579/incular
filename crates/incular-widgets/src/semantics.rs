@@ -1,18 +1,26 @@
 //! Accessible semantic annotation widgets.
 
 use incular_semantics::{SemanticAction, SemanticRole, SemanticState};
+use typed_builder::TypedBuilder;
 
 use crate::Widget;
 
 /// An accessible semantic annotation on a widget subtree.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct Semantics {
+    #[builder(default, setter(strip_option))]
     role: Option<SemanticRole>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     value: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     description: Option<String>,
+    #[builder(default)]
     actions: Vec<SemanticAction>,
+    #[builder(default)]
     state: SemanticState,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -329,8 +337,9 @@ mod tests {
 }
 
 /// Merges descendant accessibility nodes into a single semantic element.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct MergeSemantics {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -353,10 +362,21 @@ impl From<MergeSemantics> for Widget {
 }
 
 /// Excludes a subtree from the accessibility tree.
-#[derive(Clone, Default)]
+#[derive(Clone, TypedBuilder)]
 pub struct ExcludeSemantics {
+    #[builder(default = true)]
     excluding: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+}
+
+impl Default for ExcludeSemantics {
+    fn default() -> Self {
+        Self {
+            excluding: true,
+            child: None,
+        }
+    }
 }
 
 impl ExcludeSemantics {
@@ -389,10 +409,21 @@ impl From<ExcludeSemantics> for Widget {
 }
 
 /// Blocks preceding semantic siblings at the same stacking level (e.g. for modal dialogs).
-#[derive(Clone, Default)]
+#[derive(Clone, TypedBuilder)]
 pub struct BlockSemantics {
+    #[builder(default = true)]
     blocking: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+}
+
+impl Default for BlockSemantics {
+    fn default() -> Self {
+        Self {
+            blocking: true,
+            child: None,
+        }
+    }
 }
 
 impl BlockSemantics {

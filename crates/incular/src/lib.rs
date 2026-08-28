@@ -149,6 +149,14 @@ pub mod prelude {
     };
 }
 
+/// Opt-in Controls convenience imports. Controls stay separate from the base
+/// prelude so applications without the optional `controls` feature keep the
+/// renderer-neutral API surface.
+#[cfg(feature = "controls")]
+pub mod controls_prelude {
+    pub use incular_controls::prelude::*;
+}
+
 /// Opt-in Material convenience imports. Material is intentionally not part of
 /// [`prelude`] so a base Widgets application cannot accidentally depend on a
 /// design system. Enable the `material` feature and import this module when

@@ -29,6 +29,7 @@ use incular_widgets::{
     GestureDetector, HitTestBehavior, IconTheme, Positioned, Row, Semantics, SizedBox, Stack, Text,
     Widget,
 };
+use typed_builder::TypedBuilder;
 
 /// Alias used by callers that want a generic surface vocabulary rather than
 /// Flutter's `Material` name.
@@ -36,23 +37,44 @@ pub type Surface = Material;
 
 /// A Material top app bar composed from a title, optional leading control, and
 /// trailing action widgets.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct AppBar {
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default, setter(strip_option, into))]
     leading: Option<Widget>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |actions: impl IntoIterator<Item = impl Into<Widget>>| {
+            actions.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     actions: Vec<Widget>,
+    #[builder(default, setter(strip_option, into))]
     bottom: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default, setter(strip_option))]
     foreground: Option<Color>,
+    #[builder(default = 0.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default = 64.0, setter(transform = |value: f32| finite_non_negative(value).max(1.0)))]
     toolbar_height: f32,
+    #[builder(default = true)]
     automatically_imply_leading: bool,
+    #[builder(default)]
     center_title: bool,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     title_spacing: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     leading_width: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     flexible_space: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     shadow_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
 }
 
@@ -248,14 +270,21 @@ impl From<AppBar> for Widget {
 /// scroll offsets; this Material wrapper keeps the Flutter flag vocabulary and
 /// resolves the currently visible toolbar without introducing a second scroll
 /// engine.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
+    #[builder(default = AppBar::new(Text::new("")))]
     app_bar: AppBar,
+    #[builder(default)]
     pinned: bool,
+    #[builder(default)]
     floating: bool,
+    #[builder(default)]
     snap: bool,
+    #[builder(default)]
     stretch: bool,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     expanded_height: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
     collapsed_height: Option<f32>,
 }
 
@@ -358,19 +387,31 @@ impl From<SliverAppBar> for Widget {
 
 /// A retained page scaffold with app bar, body, bottom navigation, and FAB
 /// slots.  Navigation/routing remains owned by `incular-navigation`.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Scaffold {
+    #[builder(setter(into))]
     body: Widget,
+    #[builder(default, setter(strip_option))]
     app_bar: Option<AppBar>,
+    #[builder(default, setter(strip_option, into))]
     bottom_navigation_bar: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     floating_action_button: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     drawer: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     end_drawer: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     bottom_app_bar: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     bottom_sheet: Option<Widget>,
+    #[builder(default = true)]
     resize_to_avoid_bottom_inset: bool,
+    #[builder(default)]
     extend_body: bool,
+    #[builder(default)]
     extend_body_behind_app_bar: bool,
 }
 
@@ -532,11 +573,15 @@ impl From<Scaffold> for Widget {
 }
 
 /// A Material circular avatar.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct CircleAvatar {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default, setter(strip_option))]
     foreground: Option<Color>,
+    #[builder(default = 20.0, setter(transform = |value: f32| finite_non_negative(value)))]
     radius: f32,
 }
 
@@ -597,12 +642,17 @@ impl From<CircleAvatar> for Widget {
 }
 
 /// One destination in a [`BottomNavigationBar`].
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct BottomNavigationBarItem {
+    #[builder(setter(into))]
     pub icon: Widget,
+    #[builder(setter(into))]
     pub label: String,
+    #[builder(default, setter(strip_option, into))]
     pub active_icon: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     pub background_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub tooltip: Option<String>,
 }
 
@@ -638,12 +688,32 @@ impl BottomNavigationBarItem {
 }
 
 /// A Material bottom navigation bar with controlled selection.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct BottomNavigationBar {
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |items: impl IntoIterator<Item = BottomNavigationBarItem>| {
+            items.into_iter().collect::<Vec<_>>()
+        })
+    )]
     items: Vec<BottomNavigationBarItem>,
+    #[builder(default)]
     current_index: usize,
+    #[builder(default = BottomNavigationBarType::Fixed)]
     bar_type: BottomNavigationBarType,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(usize)>>
+            where
+                F: Fn(usize) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn(usize)>>,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
 }
 
@@ -736,14 +806,19 @@ impl From<BottomNavigationBar> for Widget {
 }
 
 /// A Material 3 navigation destination.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationDestination {
+    #[builder(setter(into))]
     pub icon: Widget,
+    #[builder(setter(into))]
     pub label: String,
+    #[builder(default, setter(strip_option, into))]
     pub selected_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub tooltip: Option<String>,
     /// Whether this destination accepts activation and participates in normal
     /// focus traversal.  Flutter's destination defaults to enabled.
+    #[builder(default = true)]
     pub enabled: bool,
 }
 
@@ -785,11 +860,30 @@ impl NavigationDestination {
 
 /// Material 3 navigation bar.  Selection is controlled by the application in
 /// the same way as Flutter's `NavigationBar.selectedIndex`.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationBar {
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |destinations: impl IntoIterator<Item = NavigationDestination>| {
+            destinations.into_iter().collect::<Vec<_>>()
+        })
+    )]
     destinations: Vec<NavigationDestination>,
+    #[builder(default)]
     selected_index: usize,
+    #[builder(default = NavigationDestinationLabelBehavior::AlwaysShow)]
     label_behavior: NavigationDestinationLabelBehavior,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(usize)>>
+            where
+                F: Fn(usize) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_destination_selected: Option<Rc<dyn Fn(usize)>>,
 }
 
@@ -866,20 +960,33 @@ impl From<NavigationBar> for Widget {
 }
 
 /// Material card composition.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Card {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     shadow_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
+    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     radius: Option<f32>,
+    #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
+    #[builder(default = Some(EdgeInsets::all(16.0)))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     margin: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     border: Option<Border>,
+    #[builder(default = Clip::None)]
     clip_behavior: Clip,
+    #[builder(default)]
     border_on_foreground: bool,
+    #[builder(default = true)]
     semantic_container: bool,
 }
 
@@ -1040,11 +1147,15 @@ impl From<Card> for Widget {
 }
 
 /// A horizontal Material divider.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Divider {
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
     thickness: f32,
+    #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     indent: f32,
+    #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     end_indent: f32,
 }
 
@@ -1107,11 +1218,15 @@ impl From<Divider> for Widget {
 }
 
 /// A vertical Material divider for rows and navigation rails.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct VerticalDivider {
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default = 1.0, setter(transform = |value: f32| finite_non_negative(value)))]
     thickness: f32,
+    #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     indent: f32,
+    #[builder(default, setter(transform = |value: f32| finite_non_negative(value)))]
     end_indent: f32,
 }
 
@@ -1179,13 +1294,19 @@ impl From<VerticalDivider> for Widget {
 /// track/indicator composition is shared with the controls crate so value
 /// clamping, sizing, and accessibility remain consistent with Incular's
 /// existing progress implementation.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct LinearProgressIndicator {
+    #[builder(default, setter(strip_option))]
     value: Option<f32>,
+    #[builder(default = 0.0)]
     min: f32,
+    #[builder(default = 1.0)]
     max: f32,
+    #[builder(default = 180.0, setter(transform = |value: f32| finite_non_negative(value)))]
     width: f32,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
 }
 
@@ -1301,15 +1422,23 @@ impl From<LinearProgressIndicator> for Widget {
 /// renderer path/display-list primitives so determinate values paint the
 /// actual progress arc while indeterminate values still expose a stable
 /// Material-sized visual without a continuously scheduled frame.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct CircularProgressIndicator {
+    #[builder(default, setter(strip_option))]
     value: Option<f32>,
+    #[builder(default = 0.0)]
     min: f32,
+    #[builder(default = 1.0)]
     max: f32,
+    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
     size: f32,
+    #[builder(default = 2.0, setter(transform = |value: f32| finite_non_negative(value)))]
     stroke_width: f32,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
 }
 
@@ -1486,12 +1615,17 @@ impl From<CircularProgressIndicator> for Widget {
 }
 
 /// Material badge, optionally overlaid on a child.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Badge {
+    #[builder(setter(into))]
     label: String,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     foreground_color: Option<Color>,
+    #[builder(default = EdgeInsets::symmetric(4.0, 2.0))]
     padding: EdgeInsets,
 }
 
@@ -1567,27 +1701,67 @@ impl From<Badge> for Widget {
 }
 
 /// A Material list tile with optional leading, subtitle, and trailing slots.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct ListTile {
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default, setter(strip_option, into))]
     subtitle: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     leading: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     selected: bool,
+    #[builder(default)]
     dense: bool,
+    #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     tile_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     selected_tile_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     min_tile_height: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     min_leading_width: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     horizontal_title_gap: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     min_vertical_padding: Option<f32>,
+    #[builder(default = ListTileTitleAlignment::TitleHeight)]
     title_alignment: ListTileTitleAlignment,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_long_press: Option<Rc<dyn Fn() + 'static>>,
 }
 
@@ -1820,17 +1994,37 @@ impl From<ListTile> for Widget {
 
 /// A full-row checkbox tile.  The controls crate owns the retained checkbox
 /// state and semantic role; this component only composes its visual row.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct CheckboxListTile {
+    #[builder(setter(into))]
     value: bool,
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default, setter(strip_option, into))]
     subtitle: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     secondary: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     selected: bool,
+    #[builder(default)]
     dense: bool,
+    #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -1951,18 +2145,39 @@ impl From<CheckboxListTile> for Widget {
 /// A full-row radio tile.  `selected` is supplied explicitly so the wrapper
 /// remains usable with any group state model without introducing a separate
 /// selection controller into the Material crate.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct RadioListTile<T: PartialEq + Clone + 'static> {
+    #[builder(setter(into))]
     value: T,
+    #[builder(default, setter(strip_option))]
     group_value: Option<T>,
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default, setter(strip_option, into))]
     subtitle: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     secondary: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default = false)]
     selected: bool,
+    #[builder(default)]
     dense: bool,
+    #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(T) + 'static>>
+            where
+                F: Fn(T) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
 }
 
@@ -2086,17 +2301,37 @@ impl<T: PartialEq + Clone + 'static> From<RadioListTile<T>> for Widget {
 
 /// A full-row switch tile.  The controls crate's compound switch retains the
 /// checked semantics while this wrapper supplies the Material tile anatomy.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SwitchListTile {
+    #[builder(setter(into))]
     value: bool,
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default, setter(strip_option, into))]
     subtitle: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     secondary: Option<Widget>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     selected: bool,
+    #[builder(default)]
     dense: bool,
+    #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
 }
 
@@ -2219,23 +2454,69 @@ impl From<SwitchListTile> for Widget {
 /// is that common implementation.  The named chip types below are small
 /// typed wrappers that expose the corresponding Flutter-shaped constructors
 /// without duplicating the retained rendering and hit target.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct RawChip {
+    #[builder(setter(into))]
     label: String,
+    #[builder(default, setter(strip_option, into))]
     avatar: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     delete_icon: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_pressed: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_selected: Option<Rc<dyn Fn(bool) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_deleted: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
     selected: bool,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     show_checkmark: bool,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     selected_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     disabled_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     label_style: Option<TextStyle>,
+    #[builder(default = EdgeInsets::symmetric(12.0, 6.0))]
     padding: EdgeInsets,
+    #[builder(default = 0.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -2272,6 +2553,11 @@ impl RawChip {
     #[must_use]
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    fn set_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
     }
 
     #[must_use]
@@ -2502,9 +2788,45 @@ impl From<RawChip> for Widget {
 pub type Chip = RawChip;
 
 /// A tappable chip with no built-in selection semantics.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().set_label(label);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.raw = self.raw.clone().on_pressed(callback);
+    }
+    pub fn avatar(self, avatar: impl Into<Widget>) {
+        self.raw = self.raw.clone().avatar(avatar);
+    }
+    pub fn enabled(self, enabled: bool) {
+        self.raw = self.raw.clone().enabled(enabled);
+    }
+    pub fn color(self, color: Color) {
+        self.raw = self.raw.clone().color(color);
+    }
+    pub fn elevation(self, elevation: f32) {
+        self.raw = self.raw.clone().elevation(elevation);
+    }
+    pub fn padding(self, padding: EdgeInsets) {
+        self.raw = self.raw.clone().padding(padding);
+    }
+    pub fn semantic_label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().semantic_label(label);
+    }
+))]
 pub struct ActionChip {
+    #[builder(via_mutators = RawChip::default())]
     raw: RawChip,
+}
+
+impl Default for ActionChip {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl ActionChip {
@@ -2517,43 +2839,43 @@ impl ActionChip {
 
     #[must_use]
     pub fn on_pressed(mut self, callback: impl Fn() + 'static) -> Self {
-        self.raw = self.raw.on_pressed(callback);
+        self.raw = self.raw.clone().on_pressed(callback);
         self
     }
 
     #[must_use]
     pub fn avatar(mut self, avatar: impl Into<Widget>) -> Self {
-        self.raw = self.raw.avatar(avatar);
+        self.raw = self.raw.clone().avatar(avatar);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.raw = self.raw.enabled(enabled);
+        self.raw = self.raw.clone().enabled(enabled);
         self
     }
 
     #[must_use]
     pub fn color(mut self, color: Color) -> Self {
-        self.raw = self.raw.color(color);
+        self.raw = self.raw.clone().color(color);
         self
     }
 
     #[must_use]
     pub fn elevation(mut self, elevation: f32) -> Self {
-        self.raw = self.raw.elevation(elevation);
+        self.raw = self.raw.clone().elevation(elevation);
         self
     }
 
     #[must_use]
     pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.raw = self.raw.padding(padding);
+        self.raw = self.raw.clone().padding(padding);
         self
     }
 
     #[must_use]
     pub fn semantic_label(mut self, label: impl Into<String>) -> Self {
-        self.raw = self.raw.semantic_label(label);
+        self.raw = self.raw.clone().semantic_label(label);
         self
     }
 
@@ -2570,9 +2892,45 @@ impl From<ActionChip> for Widget {
 }
 
 /// A selectable chip for one choice in a mutually exclusive set.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().set_label(label);
+    }
+    pub fn selected(self, selected: bool) {
+        self.raw = self.raw.clone().selected(selected);
+    }
+    pub fn on_selected<F>(self, callback: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.raw = self.raw.clone().on_selected(callback);
+    }
+    pub fn avatar(self, avatar: impl Into<Widget>) {
+        self.raw = self.raw.clone().avatar(avatar);
+    }
+    pub fn enabled(self, enabled: bool) {
+        self.raw = self.raw.clone().enabled(enabled);
+    }
+    pub fn selected_color(self, color: Color) {
+        self.raw = self.raw.clone().selected_color(color);
+    }
+    pub fn show_checkmark(self, show_checkmark: bool) {
+        self.raw = self.raw.clone().show_checkmark(show_checkmark);
+    }
+    pub fn semantic_label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().semantic_label(label);
+    }
+))]
 pub struct ChoiceChip {
+    #[builder(via_mutators = RawChip::default().show_checkmark(true))]
     raw: RawChip,
+}
+
+impl Default for ChoiceChip {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl ChoiceChip {
@@ -2585,43 +2943,43 @@ impl ChoiceChip {
 
     #[must_use]
     pub fn selected(mut self, selected: bool) -> Self {
-        self.raw = self.raw.selected(selected);
+        self.raw = self.raw.clone().selected(selected);
         self
     }
 
     #[must_use]
     pub fn on_selected(mut self, callback: impl Fn(bool) + 'static) -> Self {
-        self.raw = self.raw.on_selected(callback);
+        self.raw = self.raw.clone().on_selected(callback);
         self
     }
 
     #[must_use]
     pub fn avatar(mut self, avatar: impl Into<Widget>) -> Self {
-        self.raw = self.raw.avatar(avatar);
+        self.raw = self.raw.clone().avatar(avatar);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.raw = self.raw.enabled(enabled);
+        self.raw = self.raw.clone().enabled(enabled);
         self
     }
 
     #[must_use]
     pub fn selected_color(mut self, color: Color) -> Self {
-        self.raw = self.raw.selected_color(color);
+        self.raw = self.raw.clone().selected_color(color);
         self
     }
 
     #[must_use]
     pub fn show_checkmark(mut self, show_checkmark: bool) -> Self {
-        self.raw = self.raw.show_checkmark(show_checkmark);
+        self.raw = self.raw.clone().show_checkmark(show_checkmark);
         self
     }
 
     #[must_use]
     pub fn semantic_label(mut self, label: impl Into<String>) -> Self {
-        self.raw = self.raw.semantic_label(label);
+        self.raw = self.raw.clone().semantic_label(label);
         self
     }
 
@@ -2638,9 +2996,48 @@ impl From<ChoiceChip> for Widget {
 }
 
 /// A selectable chip suitable for filtering, optionally with deletion.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().set_label(label);
+    }
+    pub fn selected(self, selected: bool) {
+        self.raw = self.raw.clone().selected(selected);
+    }
+    pub fn on_selected<F>(self, callback: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.raw = self.raw.clone().on_selected(callback);
+    }
+    pub fn on_deleted<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.raw = self.raw.clone().on_deleted(callback);
+    }
+    pub fn delete_icon(self, icon: impl Into<Widget>) {
+        self.raw = self.raw.clone().delete_icon(icon);
+    }
+    pub fn enabled(self, enabled: bool) {
+        self.raw = self.raw.clone().enabled(enabled);
+    }
+    pub fn selected_color(self, color: Color) {
+        self.raw = self.raw.clone().selected_color(color);
+    }
+    pub fn semantic_label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().semantic_label(label);
+    }
+))]
 pub struct FilterChip {
+    #[builder(via_mutators = RawChip::default().show_checkmark(true))]
     raw: RawChip,
+}
+
+impl Default for FilterChip {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl FilterChip {
@@ -2653,43 +3050,43 @@ impl FilterChip {
 
     #[must_use]
     pub fn selected(mut self, selected: bool) -> Self {
-        self.raw = self.raw.selected(selected);
+        self.raw = self.raw.clone().selected(selected);
         self
     }
 
     #[must_use]
     pub fn on_selected(mut self, callback: impl Fn(bool) + 'static) -> Self {
-        self.raw = self.raw.on_selected(callback);
+        self.raw = self.raw.clone().on_selected(callback);
         self
     }
 
     #[must_use]
     pub fn on_deleted(mut self, callback: impl Fn() + 'static) -> Self {
-        self.raw = self.raw.on_deleted(callback);
+        self.raw = self.raw.clone().on_deleted(callback);
         self
     }
 
     #[must_use]
     pub fn delete_icon(mut self, icon: impl Into<Widget>) -> Self {
-        self.raw = self.raw.delete_icon(icon);
+        self.raw = self.raw.clone().delete_icon(icon);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.raw = self.raw.enabled(enabled);
+        self.raw = self.raw.clone().enabled(enabled);
         self
     }
 
     #[must_use]
     pub fn selected_color(mut self, color: Color) -> Self {
-        self.raw = self.raw.selected_color(color);
+        self.raw = self.raw.clone().selected_color(color);
         self
     }
 
     #[must_use]
     pub fn semantic_label(mut self, label: impl Into<String>) -> Self {
-        self.raw = self.raw.semantic_label(label);
+        self.raw = self.raw.clone().semantic_label(label);
         self
     }
 
@@ -2706,9 +3103,54 @@ impl From<FilterChip> for Widget {
 }
 
 /// A chip representing an input token, with optional selection and deletion.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().set_label(label);
+    }
+    pub fn selected(self, selected: bool) {
+        self.raw = self.raw.clone().selected(selected);
+    }
+    pub fn on_pressed<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.raw = self.raw.clone().on_pressed(callback);
+    }
+    pub fn on_selected<F>(self, callback: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.raw = self.raw.clone().on_selected(callback);
+    }
+    pub fn on_deleted<F>(self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.raw = self.raw.clone().on_deleted(callback);
+    }
+    pub fn avatar(self, avatar: impl Into<Widget>) {
+        self.raw = self.raw.clone().avatar(avatar);
+    }
+    pub fn delete_icon(self, icon: impl Into<Widget>) {
+        self.raw = self.raw.clone().delete_icon(icon);
+    }
+    pub fn enabled(self, enabled: bool) {
+        self.raw = self.raw.clone().enabled(enabled);
+    }
+    pub fn semantic_label(self, label: impl Into<String>) {
+        self.raw = self.raw.clone().semantic_label(label);
+    }
+))]
 pub struct InputChip {
+    #[builder(via_mutators = RawChip::default())]
     raw: RawChip,
+}
+
+impl Default for InputChip {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl InputChip {
@@ -2721,49 +3163,49 @@ impl InputChip {
 
     #[must_use]
     pub fn selected(mut self, selected: bool) -> Self {
-        self.raw = self.raw.selected(selected);
+        self.raw = self.raw.clone().selected(selected);
         self
     }
 
     #[must_use]
     pub fn on_pressed(mut self, callback: impl Fn() + 'static) -> Self {
-        self.raw = self.raw.on_pressed(callback);
+        self.raw = self.raw.clone().on_pressed(callback);
         self
     }
 
     #[must_use]
     pub fn on_selected(mut self, callback: impl Fn(bool) + 'static) -> Self {
-        self.raw = self.raw.on_selected(callback);
+        self.raw = self.raw.clone().on_selected(callback);
         self
     }
 
     #[must_use]
     pub fn on_deleted(mut self, callback: impl Fn() + 'static) -> Self {
-        self.raw = self.raw.on_deleted(callback);
+        self.raw = self.raw.clone().on_deleted(callback);
         self
     }
 
     #[must_use]
     pub fn avatar(mut self, avatar: impl Into<Widget>) -> Self {
-        self.raw = self.raw.avatar(avatar);
+        self.raw = self.raw.clone().avatar(avatar);
         self
     }
 
     #[must_use]
     pub fn delete_icon(mut self, icon: impl Into<Widget>) -> Self {
-        self.raw = self.raw.delete_icon(icon);
+        self.raw = self.raw.clone().delete_icon(icon);
         self
     }
 
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.raw = self.raw.enabled(enabled);
+        self.raw = self.raw.clone().enabled(enabled);
         self
     }
 
     #[must_use]
     pub fn semantic_label(mut self, label: impl Into<String>) -> Self {
-        self.raw = self.raw.semantic_label(label);
+        self.raw = self.raw.clone().semantic_label(label);
         self
     }
 

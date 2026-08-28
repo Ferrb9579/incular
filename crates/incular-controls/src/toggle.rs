@@ -9,6 +9,7 @@ use incular_widgets::{Stack, Widget};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use typed_builder::TypedBuilder;
 
 #[derive(Clone)]
 pub struct Toggle {
@@ -183,23 +184,22 @@ impl From<Toggle> for Widget {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct Group {
+    #[builder(default)]
     multiple: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
-impl Default for Group {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+
 impl Group {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            multiple: false,
-            child: None,
-        }
+        Self::default()
+    }
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::default().child(child)
     }
     #[must_use]
     pub fn multiple(mut self, value: bool) -> Self {
@@ -217,5 +217,32 @@ impl From<Group> for Widget {
         value
             .child
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn group_builder_uses_explicit_defaults() {
+        let group = Group::builder().build();
+
+        assert!(!group.multiple);
+        assert!(group.child.is_none());
+        assert!(!Group::new().multiple);
+    }
+
+    #[test]
+    fn group_builder_accepts_generic_widget_children() {
+        let group = Group::builder()
+            .multiple(true)
+            .child(Text::new("toggles"))
+            .build();
+
+        assert!(group.multiple);
+        assert!(group.child.is_some());
+        let _: Widget = Group::with_child(Text::new("child")).into();
     }
 }

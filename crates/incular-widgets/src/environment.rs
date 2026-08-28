@@ -8,6 +8,7 @@ use incular_core::{BuildContext, Color};
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_text::TextStyle;
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 use crate::{LayoutBuilder, Widget};
 
@@ -15,9 +16,11 @@ use crate::{LayoutBuilder, Widget};
 /// viewport, scale, safe-area, brightness, or accessibility information.
 /// The runtime installs its authoritative snapshot on each `WidgetTree`; this
 /// descriptor is useful for isolated subtrees and deterministic tests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct MediaQuery {
+    #[builder(setter(transform = |data: RuntimeEnvironment| data.normalized()))]
     data: RuntimeEnvironment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -59,10 +62,20 @@ impl From<MediaQuery> for Widget {
 /// and is exposed to deferred builders as `(Locale, Rc<dyn
 /// LocalizationCatalog>)`. This keeps locale selection in `incular-config`
 /// without recreating Flutter's delegate/inherited-widget hierarchy.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Localizations {
+    #[builder(setter(into))]
     locale: Locale,
+    #[builder(setter(
+        fn transform<C>(catalog: C) -> Rc<dyn LocalizationCatalog>
+        where
+            C: LocalizationCatalog + 'static,
+        {
+            Rc::new(catalog)
+        }
+    ))]
     catalog: Rc<dyn LocalizationCatalog>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -128,11 +141,15 @@ impl From<Localizations> for Widget {
 }
 
 /// Ambient selection colors for editable text descendants.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DefaultSelectionStyle {
+    #[builder(default, setter(strip_option))]
     cursor_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     selection_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     handle_color: Option<Color>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -178,9 +195,10 @@ impl From<DefaultSelectionStyle> for Widget {
 }
 
 /// Directionality provides ambient text direction (`Ltr` or `Rtl`) to its subtree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Directionality {
     text_direction: TextDirection,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -206,9 +224,10 @@ impl From<Directionality> for Widget {
 }
 
 /// Sets the default [`TextStyle`] for descendant [`Text`](crate::Text) widgets.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DefaultTextStyle {
     style: TextStyle,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -234,11 +253,15 @@ impl From<DefaultTextStyle> for Widget {
 }
 
 /// Defines default color, size, and opacity for descendant [`Icon`](crate::Icon) widgets.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct IconTheme {
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(transform = |size: f32| Some(size.max(0.0))))]
     size: Option<f32>,
+    #[builder(default, setter(transform = |opacity: f32| Some(opacity.clamp(0.0, 1.0))))]
     opacity: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -322,9 +345,11 @@ impl From<OrientationBuilder> for Widget {
 }
 
 /// Controls ambient scroll physics and behavior for descendant scroll views.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ScrollConfiguration {
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -351,10 +376,12 @@ impl From<ScrollConfiguration> for Widget {
 }
 
 /// Associates a [`ScrollController`] with the subtree as the default primary scroll controller.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PrimaryScrollController {
     controller: ScrollController,
+    #[builder(default = true, setter(skip))]
     automatically_inherit_for_platforms: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -381,9 +408,10 @@ impl From<PrimaryScrollController> for Widget {
 }
 
 /// Enables or disables animation ticking for its subtree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct TickerMode {
     enabled: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -409,9 +437,11 @@ impl From<TickerMode> for Widget {
 }
 
 /// Marks content as sensitive to obscure it from window sharing, screen recording, and diagnostics.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SensitiveContent {
+    #[builder(default = true)]
     sensitive: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -438,8 +468,9 @@ impl From<SensitiveContent> for Widget {
 }
 
 /// Boundary host coordinating sensitive content obscuration.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SensitiveContentHost {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -459,8 +490,9 @@ impl From<SensitiveContentHost> for Widget {
 }
 
 /// Isolates inherited widget lookups across boundaries.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct LookupBoundary {
+    #[builder(setter(into))]
     child: Widget,
 }
 

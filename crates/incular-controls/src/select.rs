@@ -2,26 +2,36 @@
 pub use crate::popup::{Arrow, Popup, Portal, Positioner, Trigger};
 use incular_widgets::Widget;
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default, setter(strip_option, into))]
     value: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(String) + 'static>>
+            where
+                F: Fn(String) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change: Option<Rc<dyn Fn(String) + 'static>>,
 }
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            value: None,
-            child: None,
-            on_change: None,
-        }
+        Self::builder().build()
     }
     #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -55,8 +65,9 @@ impl From<Root> for Widget {
 fn incular_controls_button(label: String) -> Widget {
     crate::Button::new(label).into()
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct List {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl List {
@@ -72,10 +83,13 @@ impl From<List> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Item {
+    #[builder(setter(into))]
     value: String,
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default)]
     disabled: bool,
 }
 impl Item {
@@ -104,5 +118,37 @@ impl Item {
 impl From<Item> for Widget {
     fn from(value: Item) -> Self {
         value.child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builders_use_select_defaults() {
+        let root = Root::builder().build();
+        assert!(root.value.is_none());
+        assert!(root.child.is_none());
+        assert!(root.on_change.is_none());
+
+        let item = Item::builder().value("one").child(Text::new("One")).build();
+        assert_eq!(item.value(), "one");
+        assert!(!item.is_disabled());
+    }
+
+    #[test]
+    fn builders_accept_widget_children_and_callbacks() {
+        let root = Root::builder()
+            .value("one")
+            .child(Text::new("Choose"))
+            .on_change(|_| {})
+            .build();
+        assert!(root.child.is_some());
+        assert!(root.on_change.is_some());
+
+        let list = List::builder().child(Text::new("Options")).build();
+        let _: Widget = list.into();
     }
 }

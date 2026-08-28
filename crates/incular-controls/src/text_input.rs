@@ -8,31 +8,41 @@ use incular_widgets::{
     Border, BorderRadius, BoxDecoration, Container, EditableText as RawEditableText, Widget,
 };
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 /// Base UI terminology for a single-line text control. `TextField` remains
 /// the descriptive compatibility name used by existing applications.
 pub type Input = TextField;
 
 /// Styled single-line text input field.
-#[derive(Clone)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct TextField {
+    #[builder(default = TextEditingController::new(), setter(into))]
     controller: TextEditingController,
+    #[builder(default = Size::ZERO)]
     size: Size,
+    #[builder(default = String::new(), setter(into))]
     placeholder: String,
+    #[builder(default)]
     style: TextFieldStyle,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(String) + 'static>>
+            where
+                F: Fn(String) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_submit: Option<Rc<dyn Fn(String) + 'static>>,
 }
 
 impl TextField {
     #[must_use]
     pub fn new(controller: TextEditingController) -> Self {
-        Self {
-            controller,
-            size: Size::ZERO,
-            placeholder: String::new(),
-            style: TextFieldStyle::default(),
-            on_submit: None,
-        }
+        Self::builder().controller(controller).build()
     }
 
     /// Sets an explicit logical size. A zero component keeps the natural
@@ -113,23 +123,22 @@ impl From<TextField> for Widget {
 }
 
 /// Styled multiline text editing area.
-#[derive(Clone)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct TextArea {
+    #[builder(default = TextEditingController::new(), setter(into))]
     controller: TextEditingController,
+    #[builder(default = Size::ZERO)]
     size: Size,
+    #[builder(default = String::new(), setter(into))]
     placeholder: String,
+    #[builder(default)]
     style: TextFieldStyle,
 }
 
 impl TextArea {
     #[must_use]
     pub fn new(controller: TextEditingController) -> Self {
-        Self {
-            controller,
-            size: Size::ZERO,
-            placeholder: String::new(),
-            style: TextFieldStyle::default(),
-        }
+        Self::builder().controller(controller).build()
     }
 
     /// Sets an explicit logical size. A zero component keeps the natural
@@ -195,5 +204,70 @@ impl From<TextArea> for Widget {
                 .unwrap_or_default();
             value.build(&theme)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_field_builder_has_explicit_empty_defaults() {
+        let field = TextField::builder().build();
+        assert_eq!(field.size, Size::ZERO);
+        assert!(field.placeholder.is_empty());
+        assert_eq!(field.style, TextFieldStyle::default());
+        assert!(field.on_submit.is_none());
+
+        let default = TextField::default();
+        assert_eq!(default.size, Size::ZERO);
+        assert!(default.placeholder.is_empty());
+        assert_eq!(default.style, TextFieldStyle::default());
+        assert!(default.on_submit.is_none());
+    }
+
+    #[test]
+    fn text_field_builder_preserves_controller_and_legacy_setters() {
+        let controller = TextEditingController::with_text("initial");
+        let style = TextFieldStyle {
+            padding: Some(EdgeInsets::all(6.0)),
+            ..TextFieldStyle::default()
+        };
+        let field = TextField::builder()
+            .controller(controller.clone())
+            .size(Size::new(240.0, 40.0))
+            .placeholder("Search")
+            .style(style.clone())
+            .on_submit(|_| {})
+            .build();
+
+        assert_eq!(field.controller, controller);
+        assert_eq!(field.size, Size::new(240.0, 40.0));
+        assert_eq!(field.placeholder, "Search");
+        assert_eq!(field.style, style);
+        assert!(field.on_submit.is_some());
+
+        let legacy = TextField::new(controller)
+            .size(Size::new(120.0, 32.0))
+            .placeholder("Legacy")
+            .style(TextFieldStyle::default())
+            .on_submit(|_| {});
+        let _: Widget = legacy.into();
+    }
+
+    #[test]
+    fn text_area_builder_has_defaults_and_preserves_composition() {
+        let area = TextArea::builder()
+            .controller(TextEditingController::with_text("notes"))
+            .placeholder("Notes")
+            .size(Size::new(300.0, 160.0))
+            .build();
+
+        assert_eq!(area.placeholder, "Notes");
+        assert_eq!(area.size, Size::new(300.0, 160.0));
+        assert_eq!(area.style, TextFieldStyle::default());
+
+        let _: Widget = TextArea::default().into();
+        let _: Widget = TextArea::new(TextEditingController::new()).into();
     }
 }

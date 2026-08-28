@@ -4,30 +4,34 @@ use crate::{ControlTheme, progress};
 use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::{Widget, internal::ExplicitSemantics};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default = 0.)]
     value: f32,
+    #[builder(default = 0.)]
     min: f32,
+    #[builder(default = 1.)]
     max: f32,
+    #[builder(default, setter(strip_option))]
     low: Option<f32>,
+    #[builder(default, setter(strip_option))]
     high: Option<f32>,
+    #[builder(default, setter(strip_option))]
     optimum: Option<f32>,
+    #[builder(default = 180., setter(transform = |width: f32| width.max(0.)))]
     width: f32,
+    #[builder(default, setter(transform = |height: f32| Some(height.max(0.))))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Root {
-    #[must_use]
-    pub fn new() -> Self {
         Self {
             value: 0.,
             min: 0.,
@@ -40,6 +44,18 @@ impl Root {
             label: None,
             child: None,
         }
+    }
+}
+
+impl Root {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::default().child(child)
     }
 
     #[must_use]
@@ -153,5 +169,49 @@ impl ProgressChild for progress::Root {
             Some(child) => self.child(child),
             None => self,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builder_defaults_match_new() {
+        let new = Root::new();
+        let built = Root::builder().build();
+
+        assert_eq!(new.value, built.value);
+        assert_eq!(new.min, built.min);
+        assert_eq!(new.max, built.max);
+        assert_eq!(new.width, 180.);
+        assert_eq!(new.width, built.width);
+        assert!(built.low.is_none() && built.high.is_none() && built.optimum.is_none());
+        assert!(built.height.is_none() && built.label.is_none() && built.child.is_none());
+    }
+
+    #[test]
+    fn builder_accepts_child_and_preserves_numeric_setter_behavior() {
+        let meter = Root::builder()
+            .value(0.5)
+            .min(0.)
+            .max(2.)
+            .low(0.25)
+            .high(1.5)
+            .optimum(1.)
+            .width(-10.)
+            .height(-4.)
+            .label("Load")
+            .child(Text::new("meter"))
+            .build();
+
+        assert_eq!(meter.normalized_value(), 0.25);
+        assert_eq!(meter.width, 0.);
+        assert_eq!(meter.height, Some(0.));
+        assert!(meter.child.is_some());
+        assert_eq!(meter.label.as_deref(), Some("Load"));
+
+        let _: Widget = Root::with_child(Text::new("child")).into();
     }
 }

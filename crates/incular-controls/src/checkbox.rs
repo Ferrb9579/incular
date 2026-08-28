@@ -8,6 +8,7 @@ use incular_widgets::{
     internal::{ActionSurface, ExplicitSemantics},
 };
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
 /// Explicit checkbox value, including the mixed state used by tree views.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -27,47 +28,56 @@ impl CheckedState {
 
 /// Compound checkbox root. `child` is optional; when omitted the default
 /// polished Incular indicator and optional label are composed for the caller.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default)]
     state: CheckedState,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     read_only: bool,
+    #[builder(default)]
     required: bool,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(default, setter(strip_option))]
     active_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     check_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     radius: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(CheckedState) + 'static>>
+            where
+                F: Fn(CheckedState) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change: Option<Rc<dyn Fn(CheckedState) + 'static>>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            state: CheckedState::Unchecked,
-            enabled: true,
-            read_only: false,
-            required: false,
-            label: None,
-            child: None,
-            active_color: None,
-            inactive_color: None,
-            check_color: None,
-            border_color: None,
-            border_width: None,
-            radius: None,
-            on_change: None,
-        }
+        Self::default()
     }
     #[must_use]
     pub fn checked(mut self, checked: bool) -> Self {
@@ -276,19 +286,20 @@ impl From<Root> for Widget {
 
 /// Visual indicator slot. It is transparent and can be replaced by an icon,
 /// path, or application widget without changing root semantics.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Indicator {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 impl Default for Indicator {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Indicator {
     #[must_use]
     pub fn new() -> Self {
-        Self { child: None }
+        Self::default()
     }
     #[must_use]
     pub fn child(mut self, child: impl Into<Widget>) -> Self {
@@ -306,25 +317,37 @@ impl From<Indicator> for Widget {
 
 /// Shared value collection for checkbox groups. Rendering remains ordinary
 /// child composition; the group owns selection state and validation metadata.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Group {
+    #[builder(
+        default = Rc::new(std::cell::RefCell::new(Vec::new())),
+        setter(
+            fn transform<I>(values: I) -> Rc<std::cell::RefCell<Vec<String>>>
+            where
+                I: IntoIterator,
+                I::Item: Into<String>,
+            {
+                Rc::new(std::cell::RefCell::new(
+                    values.into_iter().map(Into::into).collect(),
+                ))
+            }
+        )
+    )]
     values: Rc<std::cell::RefCell<Vec<String>>>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 impl Default for Group {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Group {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            values: Rc::new(std::cell::RefCell::new(Vec::new())),
-            enabled: true,
-            child: None,
-        }
+        Self::default()
     }
     #[must_use]
     pub fn values(self, values: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -353,5 +376,36 @@ impl From<Group> for Widget {
         value
             .child
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn anatomy_builders_keep_checkbox_defaults_and_generic_children() {
+        let root = Root::builder().child(Text::new("Accept")).build();
+        assert_eq!(root.state_value(), CheckedState::Unchecked);
+        assert!(root.enabled);
+        assert!(!root.read_only);
+        assert!(!root.required);
+        assert!(root.child.is_some());
+        assert!(root.on_change.is_none());
+
+        let indicator = Indicator::builder().child(Text::new("check")).build();
+        assert!(indicator.child.is_some());
+
+        let group = Group::builder().values(["one", "two"]).build();
+        assert_eq!(group.selected(), vec!["one", "two"]);
+        assert!(group.enabled);
+    }
+
+    #[test]
+    fn anatomy_compatibility_constructors_use_builder_defaults() {
+        assert_eq!(Root::new().state_value(), Root::default().state_value());
+        assert!(Indicator::new().child.is_none());
+        assert!(Group::new().selected().is_empty());
     }
 }

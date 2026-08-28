@@ -12,14 +12,17 @@ use std::sync::Arc;
 use incular_config::{Alignment, Axis, Clip, Constraints, EdgeInsets};
 use incular_core::{Color, Size};
 use incular_rendering::{CornerRadii, DisplayList, Path};
+use typed_builder::TypedBuilder;
 
 use crate::tree::BoxFit;
 use crate::{DecoratedBox, Widget, WidgetKind};
 
 /// Insets its child by given [`EdgeInsets`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Padding {
+    #[builder(setter(into))]
     padding: EdgeInsets,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -62,11 +65,20 @@ impl From<Padding> for Widget {
 }
 
 /// Positions a child inside itself with fractional alignment and optional size factors.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Align {
     alignment: Alignment,
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     width_factor: Option<f32>,
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     height_factor: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -114,10 +126,19 @@ impl From<Align> for Widget {
 }
 
 /// Centers its child within itself.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Center {
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     width_factor: Option<f32>,
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     height_factor: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -161,10 +182,13 @@ impl From<Center> for Widget {
 }
 
 /// A box with a specified size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SizedBox {
+    #[builder(default, setter(strip_option))]
     width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -314,9 +338,11 @@ impl From<SizedBox> for Widget {
 }
 
 /// Paints a solid background color behind a child widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ColoredBox {
+    #[builder(setter(into))]
     color: Color,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -353,9 +379,10 @@ impl From<ColoredBox> for Widget {
 }
 
 /// Imposes additional layout constraints on its child.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ConstrainedBox {
     constraints: Constraints,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -380,10 +407,19 @@ impl From<ConstrainedBox> for Widget {
 }
 
 /// Applies maximum dimensions only when incoming constraints are unbounded.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct LimitedBox {
+    #[builder(
+        default = f32::INFINITY,
+        setter(transform = |limit: f32| limit.max(0.0))
+    )]
     max_width: f32,
+    #[builder(
+        default = f32::INFINITY,
+        setter(transform = |limit: f32| limit.max(0.0))
+    )]
     max_height: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -424,12 +460,17 @@ impl From<LimitedBox> for Widget {
 }
 
 /// Allows its child to overflow parent bounds while parent reports constrained size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct OverflowBox {
+    #[builder(default, setter(strip_option))]
     min_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     max_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     min_height: Option<f32>,
+    #[builder(default, setter(strip_option))]
     max_height: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -484,9 +525,11 @@ impl From<OverflowBox> for Widget {
 }
 
 /// Allows its child to size naturally without parent constraints.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct UnconstrainedBox {
+    #[builder(default, setter(strip_option))]
     constrained_axis: Option<Axis>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -518,10 +561,19 @@ impl From<UnconstrainedBox> for Widget {
 }
 
 /// Sizes child as a fraction of incoming parent constraints.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct FractionallySizedBox {
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     width_factor: Option<f32>,
+    #[builder(
+        default,
+        setter(transform = |factor: f32| Some(factor.max(0.0)))
+    )]
     height_factor: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -560,9 +612,11 @@ impl From<FractionallySizedBox> for Widget {
 }
 
 /// Positions child baseline at an explicit vertical offset.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Baseline {
+    #[builder(setter(transform = |baseline: f32| baseline.max(0.0)))]
     baseline: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -587,9 +641,11 @@ impl From<Baseline> for Widget {
 }
 
 /// Sizes its child to match a specified aspect ratio.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AspectRatio {
+    #[builder(setter(transform = |ratio: f32| ratio.max(f32::EPSILON)))]
     aspect_ratio: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -614,10 +670,13 @@ impl From<AspectRatio> for Widget {
 }
 
 /// Scales and positions its child according to [`BoxFit`] and [`Alignment`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct FittedBox {
+    #[builder(default = BoxFit::Contain)]
     fit: BoxFit,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -652,14 +711,21 @@ impl From<FittedBox> for Widget {
 }
 
 /// Conditionally displays a child or hides it from layout, paint, hit-testing, and semantics.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Visibility {
+    #[builder(default = true)]
     visible: bool,
+    #[builder(default)]
     maintain_state: bool,
+    #[builder(default)]
     maintain_size: bool,
+    #[builder(default)]
     maintain_animation: bool,
+    #[builder(default)]
     maintain_semantics: bool,
+    #[builder(default, setter(strip_option, into))]
     replacement: Option<Widget>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -719,9 +785,11 @@ impl From<Visibility> for Widget {
 }
 
 /// Hides its child offstage without unmounting the retained element.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Offstage {
+    #[builder(default = true)]
     offstage: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -778,8 +846,9 @@ impl From<LayoutBuilder> for Widget {
 }
 
 /// Isolates display list painting and caching into a dedicated layer.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RepaintBoundary {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -802,7 +871,7 @@ impl From<RepaintBoundary> for Widget {
 }
 
 /// Paints an explicit [`DisplayList`] with a fixed size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct CustomPaint {
     size: Size,
     display_list: DisplayList,
@@ -833,9 +902,11 @@ impl From<CustomPaint> for Widget {
 }
 
 /// Clips its child using a rectangular boundary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipRect {
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -866,10 +937,13 @@ impl From<ClipRect> for Widget {
 }
 
 /// Clips its child using a rounded-rectangular boundary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipRRect {
+    #[builder(setter(into))]
     radius: CornerRadii,
+    #[builder(default = Clip::AntiAlias)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -902,9 +976,11 @@ impl From<ClipRRect> for Widget {
 }
 
 /// Clips its child using an elliptical / oval boundary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipOval {
+    #[builder(default = Clip::AntiAlias)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -935,10 +1011,13 @@ impl From<ClipOval> for Widget {
 }
 
 /// Clips its child using an arbitrary [`Path`] boundary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipPath {
+    #[builder(setter(into))]
     path: Arc<Path>,
+    #[builder(default = Clip::AntiAlias)]
     clip_behavior: Clip,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -971,10 +1050,13 @@ impl From<ClipPath> for Widget {
 }
 
 /// Sizes its child to the child's intrinsic width.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct IntrinsicWidth {
+    #[builder(default, setter(strip_option))]
     step_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     step_height: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1008,8 +1090,9 @@ impl From<IntrinsicWidth> for Widget {
 }
 
 /// Sizes its child to the child's intrinsic height.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct IntrinsicHeight {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1029,10 +1112,12 @@ impl From<IntrinsicHeight> for Widget {
 }
 
 /// A box with specified size that allows its child to overflow with alignment.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SizedOverflowBox {
     size: Size,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1062,9 +1147,10 @@ impl From<SizedOverflowBox> for Widget {
 }
 
 /// Rotates its child by an integral number of quarter turns (90 degrees each).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RotatedBox {
     quarter_turns: i32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1135,9 +1221,11 @@ impl From<ConstraintsTransformBox> for Widget {
 }
 
 /// Wraps a child subtree with an explicit retained key.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct KeyedSubtree {
+    #[builder(setter(into))]
     key: crate::tree::Key,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1160,11 +1248,15 @@ impl From<KeyedSubtree> for Widget {
 }
 
 /// A placeholder box with cross lines and fallback sizing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Placeholder {
+    #[builder(default = Color::rgba(117, 117, 117, 255))]
     color: Color,
+    #[builder(default = 2.0, setter(transform = |width: f32| width.max(0.1)))]
     stroke_width: f32,
+    #[builder(default = 400.0, setter(transform = |width: f32| width.max(0.0)))]
     fallback_width: f32,
+    #[builder(default = 400.0, setter(transform = |height: f32| height.max(0.0)))]
     fallback_height: f32,
 }
 
@@ -1224,9 +1316,10 @@ impl From<Placeholder> for Widget {
 }
 
 /// Informs parent of preferred size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct PreferredSize {
     preferred_size: Size,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1261,10 +1354,12 @@ impl From<PreferredSize> for Widget {
 }
 
 /// Translates its child by a fraction of the child's size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct FractionalTranslation {
     translation: incular_core::Offset,
+    #[builder(default = true)]
     transform_hit_tests: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1292,9 +1387,11 @@ impl From<FractionalTranslation> for Widget {
 }
 
 /// A cell in a Table widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct TableCell {
+    #[builder(default, setter(strip_option))]
     vertical_alignment: Option<incular_config::CrossAxisAlignment>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1321,12 +1418,27 @@ impl From<TableCell> for Widget {
 }
 
 /// Lays out children in a row with spacing; wraps or flows when width is constrained.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct OverflowBar {
+    #[builder(default = 0.0)]
     spacing: f32,
+    #[builder(default = 0.0)]
     overflow_spacing: f32,
+    #[builder(default = incular_config::WrapCrossAlignment::Start)]
     overflow_alignment: incular_config::WrapCrossAlignment,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     children: Vec<Widget>,
+}
+
+impl Default for OverflowBar {
+    fn default() -> Self {
+        Self::new(Vec::<Widget>::new())
+    }
 }
 
 impl OverflowBar {
@@ -1370,12 +1482,17 @@ impl From<OverflowBar> for Widget {
 }
 
 /// App bar navigation toolbar with leading, middle, and trailing slots.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct NavigationToolbar {
+    #[builder(default, setter(strip_option, into))]
     leading: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     middle: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing: Option<Widget>,
+    #[builder(default = true)]
     center_middle: bool,
+    #[builder(default = 16.0)]
     middle_spacing: f32,
 }
 
@@ -1448,12 +1565,17 @@ impl From<NavigationToolbar> for Widget {
 }
 
 /// An interactive viewer enabling panning and zooming on a child widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct InteractiveViewer {
+    #[builder(default = 0.8)]
     min_scale: f32,
+    #[builder(default = 2.5)]
     max_scale: f32,
+    #[builder(default = true)]
     pan_enabled: bool,
+    #[builder(default = true)]
     scale_enabled: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1512,19 +1634,30 @@ pub enum SplitPosition {
 }
 
 /// A resizable dual-pane container separated by an interactive divider.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SplitView {
     axis: Axis,
+    #[builder(setter(into))]
     first: Widget,
+    #[builder(setter(into))]
     second: Widget,
+    #[builder(default = SplitPosition::Fraction(0.5))]
     position: SplitPosition,
+    #[builder(default)]
     min_first: f32,
+    #[builder(default = f32::INFINITY)]
     max_first: f32,
+    #[builder(default)]
     min_second: f32,
+    #[builder(default = f32::INFINITY)]
     max_second: f32,
+    #[builder(default = 8.0)]
     divider_hit_extent: f32,
+    #[builder(default = 1.0)]
     divider_visual_extent: f32,
+    #[builder(default, setter(strip_option))]
     divider_color: Option<Color>,
+    #[builder(default, setter(skip))]
     on_split_changed: Option<std::rc::Rc<dyn Fn(f32)>>,
 }
 
@@ -1775,5 +1908,90 @@ impl From<SplitView> for Widget {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sized_box_builder_defaults_match_new() {
+        assert_eq!(SizedBox::builder().build(), SizedBox::new());
+    }
+
+    #[test]
+    fn optional_child_builders_accept_widgets() {
+        let child = Widget::text("child");
+        let sized_box = SizedBox::builder().child(child.clone()).build();
+        assert_eq!(sized_box.child, Some(child.clone()));
+
+        let colored_box = ColoredBox::builder()
+            .color(Color::BLACK)
+            .child(child.clone())
+            .build();
+        assert_eq!(colored_box.child, Some(child));
+    }
+
+    #[test]
+    fn multiple_children_use_vec_widget_storage() {
+        let overflow_bar = OverflowBar::builder()
+            .children([crate::Text::new("first"), crate::Text::new("second")])
+            .spacing(4.0)
+            .build();
+
+        assert_eq!(
+            overflow_bar.children,
+            vec![Widget::text("first"), Widget::text("second")]
+        );
+        assert_eq!(OverflowBar::default().children, Vec::new());
+    }
+
+    #[test]
+    fn required_child_builder_preserves_existing_lowering() {
+        let child = Widget::text("child");
+        let padding = Padding::builder()
+            .padding(EdgeInsets::all(4.0))
+            .child(child.clone())
+            .build();
+
+        assert_eq!(
+            Widget::from(padding),
+            Widget::from(Padding::new(EdgeInsets::all(4.0), child,))
+        );
+    }
+
+    #[test]
+    fn builder_defaults_match_constructor_defaults() {
+        let child = Widget::text("child");
+
+        let fitted = FittedBox::builder().child(child.clone()).build();
+        let fitted_from_constructor = FittedBox::new(child.clone());
+        assert_eq!(fitted, fitted_from_constructor);
+
+        let visibility = Visibility::builder().child(child.clone()).build();
+        let visibility_from_constructor = Visibility::new(child);
+        assert_eq!(visibility, visibility_from_constructor);
+
+        let placeholder = Placeholder::builder().build();
+        assert_eq!(placeholder, Placeholder::new());
+
+        let toolbar = NavigationToolbar::builder().build();
+        assert_eq!(toolbar, NavigationToolbar::new());
+    }
+
+    #[test]
+    fn split_view_builder_keeps_callback_private_and_children_generic() {
+        let child = Widget::text("child");
+        let split = SplitView::builder()
+            .axis(Axis::Horizontal)
+            .first(child.clone())
+            .second(child)
+            .build();
+
+        assert_eq!(split.position, SplitPosition::Fraction(0.5));
+        assert_eq!(split.divider_hit_extent, 8.0);
+        assert_eq!(split.divider_visual_extent, 1.0);
+        assert!(split.on_split_changed.is_none());
     }
 }

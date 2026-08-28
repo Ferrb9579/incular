@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Instant;
+use typed_builder::TypedBuilder;
 
 /// The input device classes accepted by the Material scroll behavior.
 ///
@@ -42,10 +43,23 @@ pub enum MaterialPointerDevice {
 }
 
 /// Flutter-shaped scroll behavior configuration for a Material application.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct MaterialScrollBehavior {
+    #[builder(default = ScrollPhysics::clamping())]
     physics: ScrollPhysics,
+    #[builder(default = true)]
     scrollbars: bool,
+    #[builder(
+        default = vec![
+            MaterialPointerDevice::Touch,
+            MaterialPointerDevice::Mouse,
+            MaterialPointerDevice::Trackpad,
+            MaterialPointerDevice::Stylus,
+        ],
+        setter(transform = |devices: impl IntoIterator<Item = MaterialPointerDevice>| {
+            devices.into_iter().collect::<Vec<_>>()
+        })
+    )]
     drag_devices: Vec<MaterialPointerDevice>,
 }
 
@@ -123,24 +137,60 @@ impl MaterialScrollBehavior {
 /// Runtime-owned routing can select a child through [`MaterialApp::route`]
 /// and the navigation crate can replace that selection with its Navigator
 /// projection at the integration boundary.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct MaterialApp {
+    #[builder(default, setter(strip_option, into))]
     home: Option<Widget>,
+    #[builder(default)]
     routes: BTreeMap<String, Widget>,
+    #[builder(default, setter(strip_option, into))]
     initial_route: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     title: Option<String>,
     // ThemeData carries all of the component defaults and is intentionally
     // fairly rich. Keep it behind a pointer in the application descriptor so
     // fluent builder chains do not repeatedly move a large value on the
     // stack (and so a MaterialApp remains cheap to clone).
+    #[builder(
+        default = ThemeData::light_shared(),
+        setter(transform = |theme: ThemeData| Rc::new(theme))
+    )]
     theme: Rc<ThemeData>,
+    #[builder(
+        default,
+        setter(transform = |theme: ThemeData| Some(Rc::new(theme)))
+    )]
     dark_theme: Option<Rc<ThemeData>>,
+    #[builder(default = ThemeMode::System)]
     theme_mode: ThemeMode,
+    #[builder(default, setter(strip_option))]
     locale: Option<Locale>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |locales: impl IntoIterator<Item = Locale>| {
+            locales.into_iter().collect::<Vec<_>>()
+        })
+    )]
     supported_locales: Vec<Locale>,
+    #[builder(default, setter(strip_option, into))]
     restoration_scope_id: Option<String>,
+    #[builder(default)]
     scroll_behavior: MaterialScrollBehavior,
+    #[builder(
+        default,
+        setter(
+            prefix = "with_",
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(Widget) -> Widget>>
+            where
+                F: Fn(Widget) -> Widget + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     builder: Option<Rc<dyn Fn(Widget) -> Widget>>,
+    #[builder(default)]
     debug_show_checked_mode_banner: bool,
 }
 
@@ -348,6 +398,12 @@ impl MaterialApp {
     }
 }
 
+impl Default for MaterialApp {
+    fn default() -> Self {
+        Self::typed_builder().build()
+    }
+}
+
 impl From<MaterialApp> for Widget {
     fn from(value: MaterialApp) -> Self {
         let value = Rc::new(value);
@@ -356,11 +412,15 @@ impl From<MaterialApp> for Widget {
 }
 
 /// A single destination shown by [`NavigationRail`].
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationRailDestination {
+    #[builder(setter(into))]
     pub icon: Widget,
+    #[builder(setter(into))]
     pub label: String,
+    #[builder(default, setter(strip_option, into))]
     pub selected_icon: Option<Widget>,
+    #[builder(default = true)]
     pub enabled: bool,
 }
 
@@ -389,17 +449,42 @@ impl NavigationRailDestination {
 }
 
 /// Material navigation rail with retained destination activation callbacks.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationRail {
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |destinations: impl IntoIterator<Item = NavigationRailDestination>| {
+            destinations.into_iter().collect::<Vec<_>>()
+        })
+    )]
     destinations: Vec<NavigationRailDestination>,
+    #[builder(default)]
     selected_index: usize,
+    #[builder(default = crate::NavigationRailLabelType::None)]
     label_type: crate::NavigationRailLabelType,
+    #[builder(default)]
     extended: bool,
+    #[builder(default = 80.0, setter(transform = |width: f32| width.max(0.0)))]
     min_width: f32,
+    #[builder(default = 256.0, setter(transform = |width: f32| width.max(0.0)))]
     min_extended_width: f32,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     leading: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     trailing: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(usize)>>
+            where
+                F: Fn(usize) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_destination_selected: Option<Rc<dyn Fn(usize)>>,
 }
 
@@ -533,6 +618,12 @@ impl NavigationRail {
     }
 }
 
+impl Default for NavigationRail {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
 impl From<NavigationRail> for Widget {
     fn from(value: NavigationRail) -> Self {
         let value = Rc::new(value);
@@ -541,11 +632,15 @@ impl From<NavigationRail> for Widget {
 }
 
 /// A single destination shown by [`NavigationDrawer`].
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationDrawerDestination {
+    #[builder(setter(into))]
     pub icon: Widget,
+    #[builder(setter(into))]
     pub label: String,
+    #[builder(default, setter(strip_option, into))]
     pub selected_icon: Option<Widget>,
+    #[builder(default = true)]
     pub enabled: bool,
 }
 
@@ -575,14 +670,41 @@ impl NavigationDrawerDestination {
 
 /// Material navigation drawer with destination selection and arbitrary header
 /// or extra children.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NavigationDrawer {
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |destinations: impl IntoIterator<Item = NavigationDrawerDestination>| {
+            destinations.into_iter().collect::<Vec<_>>()
+        })
+    )]
     destinations: Vec<NavigationDrawerDestination>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     children: Vec<Widget>,
+    #[builder(default)]
     selected_index: usize,
+    #[builder(default = 360.0, setter(transform = |width: f32| width.max(0.0)))]
     width: f32,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     header: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(usize)>>
+            where
+                F: Fn(usize) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_destination_selected: Option<Rc<dyn Fn(usize)>>,
 }
 
@@ -679,6 +801,12 @@ impl NavigationDrawer {
     }
 }
 
+impl Default for NavigationDrawer {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
 impl From<NavigationDrawer> for Widget {
     fn from(value: NavigationDrawer) -> Self {
         let value = Rc::new(value);
@@ -688,13 +816,24 @@ impl From<NavigationDrawer> for Widget {
 
 /// Material bottom app bar.  A floating action button, when supplied, is
 /// painted above the bar in a retained stack so it does not affect bar layout.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct BottomAppBar {
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |actions: impl IntoIterator<Item = impl Into<Widget>>| {
+            actions.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     actions: Vec<Widget>,
+    #[builder(default, setter(strip_option, into))]
     floating_action_button: Option<Widget>,
+    #[builder(default = 80.0, setter(transform = |height: f32| height.max(0.0)))]
     height: f32,
+    #[builder(default, setter(strip_option))]
     background: Option<Color>,
+    #[builder(default = EdgeInsets::symmetric(16.0, 8.0))]
     padding: EdgeInsets,
 }
 
@@ -704,11 +843,15 @@ pub struct BottomAppBar {
 /// drawer owns its route/gesture behavior while the header owns only the
 /// padded, decorated slot at the top.  Keeping it here avoids introducing a
 /// second drawer implementation in the Material layer.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DrawerHeader {
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default, setter(strip_option))]
     pub decoration: Option<BoxDecoration>,
+    #[builder(default = EdgeInsets::ZERO)]
     pub margin: EdgeInsets,
+    #[builder(default = EdgeInsets::all(16.0))]
     pub padding: EdgeInsets,
 }
 
@@ -718,8 +861,35 @@ pub struct DrawerHeader {
 /// desktop controls. Flutter's Material `Drawer` is left-aligned, so this
 /// thin adapter fixes that Material default while delegating open/close,
 /// barrier, and semantics behavior to the shared root.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(mutators(
+    pub fn child(self, child: impl Into<Widget>) {
+        self.root = self.root.clone().child(child);
+    }
+    pub fn panel(self, panel: impl Into<Widget>) {
+        self.root = self.root.clone().panel(panel);
+    }
+    pub fn open(self, value: bool) {
+        self.root = self.root.clone().open(value);
+    }
+    pub fn default_open(self, value: bool) {
+        self.root = self.root.clone().open(value);
+    }
+    pub fn width(self, value: f32) {
+        self.root = self.root.clone().width(value);
+    }
+    pub fn modal(self, value: bool) {
+        self.root = self.root.clone().modal(value);
+    }
+    pub fn on_open_change<F>(self, callback: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        self.root = self.root.clone().on_open_change(callback);
+    }
+))]
 pub struct Drawer {
+    #[builder(via_mutators = incular_controls::drawer::Root::new().side(Side::Left))]
     root: incular_controls::drawer::Root,
 }
 
@@ -1049,9 +1219,11 @@ impl ScaffoldMessengerController {
 }
 
 /// Retained shell that paints the application child and current snackbar.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct ScaffoldMessenger {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = ScaffoldMessengerController::new(), setter(skip))]
     controller: ScaffoldMessengerController,
 }
 
@@ -1151,14 +1323,6 @@ struct ActionButtonSpec {
 }
 
 impl ActionButtonSpec {
-    fn new() -> Self {
-        Self {
-            enabled: true,
-            tooltip: None,
-            on_pressed: None,
-        }
-    }
-
     fn build(&self, kind: ActionButtonKind) -> Widget {
         let mut button = crate::IconButton::with_child(kind.icon())
             .tooltip(
@@ -1174,36 +1338,50 @@ impl ActionButtonSpec {
     }
 }
 
+#[rustfmt::skip]
 macro_rules! action_button {
     ($name:ident, $kind:ident) => {
-        #[derive(Clone)]
+        #[derive(Clone, TypedBuilder)]
         pub struct $name {
-            spec: ActionButtonSpec,
+            #[builder(default = true)]
+            enabled: bool,
+            #[builder(default, setter(strip_option, into))]
+            tooltip: Option<String>,
+            #[builder(
+                default,
+                setter(
+                    fn transform<F>(callback: F) -> Option<Rc<dyn Fn()>>
+                    where
+                        F: Fn() + 'static,
+                    {
+                        Some(Rc::new(callback))
+                    }
+                )
+            )]
+            on_pressed: Option<Rc<dyn Fn()>>,
         }
 
         impl $name {
             #[must_use]
             pub fn new() -> Self {
-                Self {
-                    spec: ActionButtonSpec::new(),
-                }
+                Self::builder().build()
             }
 
             #[must_use]
             pub fn enabled(mut self, enabled: bool) -> Self {
-                self.spec.enabled = enabled;
+                self.enabled = enabled;
                 self
             }
 
             #[must_use]
             pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
-                self.spec.tooltip = Some(tooltip.into());
+                self.tooltip = Some(tooltip.into());
                 self
             }
 
             #[must_use]
             pub fn on_pressed(mut self, callback: impl Fn() + 'static) -> Self {
-                self.spec.on_pressed = Some(Rc::new(callback));
+                self.on_pressed = Some(Rc::new(callback));
                 self
             }
 
@@ -1221,7 +1399,12 @@ macro_rules! action_button {
 
         impl From<$name> for Widget {
             fn from(value: $name) -> Self {
-                value.spec.build(ActionButtonKind::$kind)
+                ActionButtonSpec {
+                    enabled: value.enabled,
+                    tooltip: value.tooltip,
+                    on_pressed: value.on_pressed,
+                }
+                .build(ActionButtonKind::$kind)
             }
         }
     };

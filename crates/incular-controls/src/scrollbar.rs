@@ -9,6 +9,7 @@ use crate::theme::ControlTheme;
 use incular_scroll::{ScrollController, ScrollbarStyle as RawScrollbarStyle};
 use incular_widgets::Widget;
 use incular_widgets::internal::WidgetKind;
+use typed_builder::TypedBuilder;
 
 /// Themed vertical scrollbar/scroll-area wrapper.
 ///
@@ -17,11 +18,15 @@ use incular_widgets::internal::WidgetKind;
 /// [`Self::controller`] is explicitly supplied. The resulting widget is
 /// always a retained scroll viewport, so it participates in the existing
 /// wheel, track-click, and thumb-drag input paths.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Scrollbar {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default, setter(skip))]
     controller: Option<ScrollController>,
+    #[builder(default, setter(strip_option))]
     style: Option<RawScrollbarStyle>,
+    #[builder(default)]
     thumb_visibility: bool,
 }
 
@@ -29,12 +34,7 @@ impl Scrollbar {
     /// Creates a scrollbar around scrollable content.
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-            controller: None,
-            style: None,
-            thumb_visibility: false,
-        }
+        Self::builder().child(child).build()
     }
 
     /// Uses an externally owned controller, allowing the application to
@@ -126,7 +126,30 @@ mod tests {
     use incular_config::Constraints;
     use incular_core::{Color, Offset, Size};
     use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::Text;
     use incular_widgets::internal::WidgetTree;
+
+    #[test]
+    fn builder_keeps_controller_private_and_uses_explicit_defaults() {
+        let default = Scrollbar::builder().child(Text::new("content")).build();
+        assert!(default.controller.is_none());
+        assert!(default.style.is_none());
+        assert!(!default.thumb_visibility);
+
+        let style = RawScrollbarStyle {
+            width: 10.,
+            min_thumb_extent: 24.,
+            track_color: Color::TRANSPARENT,
+            thumb_color: Color::WHITE,
+        };
+        let configured = Scrollbar::builder()
+            .child(Text::new("content"))
+            .style(style)
+            .thumb_visibility(true)
+            .build();
+        assert_eq!(configured.style, Some(style));
+        assert!(configured.thumb_visibility);
+    }
 
     #[test]
     fn plain_content_becomes_a_retained_scroll_view() {

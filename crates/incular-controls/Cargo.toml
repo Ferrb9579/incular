@@ -8,6 +8,7 @@ readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+typed-builder = { workspace = true }
 incular-core = { workspace = true }
 incular-config = { workspace = true }
 incular-rendering = { workspace = true }

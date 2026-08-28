@@ -10,27 +10,28 @@ use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{BorderRadius, BoxDecoration, Container, Positioned, Stack, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(default = Some(0.), setter(strip_option))]
     value: Option<f32>,
+    #[builder(default = 0.)]
     min: f32,
+    #[builder(default = 1.)]
     max: f32,
+    #[builder(default = 180., setter(transform = |width: f32| width.max(0.)))]
     width: f32,
+    #[builder(default, setter(transform = |height: f32| Some(height.max(0.))))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Root {
-    #[must_use]
-    pub fn new() -> Self {
         Self {
             value: Some(0.),
             min: 0.,
@@ -40,6 +41,18 @@ impl Root {
             label: None,
             child: None,
         }
+    }
+}
+
+impl Root {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::default().child(child)
     }
 
     /// Sets a determinate value. Values are clamped into the configured range.
@@ -168,4 +181,44 @@ impl From<Root> for Widget {
 
 fn with_alpha(color: Color, alpha: u8) -> Color {
     Color::rgba(color.red, color.green, color.blue, alpha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builder_defaults_match_new() {
+        let new = Root::new();
+        let built = Root::builder().build();
+
+        assert_eq!(new.value, Some(0.));
+        assert_eq!(new.value, built.value);
+        assert_eq!(new.min, built.min);
+        assert_eq!(new.max, built.max);
+        assert_eq!(new.width, built.width);
+        assert!(built.height.is_none() && built.label.is_none() && built.child.is_none());
+    }
+
+    #[test]
+    fn builder_accepts_widget_child_and_preserves_numeric_setter_behavior() {
+        let progress = Root::builder()
+            .value(0.5)
+            .min(0.)
+            .max(2.)
+            .width(-10.)
+            .height(-4.)
+            .label("Loading")
+            .child(Text::new("indicator"))
+            .build();
+
+        assert_eq!(progress.normalized_value(), Some(0.25));
+        assert_eq!(progress.width, 0.);
+        assert_eq!(progress.height, Some(0.));
+        assert_eq!(progress.label.as_deref(), Some("Loading"));
+        assert!(progress.child.is_some());
+
+        let _: Widget = Root::with_child(Text::new("child")).into();
+    }
 }

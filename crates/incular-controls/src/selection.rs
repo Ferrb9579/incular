@@ -12,6 +12,7 @@ use incular_widgets::{
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use typed_builder::TypedBuilder;
 
 fn indicator_transition(theme: &ControlTheme) -> Duration {
     if theme.motion.reduced_motion {
@@ -22,47 +23,77 @@ fn indicator_transition(theme: &ControlTheme) -> Duration {
 }
 
 /// Platform-neutral styled checkbox toggle.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Checkbox {
+    #[builder(
+        default = Rc::new(Cell::new(false)),
+        setter(transform = |value: bool| Rc::new(Cell::new(value)))
+    )]
     value: Rc<Cell<bool>>,
+    #[builder(default = Rc::new(Cell::new(0)), setter(skip))]
     revision: Rc<Cell<u64>>,
-    check_opacity: OpacityController,
-    check_scale: ScaleController,
+    #[builder(default)]
     indeterminate: bool,
+    #[builder(
+        default = {
+            let controller = OpacityController::new();
+            let visible = *indeterminate || value.get();
+            controller.set_opacity(if visible { 1. } else { 0. });
+            controller
+        },
+        setter(skip)
+    )]
+    check_opacity: OpacityController,
+    #[builder(
+        default = {
+            let controller = ScaleController::new();
+            let visible = *indeterminate || value.get();
+            controller.set_scale(if visible { 1. } else { 0.8 });
+            controller
+        },
+        setter(skip)
+    )]
+    check_scale: ScaleController,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option))]
     active_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     check_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     radius: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
+}
+
+impl Default for Checkbox {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Checkbox {
     #[must_use]
     pub fn new(value: bool) -> Self {
-        let check_opacity = OpacityController::new();
-        let check_scale = ScaleController::new();
-        check_opacity.set_opacity(if value { 1. } else { 0. });
-        check_scale.set_scale(if value { 1. } else { 0.8 });
-        Self {
-            value: Rc::new(Cell::new(value)),
-            revision: Rc::new(Cell::new(0)),
-            check_opacity,
-            check_scale,
-            indeterminate: false,
-            label: None,
-            enabled: true,
-            active_color: None,
-            inactive_color: None,
-            check_color: None,
-            border_color: None,
-            border_width: None,
-            radius: None,
-            on_changed: None,
-        }
+        Self::builder().value(value).build()
     }
 
     #[must_use]
@@ -279,18 +310,38 @@ impl From<Checkbox> for Widget {
 }
 
 /// Platform-neutral styled radio option button.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Radio<T: PartialEq + Clone + 'static> {
     value: T,
+    #[builder(default, setter(strip_option))]
     group_value: Option<T>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
     toggleable: bool,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(strip_option))]
     active_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     dot_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     border_width: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(T) + 'static>>
+            where
+                F: Fn(T) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(T) + 'static>>,
 }
 
@@ -467,39 +518,57 @@ impl<T: PartialEq + Clone + 'static> From<Radio<T>> for Widget {
 }
 
 /// Platform-neutral styled toggle switch.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Switch {
+    #[builder(
+        default = Rc::new(Cell::new(false)),
+        setter(transform = |value: bool| Rc::new(Cell::new(value)))
+    )]
     value: Rc<Cell<bool>>,
+    #[builder(default = Rc::new(Cell::new(0)), setter(skip))]
     revision: Rc<Cell<u64>>,
+    #[builder(default = TranslationController::new(), setter(skip))]
     thumb_translation: TranslationController,
+    #[builder(default = Rc::new(Cell::new(false)), setter(skip))]
     thumb_initialized: Rc<Cell<bool>>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option))]
     active_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     active_thumb_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_thumb_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     outline_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     outline_width: Option<f32>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(bool) + 'static>>
+            where
+                F: Fn(bool) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_changed: Option<Rc<dyn Fn(bool) + 'static>>,
+}
+
+impl Default for Switch {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Switch {
     #[must_use]
     pub fn new(value: bool) -> Self {
-        Self {
-            value: Rc::new(Cell::new(value)),
-            revision: Rc::new(Cell::new(0)),
-            thumb_translation: TranslationController::new(),
-            thumb_initialized: Rc::new(Cell::new(false)),
-            enabled: true,
-            active_track_color: None,
-            inactive_track_color: None,
-            active_thumb_color: None,
-            inactive_thumb_color: None,
-            outline_color: None,
-            outline_width: None,
-            on_changed: None,
-        }
+        Self::builder().value(value).build()
     }
 
     #[must_use]
@@ -666,5 +735,63 @@ impl From<Switch> for Widget {
                 .unwrap_or_default();
             value.build(&theme)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::checkbox::CheckedState;
+
+    #[test]
+    fn checkbox_builder_preserves_semantic_defaults_and_initial_state() {
+        let default = Checkbox::default();
+        assert_eq!(default.checked_state(), CheckedState::Unchecked);
+        assert!(!default.indeterminate);
+        assert!(default.enabled);
+        assert_eq!(default.check_opacity.opacity(), 0.);
+        assert_eq!(default.check_scale.scale(), 0.8);
+        assert!(default.on_changed.is_none());
+
+        let checked = Checkbox::builder()
+            .value(true)
+            .label("Accept")
+            .on_changed(|_| {})
+            .build();
+        assert_eq!(checked.checked_state(), CheckedState::Checked);
+        assert_eq!(checked.check_opacity.opacity(), 1.);
+        assert_eq!(checked.check_scale.scale(), 1.);
+        assert!(checked.label.is_some());
+        assert!(checked.on_changed.is_some());
+    }
+
+    #[test]
+    fn radio_builder_keeps_required_value_and_explicit_defaults() {
+        let radio = Radio::<u8>::builder()
+            .value(2)
+            .group_value(2)
+            .label("Two")
+            .on_changed(|_| {})
+            .build();
+        assert_eq!(radio.value, 2);
+        assert_eq!(radio.group_value, Some(2));
+        assert!(radio.enabled);
+        assert!(!radio.toggleable);
+        assert!(radio.label.is_some());
+        assert!(radio.on_changed.is_some());
+    }
+
+    #[test]
+    fn switch_builder_preserves_runtime_defaults_and_compatibility() {
+        let default = Switch::default();
+        assert!(!default.value.get());
+        assert!(default.enabled);
+        assert!(default.on_changed.is_none());
+
+        let enabled = Switch::builder().value(true).on_changed(|_| {}).build();
+        assert!(enabled.value.get());
+        assert!(enabled.on_changed.is_some());
+
+        assert_eq!(Switch::new(true).value.get(), enabled.value.get());
     }
 }

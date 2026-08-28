@@ -1,11 +1,14 @@
 //! Hero and shared-element route transition widgets.
 
 use crate::Widget;
+use typed_builder::TypedBuilder;
 
 /// Marks a child widget as a candidate for shared-element route animations.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Hero {
+    #[builder(setter(into))]
     tag: String,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -31,9 +34,10 @@ impl From<Hero> for Widget {
 }
 
 /// Enables or disables [`Hero`] transitions for its subtree.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct HeroMode {
     enabled: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -59,8 +63,9 @@ impl From<HeroMode> for Widget {
 }
 
 /// Scopes a hero animation controller.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct HeroControllerScope {
+    #[builder(setter(into))]
     child: Widget,
 }
 

@@ -1,18 +1,26 @@
 //! Declarative SafeArea widget consuming ambient runtime/window safe insets.
 
 use incular_config::EdgeInsets;
+use typed_builder::TypedBuilder;
 
 use crate::{Widget, WidgetKind};
 
 /// Insets child from the display edges to avoid platform UI, notches, and status bars.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SafeArea {
+    #[builder(setter(into))]
     pub(crate) child: Widget,
+    #[builder(default = EdgeInsets::ZERO)]
     pub(crate) minimum: EdgeInsets,
+    #[builder(default = true)]
     pub(crate) left: bool,
+    #[builder(default = true)]
     pub(crate) top: bool,
+    #[builder(default = true)]
     pub(crate) right: bool,
+    #[builder(default = true)]
     pub(crate) bottom: bool,
+    #[builder(default = false)]
     pub(crate) maintain_bottom_view_padding: bool,
 }
 

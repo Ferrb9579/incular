@@ -11,11 +11,15 @@ use incular_widgets::{
 };
 use std::cell::Cell;
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct Range {
+    #[builder(default = 0.0)]
     pub min: f32,
+    #[builder(default = 1.0)]
     pub max: f32,
+    #[builder(default = 0.01)]
     pub step: f32,
 }
 impl Default for Range {
@@ -38,61 +42,97 @@ impl Range {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Root {
+    #[builder(
+        default = Rc::new(Cell::new(0.0)),
+        setter(
+            fn transform(value: f32) -> Rc<Cell<f32>> {
+                Rc::new(Cell::new(value))
+            }
+        )
+    )]
     value: Rc<Cell<f32>>,
+    #[builder(default = Rc::new(Cell::new(0)), setter(skip))]
     revision: Rc<Cell<u64>>,
+    #[builder(default)]
     range: Range,
+    #[builder(default = Axis::Horizontal)]
     orientation: Axis,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option))]
     secondary_value: Option<f32>,
+    #[builder(default, setter(strip_option))]
     active_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     inactive_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     secondary_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     thumb_color: Option<Color>,
+    #[builder(default = true)]
     tap_enabled: bool,
+    #[builder(default = true)]
     drag_enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     semantic_value: Option<String>,
+    #[builder(default, setter(strip_option))]
     track_extent: Option<f32>,
+    #[builder(default)]
     rtl: bool,
+    #[builder(default = FocusNode::new(), setter(skip))]
     focus_node: FocusNode,
+    #[builder(default)]
     autofocus: bool,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change: Option<Rc<dyn Fn(f32) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_start: Option<Rc<dyn Fn(f32) + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn(f32) + 'static>>
+            where
+                F: Fn(f32) + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_change_end: Option<Rc<dyn Fn(f32) + 'static>>,
 }
 impl Default for Root {
     fn default() -> Self {
-        Self::new()
+        Self::builder().build()
     }
 }
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            value: Rc::new(Cell::new(0.)),
-            revision: Rc::new(Cell::new(0)),
-            range: Range::default(),
-            orientation: Axis::Horizontal,
-            enabled: true,
-            secondary_value: None,
-            active_track_color: None,
-            inactive_track_color: None,
-            secondary_track_color: None,
-            thumb_color: None,
-            tap_enabled: true,
-            drag_enabled: true,
-            semantic_value: None,
-            track_extent: None,
-            rtl: false,
-            focus_node: FocusNode::new(),
-            autofocus: false,
-            child: None,
-            on_change: None,
-            on_change_start: None,
-            on_change_end: None,
-        }
+        Self::builder().build()
     }
     #[must_use]
     pub fn value(self, value: f32) -> Self {
@@ -241,7 +281,8 @@ impl Root {
             return child.clone();
         }
 
-        let current_value = self.value.get();
+        let current_value = self.range.clamp(self.value.get());
+        self.value.set(current_value);
         let ratio = ((current_value - self.range.min)
             / (self.range.max - self.range.min).max(f32::EPSILON))
         .clamp(0., 1.);
@@ -538,8 +579,9 @@ impl From<Root> for Widget {
         })
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Control {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Control {
@@ -555,8 +597,9 @@ impl From<Control> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Track {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Track {
@@ -572,8 +615,9 @@ impl From<Track> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Indicator {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Indicator {
@@ -589,8 +633,9 @@ impl From<Indicator> for Widget {
         value.child
     }
 }
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Thumb {
+    #[builder(setter(into))]
     child: Widget,
 }
 impl Thumb {
@@ -604,5 +649,61 @@ impl Thumb {
 impl From<Thumb> for Widget {
     fn from(value: Thumb) -> Self {
         value.child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builders_use_slider_semantic_defaults() {
+        let range = Range::builder().build();
+        assert_eq!(range, Range::default());
+
+        let root = Root::builder().build();
+        assert_eq!(root.value.get(), 0.0);
+        assert_eq!(root.range, Range::default());
+        assert_eq!(root.orientation, Axis::Horizontal);
+        assert!(root.enabled);
+        assert!(root.tap_enabled);
+        assert!(root.drag_enabled);
+        assert!(!root.autofocus);
+        assert!(root.child.is_none());
+        assert!(root.on_change.is_none());
+        assert!(root.on_change_start.is_none());
+        assert!(root.on_change_end.is_none());
+    }
+
+    #[test]
+    fn builder_accepts_generic_widgets_and_callback_configuration() {
+        let root = Root::builder()
+            .value(0.5)
+            .range(Range::builder().max(2.0).step(0.5).build())
+            .orientation(Axis::Vertical)
+            .child(Text::new("Slider"))
+            .on_change(|_| {})
+            .on_change_start(|_| {})
+            .on_change_end(|_| {})
+            .build();
+        assert_eq!(root.value.get(), 0.5);
+        assert_eq!(root.range.max, 2.0);
+        assert_eq!(root.orientation, Axis::Vertical);
+        assert!(root.child.is_some());
+        assert!(root.on_change.is_some());
+        assert!(root.on_change_start.is_some());
+        assert!(root.on_change_end.is_some());
+
+        let _: Widget = Control::builder()
+            .child(Text::new("Control"))
+            .build()
+            .into();
+        let _: Widget = Track::builder().child(Text::new("Track")).build().into();
+        let _: Widget = Indicator::builder()
+            .child(Text::new("Indicator"))
+            .build()
+            .into();
+        let _: Widget = Thumb::builder().child(Text::new("Thumb")).build().into();
     }
 }

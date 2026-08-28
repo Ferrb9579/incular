@@ -5,18 +5,26 @@ use incular_scroll::{
     DragStartBehavior, MeasuredExtentIndex, ScrollCacheExtent, ScrollController, ScrollPhysics,
     ScrollViewKeyboardDismissBehavior,
 };
+use typed_builder::TypedBuilder;
 
 use crate::{Column, DecoratedBox, Padding, Row, SizedBox, VirtualList, Widget};
 
 /// A first-class scrollable box that scrolls a single child.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SingleChildScrollView {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
+    #[builder(default = false)]
     reverse: bool,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
 }
 
@@ -207,16 +215,35 @@ enum ListViewStrategy {
 }
 
 /// A first-class list descriptor supporting static children and lazy virtualized item builders.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct ListView {
-    strategy: ListViewStrategy,
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
+    children: Vec<Widget>,
+    #[builder(default, setter(skip))]
+    strategy: Option<ListViewStrategy>,
+    #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
+    #[builder(default = false)]
     reverse: bool,
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     cache_extent: Option<f32>,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+}
+
+impl Default for ListView {
+    fn default() -> Self {
+        Self::typed_builder().build()
+    }
 }
 
 impl ListView {
@@ -224,7 +251,8 @@ impl ListView {
     #[must_use]
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
-            strategy: ListViewStrategy::Children(children.into_iter().map(Into::into).collect()),
+            children: children.into_iter().map(Into::into).collect(),
+            strategy: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -242,10 +270,11 @@ impl ListView {
         W: Into<Widget> + 'static,
     {
         Self {
-            strategy: ListViewStrategy::Builder {
+            children: Vec::new(),
+            strategy: Some(ListViewStrategy::Builder {
                 item_count,
                 builder: Rc::new(move |i| builder(i).into()),
-            },
+            }),
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -275,7 +304,8 @@ impl ListView {
         let item_builder = Rc::new(move |i| item_builder(i).into());
         let separator_builder = Rc::new(move |i| separator_builder(i).into());
         Self {
-            strategy: ListViewStrategy::Builder {
+            children: Vec::new(),
+            strategy: Some(ListViewStrategy::Builder {
                 item_count: total_count,
                 builder: Rc::new(move |index| {
                     if index % 2 == 0 {
@@ -284,7 +314,7 @@ impl ListView {
                         separator_builder(index / 2)
                     }
                 }),
-            },
+            }),
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -306,11 +336,12 @@ impl ListView {
         W: Into<Widget> + 'static,
     {
         Self {
-            strategy: ListViewStrategy::FixedExtent {
+            children: Vec::new(),
+            strategy: Some(ListViewStrategy::FixedExtent {
                 item_count,
                 item_extent: item_extent.max(1.0),
                 builder: Rc::new(move |i| builder(i).into()),
-            },
+            }),
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -332,12 +363,13 @@ impl ListView {
         W: Into<Widget> + 'static,
     {
         Self {
-            strategy: ListViewStrategy::VariableExtent {
+            children: Vec::new(),
+            strategy: Some(ListViewStrategy::VariableExtent {
                 item_count,
                 estimated_extent: estimated_extent.max(1.0),
                 index: None,
                 builder: Rc::new(move |i| builder(i).into()),
-            },
+            }),
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -413,16 +445,16 @@ impl ListView {
     /// Sets fixed item extent.
     #[must_use]
     pub fn item_extent(mut self, extent: f32) -> Self {
-        if let ListViewStrategy::Builder {
+        if let Some(ListViewStrategy::Builder {
             item_count,
             builder,
-        } = self.strategy
+        }) = self.strategy
         {
-            self.strategy = ListViewStrategy::FixedExtent {
+            self.strategy = Some(ListViewStrategy::FixedExtent {
                 item_count,
                 item_extent: extent.max(1.0),
                 builder,
-            };
+            });
         }
         self
     }
@@ -488,7 +520,10 @@ impl ListView {
 impl From<ListView> for Widget {
     fn from(value: ListView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let list_widget = match value.strategy {
+        let list_widget = match value
+            .strategy
+            .unwrap_or_else(|| ListViewStrategy::Children(value.children))
+        {
             ListViewStrategy::Children(children) => {
                 let content: Widget = match value.scroll_direction {
                     Axis::Vertical => Column::new(children).into(),
@@ -591,14 +626,35 @@ enum GridViewStrategy {
 }
 
 /// A first-class grid descriptor with bounded virtualization.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct GridView {
-    strategy: GridViewStrategy,
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
+    children: Vec<Widget>,
+    #[builder(default, setter(skip))]
+    strategy: Option<GridViewStrategy>,
+    #[builder(default = 1, setter(transform = |count: usize| count.max(1)))]
+    cross_axis_count: usize,
+    #[builder(default, setter(transform = |extent: f32| Some(extent.max(1.0))))]
+    row_extent: Option<f32>,
+    #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
+    #[builder(default = false)]
     reverse: bool,
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+}
+
+impl Default for GridView {
+    fn default() -> Self {
+        Self::typed_builder().build()
+    }
 }
 
 impl GridView {
@@ -609,11 +665,10 @@ impl GridView {
         children: impl IntoIterator<Item = impl Into<Widget>>,
     ) -> Self {
         Self {
-            strategy: GridViewStrategy::Count {
-                cross_axis_count: cross_axis_count.max(1),
-                children: children.into_iter().map(Into::into).collect(),
-                row_extent: None,
-            },
+            children: children.into_iter().map(Into::into).collect(),
+            strategy: None,
+            cross_axis_count: cross_axis_count.max(1),
+            row_extent: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -634,12 +689,15 @@ impl GridView {
         W: Into<Widget> + 'static,
     {
         Self {
-            strategy: GridViewStrategy::Builder {
+            children: Vec::new(),
+            strategy: Some(GridViewStrategy::Builder {
                 item_count,
                 cross_axis_count: cross_axis_count.max(1),
                 row_extent: row_extent.max(1.0),
                 builder: Rc::new(move |i| builder(i).into()),
-            },
+            }),
+            cross_axis_count: 1,
+            row_extent: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
             controller: None,
@@ -697,7 +755,11 @@ impl GridView {
 impl From<GridView> for Widget {
     fn from(value: GridView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let grid_widget: Widget = match value.strategy {
+        let grid_widget: Widget = match value.strategy.unwrap_or_else(|| GridViewStrategy::Count {
+            cross_axis_count: value.cross_axis_count,
+            children: value.children,
+            row_extent: value.row_extent,
+        }) {
             GridViewStrategy::Count {
                 cross_axis_count,
                 children,
@@ -771,15 +833,33 @@ enum PageViewStrategy {
 }
 
 /// A first-class paged scrollable descriptor.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct PageView {
-    strategy: PageViewStrategy,
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
+    children: Vec<Widget>,
+    #[builder(default, setter(skip))]
+    strategy: Option<PageViewStrategy>,
+    #[builder(default, setter(strip_option))]
     controller: Option<PageController>,
+    #[builder(default = Axis::Horizontal)]
     scroll_direction: Axis,
+    #[builder(default = false)]
     reverse: bool,
+    #[builder(default = true)]
     page_snapping: bool,
+    #[builder(default = 1.0, setter(transform = |value: f32| value.max(0.01)))]
     viewport_fraction: f32,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+}
+
+impl Default for PageView {
+    fn default() -> Self {
+        Self::typed_builder().build()
+    }
 }
 
 impl PageView {
@@ -787,7 +867,8 @@ impl PageView {
     #[must_use]
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
-            strategy: PageViewStrategy::Children(children.into_iter().map(Into::into).collect()),
+            children: children.into_iter().map(Into::into).collect(),
+            strategy: None,
             controller: None,
             scroll_direction: Axis::Horizontal,
             reverse: false,
@@ -808,11 +889,12 @@ impl PageView {
         W: Into<Widget> + 'static,
     {
         Self {
-            strategy: PageViewStrategy::Builder {
+            children: Vec::new(),
+            strategy: Some(PageViewStrategy::Builder {
                 page_count,
                 page_extent: page_extent.max(1.0),
                 builder: Rc::new(move |i| builder(i).into()),
-            },
+            }),
             controller: None,
             scroll_direction: Axis::Horizontal,
             reverse: false,
@@ -899,7 +981,10 @@ impl From<PageView> for Widget {
                 ScrollPhysics::clamping()
             }
         };
-        match value.strategy {
+        match value
+            .strategy
+            .unwrap_or_else(|| PageViewStrategy::Children(value.children))
+        {
             PageViewStrategy::Children(children) => {
                 let page_count = children.len();
                 let children = Rc::new(children);
@@ -954,8 +1039,9 @@ pub trait Sliver {
 }
 
 /// Adapts an ordinary box widget into a sliver.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SliverToBoxAdapter {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1062,8 +1148,13 @@ impl Sliver for SliverGrid {
 }
 
 /// Insets around a sliver child.
+#[derive(TypedBuilder)]
 pub struct SliverPadding {
+    #[builder(setter(into))]
     padding: EdgeInsets,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -1084,9 +1175,13 @@ impl Sliver for SliverPadding {
 }
 
 /// A pinned header sliver.
+#[derive(TypedBuilder)]
 pub struct SliverPersistentHeader {
+    #[builder(setter(transform = |height: f32| height.max(0.0)))]
     height: f32,
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = true)]
     pinned: bool,
 }
 
@@ -1145,9 +1240,13 @@ impl Sliver for SliverPersistentHeader {
 }
 
 /// A framework-neutral app bar sliver.
+#[derive(TypedBuilder)]
 pub struct SliverAppBar {
+    #[builder(default = 56.0, setter(transform = |height: f32| height.max(0.0)))]
     expanded_height: f32,
+    #[builder(setter(into))]
     title: Widget,
+    #[builder(default = true)]
     pinned: bool,
 }
 
@@ -1192,13 +1291,31 @@ impl Sliver for SliverAppBar {
 }
 
 /// A first-class CustomScrollView coordinating a sequence of slivers.
+#[derive(TypedBuilder)]
 pub struct CustomScrollView {
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     slivers: Vec<Box<dyn Sliver>>,
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
+    #[builder(default = false)]
     reverse: bool,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+}
+
+impl Default for CustomScrollView {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl CustomScrollView {
@@ -1326,9 +1443,18 @@ impl From<Scrollable> for Widget {
 }
 
 /// Coordinates outer and inner scroll views with sliver headers.
+#[derive(TypedBuilder)]
 pub struct NestedScrollView {
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     header_slivers: Vec<Box<dyn Sliver>>,
+    #[builder(setter(into))]
     body: Widget,
 }
 
@@ -1368,10 +1494,25 @@ impl From<NestedScrollView> for Widget {
 }
 
 /// A viewport bounding visible slivers.
+#[derive(TypedBuilder)]
 pub struct Viewport {
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     slivers: Vec<Box<dyn Sliver>>,
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default = Axis::Vertical)]
     axis_direction: Axis,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Viewport {
@@ -1409,8 +1550,21 @@ impl From<Viewport> for Widget {
 }
 
 /// A shrink-wrapping viewport.
+#[derive(TypedBuilder)]
 pub struct ShrinkWrappingViewport {
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl Default for ShrinkWrappingViewport {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl ShrinkWrappingViewport {
@@ -1429,10 +1583,13 @@ impl From<ShrinkWrappingViewport> for Widget {
 }
 
 /// A configurable scrollbar widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RawScrollbar {
+    #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
+    #[builder(default = false)]
     thumb_visibility: bool,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1466,10 +1623,20 @@ impl From<RawScrollbar> for Widget {
 }
 
 /// A simple sequential layout along the main axis.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ListBody {
+    #[builder(default = Axis::Vertical)]
     main_axis: Axis,
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
     children: Vec<Widget>,
+}
+
+impl Default for ListBody {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl ListBody {
@@ -1498,9 +1665,13 @@ impl From<ListBody> for Widget {
 }
 
 /// A 3D cylindrical rotating wheel scroll list.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct ListWheelScrollView {
+    #[builder(setter(transform = |extent: f32| extent.max(1.0)))]
     item_extent: f32,
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
     children: Vec<Widget>,
 }
 
@@ -1523,11 +1694,15 @@ impl From<ListWheelScrollView> for Widget {
 }
 
 /// Draggable scrollable bottom sheet.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DraggableScrollableSheet {
+    #[builder(default = 0.5, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
     initial_child_size: f32,
+    #[builder(default = 0.25, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
     min_child_size: f32,
+    #[builder(default = 1.0, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
     max_child_size: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1570,8 +1745,9 @@ impl From<DraggableScrollableSheet> for Widget {
 }
 
 /// Notifies and controls the sheet extent of an ancestor [`DraggableScrollableSheet`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct DraggableScrollableActuator {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1591,8 +1767,9 @@ impl From<DraggableScrollableActuator> for Widget {
 }
 
 /// Listens for notifications bubbling up the widget tree.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct NotificationListener {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1612,8 +1789,9 @@ impl From<NotificationListener> for Widget {
 }
 
 /// Observes scroll notifications.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct ScrollNotificationObserver {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1633,10 +1811,13 @@ impl From<ScrollNotificationObserver> for Widget {
 }
 
 /// Bidirectional (2D) scrollable coordinator.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct TwoDimensionalScrollable {
+    #[builder(default, setter(strip_option))]
     horizontal_controller: Option<ScrollController>,
+    #[builder(default, setter(strip_option))]
     vertical_controller: Option<ScrollController>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1681,8 +1862,9 @@ impl From<TwoDimensionalScrollable> for Widget {
 }
 
 /// Bidirectional (2D) scrolling view.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct TwoDimensionalScrollView {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1702,8 +1884,9 @@ impl From<TwoDimensionalScrollView> for Widget {
 }
 
 /// Bidirectional (2D) viewport.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct TwoDimensionalViewport {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -1844,8 +2027,11 @@ impl Sliver for SliverPrototypeExtentList {
 }
 
 /// Sliver filling remaining viewport space.
+#[derive(TypedBuilder)]
 pub struct SliverFillRemaining {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = true)]
     has_scroll_body: bool,
 }
 
@@ -1877,8 +2063,18 @@ impl Sliver for SliverFillRemaining {
 }
 
 /// Sliver with children each filling the entire viewport.
+#[derive(TypedBuilder)]
 pub struct SliverFillViewport {
+    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+    }))]
     children: Vec<Widget>,
+}
+
+impl Default for SliverFillViewport {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl SliverFillViewport {
@@ -1920,8 +2116,21 @@ impl Sliver for SliverLayoutBuilder {
 }
 
 /// Groups multiple slivers along the main axis.
+#[derive(TypedBuilder)]
 pub struct SliverMainAxisGroup {
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl Default for SliverMainAxisGroup {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl SliverMainAxisGroup {
@@ -1945,8 +2154,21 @@ impl Sliver for SliverMainAxisGroup {
 }
 
 /// Groups multiple slivers across the cross axis.
+#[derive(TypedBuilder)]
 pub struct SliverCrossAxisGroup {
+    #[builder(
+        default,
+        setter(transform = |slivers: impl IntoIterator<Item = Box<dyn Sliver>>| {
+            slivers.into_iter().collect::<Vec<Box<dyn Sliver>>>()
+        })
+    )]
     slivers: Vec<Box<dyn Sliver>>,
+}
+
+impl Default for SliverCrossAxisGroup {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl SliverCrossAxisGroup {
@@ -1970,8 +2192,13 @@ impl Sliver for SliverCrossAxisGroup {
 }
 
 /// Expands a sliver across cross-axis group space.
+#[derive(TypedBuilder)]
 pub struct SliverCrossAxisExpanded {
+    #[builder(default = 1, setter(transform = |flex: usize| flex.max(1)))]
     flex: usize,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -1994,8 +2221,13 @@ impl Sliver for SliverCrossAxisExpanded {
 }
 
 /// Constrains the cross-axis dimension of a sliver.
+#[derive(TypedBuilder)]
 pub struct SliverConstrainedCrossAxis {
+    #[builder(setter(transform = |extent: f32| extent.max(0.0)))]
     max_extent: f32,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2023,8 +2255,12 @@ impl Sliver for SliverConstrainedCrossAxis {
 }
 
 /// Paints decoration behind a sliver.
+#[derive(TypedBuilder)]
 pub struct DecoratedSliver {
     decoration: incular_rendering::Decoration,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2051,8 +2287,13 @@ impl Sliver for DecoratedSliver {
 }
 
 /// Sliver opacity wrapper.
+#[derive(TypedBuilder)]
 pub struct SliverOpacity {
+    #[builder(setter(transform = |opacity: f32| opacity.clamp(0.0, 1.0)))]
     opacity: f32,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2073,8 +2314,12 @@ impl Sliver for SliverOpacity {
 }
 
 /// Sliver offstage wrapper.
+#[derive(TypedBuilder)]
 pub struct SliverOffstage {
     offstage: bool,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2097,8 +2342,12 @@ impl Sliver for SliverOffstage {
 }
 
 /// Sliver ignore pointer wrapper.
+#[derive(TypedBuilder)]
 pub struct SliverIgnorePointer {
     ignoring: bool,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2121,7 +2370,11 @@ impl Sliver for SliverIgnorePointer {
 }
 
 /// Sliver safe area insets wrapper.
+#[derive(TypedBuilder)]
 pub struct SliverSafeArea {
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2141,8 +2394,12 @@ impl Sliver for SliverSafeArea {
 }
 
 /// Sliver visibility wrapper.
+#[derive(TypedBuilder)]
 pub struct SliverVisibility {
     visible: bool,
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2165,7 +2422,9 @@ impl Sliver for SliverVisibility {
 }
 
 /// Pinned leading header sliver.
+#[derive(TypedBuilder)]
 pub struct PinnedHeaderSliver {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -2202,7 +2461,9 @@ impl Sliver for PinnedHeaderSliver {
 }
 
 /// Floating header sliver.
+#[derive(TypedBuilder)]
 pub struct SliverFloatingHeader {
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -2233,9 +2494,13 @@ impl Sliver for SliverFloatingHeader {
 }
 
 /// Resizing header sliver.
+#[derive(TypedBuilder)]
 pub struct SliverResizingHeader {
+    #[builder(setter(transform = |extent: f32| extent.max(0.0)))]
     min_extent: f32,
+    #[builder(setter(transform = |extent: f32| extent.max(0.0)))]
     max_extent: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -2277,7 +2542,11 @@ impl Sliver for SliverResizingHeader {
 }
 
 /// Sliver overlap absorber for nested scroll view coordinators.
+#[derive(TypedBuilder)]
 pub struct SliverOverlapAbsorber {
+    #[builder(setter(transform = |sliver: impl Sliver + 'static| {
+        Box::new(sliver) as Box<dyn Sliver>
+    }))]
     sliver: Box<dyn Sliver>,
 }
 
@@ -2356,7 +2625,9 @@ impl Sliver for SliverReorderableList {
 }
 
 /// Hierarchical tree sliver.
+#[derive(TypedBuilder)]
 pub struct TreeSliver {
+    #[builder(setter(into))]
     child: Widget,
 }
 

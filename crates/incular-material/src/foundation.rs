@@ -16,6 +16,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use typed_builder::TypedBuilder;
 
 /// Material interaction states used by state-dependent properties.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
@@ -348,9 +349,11 @@ impl WidgetStatesController {
 }
 
 /// Material density adjustment used by layout and hit-target calculations.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct VisualDensity {
+    #[builder(default = 0.0)]
     pub horizontal: f32,
+    #[builder(default = 0.0)]
     pub vertical: f32,
 }
 
@@ -433,17 +436,27 @@ pub enum MaterialType {
 /// A retained Material surface. Elevation is lowered to the shared shadow
 /// renderer, so changing it affects paint/composite output rather than being a
 /// passive style field.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Material {
+    #[builder(default = MaterialType::Canvas)]
     pub material_type: MaterialType,
+    #[builder(default = Color::TRANSPARENT)]
     pub color: Color,
+    #[builder(default = Color::rgba(0, 0, 0, 100))]
     pub shadow_color: Color,
+    #[builder(default, setter(strip_option, into))]
     pub surface_tint_color: Option<Color>,
+    #[builder(default = 0.0, setter(transform = |value: f32| value.max(0.0)))]
     pub elevation: f32,
+    #[builder(default = BorderRadius::ZERO)]
     pub border_radius: BorderRadius,
+    #[builder(default, setter(strip_option))]
     pub padding: Option<EdgeInsets>,
+    #[builder(default = Clip::None)]
     pub clip_behavior: Clip,
+    #[builder(default = Duration::from_millis(200))]
     pub animation_duration: Duration,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -555,9 +568,11 @@ impl From<Material> for Widget {
 
 /// Material ink background wrapper. The actual ink is painted by the shared
 /// retained decoration/action primitives.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Ink {
+    #[builder(default, setter(strip_option))]
     pub color: Option<Color>,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -589,11 +604,25 @@ impl From<Ink> for Widget {
 }
 
 /// Retained pointer/keyboard ink interaction surface.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct InkWell {
+    #[builder(setter(into))]
     pub child: Widget,
-    pub on_tap: Option<std::rc::Rc<dyn Fn() + 'static>>,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn() + 'static>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
+    on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default = Color::TRANSPARENT)]
     pub color: Color,
+    #[builder(default = Color::TRANSPARENT)]
     pub overlay_color: Color,
 }
 
@@ -1427,15 +1456,19 @@ pub type PopupMenuTheme = crate::menus::PopupMenuThemeData;
 pub type TabBarTheme = crate::p0_controls::TabBarThemeData;
 
 /// Full Material input-decoration configuration.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
+#[builder(field_defaults(default, setter(strip_option, into)))]
 pub struct InputDecorationThemeData {
     pub label_style: Option<TextStyle>,
     pub floating_label_style: Option<TextStyle>,
     pub hint_style: Option<TextStyle>,
+    #[builder(default, setter(!strip_option, transform = |value: usize| Some(value.max(1))))]
     pub hint_max_lines: Option<usize>,
     pub helper_style: Option<TextStyle>,
+    #[builder(default, setter(!strip_option, transform = |value: usize| Some(value.max(1))))]
     pub helper_max_lines: Option<usize>,
     pub error_style: Option<TextStyle>,
+    #[builder(default, setter(!strip_option, transform = |value: usize| Some(value.max(1))))]
     pub error_max_lines: Option<usize>,
     pub counter_style: Option<TextStyle>,
     pub prefix_style: Option<TextStyle>,
@@ -1628,9 +1661,11 @@ impl InputDecorationThemeData {
 }
 
 /// Inherited wrapper for an [`InputDecorationThemeData`] value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct InputDecorationTheme {
+    #[builder(setter(into))]
     pub data: InputDecorationThemeData,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -1652,51 +1687,95 @@ impl From<InputDecorationTheme> for Widget {
 
 /// Per-field Material decoration. `None` fields inherit from the nearest
 /// [`InputDecorationThemeData`] and then the component defaults.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct InputDecoration {
+    #[builder(default, setter(strip_option, into))]
     pub icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub label_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub hint_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub helper_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub error_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub counter_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub counter: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub prefix_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub suffix_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub label_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub floating_label_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub hint_style: Option<TextStyle>,
+    #[builder(default, setter(transform = |value: usize| Some(value.max(1))))]
     pub hint_max_lines: Option<usize>,
+    #[builder(default, setter(transform = |value: usize| Some(value.max(1))))]
     pub helper_max_lines: Option<usize>,
+    #[builder(default, setter(transform = |value: usize| Some(value.max(1))))]
     pub error_max_lines: Option<usize>,
+    #[builder(default, setter(strip_option, into))]
     pub helper_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub error_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub counter_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub prefix_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub suffix_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option, into))]
     pub prefix_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub suffix_icon: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub icon_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub prefix_icon_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub suffix_icon_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub prefix: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub suffix: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     pub is_dense: Option<bool>,
+    #[builder(default)]
     pub is_collapsed: bool,
+    #[builder(default, setter(strip_option, into))]
     pub align_label_with_hint: Option<bool>,
+    #[builder(default, setter(strip_option, into))]
     pub semantic_counter_text: Option<String>,
+    #[builder(default, setter(strip_option, into))]
     pub filled: Option<bool>,
+    #[builder(default, setter(strip_option, into))]
     pub fill_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub hover_color: Option<Color>,
+    #[builder(default, setter(strip_option, into))]
     pub content_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option, into))]
     pub floating_label_behavior: Option<FloatingLabelBehavior>,
+    #[builder(default, setter(strip_option, into))]
     pub floating_label_alignment: Option<FloatingLabelAlignment>,
+    #[builder(default, setter(strip_option, into))]
     pub constraints: Option<Size>,
+    #[builder(default, setter(strip_option, into))]
     pub border: Option<InputBorder>,
+    #[builder(default, setter(strip_option, into))]
     pub enabled_border: Option<InputBorder>,
+    #[builder(default, setter(strip_option, into))]
     pub focused_border: Option<InputBorder>,
+    #[builder(default, setter(strip_option, into))]
     pub error_border: Option<InputBorder>,
+    #[builder(default, setter(strip_option, into))]
     pub focused_error_border: Option<InputBorder>,
+    #[builder(default, setter(strip_option, into))]
     pub disabled_border: Option<InputBorder>,
 }
 
@@ -2119,12 +2198,17 @@ impl InputDecoration {
 /// Material's chrome-only input decorator. Editing, focus and selection stay
 /// in the child (normally core `EditableText`); this widget only resolves the
 /// decoration state and composes labels, icons, helper/error text, and borders.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct InputDecorator {
+    #[builder(setter(into))]
     pub decoration: InputDecoration,
+    #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default)]
     pub is_focused: bool,
+    #[builder(default = true)]
     pub is_empty: bool,
+    #[builder(default = true)]
     pub enabled: bool,
 }
 
@@ -2401,9 +2485,11 @@ impl InputBorder {
 /// Flutter-shaped outline border descriptor. The renderer-neutral border is
 /// retained in [`InputBorder`] so Material text fields do not need a second
 /// painting implementation.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct OutlineInputBorder {
+    #[builder(default = Border::new(1.0, Color::rgba(121, 116, 126, 255)))]
     pub border: Border,
+    #[builder(default = 4.0, setter(transform = |value: f32| value.max(0.0)))]
     pub radius: f32,
 }
 
@@ -2440,9 +2526,11 @@ impl From<OutlineInputBorder> for InputBorder {
 }
 
 /// Flutter-shaped underline border descriptor.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, TypedBuilder)]
 pub struct UnderlineInputBorder {
+    #[builder(default = Border::new(1.0, Color::rgba(121, 116, 126, 255)))]
     pub border: Border,
+    #[builder(default = 0.0, setter(transform = |value: f32| value.max(0.0)))]
     pub radius: f32,
 }
 
@@ -2502,9 +2590,11 @@ pub trait ThemeExtension: Clone + fmt::Debug + PartialEq + 'static {
 
 /// Animation/page-transition policy. It is intentionally data-only; the
 /// runtime owns controllers and frame scheduling.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
 pub struct PageTransitionsTheme {
+    #[builder(default)]
     pub duration: Duration,
+    #[builder(default)]
     pub reduced_motion: bool,
 }
 
@@ -2602,7 +2692,8 @@ pub struct ThemeData {
 }
 
 /// The fields that are most commonly changed when deriving a theme.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
+#[builder(field_defaults(default, setter(strip_option, into)))]
 pub struct ThemeDataPatch {
     pub brightness: Option<Brightness>,
     pub cupertino_override_theme: Option<ThemeExtensionValue>,
@@ -3200,9 +3291,11 @@ impl Default for ThemeData {
 }
 
 /// Inherited Material theme scope.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Theme {
+    #[builder(setter(into))]
     pub data: ThemeData,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -3249,10 +3342,12 @@ impl From<Theme> for Widget {
 
 /// Data-only animated theme descriptor. The runtime can interpolate the
 /// supplied endpoints without forcing components to own animation state.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedTheme {
+    #[builder(setter(into))]
     pub data: ThemeData,
     pub duration: Duration,
+    #[builder(setter(into))]
     pub child: Widget,
 }
 
@@ -3274,7 +3369,8 @@ impl From<AnimatedTheme> for Widget {
 }
 
 /// Theme data for the legacy `ButtonTheme` API.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, TypedBuilder)]
+#[builder(field_defaults(default, setter(strip_option, into)))]
 pub struct ButtonThemeData {
     pub style: Option<ButtonStyle>,
     pub height: Option<f32>,

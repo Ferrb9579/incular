@@ -1,22 +1,34 @@
 //! Flutter-style stack and positioning layout descriptors.
 
 use incular_config::{Alignment, Clip, StackFit, TextDirection};
+use typed_builder::TypedBuilder;
 
 use crate::{Widget, WidgetKind};
 
 /// Overlays children in paint order with alignment, sizing fit, and clipping.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Stack {
+    #[builder(default, setter(into))]
     children: Vec<Widget>,
+    #[builder(default = Alignment::TOP_LEFT)]
     alignment: Alignment,
+    #[builder(default = StackFit::Loose)]
     fit: StackFit,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+    #[builder(default, setter(strip_option))]
     text_direction: Option<TextDirection>,
 }
 
 impl Default for Stack {
     fn default() -> Self {
-        Self::new(Vec::<Widget>::new())
+        Self {
+            children: Vec::new(),
+            alignment: Alignment::TOP_LEFT,
+            fit: StackFit::Loose,
+            clip_behavior: Clip::HardEdge,
+            text_direction: None,
+        }
     }
 }
 
@@ -26,10 +38,7 @@ impl Stack {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
-            alignment: Alignment::TOP_LEFT,
-            fit: StackFit::Loose,
-            clip_behavior: Clip::HardEdge,
-            text_direction: None,
+            ..Self::default()
         }
     }
 
@@ -99,14 +108,21 @@ impl From<Stack> for Widget {
 }
 
 /// Positions a child inside a [`Stack`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Positioned {
+    #[builder(default, setter(strip_option))]
     left: Option<f32>,
+    #[builder(default, setter(strip_option))]
     top: Option<f32>,
+    #[builder(default, setter(strip_option))]
     right: Option<f32>,
+    #[builder(default, setter(strip_option))]
     bottom: Option<f32>,
+    #[builder(default, setter(strip_option))]
     width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     height: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -114,29 +130,19 @@ impl Positioned {
     /// Creates a new unconstrained positioned child.
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            left: None,
-            top: None,
-            right: None,
-            bottom: None,
-            width: None,
-            height: None,
-            child: child.into(),
-        }
+        Self::builder().child(child).build()
     }
 
     /// Creates a positioned child filled to all four edges.
     #[must_use]
     pub fn fill(child: impl Into<Widget>) -> Self {
-        Self {
-            left: Some(0.0),
-            top: Some(0.0),
-            right: Some(0.0),
-            bottom: Some(0.0),
-            width: None,
-            height: None,
-            child: child.into(),
-        }
+        Self::builder()
+            .left(0.0)
+            .top(0.0)
+            .right(0.0)
+            .bottom(0.0)
+            .child(child)
+            .build()
     }
 
     /// Sets the left edge offset.
@@ -197,18 +203,29 @@ impl From<Positioned> for Widget {
 }
 
 /// A Stack that shows only one child at a time while keeping all children laid out.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct IndexedStack {
+    #[builder(default)]
     index: usize,
+    #[builder(default = Alignment::TOP_LEFT)]
     alignment: Alignment,
+    #[builder(default = StackFit::Loose)]
     fit: StackFit,
+    #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
+    #[builder(default, setter(into))]
     children: Vec<Widget>,
 }
 
 impl Default for IndexedStack {
     fn default() -> Self {
-        Self::new(Vec::<Widget>::new())
+        Self {
+            index: 0,
+            alignment: Alignment::TOP_LEFT,
+            fit: StackFit::Loose,
+            clip_behavior: Clip::HardEdge,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -217,11 +234,8 @@ impl IndexedStack {
     #[must_use]
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
-            index: 0,
-            alignment: Alignment::TOP_LEFT,
-            fit: StackFit::Loose,
-            clip_behavior: Clip::HardEdge,
             children: children.into_iter().map(Into::into).collect(),
+            ..Self::default()
         }
     }
 
@@ -266,5 +280,91 @@ impl From<IndexedStack> for Widget {
             index: value.index,
             children: value.children,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_builder_defaults_match_default_and_lowering() {
+        assert_eq!(Stack::builder().build(), Stack::default());
+
+        let widget: Widget = Stack::builder()
+            .children(vec![crate::Text::new("child").into()])
+            .alignment(Alignment::CENTER)
+            .fit(StackFit::Expand)
+            .clip_behavior(Clip::None)
+            .text_direction(TextDirection::Rtl)
+            .build()
+            .into();
+
+        let WidgetKind::Stack {
+            alignment,
+            text_direction,
+            fit,
+            clip_behavior,
+            children,
+        } = widget.kind
+        else {
+            panic!("expected Stack widget kind")
+        };
+
+        assert_eq!(alignment, Alignment::CENTER);
+        assert_eq!(text_direction, TextDirection::Rtl);
+        assert_eq!(fit, StackFit::Expand);
+        assert_eq!(clip_behavior, Clip::None);
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn positioned_builder_keeps_required_generic_child() {
+        let positioned = Positioned::builder()
+            .left(4.0)
+            .child(crate::Text::new("child"))
+            .build();
+
+        let WidgetKind::Positioned {
+            left,
+            top,
+            right,
+            bottom,
+            width,
+            height,
+            child,
+        } = Widget::from(positioned).kind
+        else {
+            panic!("expected Positioned widget kind")
+        };
+
+        assert_eq!(left, Some(4.0));
+        assert_eq!(top, None);
+        assert_eq!(right, None);
+        assert_eq!(bottom, None);
+        assert_eq!(width, None);
+        assert_eq!(height, None);
+        assert_eq!(child.text_if_any().as_deref(), Some("child"));
+    }
+
+    #[test]
+    fn indexed_stack_builder_defaults_and_constructor_keep_children() {
+        assert_eq!(IndexedStack::builder().build(), IndexedStack::default());
+
+        let indexed = IndexedStack::new([crate::Text::new("first")])
+            .index(1)
+            .alignment(Alignment::BOTTOM_RIGHT);
+        let WidgetKind::IndexedStack {
+            alignment,
+            index,
+            children,
+        } = Widget::from(indexed).kind
+        else {
+            panic!("expected IndexedStack widget kind")
+        };
+
+        assert_eq!(alignment, Alignment::BOTTOM_RIGHT);
+        assert_eq!(index, 1);
+        assert_eq!(children.len(), 1);
     }
 }

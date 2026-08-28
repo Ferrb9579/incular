@@ -23,6 +23,7 @@ use incular_widgets::{
     Align, BorderRadius, BoxDecoration, Column, Container, Focus, FocusNode, OverlayPortal,
     Padding, Positioned, Row, Semantics, SizedBox, Stack, Text, Widget,
 };
+use typed_builder::TypedBuilder;
 
 fn finite_non_negative(value: f32) -> f32 {
     if value.is_finite() {
@@ -60,16 +61,25 @@ fn semantic_state(enabled: bool) -> SemanticState {
 /// `Dialog` only describes the surface itself.  Use [`show_dialog`] and
 /// [`DialogHandle::present`] when a retained overlay presentation is desired;
 /// navigation and application-shell policy remain outside this type.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Dialog {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
+    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default = EdgeInsets::symmetric(40.0, 24.0))]
     inset_padding: EdgeInsets,
+    #[builder(default = BorderRadius::circular(4.0))]
     shape: BorderRadius,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(default = Clip::None)]
     clip_behavior: Clip,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -79,21 +89,40 @@ pub struct Dialog {
 /// type only composes the Material surface.  Keeping the slots as ordinary
 /// widgets makes it possible to use custom controls without introducing a
 /// second route or focus implementation.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct AlertDialog {
+    #[builder(default, setter(strip_option, into))]
     title: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     content: Option<Widget>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |actions: impl IntoIterator<Item = impl Into<Widget>>| {
+            actions.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     actions: Vec<Widget>,
+    #[builder(default)]
     scrollable: bool,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     surface_tint_color: Option<Color>,
+    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default = EdgeInsets::symmetric(40.0, 24.0))]
     inset_padding: EdgeInsets,
+    #[builder(default, setter(strip_option))]
     title_padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     content_padding: Option<EdgeInsets>,
+    #[builder(default = EdgeInsets::symmetric(24.0, 8.0))]
     actions_padding: EdgeInsets,
+    #[builder(default = BorderRadius::circular(4.0))]
     shape: BorderRadius,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -603,11 +632,25 @@ pub fn show_dialog_result<T>(dialog: Dialog) -> DialogResultHandle<T> {
 }
 
 /// A selectable option used by [`SimpleDialog`].
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SimpleDialogOption {
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn()>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_pressed: Option<Rc<dyn Fn()>>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -694,16 +737,30 @@ impl From<SimpleDialogOption> for Widget {
 }
 
 /// A Material simple dialog made from a title and selectable options.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SimpleDialog {
+    #[builder(default, setter(strip_option, into))]
     title: Option<Widget>,
+    #[builder(
+        default = Vec::new(),
+        setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
+            children.into_iter().map(Into::into).collect::<Vec<Widget>>()
+        })
+    )]
     children: Vec<Widget>,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default = 24.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default = EdgeInsets::symmetric(40.0, 24.0))]
     inset_padding: EdgeInsets,
+    #[builder(default = EdgeInsets::symmetric(8.0, 12.0))]
     content_padding: EdgeInsets,
+    #[builder(default = EdgeInsets::symmetric(24.0, 16.0))]
     title_padding: EdgeInsets,
+    #[builder(default = BorderRadius::circular(4.0))]
     shape: BorderRadius,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -847,13 +904,29 @@ impl From<SimpleDialog> for Widget {
 }
 
 /// A Material snackbar action.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SnackBarAction {
+    #[builder(setter(into))]
     label: String,
+    #[builder(
+        default,
+        setter(
+            fn transform<F>(callback: F) -> Option<Rc<dyn Fn()>>
+            where
+                F: Fn() + 'static,
+            {
+                Some(Rc::new(callback))
+            }
+        )
+    )]
     on_pressed: Option<Rc<dyn Fn()>>,
+    #[builder(default, setter(strip_option))]
     text_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     disabled_text_color: Option<Color>,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -964,18 +1037,29 @@ impl From<SnackBarAction> for Widget {
 }
 
 /// A Material snackbar surface.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct SnackBar {
+    #[builder(setter(into))]
     content: Widget,
+    #[builder(default, setter(strip_option))]
     action: Option<SnackBarAction>,
+    #[builder(default, setter(strip_option))]
     background_color: Option<Color>,
+    #[builder(default = 6.0, setter(transform = |value: f32| finite_non_negative(value)))]
     elevation: f32,
+    #[builder(default, setter(strip_option))]
     shape: Option<BorderRadius>,
+    #[builder(default = EdgeInsets::symmetric(16.0, 14.0))]
     padding: EdgeInsets,
+    #[builder(default, setter(strip_option))]
     margin: Option<EdgeInsets>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     width: Option<f32>,
+    #[builder(default = SnackBarBehavior::Fixed)]
     behavior: SnackBarBehavior,
+    #[builder(default = Duration::from_millis(4_000))]
     duration: Duration,
+    #[builder(default, setter(strip_option, into))]
     semantic_label: Option<String>,
 }
 
@@ -1218,23 +1302,39 @@ pub enum TooltipTriggerMode {
 }
 
 /// A Material tooltip attached to a child widget.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct Tooltip {
+    #[builder(setter(into))]
     message: String,
+    #[builder(setter(into))]
     child: Widget,
+    #[builder(default = TooltipController::new())]
     controller: TooltipController,
+    #[builder(default = FocusNode::new())]
     focus_node: FocusNode,
+    #[builder(default = TooltipTriggerMode::Hover)]
     trigger_mode: TooltipTriggerMode,
+    #[builder(default = true)]
     enabled: bool,
+    #[builder(default = EdgeInsets::symmetric(16.0, 8.0))]
     padding: EdgeInsets,
+    #[builder(default = EdgeInsets::all(0.0))]
     margin: EdgeInsets,
+    #[builder(default, setter(strip_option))]
     text_style: Option<TextStyle>,
+    #[builder(default, setter(strip_option))]
     decoration_color: Option<Color>,
+    #[builder(default = true)]
     prefer_below: bool,
+    #[builder(default = 14.0, setter(transform = |value: f32| finite_non_negative(value)))]
     vertical_offset: f32,
+    #[builder(default = Duration::from_millis(500))]
     wait_duration: Duration,
+    #[builder(default = Duration::from_millis(0))]
     show_duration: Duration,
+    #[builder(default = Duration::from_millis(100))]
     exit_duration: Duration,
+    #[builder(default)]
     exclude_from_semantics: bool,
 }
 
@@ -1477,21 +1577,35 @@ pub enum ProgressIndicatorStrokeCap {
 /// descriptors consume their own defaults; this record provides the complete
 /// retained configuration surface so a parent/theme integration can resolve
 /// those defaults without introducing renderer-specific state.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, TypedBuilder)]
 pub struct ProgressIndicatorThemeData {
+    #[builder(default, setter(strip_option))]
     pub color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub linear_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub circular_track_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub refresh_background_color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     pub stop_indicator_color: Option<Color>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     pub stop_indicator_radius: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     pub stroke_width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     pub stroke_cap: Option<ProgressIndicatorStrokeCap>,
+    #[builder(default)]
     pub stroke_align: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     pub track_gap: Option<f32>,
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     pub linear_track_height: Option<f32>,
+    #[builder(default, setter(strip_option))]
     pub border_radius: Option<BorderRadius>,
+    #[builder(default, setter(strip_option))]
     pub padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     pub constraints: Option<Size>,
 }
 
@@ -1608,9 +1722,11 @@ impl ProgressIndicatorThemeData {
 }
 
 /// Places progress-indicator theme data in the retained build environment.
-#[derive(Clone)]
+#[derive(Clone, TypedBuilder)]
 pub struct ProgressIndicatorTheme {
+    #[builder(setter(into))]
     data: ProgressIndicatorThemeData,
+    #[builder(setter(into))]
     child: Widget,
 }
 

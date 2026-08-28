@@ -8,20 +8,29 @@ use incular_core::Color;
 use incular_rendering::Decoration;
 use incular_text::TextStyle;
 use std::time::Duration;
+use typed_builder::TypedBuilder;
 
 use crate::{Align, Container, DecoratedBox, Opacity, Padding, Positioned, Transform, Widget};
 
 /// Implicitly animated version of [`Container`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedContainer {
     duration: Duration,
+    #[builder(default, setter(strip_option))]
     width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     height: Option<f32>,
+    #[builder(default, setter(strip_option))]
     color: Option<Color>,
+    #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     margin: Option<EdgeInsets>,
+    #[builder(default, setter(strip_option))]
     alignment: Option<Alignment>,
+    #[builder(default, setter(strip_option))]
     decoration: Option<Decoration>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
 }
 
@@ -119,10 +128,11 @@ impl From<AnimatedContainer> for Widget {
 }
 
 /// Implicitly animated version of [`Align`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedAlign {
     duration: Duration,
     alignment: Alignment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -144,10 +154,11 @@ impl From<AnimatedAlign> for Widget {
 }
 
 /// Implicitly animated version of [`Padding`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedPadding {
     duration: Duration,
     padding: EdgeInsets,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -169,10 +180,12 @@ impl From<AnimatedPadding> for Widget {
 }
 
 /// Implicitly animated version of [`Opacity`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedOpacity {
     duration: Duration,
+    #[builder(setter(transform = |opacity: f32| opacity.clamp(0.0, 1.0)))]
     opacity: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -194,15 +207,22 @@ impl From<AnimatedOpacity> for Widget {
 }
 
 /// Implicitly animated version of [`Positioned`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedPositioned {
     duration: Duration,
+    #[builder(default, setter(strip_option))]
     left: Option<f32>,
+    #[builder(default, setter(strip_option))]
     top: Option<f32>,
+    #[builder(default, setter(strip_option))]
     right: Option<f32>,
+    #[builder(default, setter(strip_option))]
     bottom: Option<f32>,
+    #[builder(default, setter(strip_option))]
     width: Option<f32>,
+    #[builder(default, setter(strip_option))]
     height: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -266,13 +286,18 @@ impl From<AnimatedPositioned> for Widget {
 }
 
 /// Directional implicitly animated version of [`Positioned`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedPositionedDirectional {
     duration: Duration,
+    #[builder(default, setter(strip_option))]
     start: Option<f32>,
+    #[builder(default, setter(strip_option))]
     top: Option<f32>,
+    #[builder(default, setter(strip_option))]
     end: Option<f32>,
+    #[builder(default, setter(strip_option))]
     bottom: Option<f32>,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -334,12 +359,16 @@ impl From<AnimatedPositionedDirectional> for Widget {
 }
 
 /// Implicitly animated version of [`FractionallySizedBox`](crate::FractionallySizedBox).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedFractionallySizedBox {
     duration: Duration,
+    #[builder(default, setter(strip_option))]
     width_factor: Option<f32>,
+    #[builder(default, setter(strip_option))]
     height_factor: Option<f32>,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -382,10 +411,11 @@ impl From<AnimatedFractionallySizedBox> for Widget {
 }
 
 /// Implicitly animated rotation widget by turns (1 turn = 360 degrees).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedRotation {
     duration: Duration,
     turns: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -408,10 +438,11 @@ impl From<AnimatedRotation> for Widget {
 }
 
 /// Implicitly animated scale widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedScale {
     duration: Duration,
     scale: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -433,10 +464,11 @@ impl From<AnimatedScale> for Widget {
 }
 
 /// Implicitly animated slide translation widget.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedSlide {
     duration: Duration,
     offset: incular_core::Offset,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -458,10 +490,12 @@ impl From<AnimatedSlide> for Widget {
 }
 
 /// Implicitly animated size widget that animates when its child changes size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedSize {
     duration: Duration,
+    #[builder(default = Alignment::CENTER)]
     alignment: Alignment,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -483,10 +517,11 @@ impl From<AnimatedSize> for Widget {
 }
 
 /// Implicitly animated version of [`DefaultTextStyle`](crate::DefaultTextStyle).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedDefaultTextStyle {
     duration: Duration,
     style: TextStyle,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -508,11 +543,12 @@ impl From<AnimatedDefaultTextStyle> for Widget {
 }
 
 /// Implicitly animated physical layer model.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedPhysicalModel {
     duration: Duration,
     color: Color,
     elevation: f32,
+    #[builder(setter(into))]
     child: Widget,
 }
 
@@ -537,10 +573,12 @@ impl From<AnimatedPhysicalModel> for Widget {
 }
 
 /// Implicitly animated cross-fade between two children widgets.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedCrossFade {
     duration: Duration,
+    #[builder(setter(into))]
     first_child: Widget,
+    #[builder(setter(into))]
     second_child: Widget,
     show_second: bool,
 }
@@ -573,9 +611,10 @@ impl From<AnimatedCrossFade> for Widget {
 }
 
 /// Implicitly transitions to a new child when the child identity changes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct AnimatedSwitcher {
     duration: Duration,
+    #[builder(setter(into))]
     child: Widget,
 }
 

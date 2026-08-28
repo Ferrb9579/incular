@@ -6,32 +6,31 @@ use incular_semantics::{Role as SemanticRole, SemanticState};
 use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{Border, BorderRadius, BoxDecoration, ClipOval, Container, Text, Widget};
 use std::rc::Rc;
+use typed_builder::TypedBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, Default, TypedBuilder)]
 pub struct Root {
+    #[builder(default, setter(strip_option, into))]
     image: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     fallback: Option<Widget>,
+    #[builder(default, setter(strip_option, into))]
     label: Option<String>,
+    #[builder(default, setter(transform = |size: f32| Some(size.max(1.))))]
     size: Option<f32>,
+    #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
-}
-
-impl Default for Root {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Root {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            image: None,
-            fallback: None,
-            label: None,
-            size: None,
-            child: None,
-        }
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with_child(child: impl Into<Widget>) -> Self {
+        Self::default().child(child)
     }
 
     /// Supplies the image part. The caller can pass Incular's Image widget,
@@ -131,5 +130,42 @@ fn initials(label: &str) -> String {
         (Some(first), Some(second)) => format!("{first}{second}").to_uppercase(),
         (Some(first), None) => first.to_uppercase().collect(),
         _ => "?".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular_widgets::Text;
+
+    #[test]
+    fn builder_defaults_match_new() {
+        let new = Root::new();
+        let built = Root::builder().build();
+
+        assert!(new.image.is_none() && built.image.is_none());
+        assert!(new.fallback.is_none() && built.fallback.is_none());
+        assert_eq!(new.label, built.label);
+        assert_eq!(new.size, built.size);
+        assert!(new.child.is_none() && built.child.is_none());
+    }
+
+    #[test]
+    fn builder_accepts_widget_parts_and_preserves_size_normalization() {
+        let avatar = Root::builder()
+            .image(Text::new("image"))
+            .fallback(Text::new("fallback"))
+            .label("Ada Lovelace")
+            .size(0.)
+            .child(Text::new("custom"))
+            .build();
+
+        assert!(avatar.image.is_some());
+        assert!(avatar.fallback.is_some());
+        assert_eq!(avatar.label.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(avatar.size, Some(1.));
+        assert!(avatar.child.is_some());
+
+        let _: Widget = Root::with_child(Text::new("child")).into();
     }
 }
