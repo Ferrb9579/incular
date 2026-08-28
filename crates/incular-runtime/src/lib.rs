@@ -401,6 +401,12 @@ type ReactiveRootId = u64;
 static NEXT_REACTIVE_ROOT: AtomicU64 = AtomicU64::new(1);
 
 trait Dependency {
+    fn subscribe(
+        &self,
+        root: ReactiveRootId,
+        element: ElementId,
+        queue: Weak<RefCell<ReactiveQueue>>,
+    );
     fn remove(&self, root: ReactiveRootId, element: ElementId);
 }
 struct ReactiveQueue {
@@ -417,6 +423,18 @@ struct ReactiveQueue {
     causes: HashMap<ElementId, Vec<InvalidationCause>>,
 }
 impl ReactiveQueue {
+    fn new() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            root: NEXT_REACTIVE_ROOT.fetch_add(1, Ordering::Relaxed),
+            queued: HashSet::new(),
+            order: VecDeque::new(),
+            dependencies: HashMap::new(),
+            focus_scopes: HashMap::new(),
+            #[cfg(feature = "devtools")]
+            causes: HashMap::new(),
+        }))
+    }
+
     fn enqueue(&mut self, id: ElementId) {
         if self.queued.insert(id) {
             self.order.push_back(id);
@@ -482,10 +500,43 @@ impl ReactiveQueue {
         self.causes.clear();
     }
 }
+fn install_focus_scope_watch(
+    queue: &Rc<RefCell<ReactiveQueue>>,
+    element: ElementId,
+    scope: &FocusScopeNode,
+) {
+    let weak_queue = Rc::downgrade(queue);
+    let subscription = scope.observe(move || {
+        if let Some(queue) = weak_queue.upgrade() {
+            let mut queue = queue.borrow_mut();
+            queue.enqueue(element);
+            #[cfg(feature = "devtools")]
+            queue.note_cause(element, InvalidationCause::Manual);
+        }
+    });
+    queue.borrow_mut().watch_focus_scope(element, subscription);
+}
+#[derive(Default)]
+struct InitialBuildDependencies {
+    signals: Vec<Rc<dyn Dependency>>,
+    focus_scopes: Vec<FocusScopeNode>,
+}
+impl InitialBuildDependencies {
+    fn record_signal(&mut self, dependency: Rc<dyn Dependency>) {
+        if !self
+            .signals
+            .iter()
+            .any(|current| Rc::ptr_eq(current, &dependency))
+        {
+            self.signals.push(dependency);
+        }
+    }
+}
 struct BuildScope {
     root: ReactiveRootId,
-    element: ElementId,
+    element: Option<ElementId>,
     queue: Weak<RefCell<ReactiveQueue>>,
+    initial_dependencies: Option<Rc<RefCell<InitialBuildDependencies>>>,
 }
 thread_local! { static BUILD_SCOPE: RefCell<Option<BuildScope>> = const { RefCell::new(None) }; }
 #[cfg(feature = "devtools")]
@@ -508,6 +559,20 @@ struct SignalInner<T> {
     dev_summarize: RefCell<Option<DevSummarizer<T>>>,
 }
 impl<T> Dependency for SignalInner<T> {
+    fn subscribe(
+        &self,
+        root: ReactiveRootId,
+        element: ElementId,
+        queue: Weak<RefCell<ReactiveQueue>>,
+    ) {
+        self.queues.borrow_mut().insert(root, queue);
+        self.dependents
+            .borrow_mut()
+            .entry(root)
+            .or_default()
+            .insert(element);
+    }
+
     fn remove(&self, root: ReactiveRootId, element: ElementId) {
         let mut dependents = self.dependents.borrow_mut();
         if let Some(elements) = dependents.get_mut(&root) {
@@ -698,21 +763,16 @@ impl<T: 'static> Signal<T> {
         scheduler_counters::SIGNAL_READS.fetch_add(1, Ordering::Relaxed);
         BUILD_SCOPE.with(|scope| {
             if let Some(scope) = scope.borrow().as_ref() {
-                self.inner
-                    .queues
-                    .borrow_mut()
-                    .insert(scope.root, scope.queue.clone());
-                self.inner
-                    .dependents
-                    .borrow_mut()
-                    .entry(scope.root)
-                    .or_default()
-                    .insert(scope.element);
                 let dependency: Rc<dyn Dependency> = self.inner.clone();
-                if let Some(queue) = scope.queue.upgrade() {
-                    queue
-                        .borrow_mut()
-                        .record(scope.element, Rc::downgrade(&dependency));
+                if let Some(element) = scope.element {
+                    dependency.subscribe(scope.root, element, scope.queue.clone());
+                    if let Some(queue) = scope.queue.upgrade() {
+                        queue
+                            .borrow_mut()
+                            .record(element, Rc::downgrade(&dependency));
+                    }
+                } else if let Some(initial_dependencies) = &scope.initial_dependencies {
+                    initial_dependencies.borrow_mut().record_signal(dependency);
                 }
             }
         });
@@ -965,11 +1025,28 @@ impl Runtime {
     }
 
     fn with_window(
+        root: Widget,
+        scheduler: Rc<RefCell<tasks::TaskScheduler>>,
+        window_id: Option<WindowId>,
+        window_scope: TaskScope,
+        window_manager: Option<WindowManager>,
+    ) -> Result<Self, TreeError> {
+        Self::with_window_and_reactive(
+            root,
+            scheduler,
+            window_id,
+            window_scope,
+            window_manager,
+            ReactiveQueue::new(),
+        )
+    }
+    fn with_window_and_reactive(
         mut root: Widget,
         scheduler: Rc<RefCell<tasks::TaskScheduler>>,
         window_id: Option<WindowId>,
         window_scope: TaskScope,
         window_manager: Option<WindowManager>,
+        reactive: Rc<RefCell<ReactiveQueue>>,
     ) -> Result<Self, TreeError> {
         let mut tree = WidgetTree::new();
         let mut handlers = HashMap::new();
@@ -984,15 +1061,7 @@ impl Runtime {
             tree,
             pending: HashMap::new(),
             order: VecDeque::new(),
-            reactive: Rc::new(RefCell::new(ReactiveQueue {
-                root: NEXT_REACTIVE_ROOT.fetch_add(1, Ordering::Relaxed),
-                queued: HashSet::new(),
-                order: VecDeque::new(),
-                dependencies: HashMap::new(),
-                focus_scopes: HashMap::new(),
-                #[cfg(feature = "devtools")]
-                causes: HashMap::new(),
-            })),
+            reactive,
             builders: HashMap::new(),
             handlers,
             hovered_button: None,
@@ -1468,11 +1537,36 @@ impl Runtime {
         id: ElementId,
         builder: impl FnMut() -> Widget + 'static,
     ) -> Result<(), TreeError> {
+        self.register_builder_without_rebuild(id, builder)?;
+        self.rebuild_from_builder(id)
+    }
+    fn register_builder_without_rebuild(
+        &mut self,
+        id: ElementId,
+        builder: impl FnMut() -> Widget + 'static,
+    ) -> Result<(), TreeError> {
         if !self.tree.element_exists(id) {
             return Err(TreeError::MissingElement(id));
         }
         self.builders.insert(id, Box::new(builder));
-        self.rebuild_from_builder(id)
+        Ok(())
+    }
+    fn install_initial_dependencies(
+        &mut self,
+        id: ElementId,
+        initial_dependencies: Rc<RefCell<InitialBuildDependencies>>,
+    ) {
+        let initial_dependencies = std::mem::take(&mut *initial_dependencies.borrow_mut());
+        let queue = self.reactive.clone();
+        let root = queue.borrow().root;
+        let queue_weak = Rc::downgrade(&queue);
+        for dependency in initial_dependencies.signals {
+            dependency.subscribe(root, id, queue_weak.clone());
+            queue.borrow_mut().record(id, Rc::downgrade(&dependency));
+        }
+        for scope in initial_dependencies.focus_scopes {
+            install_focus_scope_watch(&queue, id, &scope);
+        }
     }
     pub fn schedule_update(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
         if !self.tree.element_exists(id) {
@@ -2029,8 +2123,9 @@ impl Runtime {
         let old = BUILD_SCOPE.with(|scope| {
             scope.replace(Some(BuildScope {
                 root: self.reactive.borrow().root,
-                element: id,
+                element: Some(id),
                 queue: Rc::downgrade(&self.reactive),
+                initial_dependencies: None,
             }))
         });
         let widget = self.builders.get_mut(&id).expect("registered builder")();
@@ -2184,34 +2279,32 @@ impl BuildContext {
     ///
     /// A scope is an application-owned handle rather than a signal, so this
     /// explicit watch registers a weak, owner-lifetime subscription in the
-    /// runtime's ordinary reactive queue. Calling it during the initial build
-    /// is harmless; the subsequent retained builder pass installs the live
-    /// subscription once its element identity exists.
+    /// runtime's ordinary reactive queue. The initial root build records the
+    /// scope and installs the subscription once its element identity exists.
     pub fn watch_focus_scope(&self, scope: &FocusScopeNode) {
         let target = BUILD_SCOPE.with(|current| {
             let current = current.borrow();
-            current
-                .as_ref()
-                .map(|build| (build.element, build.queue.clone()))
+            current.as_ref().map(|build| {
+                (
+                    build.element,
+                    build.queue.clone(),
+                    build.initial_dependencies.clone(),
+                )
+            })
         });
-        let Some((element, queue)) = target else {
+        let Some((element, queue, initial_dependencies)) = target else {
             return;
         };
-        let Some(queue_for_callback) = queue.upgrade() else {
-            return;
-        };
-        let weak_queue = Rc::downgrade(&queue_for_callback);
-        let subscription = scope.observe(move || {
-            if let Some(queue) = weak_queue.upgrade() {
-                let mut queue = queue.borrow_mut();
-                queue.enqueue(element);
-                #[cfg(feature = "devtools")]
-                queue.note_cause(element, InvalidationCause::Manual);
+        if let Some(element) = element {
+            if let Some(queue) = queue.upgrade() {
+                install_focus_scope_watch(&queue, element, scope);
             }
-        });
-        queue_for_callback
-            .borrow_mut()
-            .watch_focus_scope(element, subscription);
+        } else if let Some(initial_dependencies) = initial_dependencies {
+            initial_dependencies
+                .borrow_mut()
+                .focus_scopes
+                .push(scope.clone());
+        }
     }
 
     /// Returns the stable restoration scope for this build when the owning
@@ -2637,9 +2730,19 @@ impl WindowManager {
         let window_scope = spawner.scope();
         window_scope.bind_window(id);
         let root_scope = window_scope.child();
-        let environment = Rc::new(RefCell::new(RuntimeEnvironment::default()));
+        let metrics = initial_metrics(&options);
+        let initial_environment = RuntimeEnvironment {
+            viewport: metrics.logical_size(),
+            physical_width: metrics.physical_size.width,
+            physical_height: metrics.physical_size.height,
+            scale_factor: metrics.scale_factor,
+            ..RuntimeEnvironment::default()
+        };
+        let environment = Rc::new(RefCell::new(initial_environment));
         let environment_dependencies = Rc::new(Cell::new(0));
         let build = Rc::new(RefCell::new(build));
+        let reactive = ReactiveQueue::new();
+        let initial_dependencies = Rc::new(RefCell::new(InitialBuildDependencies::default()));
         let mut build_context = BuildContext::new(
             spawner.clone(),
             root_scope.clone(),
@@ -2648,27 +2751,41 @@ impl WindowManager {
             Some(self.clone()),
             restoration_scope.clone(),
         );
-        let mut build_callback = build.borrow_mut();
-        let initial = build_callback(&mut build_context);
-        drop(build_callback);
-        let mut runtime = Runtime::with_window(
+        let initial = {
+            let previous = BUILD_SCOPE.with(|scope| {
+                scope.replace(Some(BuildScope {
+                    root: reactive.borrow().root,
+                    element: None,
+                    queue: Rc::downgrade(&reactive),
+                    initial_dependencies: Some(initial_dependencies.clone()),
+                }))
+            });
+            let result = (build.borrow_mut())(&mut build_context);
+            BUILD_SCOPE.with(|scope| {
+                scope.replace(previous);
+            });
+            result
+        };
+        let mut runtime = Runtime::with_window_and_reactive(
             initial,
             self.scheduler.clone(),
             Some(id),
             window_scope.clone(),
             Some(self.clone()),
+            reactive,
         )?;
         runtime.environment = environment;
         runtime.environment_dependencies = environment_dependencies;
         let root = runtime.tree().root().expect("new runtime has root");
         root_scope.bind_owner(root);
+        runtime.install_initial_dependencies(root, initial_dependencies);
         let closure = build.clone();
         let builder_spawner = spawner.clone();
         let builder_scope = root_scope.clone();
         let builder_environment = runtime.environment.clone();
         let builder_dependencies = runtime.environment_dependencies.clone();
         let builder_manager = self.clone();
-        runtime.register_builder(root, move || {
+        runtime.register_builder_without_rebuild(root, move || {
             (closure.borrow_mut())(&mut BuildContext::new(
                 builder_spawner.clone(),
                 builder_scope.clone(),
@@ -2681,8 +2798,6 @@ impl WindowManager {
         runtime.application_root = Some(root);
         runtime.owner_scopes.insert(root, root_scope);
         runtime.lifecycle = ApplicationLifecycle::Active;
-        let metrics = initial_metrics(&options);
-        runtime.update_window_metrics(metrics);
         registry.borrow_mut().insert(
             id,
             WindowRecord {
@@ -5037,6 +5152,30 @@ mod tests {
         runtime.process_runtime_work();
         assert!(!hit.load(std::sync::atomic::Ordering::Acquire));
     }
+    #[test]
+    fn application_root_builds_once_and_subscribes_during_initial_build() {
+        let builds = Rc::new(Cell::new(0));
+        let observed_builds = builds.clone();
+        let signal = Signal::new(false);
+        let observed_signal = signal.clone();
+        let application = Application::new(move |_| {
+            observed_builds.set(observed_builds.get() + 1);
+            let _ = observed_signal.get();
+            Widget::box_(Size::new(1., 1.), Color::WHITE)
+        })
+        .unwrap();
+
+        assert_eq!(builds.get(), 1);
+        assert_eq!(signal.dependent_count(), 1);
+
+        let mut runtime = application.into_runtime();
+        assert!(signal.set(true));
+        runtime
+            .run_frame(Constraints::tight(Size::new(20., 20.)))
+            .unwrap();
+        assert_eq!(builds.get(), 2);
+    }
+
     #[test]
     fn typed_environment_rebuilds_only_when_a_read_field_changes() {
         let builds = Rc::new(Cell::new(0));
