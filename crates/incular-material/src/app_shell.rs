@@ -133,8 +133,8 @@ pub struct MaterialApp {
     // fairly rich. Keep it behind a pointer in the application descriptor so
     // fluent builder chains do not repeatedly move a large value on the
     // stack (and so a MaterialApp remains cheap to clone).
-    theme: Box<ThemeData>,
-    dark_theme: Option<Box<ThemeData>>,
+    theme: Rc<ThemeData>,
+    dark_theme: Option<Rc<ThemeData>>,
     theme_mode: ThemeMode,
     locale: Option<Locale>,
     supported_locales: Vec<Locale>,
@@ -152,7 +152,7 @@ impl MaterialApp {
             routes: BTreeMap::new(),
             initial_route: None,
             title: None,
-            theme: Box::new(ThemeData::light()),
+            theme: ThemeData::light_shared(),
             dark_theme: None,
             theme_mode: ThemeMode::System,
             locale: None,
@@ -205,13 +205,28 @@ impl MaterialApp {
 
     #[must_use]
     pub fn theme(mut self, theme: ThemeData) -> Self {
-        self.theme = Box::new(theme);
+        self.theme = Rc::new(theme);
+        self
+    }
+
+    /// Sets a theme already owned by the application without copying the
+    /// large descriptor through the native UI stack.
+    #[must_use]
+    pub fn theme_shared(mut self, theme: Rc<ThemeData>) -> Self {
+        self.theme = theme;
         self
     }
 
     #[must_use]
     pub fn dark_theme(mut self, theme: ThemeData) -> Self {
-        self.dark_theme = Some(Box::new(theme));
+        self.dark_theme = Some(Rc::new(theme));
+        self
+    }
+
+    /// Sets a shared dark theme without copying the descriptor.
+    #[must_use]
+    pub fn dark_theme_shared(mut self, theme: Rc<ThemeData>) -> Self {
+        self.dark_theme = Some(theme);
         self
     }
 
@@ -311,18 +326,16 @@ impl MaterialApp {
         let theme = match self.theme_mode {
             ThemeMode::Dark => self
                 .dark_theme
-                .as_deref()
-                .cloned()
-                .unwrap_or_else(ThemeData::dark),
-            ThemeMode::Light => (*self.theme).clone(),
+                .clone()
+                .unwrap_or_else(ThemeData::dark_shared),
+            ThemeMode::Light => self.theme.clone(),
             ThemeMode::System if system_brightness == Brightness::Dark => self
                 .dark_theme
-                .as_deref()
-                .cloned()
-                .unwrap_or_else(ThemeData::dark),
-            ThemeMode::System => (*self.theme).clone(),
+                .clone()
+                .unwrap_or_else(ThemeData::dark_shared),
+            ThemeMode::System => self.theme.clone(),
         };
-        let themed: Widget = Theme::new(theme, child).into();
+        let themed: Widget = Theme::scope_shared(theme, child);
         let localized = if let Some(locale) = self.locale.clone() {
             Widget::environment_scope(locale, themed)
         } else {

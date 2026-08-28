@@ -72,6 +72,8 @@ fn button_suite_build_and_mount() {
     let size = tree.render_size(render_id).unwrap();
     assert!(size.width > 0.0);
     assert!(size.height > 0.0);
+    assert!(size.width < 400.0, "button should shrink-wrap its label");
+    assert_eq!(size.height, 32.0);
 
     let _ = tree.mount(primary.into()).unwrap();
     let _ = tree.mount(ghost.into()).unwrap();

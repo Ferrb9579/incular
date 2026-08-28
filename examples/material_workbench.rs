@@ -49,14 +49,16 @@ fn main() {
     );
 
     let menu_controller = MenuController::new();
+    let light_theme = ThemeData::from_seed_shared(Color::rgba(103, 80, 164, 255));
+    let dark_theme = ThemeData::dark_shared();
     let app = Application::new_with_options(options, move |_cx| {
         let is_dark = dark.get();
         let checked_now = checked.get();
         let slider_now = slider_value.get();
         let theme = if is_dark {
-            ThemeData::dark()
+            dark_theme.clone()
         } else {
-            ThemeData::from_seed(Color::rgba(103, 80, 164, 255))
+            light_theme.clone()
         };
         let theme_toggle = FilledButton::new(if is_dark {
             "Use light theme"
@@ -209,8 +211,8 @@ fn main() {
         .floating_action_button(FloatingActionButton::extended("Create"));
         let shell = ScaffoldMessenger::with_controller(messenger.clone(), scaffold);
         let root: Widget = MaterialApp::new(shell)
-            .theme(theme.clone())
-            .dark_theme(ThemeData::dark())
+            .theme_shared(theme)
+            .dark_theme_shared(dark_theme.clone())
             .theme_mode(if is_dark {
                 ThemeMode::Dark
             } else {

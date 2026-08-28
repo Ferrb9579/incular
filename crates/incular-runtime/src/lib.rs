@@ -2640,14 +2640,17 @@ impl WindowManager {
         let environment = Rc::new(RefCell::new(RuntimeEnvironment::default()));
         let environment_dependencies = Rc::new(Cell::new(0));
         let build = Rc::new(RefCell::new(build));
-        let initial = (build.borrow_mut())(&mut BuildContext::new(
+        let mut build_context = BuildContext::new(
             spawner.clone(),
             root_scope.clone(),
             environment.clone(),
             environment_dependencies.clone(),
             Some(self.clone()),
             restoration_scope.clone(),
-        ));
+        );
+        let mut build_callback = build.borrow_mut();
+        let initial = build_callback(&mut build_context);
+        drop(build_callback);
         let mut runtime = Runtime::with_window(
             initial,
             self.scheduler.clone(),

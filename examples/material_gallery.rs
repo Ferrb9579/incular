@@ -7,12 +7,12 @@
 
 use incular::material::{
     ActionChip, AppBar, Badge, Card, CheckboxListTile, ChoiceChip, CircularProgressIndicator,
-    ColorScheme, Dialog, DialogHandle, Divider, DropdownButton, DropdownMenuItem, ElevatedButton,
-    FilledButton, FilterChip, FloatingActionButton, InputChip, InputDecoration,
-    LinearProgressIndicator, ListTile, Material, MaterialApp, MenuAnchor, MenuItemButton,
-    NavigationBar, NavigationDestination, NavigationDrawer, NavigationDrawerDestination,
-    OutlinedButton, PopupMenuButton, PopupMenuItem, RadioListTile, RangeSlider, RangeValues,
-    Scaffold, ScaffoldMessenger, ScaffoldMessengerController, Slider, SnackBar, SnackBarAction,
+    Dialog, DialogHandle, Divider, DropdownButton, DropdownMenuItem, ElevatedButton, FilledButton,
+    FilterChip, FloatingActionButton, InputChip, InputDecoration, LinearProgressIndicator,
+    ListTile, Material, MaterialApp, MenuAnchor, MenuItemButton, NavigationBar,
+    NavigationDestination, NavigationDrawer, NavigationDrawerDestination, OutlinedButton,
+    PopupMenuButton, PopupMenuItem, RadioListTile, RangeSlider, RangeValues, Scaffold,
+    ScaffoldMessenger, ScaffoldMessengerController, Slider, SnackBar, SnackBarAction,
     SwitchListTile, Tab, TabBar, TabBarView, TabController, TextButton, TextField, ThemeData,
     ThemeMode, Tooltip, TooltipController,
 };
@@ -71,15 +71,16 @@ fn main() {
     let tooltip = TooltipController::new();
     let tabs = TabController::new(2);
     let menu_controller = incular_material::MenuController::new();
+    let light_theme =
+        ThemeData::from_seed_shared(incular::prelude::Color::rgba(0x67, 0x50, 0xa4, 255));
+    let dark_theme = ThemeData::dark_shared();
 
     let app = Application::new_with_options(options, move |_cx| {
         let is_dark = dark_mode.get();
         let theme = if is_dark {
-            ThemeData::dark()
+            dark_theme.clone()
         } else {
-            ThemeData::from_color_scheme(ColorScheme::from_seed(incular::prelude::Color::rgba(
-                0x67, 0x50, 0xa4, 255,
-            )))
+            light_theme.clone()
         };
         let checked_value = checked.get();
         let radio_value = radio.get();
@@ -382,7 +383,7 @@ fn main() {
             .child(
                 SingleChildScrollView::new(
                     Column::new([
-                        heading("Material 3.47.1", &theme),
+                        heading("Material 3.47.1", theme.as_ref()),
                         Text::new("Retained widgets, stateful controls, and theme-driven defaults")
                             .style(theme.text_theme.body_large.clone())
                             .into(),
@@ -410,8 +411,8 @@ fn main() {
             .floating_action_button(FloatingActionButton::extended("Add"));
         let shell = ScaffoldMessenger::with_controller(messenger.clone(), scaffold);
         let root: Widget = MaterialApp::new(shell)
-            .theme(theme.clone())
-            .dark_theme(ThemeData::dark())
+            .theme_shared(theme)
+            .dark_theme_shared(dark_theme.clone())
             .theme_mode(if is_dark {
                 ThemeMode::Dark
             } else {

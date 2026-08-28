@@ -87,11 +87,35 @@ pub fn with_build_environment<R>(
 #[must_use]
 pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
     BUILD_ENVIRONMENT.with(|stack| {
-        stack
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|value| value.as_ref()?.downcast_ref::<T>().cloned())
+        let stack = stack.borrow();
+        for value in stack.iter().rev() {
+            let Some(value) = value.as_ref() else {
+                continue;
+            };
+            if let Some(value) = value.downcast_ref::<T>() {
+                return Some(value.clone());
+            }
+        }
+        None
+    })
+}
+
+/// Reads a typed retained environment without placing the value-sized result
+/// on the caller's stack. This matters for large theme descriptors on native
+/// entry threads, whose stack is smaller than a test harness thread's stack.
+#[must_use]
+pub fn current_build_environment_boxed<T: Any + Clone>() -> Option<Box<T>> {
+    BUILD_ENVIRONMENT.with(|stack| {
+        let stack = stack.borrow();
+        for value in stack.iter().rev() {
+            let Some(value) = value.as_ref() else {
+                continue;
+            };
+            if let Some(value) = value.downcast_ref::<T>() {
+                return Some(Box::new(value.clone()));
+            }
+        }
+        None
     })
 }
 
@@ -8710,6 +8734,71 @@ impl WidgetTree {
         parent: Option<ElementId>,
         widget: Widget,
     ) -> Result<ElementId, TreeError> {
+        enum MountWork {
+            Create {
+                parent: Option<ElementId>,
+                widget: Box<Widget>,
+            },
+            Finish(ElementId),
+        }
+
+        let mut work = vec![MountWork::Create {
+            parent,
+            widget: Box::new(widget),
+        }];
+        let mut root = None;
+        while let Some(next) = work.pop() {
+            match next {
+                MountWork::Create { parent, widget } => {
+                    let children = widget
+                        .children_refs()
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let id = self.mount_element_node(parent, *widget)?;
+                    if root.is_none() {
+                        root = Some(id);
+                    }
+                    if let Some(parent) = parent {
+                        self.elements
+                            .get_mut(parent.0)
+                            .expect("mount parent remains live")
+                            .children
+                            .push(id);
+                    }
+                    work.push(MountWork::Finish(id));
+                    for child in children.into_iter().rev() {
+                        work.push(MountWork::Create {
+                            parent: Some(id),
+                            widget: Box::new(child),
+                        });
+                    }
+                }
+                MountWork::Finish(id) => {
+                    self.sync_render_children(id);
+                    if self
+                        .elements
+                        .get(id.0)
+                        .is_some_and(|element| element.parent.is_none())
+                    {
+                        let layer = self
+                            .renders
+                            .get(self.render_id(id).expect("mounted").0)
+                            .expect("mounted render")
+                            .layer;
+                        self.compositor.set_root(layer);
+                    }
+                }
+            }
+        }
+        Ok(root.expect("mount work always contains the root widget"))
+    }
+
+    fn mount_element_node(
+        &mut self,
+        parent: Option<ElementId>,
+        widget: Widget,
+    ) -> Result<ElementId, TreeError> {
         let inherited_environment = parent
             .and_then(|id| self.elements.get(id.0))
             .and_then(|element| element.environment.clone());
@@ -8897,16 +8986,7 @@ impl WidgetTree {
             #[cfg(feature = "devtools")]
             dev: ElementDevData::default(),
         }));
-        let desired_children = widget.children_refs();
-        let mut children = Vec::with_capacity(desired_children.len());
-        for child in desired_children {
-            children.push(self.mount_element(Some(id), child.clone())?);
-        }
-        self.elements.get_mut(id.0).expect("fresh element").children = children;
-        self.sync_render_children(id);
-        if parent.is_none() {
-            self.compositor.set_root(layer);
-        }
+        self.elements.get_mut(id.0).expect("fresh element").children = Vec::new();
         self.diagnostics.mounts += 1;
         Ok(id)
     }

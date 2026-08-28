@@ -854,8 +854,8 @@ impl From<Slider> for Widget {
         if let Some(label) = value.label.clone() {
             root = root.semantic_value(label);
         }
-        if let Some(theme) = Theme::of() {
-            let slider_theme = theme.slider_theme;
+        if let Some(theme) = Theme::of_shared() {
+            let slider_theme = &theme.slider_theme;
             let state = if value.enabled {
                 WidgetStates::default()
             } else {

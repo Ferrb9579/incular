@@ -13,6 +13,7 @@ use incular_widgets::internal::{ActionSurface, DropShadow};
 use incular_widgets::{Border, BorderRadius, BoxDecoration, Container, Row, Text, Widget};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -2664,6 +2665,20 @@ impl ThemeData {
         Self::from_color_scheme(ColorScheme::dark())
     }
 
+    /// Creates a light theme directly in shared heap storage. ThemeData is a
+    /// deliberately rich compatibility descriptor; keeping this constructor
+    /// shared avoids moving its large value through the native UI stack.
+    #[must_use]
+    pub fn light_shared() -> Rc<Self> {
+        Self::from_color_scheme_shared(ColorScheme::light())
+    }
+
+    /// Creates a dark theme directly in shared heap storage.
+    #[must_use]
+    pub fn dark_shared() -> Rc<Self> {
+        Self::from_color_scheme_shared(ColorScheme::dark())
+    }
+
     #[must_use]
     pub fn fallback() -> Self {
         Self::light()
@@ -2674,6 +2689,139 @@ impl ThemeData {
         Self::from_color_scheme(ColorScheme::from_seed(seed_color))
     }
 
+    /// Creates a seeded theme directly in shared heap storage.
+    #[must_use]
+    pub fn from_seed_shared(seed_color: Color) -> Rc<Self> {
+        Self::from_color_scheme_shared(ColorScheme::from_seed(seed_color))
+    }
+
+    /// Heap-backed counterpart to [`Self::from_color_scheme`]. Each field is
+    /// written into the allocation so no full ThemeData temporary is needed
+    /// on the caller's stack.
+    #[must_use]
+    pub fn from_color_scheme_shared(color_scheme: ColorScheme) -> Rc<Self> {
+        let brightness = color_scheme.brightness;
+        let text_theme = match brightness {
+            Brightness::Light => TextTheme::light(),
+            Brightness::Dark => TextTheme::dark(),
+        };
+        let control_theme = ControlTheme::default();
+        let mut shared = Rc::<Self>::new_uninit();
+        let ptr = Rc::get_mut(&mut shared)
+            .expect("new theme allocation has one owner")
+            .as_mut_ptr();
+        macro_rules! write_field {
+            ($field:ident, $value:expr) => {
+                // `shared` is a unique, uninitialized allocation and every
+                // field is written exactly once before assume_init below.
+                unsafe { std::ptr::addr_of_mut!((*ptr).$field).write($value) };
+            };
+        }
+        write_field!(brightness, brightness);
+        write_field!(cupertino_override_theme, None);
+        write_field!(adaptation_map, BTreeMap::new());
+        write_field!(color_scheme, color_scheme);
+        write_field!(text_theme, text_theme.clone());
+        write_field!(primary_text_theme, text_theme);
+        write_field!(typography, Typography::default());
+        write_field!(use_material3, true);
+        write_field!(visual_density, VisualDensity::default());
+        write_field!(material_tap_target_size, MaterialTapTargetSize::default());
+        write_field!(platform, TargetPlatform::default());
+        write_field!(page_transitions_theme, PageTransitionsTheme::default());
+        write_field!(splash_factory, SplashFactory::Ripple);
+        write_field!(
+            apply_elevation_overlay_color,
+            brightness == Brightness::Dark
+        );
+        write_field!(canvas_color, color_scheme.surface);
+        write_field!(card_color, color_scheme.surface_container_low);
+        write_field!(disabled_color, alpha(color_scheme.on_surface, 0.38));
+        write_field!(divider_color, color_scheme.outline_variant);
+        write_field!(focus_color, alpha(color_scheme.primary, 0.12));
+        write_field!(highlight_color, alpha(color_scheme.primary, 0.12));
+        write_field!(hint_color, color_scheme.on_surface_variant);
+        write_field!(hover_color, alpha(color_scheme.primary, 0.08));
+        write_field!(primary_color, color_scheme.primary);
+        write_field!(primary_color_dark, color_scheme.primary_container);
+        write_field!(primary_color_light, color_scheme.primary_fixed);
+        write_field!(scaffold_background_color, color_scheme.surface);
+        write_field!(secondary_header_color, color_scheme.secondary_container);
+        write_field!(shadow_color, color_scheme.shadow);
+        write_field!(splash_color, alpha(color_scheme.primary, 0.16));
+        write_field!(unselected_widget_color, color_scheme.on_surface_variant);
+        write_field!(dialog_background_color, color_scheme.surface_container_high);
+        write_field!(indicator_color, color_scheme.primary);
+        write_field!(icon_theme, ComponentThemeData::default());
+        write_field!(primary_icon_theme, ComponentThemeData::default());
+        write_field!(input_decoration_theme, InputDecorationThemeData::default());
+        write_field!(action_icon_theme, None);
+        write_field!(app_bar_theme, ComponentThemeData::default());
+        write_field!(badge_theme, ComponentThemeData::default());
+        write_field!(banner_theme, ComponentThemeData::default());
+        write_field!(bottom_app_bar_theme, ComponentThemeData::default());
+        write_field!(bottom_navigation_bar_theme, ComponentThemeData::default());
+        write_field!(bottom_sheet_theme, ComponentThemeData::default());
+        write_field!(button_theme, ButtonThemeData::default());
+        write_field!(card_theme, ComponentThemeData::default());
+        write_field!(carousel_view_theme, ComponentThemeData::default());
+        write_field!(checkbox_theme, ComponentThemeData::default());
+        write_field!(chip_theme, ComponentThemeData::default());
+        write_field!(data_table_theme, ComponentThemeData::default());
+        write_field!(date_picker_theme, ComponentThemeData::default());
+        write_field!(dialog_theme, ComponentThemeData::default());
+        write_field!(divider_theme, ComponentThemeData::default());
+        write_field!(drawer_theme, ComponentThemeData::default());
+        write_field!(
+            dropdown_menu_theme,
+            crate::menus::DropdownMenuThemeData::default()
+        );
+        write_field!(elevated_button_theme, ComponentThemeData::default());
+        write_field!(expansion_tile_theme, ComponentThemeData::default());
+        write_field!(filled_button_theme, ComponentThemeData::default());
+        write_field!(floating_action_button_theme, ComponentThemeData::default());
+        write_field!(icon_button_theme, ComponentThemeData::default());
+        write_field!(list_tile_theme, ComponentThemeData::default());
+        write_field!(menu_bar_theme, ComponentThemeData::default());
+        write_field!(menu_button_theme, ComponentThemeData::default());
+        write_field!(menu_theme, crate::menus::MenuThemeData::default());
+        write_field!(navigation_bar_theme, ComponentThemeData::default());
+        write_field!(navigation_drawer_theme, ComponentThemeData::default());
+        write_field!(navigation_rail_theme, ComponentThemeData::default());
+        write_field!(outlined_button_theme, ComponentThemeData::default());
+        write_field!(
+            popup_menu_theme,
+            crate::menus::PopupMenuThemeData::default()
+        );
+        write_field!(
+            progress_indicator_theme,
+            crate::feedback::ProgressIndicatorThemeData::default()
+        );
+        write_field!(radio_theme, ComponentThemeData::default());
+        write_field!(search_bar_theme, ComponentThemeData::default());
+        write_field!(search_view_theme, ComponentThemeData::default());
+        write_field!(segmented_button_theme, ComponentThemeData::default());
+        write_field!(slider_theme, crate::p0_controls::SliderThemeData::default());
+        write_field!(snack_bar_theme, ComponentThemeData::default());
+        write_field!(switch_theme, ComponentThemeData::default());
+        write_field!(
+            tab_bar_theme,
+            crate::p0_controls::TabBarThemeData::default()
+        );
+        write_field!(text_button_theme, ComponentThemeData::default());
+        write_field!(text_selection_theme, ComponentThemeData::default());
+        write_field!(time_picker_theme, ComponentThemeData::default());
+        write_field!(toggle_buttons_theme, ComponentThemeData::default());
+        write_field!(tooltip_theme, ComponentThemeData::default());
+        write_field!(button_bar_theme, None);
+        write_field!(extensions, BTreeMap::new());
+        let mut shared = unsafe { shared.assume_init() };
+        Rc::get_mut(&mut shared)
+            .expect("new theme allocation remains uniquely owned")
+            .with_control_defaults(control_theme);
+        shared
+    }
+
     #[must_use]
     pub fn from_color_scheme(color_scheme: ColorScheme) -> Self {
         let brightness = color_scheme.brightness;
@@ -2682,7 +2830,7 @@ impl ThemeData {
             Brightness::Dark => TextTheme::dark(),
         };
         let control_theme = ControlTheme::default();
-        Self {
+        let mut theme = Self {
             brightness,
             cupertino_override_theme: None,
             adaptation_map: BTreeMap::new(),
@@ -2766,14 +2914,14 @@ impl ThemeData {
             tooltip_theme: ComponentThemeData::default(),
             button_bar_theme: None,
             extensions: BTreeMap::new(),
-        }
-        .with_control_defaults(control_theme)
+        };
+        theme.with_control_defaults(control_theme);
+        theme
     }
 
-    fn with_control_defaults(mut self, control_theme: ControlTheme) -> Self {
+    fn with_control_defaults(&mut self, control_theme: ControlTheme) {
         self.elevated_button_theme.elevation = Some(control_theme.elevation.popup.min(6.0));
         self.card_theme.elevation = Some(control_theme.elevation.popup.min(1.0));
-        self
     }
 
     #[must_use]
@@ -3069,21 +3217,33 @@ impl Theme {
 
     #[must_use]
     pub fn of() -> Option<ThemeData> {
-        incular_widgets::internal::current_build_environment::<ThemeData>()
+        Self::of_shared().map(|theme| (*theme).clone()).or_else(|| {
+            incular_widgets::internal::current_build_environment_boxed::<ThemeData>()
+                .map(|theme| *theme)
+        })
+    }
+
+    /// Reads the ambient theme without copying the large theme descriptor onto
+    /// the native UI stack. Material application roots use this shared form.
+    #[must_use]
+    pub(crate) fn of_shared() -> Option<Rc<ThemeData>> {
+        incular_widgets::internal::current_build_environment::<Rc<ThemeData>>()
+    }
+
+    /// Installs one shared theme descriptor plus the derived control scopes.
+    pub(crate) fn scope_shared(data: Rc<ThemeData>, child: Widget) -> Widget {
+        let controls = data.control_theme();
+        let input_decoration = data.input_decoration_theme.clone();
+        Widget::environment_scope(
+            data,
+            Widget::environment_scope(input_decoration, Widget::environment_scope(controls, child)),
+        )
     }
 }
 
 impl From<Theme> for Widget {
     fn from(value: Theme) -> Self {
-        let controls = value.data.control_theme();
-        let input_decoration = value.data.input_decoration_theme.clone();
-        Widget::environment_scope(
-            value.data,
-            Widget::environment_scope(
-                input_decoration,
-                Widget::environment_scope(controls, value.child),
-            ),
-        )
+        Theme::scope_shared(Rc::new(value.data), value.child)
     }
 }
 

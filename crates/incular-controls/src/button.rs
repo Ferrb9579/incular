@@ -5,7 +5,7 @@ use incular_core::Color;
 use incular_core::Offset;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, DropShadow, ExplicitSemantics};
-use incular_widgets::{Border, BorderRadius, BoxDecoration, Container, Text, Widget};
+use incular_widgets::{Align, Border, BorderRadius, BoxDecoration, Container, Text, Widget};
 use std::rc::Rc;
 
 /// Platform-neutral styled push button.
@@ -162,18 +162,37 @@ impl Button {
             .as_ref()
             .map(|side| side.resolve(state))
             .or(self.style.border)
-            .unwrap_or_else(|| {
-                if self.style.variant == ButtonVariant::Ghost {
+            .unwrap_or_else(|| match self.style.variant {
+                // Filled actions do not need a second outline around their
+                // surface. Callers can still opt into one with `border` or
+                // `side`, including state-aware sides.
+                ButtonVariant::Primary | ButtonVariant::Danger | ButtonVariant::Destructive => {
                     Border::new(0.0, Color::TRANSPARENT)
-                } else {
+                }
+                ButtonVariant::Default | ButtonVariant::Standard => {
                     Border::new(theme.button.border_width, theme.colors.border)
                 }
+                ButtonVariant::Ghost => Border::new(0.0, Color::TRANSPARENT),
             });
+
+        // `Container::alignment` is intentionally expanding, which is useful
+        // for panels but wrong for a button in a loose row/column: it makes
+        // the button consume the parent's entire bounded width. A normal
+        // button should size to its label plus padding. Explicit fixed sizes
+        // keep the expanding alignment behavior so custom-width buttons still
+        // honor their requested alignment.
+        let shrink_wrap = self.style.fixed_size.is_none();
+        let content = if shrink_wrap {
+            Align::new(self.style.alignment.unwrap_or(Alignment::CENTER), content)
+                .width_factor(1.0)
+                .into()
+        } else {
+            content
+        };
 
         let mut decorated = Container::new()
             .height(height)
             .padding(padding)
-            .alignment(self.style.alignment.unwrap_or(Alignment::CENTER))
             .decoration(
                 BoxDecoration::new()
                     // The retained action surface owns the state-aware surface;
@@ -185,6 +204,9 @@ impl Button {
                     .border_radius(BorderRadius::circular(radius)),
             )
             .child(content);
+        if !shrink_wrap {
+            decorated = decorated.alignment(self.style.alignment.unwrap_or(Alignment::CENTER));
+        }
 
         if let Some(builder) = self.style.background_builder.as_ref() {
             decorated = Container::with_child(builder.build(decorated.into(), state));

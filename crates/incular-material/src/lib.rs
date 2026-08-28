@@ -1425,6 +1425,17 @@ mod tests {
     }
 
     #[test]
+    fn elevated_button_can_layout_and_paint() {
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        let button: Widget = ElevatedButton::new("Save").into();
+        tree.mount(button).unwrap();
+        tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
+            240.0, 64.0,
+        )));
+        let _ = tree.paint();
+    }
+
+    #[test]
     fn raw_material_button_is_exposed_only_from_the_material_layer() {
         let _button: Widget = RawMaterialButton::new("Low-level action")
             .on_press(|| {})

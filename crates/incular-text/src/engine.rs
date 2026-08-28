@@ -936,7 +936,11 @@ mod probe_entry_size {
     }
     fn probe_live() -> usize {
         // Reads this process's VmRSS as a stable proxy (pages, KB→B).
-        let stat = std::fs::read_to_string("/proc/self/status").unwrap();
+        let Ok(stat) = std::fs::read_to_string("/proc/self/status") else {
+            // VmRSS is Linux-specific; keep the diagnostic probe harmless on
+            // Windows and other supported hosts.
+            return 0;
+        };
         stat.split('\n')
             .find(|l| l.starts_with("VmRSS"))
             .and_then(|l| l.split_whitespace().nth(1))
