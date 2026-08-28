@@ -7,6 +7,8 @@ fn main() {
     let pressed = Signal::new(false);
     let app = Application::new(move |_cx| {
         let display_pressed = pressed.get();
+        // This diagnostic runs once per builder evaluation. Do not put
+        // external side effects such as network requests or file writes here.
         println!("Build: pressed");
         Container::new()
             .background(Color::rgba(255, 0, 0, 255))
@@ -18,9 +20,9 @@ fn main() {
                 Button::new("Press me")
                     .on_click({
                         let pressed = pressed.clone();
-                        println!("Build: pressed={display_pressed}");
                         move || {
                             pressed.update(|pressed| *pressed = !*pressed);
+                            println!("Click: pressed={}", pressed.get());
                         }
                     })
                     .into(),

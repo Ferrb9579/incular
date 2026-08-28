@@ -2992,6 +2992,12 @@ pub struct Application {
     hub: PerformanceHub,
 }
 impl Application {
+    /// Creates an application from a retained root builder.
+    ///
+    /// The builder runs during construction and may run again whenever state
+    /// or environment values read by the builder change. Keep the builder
+    /// free of external side effects such as network requests, file writes,
+    /// or analytics; put those operations in event callbacks or tasks.
     pub fn new(
         build: impl FnMut(&mut BuildContext) -> Widget + 'static,
     ) -> Result<Self, TreeError> {

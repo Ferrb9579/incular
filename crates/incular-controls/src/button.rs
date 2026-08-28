@@ -735,6 +735,19 @@ mod tests {
     }
 
     #[test]
+    fn building_a_button_does_not_invoke_its_click_callback() {
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = calls.clone();
+        let button = Button::new("Save").on_click(move || {
+            observed.set(observed.get() + 1);
+        });
+
+        let _ = button.build(&ControlTheme::default());
+
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
     fn button_defaults_shrink_wrap_and_fixed_size_is_honored() {
         let mut tree = WidgetTree::new();
         let root = tree.mount(Button::new("OK").into()).unwrap();
