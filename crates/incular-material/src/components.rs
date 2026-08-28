@@ -9,7 +9,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use crate::feedback::current_progress_indicator_theme;
-use crate::foundation::Material;
+use crate::foundation::{Material, Theme};
 use crate::{
     BottomNavigationBarType, K_BOTTOM_NAVIGATION_BAR_HEIGHT, ListTileTitleAlignment,
     NavigationDestinationLabelBehavior, TextButton,
@@ -506,9 +506,11 @@ impl Scaffold {
         if let Some(app_bar) = &self.app_bar {
             children.push(app_bar.build(theme));
         }
-        let body = Container::new()
-            .color(self.background.unwrap_or(theme.colors.background))
-            .child(Expanded::new(self.body.clone()));
+        let scaffold_background = Theme::of_shared().map_or(theme.colors.background, |theme| {
+            theme.scaffold_background_color
+        });
+        let body = Material::new(Expanded::new(self.body.clone()))
+            .color(self.background.unwrap_or(scaffold_background));
         children.push(body.into());
         if let Some(sheet) = self.bottom_sheet.clone() {
             children.push(sheet);

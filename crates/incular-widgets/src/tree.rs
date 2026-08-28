@@ -63,6 +63,58 @@ thread_local! {
     static BUILD_ENVIRONMENT: RefCell<Vec<Option<Rc<dyn Any>>>> = const { RefCell::new(Vec::new()) };
 }
 
+/// A persistent chain of typed values inherited by a retained subtree.
+///
+/// `Widget::environment_scope` is represented by a layout-builder node so the
+/// core widget crate does not need to know the concrete environment types. A
+/// single erased value is not enough when independent scopes are nested (for
+/// example, Material's theme, input-decoration theme, and control theme), so
+/// effective environments retain the complete nearest-first chain here.
+struct InheritedEnvironment {
+    value: Rc<dyn Any>,
+    parent: Option<Rc<InheritedEnvironment>>,
+}
+
+fn environment_chain(value: Rc<dyn Any>) -> Rc<InheritedEnvironment> {
+    match value.downcast::<InheritedEnvironment>() {
+        Ok(chain) => chain,
+        Err(value) => Rc::new(InheritedEnvironment {
+            value,
+            parent: None,
+        }),
+    }
+}
+
+fn compose_environment(
+    local: Option<Rc<dyn Any>>,
+    inherited: Option<Rc<dyn Any>>,
+) -> Option<Rc<dyn Any>> {
+    let Some(local) = local else {
+        return inherited;
+    };
+    let Some(inherited) = inherited else {
+        return Some(local);
+    };
+    Some(Rc::new(InheritedEnvironment {
+        value: local,
+        parent: Some(environment_chain(inherited)),
+    }) as Rc<dyn Any>)
+}
+
+fn environment_value<T: Any + Clone>(environment: &Rc<dyn Any>) -> Option<T> {
+    if let Some(value) = environment.downcast_ref::<T>() {
+        return Some(value.clone());
+    }
+    let mut chain = environment.downcast_ref::<InheritedEnvironment>();
+    while let Some(scope) = chain {
+        if let Some(value) = scope.value.downcast_ref::<T>() {
+            return Some(value.clone());
+        }
+        chain = scope.parent.as_deref();
+    }
+    None
+}
+
 /// Runs a retained builder with one inherited, type-erased environment value.
 /// This is intentionally small and renderer-neutral; higher-level crates
 /// provide typed accessors around it.
@@ -89,11 +141,11 @@ pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
     BUILD_ENVIRONMENT.with(|stack| {
         let stack = stack.borrow();
         for value in stack.iter().rev() {
-            let Some(value) = value.as_ref() else {
+            let Some(environment) = value.as_ref() else {
                 continue;
             };
-            if let Some(value) = value.downcast_ref::<T>() {
-                return Some(value.clone());
+            if let Some(value) = environment_value::<T>(environment) {
+                return Some(value);
             }
         }
         None
@@ -108,11 +160,11 @@ pub fn current_build_environment_boxed<T: Any + Clone>() -> Option<Box<T>> {
     BUILD_ENVIRONMENT.with(|stack| {
         let stack = stack.borrow();
         for value in stack.iter().rev() {
-            let Some(value) = value.as_ref() else {
+            let Some(environment) = value.as_ref() else {
                 continue;
             };
-            if let Some(value) = value.downcast_ref::<T>() {
-                return Some(Box::new(value.clone()));
+            if let Some(value) = environment_value::<T>(environment) {
+                return Some(Box::new(value));
             }
         }
         None
@@ -8806,7 +8858,7 @@ impl WidgetTree {
             WidgetKind::LayoutBuilder { environment, .. } => environment.clone(),
             _ => None,
         };
-        let environment = environment_override.clone().or(inherited_environment);
+        let environment = compose_environment(environment_override.clone(), inherited_environment);
         self.check_keys_borrowed(widget.children_refs())?;
         let layer = self
             .compositor
@@ -8941,7 +8993,7 @@ impl WidgetTree {
         let render = self.renders.insert(RenderObject {
             parent: None,
             children: Vec::new(),
-            kind: render_kind(&widget),
+            kind: render_kind(&widget, environment.as_ref()),
             size: Size::ZERO,
             offset: Offset::ZERO,
             constraints: None,
@@ -8997,24 +9049,34 @@ impl WidgetTree {
             (element.environment.clone(), element.children.clone())
         };
         for child in children {
-            let (override_value, previous) = {
+            let (override_value, previous, widget, render) = {
                 let element = self.elements.get(child.0).expect("live child");
                 (
                     element.environment_override.clone(),
                     element.environment.clone(),
+                    element.widget.clone(),
+                    element.render,
                 )
             };
-            let effective = override_value.or_else(|| inherited.clone());
+            let effective = compose_environment(override_value, inherited.clone());
             let changed = match (&previous, &effective) {
                 (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
                 (None, None) => false,
                 _ => true,
             };
             if changed {
-                let element = self.elements.get_mut(child.0).expect("live child");
-                element.environment = effective;
-                element.layout_builder_constraints = None;
-                element.layout_builder_revision = 0;
+                let new_kind = render_kind(&widget, effective.as_ref());
+                self.renders
+                    .get_mut(render.0)
+                    .expect("live child render")
+                    .kind = new_kind;
+                {
+                    let element = self.elements.get_mut(child.0).expect("live child");
+                    element.environment = effective;
+                    element.layout_builder_constraints = None;
+                    element.layout_builder_revision = 0;
+                }
+                self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
             }
             self.propagate_environment(child);
         }
@@ -9045,11 +9107,18 @@ impl WidgetTree {
         let old_environment = self
             .elements
             .get(id.0)
-            .and_then(|element| element.environment_override.clone());
-        let new_environment = match &widget.kind {
+            .and_then(|element| element.environment.clone());
+        let new_override = match &widget.kind {
             WidgetKind::LayoutBuilder { environment, .. } => environment.clone(),
             _ => None,
         };
+        let parent_environment = self
+            .elements
+            .get(id.0)
+            .and_then(|element| element.parent)
+            .and_then(|parent| self.elements.get(parent.0))
+            .and_then(|parent| parent.environment.clone());
+        let new_environment = compose_environment(new_override.clone(), parent_environment.clone());
         let environment_changed = match (&old_environment, &new_environment) {
             (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
             (None, None) => false,
@@ -9064,8 +9133,8 @@ impl WidgetTree {
         );
         self.check_keys_borrowed(widget.children_refs())?;
         let render = self.elements.get(id.0).expect("present").render;
-        let old_kind = render_kind(&old);
-        let new_kind = render_kind(widget);
+        let old_kind = render_kind(&old, old_environment.as_ref());
+        let new_kind = render_kind(widget, new_environment.as_ref());
         carry_replaced_transition(&old_kind, &new_kind);
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
@@ -9163,17 +9232,11 @@ impl WidgetTree {
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
             }
         }
-        let parent_environment = self
-            .elements
-            .get(id.0)
-            .and_then(|element| element.parent)
-            .and_then(|parent| self.elements.get(parent.0))
-            .and_then(|parent| parent.environment.clone());
         {
             let element = self.elements.get_mut(id.0).expect("present");
             element.widget = widget.clone();
-            element.environment_override = new_environment;
-            element.environment = element.environment_override.clone().or(parent_environment);
+            element.environment_override = new_override;
+            element.environment = new_environment;
             if environment_changed {
                 element.layout_builder_constraints = None;
             }
@@ -11708,7 +11771,13 @@ impl RenderKind {
     }
 }
 
-fn render_kind(widget: &Widget) -> RenderKind {
+fn resolve_text_style(style: &TextStyle, environment: Option<&Rc<dyn Any>>) -> TextStyle {
+    environment
+        .and_then(environment_value::<TextStyle>)
+        .map_or_else(|| style.clone(), |default| default.merge(style))
+}
+
+fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> RenderKind {
     match &widget.kind {
         WidgetKind::Box { size, color } => RenderKind::Box {
             desired: *size,
@@ -11770,7 +11839,7 @@ fn render_kind(widget: &Widget) -> RenderKind {
             overflow,
         } => RenderKind::Text {
             text: text.clone(),
-            style: style.clone(),
+            style: resolve_text_style(style, environment),
             align: *align,
             soft_wrap: *soft_wrap,
             max_lines: *max_lines,
@@ -11778,7 +11847,7 @@ fn render_kind(widget: &Widget) -> RenderKind {
         },
         WidgetKind::SelectableText { text, style, align } => RenderKind::SelectableText {
             text: text.clone(),
-            style: style.clone(),
+            style: resolve_text_style(style, environment),
             align: *align,
         },
         WidgetKind::SelectionArea { .. } => RenderKind::SelectionArea,
@@ -11822,7 +11891,7 @@ fn render_kind(widget: &Widget) -> RenderKind {
         } => RenderKind::TextField {
             controller: controller.clone(),
             desired: *size,
-            style: style.clone(),
+            style: resolve_text_style(style, environment),
             placeholder: placeholder.clone(),
             multiline: *multiline,
             min_lines: *min_lines,
@@ -12725,6 +12794,46 @@ mod tests {
             .child_unchecked(restoration_key("main"))
     }
 
+    #[test]
+    fn nested_environment_scopes_keep_all_typed_values() {
+        let outer = Color::rgba(12, 34, 56, 255);
+        let inner = TextStyle::new().font_size(24.0);
+        let environment = compose_environment(
+            Some(Rc::new(inner.clone()) as Rc<dyn Any>),
+            Some(Rc::new(outer) as Rc<dyn Any>),
+        )
+        .expect("nested environment");
+
+        with_build_environment(Some(environment), || {
+            assert_eq!(
+                current_build_environment::<TextStyle>(),
+                Some(inner.clone())
+            );
+            assert_eq!(current_build_environment::<Color>(), Some(outer));
+        });
+    }
+
+    #[test]
+    fn default_text_style_is_resolved_for_descendant_text() {
+        let default_style = TextStyle::new().font_size(24.0).color(Color::BLACK);
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(crate::DefaultTextStyle::new(default_style.clone(), Text::new("hello")).into())
+            .expect("mount default text style");
+        tree.layout(Constraints::tight(Size::new(200.0, 80.0)));
+
+        let child = tree.children(root).expect("materialized text")[0];
+        let render = tree
+            .renders
+            .get(tree.render_id(child).expect("text render").0)
+            .expect("text render object");
+        let RenderKind::Text { style, .. } = &render.kind else {
+            panic!("expected text render kind");
+        };
+        assert_eq!(style.size, default_style.size);
+        assert_eq!(style.color, Color::BLACK);
+    }
+
     fn rect_origins(list: &DisplayList) -> Vec<Offset> {
         let mut transforms = vec![Offset::ZERO];
         let mut origins = Vec::new();
@@ -12962,7 +13071,7 @@ mod tests {
     #[test]
     fn icons_fit_and_center_their_declared_logical_box() {
         let icon: Widget = Icon::new(icons::check()).size(12.).into();
-        let RenderKind::Shape { path, desired, .. } = render_kind(&icon) else {
+        let RenderKind::Shape { path, desired, .. } = render_kind(&icon, None) else {
             panic!("Icon should retain a shape render kind");
         };
         let bounds = path.bounds().expect("check path has geometry");

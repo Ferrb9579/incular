@@ -10,7 +10,9 @@ use incular_controls::{ButtonStyle, ControlTheme, SplashFactory, StateValue, Tex
 use incular_core::{Color, HslColor, Lerp, Offset, Size};
 use incular_text::TextStyle;
 use incular_widgets::internal::{ActionSurface, DropShadow};
-use incular_widgets::{Border, BorderRadius, BoxDecoration, Container, Row, Text, Widget};
+use incular_widgets::{
+    Border, BorderRadius, BoxDecoration, Container, DefaultTextStyle, Row, Text, Widget,
+};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
@@ -533,12 +535,16 @@ impl Material {
 
 impl From<Material> for Widget {
     fn from(value: Material) -> Self {
+        let text_style = Theme::of_shared().map_or_else(TextStyle::default, |theme| {
+            theme.text_theme.body_medium.clone()
+        });
+        let child: Widget = DefaultTextStyle::new(text_style, value.child).into();
         let mut surface_color = value.color;
         if let Some(tint) = value.surface_tint_color {
             let amount = (0.05 + value.elevation / 240.0).min(0.20);
             surface_color = mix(surface_color, tint, amount);
         }
-        let mut surface = Container::with_child(value.child)
+        let mut surface = Container::with_child(child)
             .decoration(
                 BoxDecoration::new()
                     .color(surface_color)

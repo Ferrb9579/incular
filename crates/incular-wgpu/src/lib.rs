@@ -2838,7 +2838,6 @@ impl WgpuRenderer {
         width: u32,
         height: u32,
         targets: &mut DestinationTargets,
-        clear: wgpu::Color,
         label: &'static str,
     ) -> (bool, u32, u32, u32) {
         let mut current_first = true;
@@ -2882,7 +2881,7 @@ impl WgpuRenderer {
                 width,
                 height,
                 scale,
-                clear,
+                wgpu::Color::TRANSPARENT,
                 None,
                 !first_pass,
             );
@@ -2926,7 +2925,7 @@ impl WgpuRenderer {
                 width,
                 height,
                 scale,
-                clear,
+                wgpu::Color::TRANSPARENT,
                 Some(&current_view),
                 true,
             );
@@ -2961,7 +2960,7 @@ impl WgpuRenderer {
             width,
             height,
             scale,
-            clear,
+            wgpu::Color::TRANSPARENT,
             None,
             !first_pass,
         );
@@ -3013,12 +3012,7 @@ impl WgpuRenderer {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.04,
-                        g: 0.04,
-                        b: 0.06,
-                        a: 1.,
-                    }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -3190,12 +3184,7 @@ impl WgpuRenderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.04,
-                            g: 0.04,
-                            b: 0.06,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -3556,12 +3545,6 @@ impl WgpuRenderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let clear = wgpu::Color {
-            r: 0.04,
-            g: 0.04,
-            b: 0.06,
-            a: 1.0,
-        };
         let has_destination_blend = batches.iter().any(|batch| {
             matches!(
                 batch,
@@ -3586,7 +3569,6 @@ impl WgpuRenderer {
                 target_width,
                 target_height,
                 &mut targets,
-                clear,
                 "incular destination composition segment",
             );
             self.counters.full_frame_intermediate_passes += 1;
@@ -3623,7 +3605,7 @@ impl WgpuRenderer {
                 target_width,
                 target_height,
                 scale,
-                clear,
+                wgpu::Color::TRANSPARENT,
                 None,
                 false,
             );
@@ -5510,15 +5492,8 @@ impl WgpuRenderer {
                 .destination_targets
                 .take()
                 .expect("destination targets after ensure");
-            let (current_first, _, _, passes) = self.render_destination_batches(
-                batches,
-                scale,
-                width,
-                height,
-                &mut targets,
-                wgpu::Color::TRANSPARENT,
-                label,
-            );
+            let (current_first, _, _, passes) =
+                self.render_destination_batches(batches, scale, width, height, &mut targets, label);
             let final_target = if current_first {
                 &targets.first
             } else {
