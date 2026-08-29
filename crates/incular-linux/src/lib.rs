@@ -157,18 +157,23 @@ fn devtools_launch_mode() -> DevToolsLaunchMode {
 #[cfg(feature = "devtools")]
 fn devtools_ui_candidates(current_exe: Option<PathBuf>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    let ui_binary = if cfg!(windows) {
+        "incular-devtools.exe"
+    } else {
+        "incular-devtools"
+    };
     if let Some(explicit) = std::env::var_os("INCULAR_DEVTOOLS_UI") {
         candidates.push(PathBuf::from(explicit));
     }
     if let Some(executable) = current_exe {
         if let Some(directory) = executable.parent() {
-            candidates.push(directory.join("incular-devtools"));
+            candidates.push(directory.join(ui_binary));
             // Cargo examples live under target/{profile}/examples while the
             // DevTools binary lives one directory above them.
             if directory.file_name().and_then(|name| name.to_str()) == Some("examples")
                 && let Some(profile_directory) = directory.parent()
             {
-                candidates.push(profile_directory.join("incular-devtools"));
+                candidates.push(profile_directory.join(ui_binary));
             }
         }
     }
@@ -196,7 +201,12 @@ fn launch_devtools_ui() {
             ),
         }
     }
-    match Command::new("incular-devtools")
+    let ui_command = if cfg!(windows) {
+        "incular-devtools.exe"
+    } else {
+        "incular-devtools"
+    };
+    match Command::new(ui_command)
         .arg("--target-pid")
         .arg(pid)
         .stdin(std::process::Stdio::null())
@@ -872,12 +882,39 @@ impl MultiApp {
                     }
                     Err(RendererError::OutOfMemory) => {
                         eprintln!("Incular renderer stopped: out of GPU memory");
+                        #[cfg(feature = "devtools")]
+                        self.devtools_state.push_frame(
+                            incular_devtools_protocol::TargetEvent::Log {
+                                level: "error".into(),
+                                target: "incular::renderer".into(),
+                                message: "renderer stopped: out of GPU memory".into(),
+                            },
+                        );
                     }
-                    Err(error) => eprintln!("Incular renderer error: {error}"),
+                    Err(error) => {
+                        eprintln!("Incular renderer error: {error}");
+                        #[cfg(feature = "devtools")]
+                        self.devtools_state.push_frame(
+                            incular_devtools_protocol::TargetEvent::Log {
+                                level: "error".into(),
+                                target: "incular::renderer".into(),
+                                message: error.to_string(),
+                            },
+                        );
+                    }
                 }
             }
             Ok(None) => self.application.note_presented(id, false),
-            Err(error) => eprintln!("Incular runtime error: {error:?}"),
+            Err(error) => {
+                eprintln!("Incular runtime error: {error:?}");
+                #[cfg(feature = "devtools")]
+                self.devtools_state
+                    .push_frame(incular_devtools_protocol::TargetEvent::Log {
+                        level: "error".into(),
+                        target: "incular::runtime".into(),
+                        message: format!("{error:?}"),
+                    });
+            }
         }
         if state.accessibility.active {
             if let Some(update) = self
@@ -1200,9 +1237,10 @@ mod devtools_launch_tests {
     fn cargo_example_candidate_includes_profile_binary() {
         let candidates =
             devtools_ui_candidates(Some(PathBuf::from("/repo/target/debug/examples/gallery")));
-        assert!(
-            candidates.contains(&PathBuf::from("/repo/target/debug/incular-devtools")),
-            "{candidates:?}"
-        );
+        let expected = PathBuf::from(format!(
+            "/repo/target/debug/incular-devtools{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        assert!(candidates.contains(&expected), "{candidates:?}");
     }
 }

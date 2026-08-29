@@ -90,8 +90,16 @@ pub fn list_sessions() -> Vec<(DiscoveryRecord, PathBuf)> {
     out
 }
 
+#[cfg(target_os = "linux")]
 fn process_alive(pid: u32) -> bool {
-    // /proc is authoritative on Linux; other platforms treat any record as
-    // alive and rely on connection-time authentication to fail cleanly.
     std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_alive(_pid: u32) -> bool {
+    // There is no portable process-existence API in the standard library on
+    // these targets. The discovery directory is user-scoped and the target
+    // still authenticates the WebSocket before any data is exchanged; stale
+    // records are therefore rejected and removed by the connection path.
+    true
 }

@@ -67,6 +67,7 @@ incular-devtools-ui = { path = "tools/incular-devtools", version = "0.1.0" }
 incular-windows = { path = "crates/incular-windows", version = "0.1.0" }
 
 wgpu = "30"
+wgpu-profiler = "0.28"
 # Test/dev-only: WGSL front end for the renderer pipeline-contract tests.
 naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 winit = "0.30"

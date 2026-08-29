@@ -125,6 +125,8 @@ path = "../../examples/studio/main.rs"
 [features]
 devtools = [
     "incular-linux/devtools",
+    "incular-windows/devtools",
+    "incular-macos/devtools",
     "incular-runtime/devtools",
     "incular-widgets/devtools",
 ]

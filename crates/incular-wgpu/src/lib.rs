@@ -21,12 +21,13 @@ use lyon_tessellation::{
     FillOptions, FillRule as LyonFillRule, FillTessellator, StrokeOptions, StrokeTessellator,
     VertexBuffers, geometry_builder::simple_builder, math::point, path::Path as LyonPath,
 };
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
 use std::fmt::Write as _;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wgpu::util::DeviceExt;
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 
 const ATLAS_PAGE_SIZE: u16 = 1024;
 const ATLAS_PADDING: u16 = 1;
@@ -861,97 +862,31 @@ pub struct GpuFrameTimings {
     pub main_pass_us: f64,
 }
 
-/// Optional timestamp-query ring. Four in-flight slots keep resolution
-/// asynchronous; a busy slot simply skips sampling that frame. Reading
-/// results never blocks the CPU and never calls `poll(Wait)`.
-struct GpuTimeline {
-    query_set: wgpu::QuerySet,
-    slots: [GpuTimelineSlot; 4],
-    period_ns: f32,
-    next: usize,
-    frame: u64,
-    latest: Option<GpuFrameTimings>,
-    /// Shared with the `map_async` callback of whichever slot is in flight.
-    latest_result: std::sync::Arc<Mutex<Option<GpuFrameTimings>>>,
+fn create_gpu_profiler(device: &wgpu::Device) -> Result<GpuProfiler, RendererError> {
+    GpuProfiler::new(
+        device,
+        GpuProfilerSettings {
+            enable_timer_queries: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+            // The renderer uses explicit pass queries below. Debug groups can
+            // be enabled by a future RenderDoc/debug-marker setting without
+            // changing the timing contract.
+            enable_debug_groups: false,
+            max_num_pending_frames: 3,
+        },
+    )
+    .map_err(|error| RendererError::GpuProfiler(error.to_string()))
 }
-#[derive(Debug)]
-struct GpuTimelineSlot {
-    resolve: wgpu::Buffer,
-    staging: wgpu::Buffer,
-    in_flight: bool,
-}
-impl GpuTimelineSlot {
-    const SLOT_BYTES: wgpu::BufferAddress = 16;
-}
-impl GpuTimeline {
-    #[must_use]
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("incular gpu timeline"),
-            ty: wgpu::QueryType::Timestamp,
-            count: 2,
-        });
-        let mut slots: Vec<GpuTimelineSlot> = Vec::with_capacity(4);
-        for index in 0..4 {
-            let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("incular gpu timeline resolve {index}")),
-                size: GpuTimelineSlot::SLOT_BYTES,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            });
-            let staging = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(&format!("incular gpu timeline staging {index}")),
-                size: GpuTimelineSlot::SLOT_BYTES,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            slots.push(GpuTimelineSlot {
-                resolve,
-                staging,
-                in_flight: false,
-            });
-        }
-        Self {
-            query_set,
-            slots: slots.try_into().expect("four slots"),
-            period_ns: queue.get_timestamp_period(),
-            next: 0,
-            frame: 0,
-            latest: None,
-            latest_result: std::sync::Arc::new(Mutex::new(None)),
-        }
-    }
 
-    #[must_use]
-    fn supported(device: &wgpu::Device) -> bool {
-        device.features().contains(
-            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
-        )
-    }
-
-    /// Returns the query index pair base (slot * 2) when a slot is free.
-    fn acquire_slot(&mut self) -> Option<(u32, f32)> {
-        for offset in 0..self.slots.len() {
-            let index = (self.next + offset) % self.slots.len();
-            if !self.slots[index].in_flight {
-                self.slots[index].in_flight = true;
-                self.next = (index + 1) % self.slots.len();
-                return Some((index as u32, self.period_ns));
-            }
+fn query_duration_us(results: &[GpuTimerQueryResult], label: &str) -> Option<f64> {
+    results.iter().find_map(|result| {
+        if result.label == label {
+            result.time.as_ref().and_then(|range| {
+                (range.end >= range.start).then_some((range.end - range.start) * 1_000_000.)
+            })
+        } else {
+            query_duration_us(&result.nested_queries, label)
         }
-        None
-    }
-
-    fn release_slot_if_idle(&mut self, index: usize) {
-        if self.slots[index].in_flight
-            && let Ok(guard) = self.latest_result.lock()
-            && guard.is_some()
-        {
-            // The shared result cell holds only the newest completed sample,
-            // so every awaiting slot can retire once any sample landed.
-            self.slots[index].in_flight = false;
-        }
-    }
+    })
 }
 
 #[derive(Debug)]
@@ -976,6 +911,7 @@ pub enum RendererError {
         limit: u32,
     },
     OutOfMemory,
+    GpuProfiler(String),
     /// A built-in render pipeline failed `wgpu` validation during renderer
     /// initialization. Initialization fails cleanly instead of continuing with
     /// a broken renderer; `label` names the pipeline and `reason` carries the
@@ -1018,6 +954,7 @@ impl std::fmt::Display for RendererError {
                 "opacity group target {width}x{height} exceeds GPU texture limit {limit}"
             ),
             Self::OutOfMemory => write!(f, "GPU surface ran out of memory"),
+            Self::GpuProfiler(error) => write!(f, "GPU profiler initialization failed: {error}"),
             Self::PipelineCreation { label, reason } => write!(
                 f,
                 "render pipeline '{label}' failed GPU validation: {reason}"
@@ -1228,14 +1165,13 @@ impl SharedGpuContext {
             .await
             .map_err(RendererError::Adapter)?;
         // Timestamp support is additive and optional: adapters that expose it
-        // get non-blocking GPU frame timing, everyone else reports
-        // `GPU timing unavailable` instead of failing initialization.
+        // get non-blocking GPU frame timing through wgpu-profiler, everyone
+        // else reports `GPU timing unavailable` instead of failing
+        // initialization.
         let adapter_features = adapter.features();
         let mut required_features = wgpu::Features::default();
-        let timestamp_features =
-            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
-        if adapter_features.contains(timestamp_features) {
-            required_features |= timestamp_features;
+        if adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY) {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
         }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -2134,10 +2070,12 @@ pub struct WgpuRenderer {
     window_gpu: WindowGpuState,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    gpu_timeline: Option<GpuTimeline>,
+    gpu_profiler: GpuProfiler,
     /// Armed by `render_composited`; consumed by the next top-level pass.
-    timestamp_next_pass: bool,
-    active_timeline_slot: Option<usize>,
+    profiler_next_pass: bool,
+    /// Renderer frame ids waiting for `wgpu-profiler`'s asynchronous mapping.
+    profiler_frames: VecDeque<u64>,
+    latest_gpu_timing: Option<GpuFrameTimings>,
     rectangle_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     image_pipeline: wgpu::RenderPipeline,
@@ -2245,9 +2183,9 @@ impl WgpuRenderer {
             surface.configure(&device, &config);
         }
         if let Some(pipelines) = shared.pipeline_resources(config.format) {
-            return Ok(Self::from_shared_pipeline_resources(
+            return Self::from_shared_pipeline_resources(
                 shared, handles, surface, config, size, device, queue, pipelines,
-            ));
+            );
         }
         // Device-level resources (layouts, samplers, unit quad, gradient LUT,
         // and every pipeline) are created once per target format and shared by
@@ -2313,8 +2251,7 @@ impl WgpuRenderer {
             blend_sampler,
         } = shared_pipelines.clone();
         shared.register_pipeline_resources(format, shared_pipelines);
-        let gpu_timeline =
-            GpuTimeline::supported(&device).then(|| GpuTimeline::new(&device, &queue));
+        let gpu_profiler = create_gpu_profiler(&device)?;
         Ok(Self {
             shared,
             window_gpu: WindowGpuState {
@@ -2327,9 +2264,10 @@ impl WgpuRenderer {
             },
             device,
             queue,
-            gpu_timeline,
-            timestamp_next_pass: false,
-            active_timeline_slot: None,
+            gpu_profiler,
+            profiler_next_pass: false,
+            profiler_frames: VecDeque::new(),
+            latest_gpu_timing: None,
             rectangle_pipeline,
             text_pipeline,
             image_pipeline,
@@ -2415,7 +2353,7 @@ impl WgpuRenderer {
         device: wgpu::Device,
         queue: wgpu::Queue,
         pipelines: Arc<SharedPipelineResources>,
-    ) -> Self {
+    ) -> Result<Self, RendererError> {
         let (stencil_texture, stencil_view) =
             create_stencil_attachment(&device, config.width, config.height);
         let instances = create_instance_buffer(&device, 1);
@@ -2439,9 +2377,8 @@ impl WgpuRenderer {
         let target_width = config.width;
         let target_height = config.height;
         let device_generation = shared.inner.device_generation;
-        let gpu_timeline =
-            GpuTimeline::supported(&device).then(|| GpuTimeline::new(&device, &queue));
-        Self {
+        let gpu_profiler = create_gpu_profiler(&device)?;
+        Ok(Self {
             shared,
             window_gpu: WindowGpuState {
                 handles,
@@ -2453,9 +2390,10 @@ impl WgpuRenderer {
             },
             device: device.clone(),
             queue,
-            gpu_timeline,
-            timestamp_next_pass: false,
-            active_timeline_slot: None,
+            gpu_profiler,
+            profiler_next_pass: false,
+            profiler_frames: VecDeque::new(),
+            latest_gpu_timing: None,
             rectangle_pipeline: pipelines.rectangle_pipeline.clone(),
             text_pipeline: pipelines.text_pipeline.clone(),
             image_pipeline: pipelines.image_pipeline.clone(),
@@ -2522,7 +2460,7 @@ impl WgpuRenderer {
                 stencil_pipeline_creations: 0,
                 ..GpuCounters::default()
             },
-        }
+        })
     }
     #[must_use]
     pub fn counters(&self) -> GpuCounters {
@@ -3521,7 +3459,7 @@ impl WgpuRenderer {
         self.prepare_image_bind_groups(&batches);
         let prepare_us = us_since(prepare_started);
         let encode_started = std::time::Instant::now();
-        self.timestamp_next_pass = self.gpu_timeline.is_some();
+        self.profiler_next_pass = self.gpu_timing_supported();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -3613,11 +3551,19 @@ impl WgpuRenderer {
             result
         };
         self.queue.present(frame);
-        if self.active_timeline_slot.is_some() {
-            self.begin_timestamp_readback();
-        }
-        if self.gpu_timeline.is_some() {
-            self.pump_gpu_timeline();
+        if self.gpu_timing_supported() {
+            // wgpu-profiler drops the newest pending frame when its bounded
+            // queue is full; mirror that bookkeeping for the frame ids kept
+            // alongside the profiler results.
+            if self.profiler_frames.len() >= 3 {
+                self.profiler_frames.pop_back();
+            }
+            self.gpu_profiler
+                .end_frame()
+                .map_err(|error| RendererError::GpuProfiler(error.to_string()))?;
+            self.profiler_frames
+                .push_back(self.counters.frames.saturating_add(1));
+            self.pump_gpu_profiler();
         }
         let submit_us = us_since(encode_started);
         let encode_us = submit_us;
@@ -3820,27 +3766,21 @@ impl WgpuRenderer {
         let mut rounded_offset = 0_u64;
         let mut path_offset = 0_u64;
         let mut composite_offset = 0_u64;
-        // GPU timeline sampling is armed only for the main frame's top-level
-        // pass; offscreen effect passes stay attributable through their own
-        // counters instead of consuming timestamp slots.
-        let mut timeline_slot = None;
-        if self.timestamp_next_pass
-            && let Some(timeline) = self.gpu_timeline.as_mut()
-            && let Some((index, period)) = timeline.acquire_slot()
-        {
-            self.active_timeline_slot = Some(index as usize);
-            self.timestamp_next_pass = false;
-            timeline_slot = Some(index);
-            let _ = period;
-        }
-        let timestamp_writes = timeline_slot.map(|_| {
-            let timeline = self.gpu_timeline.as_ref().expect("armed timeline");
-            wgpu::RenderPassTimestampWrites {
-                query_set: &timeline.query_set,
-                beginning_of_pass_write_index: Some(0),
-                end_of_pass_write_index: Some(1),
-            }
-        });
+        // wgpu-profiler samples only the top-level compositor pass. Offscreen
+        // effect passes remain attributable through their renderer counters
+        // instead of consuming profiler scopes for every intermediate target.
+        let profiler_query = if self.profiler_next_pass {
+            self.profiler_next_pass = false;
+            Some(
+                self.gpu_profiler
+                    .begin_pass_query("incular retained compositor pass", encoder),
+            )
+        } else {
+            None
+        };
+        let timestamp_writes = profiler_query
+            .as_ref()
+            .and_then(wgpu_profiler::GpuProfilerQuery::render_pass_timestamp_writes);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("incular retained compositor pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4210,100 +4150,48 @@ impl WgpuRenderer {
             }
         }
         drop(pass);
-        if let (Some(timeline), Some(slot)) = (self.gpu_timeline.as_ref(), timeline_slot) {
-            let slot_state = &timeline.slots[slot as usize];
-            encoder.resolve_query_set(&timeline.query_set, 0..2, &slot_state.resolve, 0);
-            encoder.copy_buffer_to_buffer(
-                &slot_state.resolve,
-                0,
-                &slot_state.staging,
-                0,
-                GpuTimelineSlot::SLOT_BYTES,
-            );
+        if let Some(query) = profiler_query {
+            self.gpu_profiler.end_query(encoder, query);
+            self.gpu_profiler.resolve_queries(encoder);
         }
         (draw_calls, text_draw_calls)
     }
 
-    /// Requests a non-blocking map of one resolved timestamp slot. The
-    /// callback completes on a later `device.poll(Maintain::Poll)`; nothing in
-    /// this path ever waits on the GPU.
-    fn begin_timestamp_readback(&mut self) {
-        let Some(index) = self.active_timeline_slot.take() else {
-            return;
-        };
-        let Some(timeline) = self.gpu_timeline.as_ref() else {
-            return;
-        };
-        let staging = timeline.slots[index].staging.clone();
-        let period_ns = timeline.period_ns;
-        let frame = timeline.frame;
-        let latest = Arc::clone(&timeline.latest_result);
-        let callback_buffer = staging.clone();
-        staging.slice(0..GpuTimelineSlot::SLOT_BYTES).map_async(
-            wgpu::MapMode::Read,
-            move |mapping| {
-                let staging = callback_buffer;
-                let sample = match mapping {
-                    Ok(()) => {
-                        let view = staging
-                            .get_mapped_range(0..GpuTimelineSlot::SLOT_BYTES)
-                            .expect("mapped staging is readable");
-                        let start =
-                            u64::from_le_bytes(view[0..8].try_into().expect("timestamp bytes"));
-                        let end =
-                            u64::from_le_bytes(view[8..16].try_into().expect("timestamp bytes"));
-                        drop(view);
-                        staging.unmap();
-                        let nanoseconds = end.saturating_sub(start) as f64 * f64::from(period_ns);
-                        Some(nanoseconds / 1000.)
-                    }
-                    Err(_) => None,
-                };
-                if let Ok(mut guard) = latest.lock() {
-                    *guard = Some(GpuFrameTimings {
-                        frame,
-                        main_pass_us: sample.unwrap_or(f64::NAN),
-                    });
-                }
-            },
-        );
-    }
-
-    /// Drives pending timestamp callbacks without blocking. Cheap when no
-    /// sampling is active; called at most once per rendered frame.
-    fn pump_gpu_timeline(&mut self) {
-        let Some(timeline) = self.gpu_timeline.as_mut() else {
-            return;
-        };
-        timeline.frame += 1;
-        if let Ok(guard) = timeline.latest_result.lock()
-            && let Some(sample) = *guard
-            && timeline
-                .latest
-                .is_none_or(|previous| previous.frame != sample.frame)
-        {
-            timeline.latest = Some(sample);
-        }
-        for index in 0..timeline.slots.len() {
-            timeline.release_slot_if_idle(index);
-        }
-        // Non-blocking poll drives timestamp callbacks; errors are surfaced
-        // through ordinary uncaptured-error handling, not this path.
+    /// Drives wgpu-profiler's asynchronous query mappings without blocking.
+    /// The profiler owns the query/readback buffers and returns the oldest
+    /// completed scope tree when the GPU has finished it.
+    fn pump_gpu_profiler(&mut self) {
         let _ = self.device.poll(wgpu::PollType::Poll);
+        let Some(results) = self
+            .gpu_profiler
+            .process_finished_frame(self.queue.get_timestamp_period())
+        else {
+            return;
+        };
+        let frame = self
+            .profiler_frames
+            .pop_front()
+            .unwrap_or(self.counters.frames);
+        if let Some(main_pass_us) = query_duration_us(&results, "incular retained compositor pass")
+        {
+            self.latest_gpu_timing = Some(GpuFrameTimings {
+                frame,
+                main_pass_us,
+            });
+        }
     }
 
     #[must_use]
-    pub const fn gpu_timing_supported(&self) -> bool {
-        self.gpu_timeline.is_some()
+    pub fn gpu_timing_supported(&self) -> bool {
+        self.device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
     }
 
     /// Latest asynchronously-resolved GPU timing, when supported.
     #[must_use]
     pub const fn gpu_frame_timings(&self) -> Option<GpuFrameTimings> {
-        match &self.gpu_timeline {
-            Some(timeline) => timeline.latest,
-            None => None,
-        }
+        self.latest_gpu_timing
     }
 
     fn lower_draw_batches(

@@ -14,8 +14,8 @@ use incular_devtools_protocol::{
     DebugOption, DebugProperty, DebugValue, DeepFrameTrace, DevSignalId, DevWidgetId, DevWindowId,
     DevtoolsProfilerMode, DiscoveryRecord, EditableValue, FrameRecordEvent, Hello, LayoutDetails,
     MemorySnapshot, Message, NodeDetails, PROTOCOL_VERSION, PeerKind, RequestMethod,
-    ResponsePayload, SignalSubscriber, SignalSummary, TargetEvent, TracePhase, TreeDelta,
-    WidgetNode, WindowSummary,
+    ResponsePayload, SignalSubscriber, SignalSummary, TargetEvent, TargetInfo, TracePhase,
+    TreeDelta, WidgetNode, WindowSummary,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -23,7 +23,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type Shared = Arc<Mutex<InspectorModel>>;
@@ -63,10 +63,12 @@ enum TraceRange {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum ToolView {
     #[default]
-    Inspector,
+    Widgets,
+    Console,
+    Network,
     Performance,
     Memory,
-    Signals,
+    Application,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,10 +87,13 @@ fn initial_tool_view() -> ToolView {
         .to_ascii_lowercase()
         .as_str()
     {
+        "console" => ToolView::Console,
+        "network" => ToolView::Network,
         "performance" => ToolView::Performance,
         "memory" => ToolView::Memory,
-        "signals" => ToolView::Signals,
-        _ => ToolView::Inspector,
+        "application" => ToolView::Application,
+        "inspector" | "signals" | "widgets" => ToolView::Widgets,
+        _ => ToolView::Widgets,
     }
 }
 
@@ -151,6 +156,13 @@ fn section(title: impl Into<String>, description: impl Into<String>, child: Widg
     .border(Border::new(1., BORDER))
     .radius(10.)
     .into()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConsoleEntry {
+    level: String,
+    target: String,
+    message: String,
 }
 
 fn flamegraph_boxes(
@@ -238,6 +250,7 @@ struct InspectorModel {
     connected: bool,
     error: Option<String>,
     target: String,
+    target_info: Option<TargetInfo>,
     windows: Vec<WindowSummary>,
     active_window: Option<DevWindowId>,
     nodes: HashMap<DevWidgetId, WidgetNode>,
@@ -262,6 +275,9 @@ struct InspectorModel {
     memory: Option<MemorySnapshot>,
     memory_a: Option<MemorySnapshot>,
     memory_b: Option<MemorySnapshot>,
+    console: VecDeque<ConsoleEntry>,
+    console_filter: String,
+    frame_arrivals: HashMap<DevWindowId, VecDeque<Instant>>,
     signals: Vec<SignalSummary>,
     selected_signal: Option<DevSignalId>,
     signal_subscribers: Vec<SignalSubscriber>,
@@ -286,6 +302,65 @@ fn editable_value(signal: &SignalSummary, input: &str) -> Option<EditableValue> 
 impl InspectorModel {
     const FRAME_HISTORY: usize = 300;
     const MAX_TRACE_EVENTS: usize = 200_000;
+    const CONSOLE_HISTORY: usize = 500;
+
+    fn push_console(
+        &mut self,
+        level: impl Into<String>,
+        target: impl Into<String>,
+        message: impl Into<String>,
+    ) {
+        while self.console.len() >= Self::CONSOLE_HISTORY {
+            self.console.pop_front();
+        }
+        self.console.push_back(ConsoleEntry {
+            level: level.into(),
+            target: target.into(),
+            message: message.into(),
+        });
+    }
+
+    fn note_frame_arrival(&mut self, window: DevWindowId) {
+        let now = Instant::now();
+        let arrivals = self.frame_arrivals.entry(window).or_default();
+        arrivals.push_back(now);
+        while arrivals
+            .front()
+            .is_some_and(|arrival| now.duration_since(*arrival) > Duration::from_secs(2))
+        {
+            arrivals.pop_front();
+        }
+    }
+
+    fn fps(&self, window: Option<DevWindowId>) -> Option<f32> {
+        let arrivals = self.frame_arrivals.get(&window?)?;
+        let first = *arrivals.front()?;
+        let last = *arrivals.back()?;
+        let elapsed = last.duration_since(first).as_secs_f32();
+        (arrivals.len() > 1 && elapsed > f32::EPSILON)
+            .then(|| ((arrivals.len() - 1) as f32 / elapsed).min(240.))
+    }
+
+    fn latest_frame(&self, window: Option<DevWindowId>) -> Option<&FrameRecordEvent> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|frame| Some(frame.window) == window)
+    }
+
+    fn filtered_console(&self) -> Vec<ConsoleEntry> {
+        let query = self.console_filter.trim().to_ascii_lowercase();
+        self.console
+            .iter()
+            .filter(|entry| {
+                query.is_empty()
+                    || entry.level.to_ascii_lowercase().contains(&query)
+                    || entry.target.to_ascii_lowercase().contains(&query)
+                    || entry.message.to_ascii_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect()
+    }
 
     fn push_deep_trace(&mut self, mut trace: DeepFrameTrace) {
         if trace.events.len() > Self::MAX_TRACE_EVENTS {
@@ -935,9 +1010,7 @@ fn list_sessions() -> Vec<DiscoveryRecord> {
             .ok()
             .and_then(|text| serde_json::from_str::<DiscoveryRecord>(&text).ok())
         {
-            Some(record) if std::path::Path::new(&format!("/proc/{}", record.pid)).exists() => {
-                sessions.push(record)
-            }
+            Some(record) if process_alive(record.pid) => sessions.push(record),
             _ => {
                 let _ = std::fs::remove_file(&path);
             }
@@ -945,6 +1018,20 @@ fn list_sessions() -> Vec<DiscoveryRecord> {
     }
     sessions.sort_by_key(|record| record.started_unix_ms);
     sessions
+}
+
+#[cfg(target_os = "linux")]
+fn process_alive(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_alive(_pid: u32) -> bool {
+    // There is no portable process-existence API in the standard library on
+    // these targets. The discovery directory is user-scoped and the target
+    // still authenticates the WebSocket before any data is exchanged; stale
+    // records are therefore rejected and removed by the connection path.
+    true
 }
 
 fn requested_target_pid(
@@ -989,6 +1076,7 @@ fn main() {
     let tick = Signal::new(0_u64);
     let pending = Rc::new(Cell::new(false));
     let search = TextEditingController::new();
+    let console_filter = TextEditingController::new();
     let signal_value = TextEditingController::new();
     let property_value = TextEditingController::new();
     let property_binding = Rc::new(RefCell::new(None::<(DevWidgetId, String)>));
@@ -1001,6 +1089,7 @@ fn main() {
     let app_tick = tick.clone();
     let app_pending = pending.clone();
     let app_search = search.clone();
+    let app_console_filter = console_filter.clone();
     let app_signal_value = signal_value.clone();
     let app_property_value = property_value.clone();
     let app_property_binding = property_binding.clone();
@@ -1042,6 +1131,7 @@ fn main() {
             }
             let (
                 header,
+                target_info,
                 connected,
                 windows,
                 active_window,
@@ -1053,6 +1143,9 @@ fn main() {
                 frames,
                 memory,
                 memory_diff,
+                fps,
+                latest_frame,
+                console_entries,
                 signals,
                 selected_signal,
                 signal_subscribers,
@@ -1075,6 +1168,7 @@ fn main() {
                 } else {
                     "Connecting to target".into()
                 };
+                let target_info = state.target_info.clone();
                 let visible_frames = state.timeline_visible.max(6);
                 let frames = state
                     .frames
@@ -1085,17 +1179,10 @@ fn main() {
                     .take(visible_frames)
                     .cloned()
                     .collect::<Vec<_>>();
-                let memory = state.memory.as_ref().map(|snapshot| {
-                    format!(
-                        "{}: RSS {} MB · elements {} · render {} · semantics {} · signals {}",
-                        snapshot.label,
-                        snapshot.counts.rss_mb,
-                        snapshot.counts.elements,
-                        snapshot.counts.render_objects,
-                        snapshot.counts.semantics_nodes,
-                        snapshot.counts.signals
-                    )
-                });
+                let memory = state.memory.clone();
+                let fps = state.fps(state.active_window);
+                let latest_frame = state.latest_frame(state.active_window).cloned();
+                let console_entries = state.filtered_console();
                 let selected_trace = state
                     .selected_frame
                     .and_then(|(window, frame)| {
@@ -1181,6 +1268,7 @@ fn main() {
                 });
                 (
                     header,
+                    target_info,
                     state.connected,
                     state.windows.clone(),
                     state.active_window,
@@ -1192,6 +1280,9 @@ fn main() {
                     frames,
                     memory,
                     state.memory_diff_lines(),
+                    fps,
+                    latest_frame,
+                    console_entries,
                     state.signals.clone(),
                     state.selected_signal.and_then(|id| {
                         state.signals.iter().find(|signal| signal.id == id).cloned()
@@ -1220,8 +1311,129 @@ fn main() {
             let mut memory_controls = Vec::new();
             let mut memory_body = Vec::new();
             let mut signal_body = Vec::new();
-            if let Some(error) = error {
+            let mut console_controls = Vec::new();
+            let mut console_body = Vec::new();
+            let mut network_body = Vec::new();
+            let mut application_controls = Vec::new();
+            let mut application_body = Vec::new();
+            if let Some(error) = error.as_ref() {
                 inspector_controls.push(ui_text(format!("Connection error: {error}"), 13., DANGER));
+            }
+            let shared = Arc::clone(&app_shared);
+            let tick = app_tick.clone();
+            let console_filter_field: Widget = TextField::new(app_console_filter.clone())
+                .placeholder("Filter console; press Enter")
+                .on_submit(move |query| {
+                    if let Ok(mut state) = shared.lock() {
+                        state.console_filter = query;
+                    }
+                    tick.update(|value| *value = value.wrapping_add(1));
+                })
+                .into();
+            console_controls.push(console_filter_field.clone());
+            let shared = Arc::clone(&app_shared);
+            let tick = app_tick.clone();
+            console_controls.push(compact_button("Clear console", false, move || {
+                if let Ok(mut state) = shared.lock() {
+                    state.console.clear();
+                }
+                tick.update(|value| *value = value.wrapping_add(1));
+            }));
+            console_body.extend(console_entries.into_iter().map(|entry| {
+                let color = match entry.level.to_ascii_lowercase().as_str() {
+                    "error" | "fatal" => DANGER,
+                    "warn" | "warning" => Color::rgba(242, 188, 64, 255),
+                    "debug" | "trace" => TEXT_MUTED,
+                    _ => TEXT_PRIMARY,
+                };
+                ui_text(
+                    format!("[{}] {} · {}", entry.level, entry.target, entry.message),
+                    13.,
+                    color,
+                )
+            }));
+            if console_body.is_empty() {
+                console_body.push(ui_text(
+                    "No target log events have been reported.",
+                    13.,
+                    TEXT_MUTED,
+                ));
+                console_body.push(ui_text(
+                    "Console captures structured events emitted through the DevTools channel; application stdout is not intercepted.",
+                    12.,
+                    TEXT_MUTED,
+                ));
+            }
+            network_body.extend([
+                ui_text("No application network requests recorded.", 16., TEXT_PRIMARY),
+                ui_text(
+                    "This target does not currently expose an HTTP/client transport to DevTools. When a network adapter is registered, requests will appear here with URL, status, type, duration, and transfer size.",
+                    13.,
+                    TEXT_MUTED,
+                ),
+                ui_text("Request   Status   Type   Duration   Size", 13., TEXT_MUTED),
+            ]);
+            let bridge = app_bridge.clone();
+            application_controls.push(compact_button("Refresh target info", false, move || {
+                bridge.send(RequestMethod::GetTargetInfo)
+            }));
+            if let Some(info) = target_info.as_ref() {
+                application_body.extend([
+                    ui_text(
+                        format!("Framework {}", info.framework_version),
+                        14.,
+                        TEXT_PRIMARY,
+                    ),
+                    ui_text(
+                        format!("Process {} · {}", info.pid, info.executable),
+                        13.,
+                        TEXT_MUTED,
+                    ),
+                    ui_text(
+                        format!(
+                            "Platform {} · protocol {}",
+                            info.platform, info.protocol_version
+                        ),
+                        13.,
+                        TEXT_MUTED,
+                    ),
+                    ui_text(
+                        format!(
+                            "DevTools session: {}",
+                            if connected {
+                                "connected"
+                            } else {
+                                "disconnected"
+                            }
+                        ),
+                        13.,
+                        if connected { SUCCESS } else { DANGER },
+                    ),
+                ]);
+            } else {
+                application_body.push(ui_text("Waiting for target information…", 13., TEXT_MUTED));
+            }
+            application_body.push(ui_text("Windows", 16., TEXT_PRIMARY));
+            for window in &windows {
+                let observed = frames
+                    .iter()
+                    .filter(|frame| frame.window == window.id)
+                    .count();
+                application_body.push(ui_text(
+                    format!(
+                        "{} · {:.0}×{:.0} logical · scale {:.2} · {} streamed frames",
+                        window.title,
+                        window.logical_size[0],
+                        window.logical_size[1],
+                        window.scale_factor,
+                        observed,
+                    ),
+                    13.,
+                    TEXT_MUTED,
+                ));
+            }
+            if windows.is_empty() {
+                application_body.push(ui_text("No live windows reported.", 13., TEXT_MUTED));
             }
             let bridge = app_bridge.clone();
             signal_body.push(compact_button("Refresh signal list", false, move || {
@@ -1463,6 +1675,33 @@ fn main() {
                     tick.update(|value| *value = value.wrapping_add(1));
                 }));
             }
+            performance_body.push(ui_text(
+                format!(
+                    "{} FPS · {} active window · {} retained frame samples",
+                    fps.map_or_else(|| "—".into(), |value| format!("{value:.1}")),
+                    active_window.map_or_else(|| "none".into(), |window| window.to_string()),
+                    frames.len(),
+                ),
+                18.,
+                if fps.is_some() { SUCCESS } else { TEXT_MUTED },
+            ));
+            if let Some(frame) = latest_frame {
+                performance_body.push(ui_text(
+                    format!(
+                        "Latest frame #{} · CPU {}µs · GPU {} · {} draws · {} instances",
+                        frame.frame,
+                        frame.timings.cpu_total,
+                        frame
+                            .timings
+                            .gpu_us
+                            .map_or_else(|| "unavailable".into(), |value| format!("{value:.0}µs"),),
+                        frame.draw_calls,
+                        frame.instances,
+                    ),
+                    13.,
+                    TEXT_PRIMARY,
+                ));
+            }
             performance_body.extend(frames.into_iter().map(|frame| {
                 let label = format!(
                     "#{} · CPU {}µs{} · build {} · layout {} · paint {} · draws {}",
@@ -1607,7 +1846,37 @@ fn main() {
                     .into()
             }));
             if let Some(memory) = memory {
-                memory_body.push(ui_text(memory, 13., TEXT_PRIMARY));
+                let counts = memory.counts;
+                memory_body.push(ui_text(
+                    format!("{} · RSS {} MB", memory.label, counts.rss_mb),
+                    14.,
+                    TEXT_PRIMARY,
+                ));
+                memory_body.extend(
+                    [
+                        format!(
+                            "Elements {} · render objects {} · layers {}",
+                            counts.elements, counts.render_objects, counts.layers
+                        ),
+                        format!(
+                            "Semantics {} · signals {} · active tasks {}",
+                            counts.semantics_nodes, counts.signals, counts.tasks_active
+                        ),
+                        format!(
+                            "Glyph atlas pages {} · images {} · gradients {} · paths {}",
+                            counts.glyph_atlas_pages,
+                            counts.image_resources,
+                            counts.gradient_resources,
+                            counts.path_meshes
+                        ),
+                        format!(
+                            "Offscreen {} B · effect cache {} B",
+                            counts.offscreen_bytes, counts.effect_cached_bytes
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|line| ui_text(line, 13., TEXT_MUTED)),
+                );
             }
             memory_body.extend(
                 memory_diff
@@ -1916,6 +2185,14 @@ fn main() {
                 }
             }
 
+            if signal_body.len() == 1 {
+                signal_body.push(ui_text(
+                    "No debug-enabled signals are registered by this target.",
+                    13.,
+                    TEXT_MUTED,
+                ));
+            }
+
             let details_content = if has_selection {
                 let mut detail_tabs = Vec::new();
                 for (section, label) in [
@@ -1959,7 +2236,7 @@ fn main() {
                 .into()
             };
             let inspector_content = Column::new([
-                ui_text("Inspector", 22., TEXT_PRIMARY),
+                ui_text("Widgets", 22., TEXT_PRIMARY),
                 ui_text(
                     "Explore retained widgets, layout decisions, and target overlays.",
                     13.,
@@ -1994,6 +2271,12 @@ fn main() {
                         .spacing(8.)
                         .run_spacing(8.)
                         .into(),
+                ),
+                gap(1., 12.),
+                section(
+                    "Signals",
+                    "Inspect writes, subscribers, and explicitly editable debug values",
+                    Column::new(signal_body).into(),
                 ),
             ]);
 
@@ -2059,40 +2342,83 @@ fn main() {
                 ),
             ]);
 
-            if signal_body.len() == 1 {
-                signal_body.push(ui_text(
-                    "No debug-enabled signals are registered by this target.",
-                    13.,
-                    TEXT_MUTED,
-                ));
-            }
-            let signals_content = Column::new([
-                ui_text("Signals", 22., TEXT_PRIMARY),
+            let console_content = Column::new([
+                ui_text("Console", 22., TEXT_PRIMARY),
                 ui_text(
-                    "Inspect writes, subscribers, and explicitly editable debug values.",
+                    "Read structured target diagnostics and DevTools connection errors.",
                     13.,
                     TEXT_MUTED,
                 ),
                 gap(1., 16.),
                 section(
-                    "Registered signals",
-                    "Values remain redacted unless a signal opts into editing",
-                    Column::new(signal_body).into(),
+                    "Messages",
+                    "Newest messages are retained in a bounded history",
+                    Column::new([
+                        Wrap::new(console_controls)
+                            .spacing(8.)
+                            .run_spacing(8.)
+                            .into(),
+                        gap(1., 12.),
+                        Column::new(console_body).into(),
+                    ])
+                    .into(),
+                ),
+            ]);
+
+            let network_content = Column::new([
+                ui_text("Network", 22., TEXT_PRIMARY),
+                ui_text(
+                    "Inspect application network activity and transfer costs.",
+                    13.,
+                    TEXT_MUTED,
+                ),
+                gap(1., 16.),
+                section(
+                    "Requests",
+                    "Request instrumentation is opt-in at the application transport boundary",
+                    Column::new(network_body).into(),
+                ),
+            ]);
+
+            let application_content = Column::new([
+                ui_text("Application", 22., TEXT_PRIMARY),
+                ui_text(
+                    "Target identity, windows, protocol, and runtime session state.",
+                    13.,
+                    TEXT_MUTED,
+                ),
+                gap(1., 16.),
+                section(
+                    "Target",
+                    "Connection and framework metadata",
+                    Column::new([
+                        Wrap::new(application_controls)
+                            .spacing(8.)
+                            .run_spacing(8.)
+                            .into(),
+                        gap(1., 12.),
+                        Column::new(application_body).into(),
+                    ])
+                    .into(),
                 ),
             ]);
 
             let page_content: Widget = match active_view {
-                ToolView::Inspector => inspector_content.into(),
+                ToolView::Widgets => inspector_content.into(),
+                ToolView::Console => console_content.into(),
+                ToolView::Network => network_content.into(),
                 ToolView::Performance => performance_content.into(),
                 ToolView::Memory => memory_content.into(),
-                ToolView::Signals => signals_content.into(),
+                ToolView::Application => application_content.into(),
             };
             let mut tabs = Vec::new();
             for (view, label) in [
-                (ToolView::Inspector, "Inspector"),
+                (ToolView::Widgets, "Widgets"),
+                (ToolView::Console, "Console"),
+                (ToolView::Network, "Network"),
                 (ToolView::Performance, "Performance"),
                 (ToolView::Memory, "Memory"),
-                (ToolView::Signals, "Signals"),
+                (ToolView::Application, "Application"),
             ] {
                 let selected = active_view == view;
                 let tool_view = app_tool_view.clone();
@@ -2138,7 +2464,7 @@ fn main() {
                 .border(Border::new(1., BORDER))
                 .radius(10.)
                 .into();
-                let body: Widget = if active_view == ToolView::Inspector {
+                let body: Widget = if active_view == ToolView::Widgets {
                     Row::new([
                         ConstrainedBox::new(
                             Constraints::tight(Size::new(tree_width, body_height)),
@@ -2161,9 +2487,9 @@ fn main() {
                         DecoratedBox::new(Padding::all(
                             16.,
                             Column::new([
+                                Row::new(tabs.clone()).spacing(6.).into(),
+                                gap(1., 8.),
                                 header_widget.clone().into(),
-                                gap(1., 10.),
-                                Wrap::new(tabs.clone()).spacing(8.).run_spacing(8.).into(),
                                 gap(1., 12.),
                                 ConstrainedBox::new(
                                     Constraints::tight(Size::new(width - 32., body_height)),
@@ -2260,14 +2586,21 @@ async fn apply_message<S>(
             payload: Ok(ResponsePayload::TargetInfo(info)),
             ..
         } => {
+            let info = *info;
             let needs_window_request = info.windows.is_empty();
             let window = if let Ok(mut state) = model.lock() {
                 state.connected = true;
                 state.error = None;
                 state.target = format!("pid {} · {}", info.pid, info.platform);
-                state.windows = info.windows;
+                state.target_info = Some(info.clone());
+                state.windows = info.windows.clone();
                 state.active_window = state.windows.first().map(|window| window.id);
                 state.tree_retry_sent = false;
+                state.push_console(
+                    "info",
+                    "devtools",
+                    format!("connected to {} ({})", info.executable, info.platform),
+                );
                 state.active_window
             } else {
                 None
@@ -2411,6 +2744,7 @@ async fn apply_message<S>(
         } => note_error(model, updates, format!("target error {code:?}: {message}")),
         Message::Event(TargetEvent::FrameRecord(frame)) => {
             let retry_window = if let Ok(mut state) = model.lock() {
+                state.note_frame_arrival(frame.window);
                 let retry_window = (!state.tree_retry_sent && state.rows.is_empty())
                     .then_some(state.active_window)
                     .flatten();
@@ -2464,12 +2798,34 @@ async fn apply_message<S>(
             )
             .await;
         }
-        Message::Event(TargetEvent::Log { message, .. }) => {
-            if let Ok(mut state) = model.lock()
-                && message.contains("recording stopped")
-            {
-                state.recording = false;
-                state.error = Some(message);
+        Message::Event(TargetEvent::Log {
+            level,
+            target,
+            message,
+        }) => {
+            if let Ok(mut state) = model.lock() {
+                state.push_console(level, target, message.clone());
+                if message.contains("recording stopped") {
+                    state.recording = false;
+                    state.error = Some(message);
+                }
+            }
+        }
+        Message::Event(TargetEvent::WindowsChanged) => {
+            send_request(sink, next, RequestMethod::GetTargetInfo).await;
+        }
+        Message::Event(TargetEvent::DroppedTelemetry { count }) => {
+            if let Ok(mut state) = model.lock() {
+                state.push_console(
+                    "warn",
+                    "devtools",
+                    format!("target dropped {count} telemetry events"),
+                );
+            }
+        }
+        Message::Event(TargetEvent::InspectModeEnded { .. }) => {
+            if let Ok(mut state) = model.lock() {
+                state.select_mode = false;
             }
         }
         Message::Response {
@@ -2501,6 +2857,7 @@ where
 
 fn note_error(model: &Shared, updates: &mpsc::Sender<()>, message: String) {
     if let Ok(mut state) = model.lock() {
+        state.push_console("error", "devtools", message.clone());
         state.error = Some(message);
         state.connected = false;
     }
@@ -2786,7 +3143,7 @@ mod tests {
 
     #[test]
     fn devtools_shell_tabs_remain_hittable_above_the_scrolling_body() {
-        let active = Signal::new(ToolView::Inspector);
+        let active = Signal::new(ToolView::Widgets);
         let observed = active.clone();
         let scroll = ScrollController::new();
         let root: Widget = LayoutBuilder::new(move |constraints| {
@@ -2795,10 +3152,12 @@ mod tests {
             let body_height = (height - 116.).max(1.);
             let mut tabs = Vec::new();
             for (view, label) in [
-                (ToolView::Inspector, "Inspector"),
+                (ToolView::Widgets, "Widgets"),
+                (ToolView::Console, "Console"),
+                (ToolView::Network, "Network"),
                 (ToolView::Performance, "Performance"),
                 (ToolView::Memory, "Memory"),
-                (ToolView::Signals, "Signals"),
+                (ToolView::Application, "Application"),
             ] {
                 let active = active.clone();
                 tabs.push(compact_button(label, active.get() == view, move || {
@@ -2818,9 +3177,9 @@ mod tests {
                     DecoratedBox::new(Padding::all(
                         16.,
                         Column::new([
+                            Row::new(tabs).spacing(6.).into(),
+                            gap(1., 8.),
                             ui_text("Incular DevTools", 20., TEXT_PRIMARY),
-                            gap(1., 10.),
-                            Wrap::new(tabs).spacing(8.).run_spacing(8.).into(),
                             gap(1., 12.),
                             ConstrainedBox::new(
                                 Constraints::tight(Size::new(width - 32., body_height)),
@@ -2841,11 +3200,11 @@ mod tests {
             .unwrap();
         let down = runtime.handle_input(InputEvent::Pointer {
             phase: PointerPhase::Down,
-            position: Offset::new(157., 70.),
+            position: Offset::new(310., 32.),
         });
         let up = runtime.handle_input(InputEvent::Pointer {
             phase: PointerPhase::Up,
-            position: Offset::new(157., 70.),
+            position: Offset::new(310., 32.),
         });
         assert!(
             down.is_some_and(|target| target.action.is_some()),
