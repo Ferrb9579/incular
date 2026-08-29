@@ -33,8 +33,8 @@ use incular_rendering::{
     Stroke, normalize_opacity, normalize_sigma,
 };
 use incular_scroll::{
-    MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollNotificationSubscription,
-    ScrollPhysics, ScrollbarGeometry, SliverConstraints, scrollbar_geometry,
+    ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,
+    ScrollbarGeometry, SliverConstraints, scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
@@ -1276,9 +1276,6 @@ pub enum WidgetKind {
         callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
         child: Box<Widget>,
     },
-    VirtualList {
-        config: Rc<VirtualListConfig>,
-    },
     SliverViewport {
         config: Rc<SliverViewportConfig>,
     },
@@ -1335,148 +1332,6 @@ pub enum WidgetKind {
         mode: BlendMode,
         child: Box<Widget>,
     },
-}
-
-/// Lazy viewport configuration. The item builder is invoked only as an index
-/// enters the bounded materialized range.
-#[derive(Clone, Debug, PartialEq)]
-enum VirtualListExtent {
-    Fixed(f32),
-    /// Each item fills the viewport's current main-axis extent. The fallback
-    /// is used only when a viewport is laid out unbounded (where a page view
-    /// cannot derive a finite page size from constraints).
-    Viewport(f32),
-    Variable(MeasuredExtentIndex),
-}
-
-impl VirtualListExtent {
-    fn item_count(&self, configured_count: usize) -> usize {
-        match self {
-            Self::Fixed(_) | Self::Viewport(_) => configured_count,
-            Self::Variable(index) => index.len(),
-        }
-    }
-
-    fn content_extent(&self, configured_count: usize) -> f32 {
-        match self {
-            Self::Fixed(extent) => fixed_extent_content_extent(configured_count, *extent),
-            Self::Viewport(extent) => fixed_extent_content_extent(configured_count, *extent),
-            Self::Variable(index) => index.total_extent(),
-        }
-    }
-
-    fn content_extent_for_viewport(&self, configured_count: usize, viewport: f32) -> f32 {
-        match self {
-            Self::Fixed(_) => self.content_extent(configured_count),
-            Self::Viewport(fallback) => {
-                let extent = if viewport.is_finite() && viewport > 0. {
-                    viewport
-                } else {
-                    *fallback
-                };
-                fixed_extent_content_extent(configured_count, extent)
-            }
-            Self::Variable(_) => self.content_extent(configured_count),
-        }
-    }
-
-    fn materialized_range(
-        &self,
-        configured_count: usize,
-        offset: f32,
-        viewport: f32,
-        cache: f32,
-    ) -> std::ops::Range<usize> {
-        match self {
-            Self::Fixed(extent) => {
-                fixed_extent_materialized_range(configured_count, *extent, offset, viewport, cache)
-            }
-            Self::Viewport(fallback) => {
-                let extent = if viewport.is_finite() && viewport > 0. {
-                    viewport
-                } else {
-                    *fallback
-                };
-                fixed_extent_materialized_range(configured_count, extent, offset, viewport, cache)
-            }
-            Self::Variable(index) => index.materialized_range(offset, viewport, cache),
-        }
-    }
-
-    fn offset_for_index(&self, index: usize, viewport: f32) -> f32 {
-        match self {
-            Self::Fixed(extent) => {
-                (index as f64 * f64::from(*extent)).min(f64::from(f32::MAX)) as f32
-            }
-            Self::Viewport(fallback) => {
-                let extent = if viewport.is_finite() && viewport > 0. {
-                    viewport
-                } else {
-                    *fallback
-                };
-                (index as f64 * f64::from(extent)).min(f64::from(f32::MAX)) as f32
-            }
-            Self::Variable(index_extents) => index_extents.offset_for_index(index),
-        }
-    }
-
-    fn structure_revision(&self) -> u64 {
-        match self {
-            Self::Fixed(_) | Self::Viewport(_) => 0,
-            Self::Variable(index) => index.structure_revision(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct VirtualListConfig {
-    item_count: usize,
-    extent: VirtualListExtent,
-    cache_extent: f32,
-    controller: ScrollController,
-    axis: Axis,
-    reverse: bool,
-    physics: ScrollPhysics,
-    builder: Rc<dyn Fn(usize) -> Widget>,
-}
-#[cfg(feature = "devtools")]
-impl VirtualListConfig {
-    pub fn dev_item_count(&self) -> usize {
-        self.item_count
-    }
-    pub fn dev_materialized(&self) -> usize {
-        match &self.extent {
-            VirtualListExtent::Fixed(_) | VirtualListExtent::Viewport(_) => self.item_count,
-            VirtualListExtent::Variable(index) => index.measured_count(),
-        }
-    }
-    pub fn dev_cache_extent(&self) -> f32 {
-        self.cache_extent
-    }
-}
-impl std::fmt::Debug for VirtualListConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VirtualListConfig")
-            .field("item_count", &self.item_count)
-            .field("extent", &self.extent)
-            .field("cache_extent", &self.cache_extent)
-            .field("axis", &self.axis)
-            .field("reverse", &self.reverse)
-            .field("physics", &self.physics)
-            .finish()
-    }
-}
-impl PartialEq for VirtualListConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.item_count == other.item_count
-            && self.extent == other.extent
-            && self.cache_extent == other.cache_extent
-            && self.controller == other.controller
-            && self.axis == other.axis
-            && self.reverse == other.reverse
-            && self.physics == other.physics
-            && Rc::ptr_eq(&self.builder, &other.builder)
-    }
 }
 
 /// Converts the controller's logical offset into the physical content offset
@@ -1554,60 +1409,22 @@ fn sliver_viewport_size(axis: Axis, constraints: Constraints, shrink_wrap: bool)
     constraints.constrain(axis.size(main, cross))
 }
 
-#[inline]
-fn item_constraints(axis: Axis, constraints: Constraints, extent: Option<f32>) -> Constraints {
-    match (axis, extent) {
-        (Axis::Vertical, Some(extent)) => {
-            Constraints::new(0., constraints.max_width, extent, extent)
-        }
-        (Axis::Horizontal, Some(extent)) => {
-            Constraints::new(extent, extent, 0., constraints.max_height)
-        }
-        (Axis::Vertical, None) => Constraints::new(0., constraints.max_width, 0., f32::INFINITY),
-        (Axis::Horizontal, None) => Constraints::new(0., f32::INFINITY, 0., constraints.max_height),
-    }
-}
-
-#[inline]
-fn viewport_item_constraints(axis: Axis, constraints: Constraints, extent: f32) -> Constraints {
-    let cross = axis.cross_extent(constraints.biggest());
-    if cross.is_finite() {
-        match axis {
-            Axis::Vertical => Constraints::new(cross, cross, extent, extent),
-            Axis::Horizontal => Constraints::new(extent, extent, cross, cross),
-        }
-    } else {
-        item_constraints(axis, constraints, Some(extent))
-    }
-}
-
-/// Computes an exclusive materialized item range. A row touching the cache
-/// boundary is not included; intersecting rows are included.
-#[must_use]
-pub fn fixed_extent_materialized_range(
-    item_count: usize,
-    item_extent: f32,
-    scroll_offset: f32,
-    viewport_extent: f32,
-    cache_extent: f32,
-) -> std::ops::Range<usize> {
-    if item_count == 0 || !item_extent.is_finite() || item_extent <= 0. {
-        return 0..0;
-    }
-    let start = ((scroll_offset.max(0.) - cache_extent.max(0.)) / item_extent)
-        .floor()
-        .max(0.) as usize;
-    let end = ((scroll_offset.max(0.) + viewport_extent.max(0.) + cache_extent.max(0.))
-        / item_extent)
-        .ceil()
-        .max(0.) as usize;
-    start.min(item_count)..end.min(item_count).max(start.min(item_count))
-}
-
-fn fixed_extent_content_extent(item_count: usize, item_extent: f32) -> f32 {
-    // Geometry is f32 today. Saturating keeps malformed or enormous logical
-    // data from wrapping while preserving normal list arithmetic exactly.
-    ((item_count as f64) * f64::from(item_extent)).min(f64::from(f32::MAX)) as f32
+/// Selects the first retained sliver child at or after the physical viewport
+/// origin. Keeping its logical identity and offset lets a variable-extent
+/// sliver compensate the scroll position when rows above that child are
+/// measured more accurately.
+fn sliver_anchor(
+    layout: &SliverViewportLayout,
+    physical_offset: f32,
+) -> Option<(SliverChildId, f32)> {
+    layout
+        .children
+        .iter()
+        .find(|child| {
+            child.offset + child.extent > physical_offset
+                || (child.extent <= 0. && child.offset >= physical_offset)
+        })
+        .map(|child| (child.id, child.offset))
 }
 
 /// Applies a child's additional constraints without ever allowing it to
@@ -2023,12 +1840,6 @@ impl std::fmt::Debug for WidgetKind {
             Self::NotificationListener { child, .. } => f
                 .debug_struct("NotificationListener")
                 .field("child", child)
-                .finish(),
-            Self::VirtualList { config } => f
-                .debug_struct("VirtualList")
-                .field("item_count", &config.extent.item_count(config.item_count))
-                .field("extent", &config.extent)
-                .field("cache_extent", &config.cache_extent)
                 .finish(),
             Self::SliverViewport { config } => f
                 .debug_struct("SliverViewport")
@@ -2565,16 +2376,6 @@ impl PartialEq for WidgetKind {
                     child: d,
                 },
             ) => a == c && e == h && f == i && g == j && b == d,
-            (Self::VirtualList { config: a }, Self::VirtualList { config: b }) => {
-                a.item_count == b.item_count
-                    && a.extent == b.extent
-                    && a.cache_extent == b.cache_extent
-                    && a.controller == b.controller
-                    && a.axis == b.axis
-                    && a.reverse == b.reverse
-                    && a.physics == b.physics
-                    && Rc::ptr_eq(&a.builder, &b.builder)
-            }
             (Self::SliverViewport { config: a }, Self::SliverViewport { config: b }) => a == b,
             (
                 Self::Translate {
@@ -2998,7 +2799,6 @@ enum WidgetType {
     Scroll,
     PersistentHeader,
     NotificationListener,
-    VirtualList,
     SliverViewport,
     Translate,
     Transform,
@@ -3305,9 +3105,7 @@ impl Widget {
             | WidgetKind::ColorFiltered { child, .. }
             | WidgetKind::Blend { child, .. } => child.bind_callbacks(allocate),
             WidgetKind::SelectionArea { child, .. } => child.bind_callbacks(allocate),
-            WidgetKind::VirtualList { .. }
-            | WidgetKind::SliverViewport { .. }
-            | WidgetKind::LayoutBuilder { .. } => {}
+            WidgetKind::SliverViewport { .. } | WidgetKind::LayoutBuilder { .. } => {}
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
@@ -4008,17 +3806,6 @@ impl Widget {
         }
     }
 
-    #[must_use]
-    fn virtual_list(config: VirtualListConfig) -> Self {
-        Self {
-            key: None,
-            kind: WidgetKind::VirtualList {
-                config: Rc::new(config),
-            },
-            semantics: SemanticProperties::default(),
-        }
-    }
-
     /// Creates a retained sliver viewport. Sliver children are materialized by
     /// the viewport delegate during layout, so they are not represented as a
     /// declarative `Column` child list.
@@ -4368,7 +4155,6 @@ impl Widget {
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
             WidgetKind::PersistentHeader { .. } => WidgetType::PersistentHeader,
             WidgetKind::NotificationListener { .. } => WidgetType::NotificationListener,
-            WidgetKind::VirtualList { .. } => WidgetType::VirtualList,
             WidgetKind::SliverViewport { .. } => WidgetType::SliverViewport,
             WidgetKind::Translate { .. } => WidgetType::Translate,
             WidgetKind::Transform { .. } => WidgetType::Transform,
@@ -4438,9 +4224,7 @@ impl Widget {
             | WidgetKind::Table { children, .. }
             | WidgetKind::Stack { children, .. }
             | WidgetKind::IndexedStack { children, .. } => children.iter().collect(),
-            WidgetKind::VirtualList { .. }
-            | WidgetKind::SliverViewport { .. }
-            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
+            WidgetKind::SliverViewport { .. } | WidgetKind::LayoutBuilder { .. } => Vec::new(),
         }
     }
 }
@@ -5735,268 +5519,6 @@ impl ScrollView {
     }
 }
 
-/// A vertically scrolling lazy viewport. It is intentionally distinct from
-/// [`ScrollView`]: items are created only while they intersect the viewport
-/// plus a bounded logical-pixel cache (240px by default). Fixed and measured
-/// variable extents share this one retained viewport implementation.
-pub struct VirtualList;
-impl VirtualList {
-    pub const DEFAULT_ITEM_EXTENT: f32 = 48.;
-    pub const DEFAULT_CACHE_EXTENT: f32 = 240.;
-
-    #[must_use]
-    pub fn builder<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::fixed_extent(item_count, Self::DEFAULT_ITEM_EXTENT, builder)
-    }
-    #[must_use]
-    pub fn fixed_extent<W>(
-        item_count: usize,
-        item_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::fixed_extent_with_controller(
-            item_count,
-            item_extent,
-            ScrollController::new(),
-            builder,
-        )
-    }
-    #[must_use]
-    pub fn fixed_extent_with_controller<W>(
-        item_count: usize,
-        item_extent: f32,
-        controller: ScrollController,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::fixed_extent_with_controller_and_cache(
-            item_count,
-            item_extent,
-            Self::DEFAULT_CACHE_EXTENT,
-            controller,
-            builder,
-        )
-    }
-    #[must_use]
-    pub fn fixed_extent_with_controller_and_cache<W>(
-        item_count: usize,
-        item_extent: f32,
-        cache_extent: f32,
-        controller: ScrollController,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::fixed_extent_with_controller_and_cache_config(
-            item_count,
-            item_extent,
-            cache_extent,
-            controller,
-            Axis::Vertical,
-            false,
-            ScrollPhysics::default(),
-            builder,
-        )
-    }
-
-    /// Internal lowering entry point retaining the viewport policy supplied
-    /// by ListView/GridView/PageView.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn fixed_extent_with_controller_and_cache_config<W>(
-        item_count: usize,
-        item_extent: f32,
-        cache_extent: f32,
-        controller: ScrollController,
-        axis: Axis,
-        reverse: bool,
-        physics: ScrollPhysics,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        assert!(
-            item_extent.is_finite() && item_extent > 0.,
-            "item extent must be positive and finite"
-        );
-        assert!(
-            cache_extent.is_finite() && cache_extent >= 0.,
-            "cache extent must be finite and non-negative"
-        );
-        Widget::virtual_list(VirtualListConfig {
-            item_count,
-            extent: VirtualListExtent::Fixed(item_extent),
-            cache_extent,
-            controller,
-            axis,
-            reverse,
-            physics,
-            builder: Rc::new(move |index| builder(index).into()),
-        })
-    }
-
-    /// Internal PageView lowering for pages that fill the viewport. The
-    /// fallback is used only when the viewport itself is unbounded.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn viewport_extent_with_controller_and_cache_config<W>(
-        item_count: usize,
-        fallback_extent: f32,
-        cache_extent: f32,
-        controller: ScrollController,
-        axis: Axis,
-        reverse: bool,
-        physics: ScrollPhysics,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        assert!(
-            fallback_extent.is_finite() && fallback_extent > 0.,
-            "fallback page extent must be positive and finite"
-        );
-        assert!(
-            cache_extent.is_finite() && cache_extent >= 0.,
-            "cache extent must be finite and non-negative"
-        );
-        Widget::virtual_list(VirtualListConfig {
-            item_count,
-            extent: VirtualListExtent::Viewport(fallback_extent),
-            cache_extent,
-            controller,
-            axis,
-            reverse,
-            physics,
-            builder: Rc::new(move |index| builder(index).into()),
-        })
-    }
-
-    /// Creates a variable-extent lazy list. Unmeasured rows use
-    /// `estimated_extent` until their first bounded viewport layout.
-    #[must_use]
-    pub fn variable_extent<W>(
-        item_count: usize,
-        estimated_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::variable_extent_with_controller(
-            item_count,
-            estimated_extent,
-            ScrollController::new(),
-            builder,
-        )
-    }
-
-    /// Variable-extent form with an external controller. Keep the returned
-    /// [`MeasuredExtentIndex`] externally via
-    /// [`Self::variable_extent_with_index`] when the widget description is
-    /// recreated between frames or when application data mutates in place.
-    #[must_use]
-    pub fn variable_extent_with_controller<W>(
-        item_count: usize,
-        estimated_extent: f32,
-        controller: ScrollController,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::variable_extent_with_index(
-            MeasuredExtentIndex::new(item_count, estimated_extent),
-            controller,
-            builder,
-        )
-    }
-
-    /// Variable-extent form backed by a shared measured index. Mutate the
-    /// index with `insert`, `remove`, `move_item`, or `invalidate_extent` as
-    /// application data changes; only the visible range is rebuilt.
-    #[must_use]
-    pub fn variable_extent_with_index<W>(
-        index: MeasuredExtentIndex,
-        controller: ScrollController,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::variable_extent_with_index_and_cache(
-            index,
-            Self::DEFAULT_CACHE_EXTENT,
-            controller,
-            builder,
-        )
-    }
-
-    /// Variable-extent form with explicit cache extent.
-    #[must_use]
-    pub fn variable_extent_with_index_and_cache<W>(
-        index: MeasuredExtentIndex,
-        cache_extent: f32,
-        controller: ScrollController,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self::variable_extent_with_index_and_cache_config(
-            index,
-            cache_extent,
-            controller,
-            Axis::Vertical,
-            false,
-            ScrollPhysics::default(),
-            builder,
-        )
-    }
-
-    /// Internal variable-extent lowering entry point retaining viewport axis,
-    /// reverse direction, and physics.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn variable_extent_with_index_and_cache_config<W>(
-        index: MeasuredExtentIndex,
-        cache_extent: f32,
-        controller: ScrollController,
-        axis: Axis,
-        reverse: bool,
-        physics: ScrollPhysics,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Widget
-    where
-        W: Into<Widget> + 'static,
-    {
-        assert!(
-            cache_extent.is_finite() && cache_extent >= 0.,
-            "cache extent must be finite and non-negative"
-        );
-        Widget::virtual_list(VirtualListConfig {
-            item_count: index.len(),
-            extent: VirtualListExtent::Variable(index),
-            cache_extent,
-            controller,
-            axis,
-            reverse,
-            physics,
-            builder: Rc::new(move |item| builder(item).into()),
-        })
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Diagnostics {
     pub mounts: u64,
@@ -6070,9 +5592,6 @@ pub struct Element {
     pub widget: Widget,
     pub render: RenderObjectId,
     pub dirty: DirtyFlags,
-    /// Parallel to `children` only for a virtual-list element. Item indices
-    /// are identity, never reusable visible-slot numbers.
-    virtual_indices: Vec<usize>,
     /// Parallel to `children` for a sliver viewport. IDs are viewport-scoped
     /// and remain stable while the cache window moves.
     sliver_child_ids: Vec<SliverChildId>,
@@ -6085,10 +5604,6 @@ pub struct Element {
     notification_subscriptions: Vec<ScrollNotificationSubscription>,
     sliver_delegate_revision: u64,
     sliver_scroll_revision: u64,
-    /// Structural mutations of a variable-extent index require remapping the
-    /// visible index-to-widget descriptions even when its numeric range did
-    /// not change. Pure post-layout measurements do not disturb identity.
-    virtual_structure_revision: u64,
     layout_builder_constraints: Option<Constraints>,
     layout_builder_revision: u64,
     /// Effective inherited retained builder environment for this element.
@@ -6363,9 +5878,6 @@ pub enum RenderKind {
         reverse: bool,
         pinned: bool,
     },
-    VirtualList {
-        config: Rc<VirtualListConfig>,
-    },
     SliverViewport {
         config: Rc<SliverViewportConfig>,
     },
@@ -6414,11 +5926,11 @@ pub enum RenderKind {
     },
 }
 
-/// Snapshot of one lazy viewport. Semantic integration can expose
+/// Snapshot of one sliver viewport. Semantic integration can expose
 /// `logical_item_count` plus these materialized item indices without creating
 /// one semantic node per logical item.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct VirtualListDiagnostics {
+pub struct SliverViewportDiagnostics {
     pub logical_item_count: usize,
     pub materialized_range: std::ops::Range<usize>,
     pub materialized_item_count: usize,
@@ -6846,20 +6358,31 @@ impl WidgetTree {
         self.renders.len()
     }
     #[must_use]
-    pub fn virtual_list_diagnostics(&self) -> Option<VirtualListDiagnostics> {
+    pub fn sliver_viewport_diagnostics(&self) -> Option<SliverViewportDiagnostics> {
         self.elements.iter().find_map(|(_raw, element)| {
-            let WidgetKind::VirtualList { config } = &element.widget.kind else {
+            let WidgetKind::SliverViewport { config } = &element.widget.kind else {
                 return None;
             };
             let render = self.renders.get(element.render.0)?;
-            let range = element.virtual_indices.first().copied().unwrap_or(0)
-                ..element.virtual_indices.last().map_or(0, |index| index + 1);
-            Some(VirtualListDiagnostics {
-                logical_item_count: config.extent.item_count(config.item_count),
-                materialized_item_count: element.virtual_indices.len(),
-                materialized_range: range,
+            let mut indices = element
+                .sliver_child_ids
+                .iter()
+                .filter_map(|id| id.item_index());
+            let first = indices.next();
+            let (start, end) = first.map_or((0, 0), |first| {
+                indices.fold((first, first + 1), |(min, max), index| {
+                    (min.min(index), max.max(index + 1))
+                })
+            });
+            Some(SliverViewportDiagnostics {
+                logical_item_count: config
+                    .delegate
+                    .child_count()
+                    .unwrap_or(element.sliver_child_ids.len()),
+                materialized_item_count: element.sliver_child_ids.len(),
+                materialized_range: start..end,
                 scroll_offset: config.controller.offset(),
-                viewport_extent: render.size.height,
+                viewport_extent: config.axis.main_extent(render.size),
                 cache_extent: config.cache_extent,
                 element_count: self.elements.len(),
                 render_object_count: self.renders.len(),
@@ -7020,28 +6543,39 @@ impl WidgetTree {
             })
     }
 
-    /// Per-viewport variant of [`Self::virtual_list_diagnostics`], used by
+    /// Per-viewport variant of [`Self::sliver_viewport_diagnostics`], used by
     /// the selected-node Layout Explorer rather than a global first-match
-    /// query. Values are retained by the live virtual viewport.
+    /// query. Values are retained by the live sliver viewport.
     #[must_use]
     #[cfg(feature = "devtools")]
-    pub(crate) fn devtools_virtual_list_diagnostics(
+    pub(crate) fn devtools_sliver_viewport_diagnostics(
         &self,
         id: ElementId,
-    ) -> Option<VirtualListDiagnostics> {
+    ) -> Option<SliverViewportDiagnostics> {
         let element = self.elements.get(id.0)?;
-        let WidgetKind::VirtualList { config } = &element.widget.kind else {
+        let WidgetKind::SliverViewport { config } = &element.widget.kind else {
             return None;
         };
         let render = self.renders.get(element.render.0)?;
-        let range = element.virtual_indices.first().copied().unwrap_or(0)
-            ..element.virtual_indices.last().map_or(0, |index| index + 1);
-        Some(VirtualListDiagnostics {
-            logical_item_count: config.extent.item_count(config.item_count),
-            materialized_item_count: element.virtual_indices.len(),
-            materialized_range: range,
+        let mut indices = element
+            .sliver_child_ids
+            .iter()
+            .filter_map(|id| id.item_index());
+        let first = indices.next();
+        let (start, end) = first.map_or((0, 0), |first| {
+            indices.fold((first, first + 1), |(min, max), index| {
+                (min.min(index), max.max(index + 1))
+            })
+        });
+        Some(SliverViewportDiagnostics {
+            logical_item_count: config
+                .delegate
+                .child_count()
+                .unwrap_or(element.sliver_child_ids.len()),
+            materialized_item_count: element.sliver_child_ids.len(),
+            materialized_range: start..end,
             scroll_offset: config.controller.offset(),
-            viewport_extent: render.size.height,
+            viewport_extent: config.axis.main_extent(render.size),
             cache_extent: config.cache_extent,
             element_count: self.elements.len(),
             render_object_count: self.renders.len(),
@@ -7818,27 +7352,6 @@ impl WidgetTree {
                             .insert(DirtyFlags::PAINT);
                     }
                 }
-                RenderKind::VirtualList { config } => {
-                    if let Some(content) = content_layer
-                        && self.compositor.update_transform(
-                            content,
-                            CoreTransform::translation(scroll_translation(
-                                &config.controller,
-                                config.axis,
-                                config.reverse,
-                            )),
-                        )
-                    {
-                        changed = true;
-                        self.diagnostics.compositor_only_updates += 1;
-                        self.diagnostics.scroll_offset_updates += 1;
-                        self.renders
-                            .get_mut(_render.0)
-                            .expect("live")
-                            .dirty
-                            .insert(DirtyFlags::PAINT);
-                    }
-                }
                 RenderKind::SliverViewport { config } => {
                     if config.delegate.tick(now) {
                         changed = true;
@@ -7868,23 +7381,30 @@ impl WidgetTree {
                             .expect("live")
                             .dirty
                             .insert(DirtyFlags::PAINT);
-                        // Pinned placement is part of sliver layout rather
-                        // than the generic box transform. Queue one retained
-                        // layout refresh so its push-away geometry follows
-                        // the new scroll offset.
-                        self.mark_render_dirty(_render, DirtyFlags::LAYOUT, true);
-                        if let Some(constraints) = self
-                            .renders
-                            .get(_render.0)
-                            .and_then(|render| render.constraints)
-                        {
-                            // Standalone WidgetTree users do not have a
-                            // runtime layout phase between a controller jump
-                            // and this compositor call. Run the already-known
-                            // viewport layout now so pinned placement is
-                            // observable immediately; the runtime reuses the
-                            // cached result on its next layout.
-                            self.layout_render(_render, constraints);
+                        let has_pinned_children = self
+                            .element_for_render(_render)
+                            .and_then(|element| self.elements.get(element.0))
+                            .is_some_and(|element| !element.sliver_pinned_ids.is_empty());
+                        if has_pinned_children {
+                            // Pinned placement is part of sliver layout rather
+                            // than the generic box transform. Queue one
+                            // retained layout refresh so its push-away
+                            // geometry follows the new scroll offset.
+                            self.mark_render_dirty(_render, DirtyFlags::LAYOUT, true);
+                            if let Some(constraints) = self
+                                .renders
+                                .get(_render.0)
+                                .and_then(|render| render.constraints)
+                            {
+                                // Standalone WidgetTree users do not have a
+                                // runtime layout phase between a controller
+                                // jump and this compositor call. Run the
+                                // already-known viewport layout now so pinned
+                                // placement is observable immediately; the
+                                // runtime reuses the cached result on its next
+                                // layout.
+                                self.layout_render(_render, constraints);
+                            }
                         }
                     }
                 }
@@ -8140,12 +7660,6 @@ impl WidgetTree {
                     reverse,
                     physics,
                 } => viewports.push((controller.clone(), *axis, *reverse, *physics)),
-                RenderKind::VirtualList { config } => viewports.push((
-                    config.controller.clone(),
-                    config.axis,
-                    config.reverse,
-                    config.physics,
-                )),
                 RenderKind::SliverViewport { config } => viewports.push((
                     config.controller.clone(),
                     config.axis,
@@ -8213,9 +7727,6 @@ impl WidgetTree {
                 reverse,
                 physics,
             } => (controller.clone(), *reverse, *physics),
-            RenderKind::VirtualList { config } => {
-                (config.controller.clone(), config.reverse, config.physics)
-            }
             RenderKind::SliverViewport { config } => {
                 (config.controller.clone(), config.reverse, config.physics)
             }
@@ -8370,7 +7881,6 @@ impl WidgetTree {
     }
     pub fn layout(&mut self, constraints: Constraints) {
         self.refresh_text_fields();
-        self.refresh_virtual_ranges();
         self.refresh_sliver_ranges();
         self.refresh_stateful_layout_builders();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
@@ -8611,19 +8121,6 @@ impl WidgetTree {
                         SemanticActionKind::ScrollBackward,
                     ],
                 ),
-                WidgetKind::VirtualList { config } => (
-                    Some(SemanticRole::List),
-                    None,
-                    None,
-                    SemanticState {
-                        set_size: Some(config.extent.item_count(config.item_count)),
-                        ..SemanticState::default()
-                    },
-                    vec![
-                        SemanticActionKind::ScrollForward,
-                        SemanticActionKind::ScrollBackward,
-                    ],
-                ),
                 _ => (None, None, None, SemanticState::default(), vec![]),
             };
         let explicit_description = entry
@@ -8664,12 +8161,7 @@ impl WidgetTree {
         let this_parent = if let Some(role) = role {
             let mut state = state;
             if let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0)) {
-                if let WidgetKind::VirtualList { config } = &parent.widget.kind {
-                    if let Some(slot) = parent.children.iter().position(|child| *child == element) {
-                        state.item_index = parent.virtual_indices.get(slot).copied();
-                        state.set_size = Some(config.extent.item_count(config.item_count));
-                    }
-                } else if let WidgetKind::SliverViewport { config } = &parent.widget.kind {
+                if let WidgetKind::SliverViewport { config } = &parent.widget.kind {
                     if let Some(slot) = parent.children.iter().position(|child| *child == element) {
                         state.item_index = parent
                             .sliver_child_ids
@@ -8677,7 +8169,7 @@ impl WidgetTree {
                             .map(|id| (id.0 & u64::from(u32::MAX)) as usize)
                             .filter(|index| *index > 0)
                             .map(|index| index - 1);
-                        state.set_size = Some(config.delegate.sliver_count());
+                        state.set_size = config.delegate.child_count();
                     }
                 }
             }
@@ -9612,7 +9104,6 @@ impl WidgetTree {
                 | WidgetKind::TextField { .. }
                 | WidgetKind::Image { .. }
                 | WidgetKind::Scroll { .. }
-                | WidgetKind::VirtualList { .. }
                 | WidgetKind::SliverViewport { .. }
         )
         .then(|| {
@@ -9641,9 +9132,7 @@ impl WidgetTree {
             color_filter_layer,
             blend_layer,
         ) = match &widget.kind {
-            WidgetKind::Scroll { .. }
-            | WidgetKind::VirtualList { .. }
-            | WidgetKind::SliverViewport { .. } => {
+            WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. } => {
                 let clip = self
                     .compositor
                     .create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
@@ -9768,13 +9257,11 @@ impl WidgetTree {
             widget: widget.clone(),
             render: RenderObjectId(render),
             dirty: DirtyFlags::NONE,
-            virtual_indices: Vec::new(),
             sliver_child_ids: Vec::new(),
             sliver_pinned_ids: HashSet::new(),
             notification_subscriptions: Vec::new(),
             sliver_delegate_revision: 0,
             sliver_scroll_revision: 0,
-            virtual_structure_revision: 0,
             layout_builder_constraints: None,
             layout_builder_revision: 0,
             environment,
@@ -10010,13 +9497,10 @@ impl WidgetTree {
             element.dev.composite_reason = work_reasons.2;
         }
         // Lazy children are owned by the viewport's indexed materialization
-        // map, not by `Widget::children()`. Recreating a VirtualList
-        // description must preserve every still-valid mounted row; the next
-        // layout pass will add/drop only indices required by the new config.
-        if matches!(
-            widget.kind,
-            WidgetKind::VirtualList { .. } | WidgetKind::SliverViewport { .. }
-        ) {
+        // map, not by `Widget::children()`. Recreating a sliver viewport
+        // description must preserve every still-valid mounted child; the
+        // next layout pass will add/drop only indices required by the delegate.
+        if matches!(widget.kind, WidgetKind::SliverViewport { .. }) {
             #[cfg(feature = "devtools")]
             self.devtools_trace_end(trace);
             return Ok(());
@@ -10151,95 +9635,6 @@ impl WidgetTree {
         next.extend(suffix);
         Ok(next)
     }
-    /// Reconciles only the requested indexed window. Items outside it are
-    /// unmounted instead of being recycled into unrelated logical indices.
-    fn materialize_virtual_children(
-        &mut self,
-        id: RenderObjectId,
-        config: &VirtualListConfig,
-        viewport: Size,
-        _constraints: Constraints,
-    ) {
-        let element_id = self.element_for_render(id).expect("virtual list element");
-        let wanted = config.extent.materialized_range(
-            config.item_count,
-            physical_scroll_offset(&config.controller, config.reverse),
-            scroll_viewport_extent(config.axis, viewport),
-            config.cache_extent,
-        );
-        let (old_indices, old_children, old_structure_revision) = {
-            let element = self
-                .elements
-                .get(element_id.0)
-                .expect("virtual list element");
-            (
-                element.virtual_indices.clone(),
-                element.children.clone(),
-                element.virtual_structure_revision,
-            )
-        };
-        let structure_changed = old_structure_revision != config.extent.structure_revision();
-        if !structure_changed
-            && old_indices.as_slice() == (wanted.clone().collect::<Vec<_>>()).as_slice()
-        {
-            return;
-        }
-        let existing = if structure_changed {
-            HashMap::new()
-        } else {
-            old_indices
-                .iter()
-                .copied()
-                .zip(old_children.iter().copied())
-                .collect::<HashMap<_, _>>()
-        };
-        let mut next_indices = Vec::with_capacity(wanted.len());
-        let mut next_children = Vec::with_capacity(wanted.len());
-        for index in wanted.clone() {
-            if let Some(child) = existing.get(&index).copied() {
-                next_indices.push(index);
-                next_children.push(child);
-                self.diagnostics.items_reused += 1;
-                continue;
-            }
-            let mut widget = (config.builder)(index);
-            let handlers = &mut self.pending_handlers;
-            let next = &mut self.next_action;
-            widget.bind_callbacks(&mut |callback| {
-                let action = ActionId(*next);
-                *next += 1;
-                handlers.push((action, callback));
-                action
-            });
-            self.diagnostics.items_built += 1;
-            match self.mount_element(Some(element_id), widget) {
-                Ok(child) => {
-                    next_indices.push(index);
-                    next_children.push(child);
-                    self.diagnostics.items_mounted += 1;
-                }
-                // An item builder is application code; keep the viewport
-                // structurally valid if it produces duplicate sibling keys.
-                Err(error) => panic!("virtual list item {index} could not mount: {error:?}"),
-            }
-        }
-        let retained = next_children.iter().copied().collect::<HashSet<_>>();
-        for child in old_children {
-            if !retained.contains(&child) {
-                self.unmount_element(child);
-                self.diagnostics.items_unmounted += 1;
-            }
-        }
-        let element = self
-            .elements
-            .get_mut(element_id.0)
-            .expect("virtual list element");
-        element.children = next_children;
-        element.virtual_indices = next_indices;
-        element.virtual_structure_revision = config.extent.structure_revision();
-        self.sync_render_children(element_id);
-    }
-
     /// Reconciles the indexed child window produced by the retained sliver
     /// protocol. Unlike a box list, each child carries a viewport-scoped
     /// identity and an explicit sliver placement/constraint record.
@@ -10373,36 +9768,66 @@ impl WidgetTree {
         element.layout_builder_revision = revision_value;
         self.sync_render_children(element_id);
     }
-    /// A controller can change independently of widget BUILD. Only mark the
-    /// lazy viewport dirty when its cache window actually changes; otherwise
-    /// scrolling remains a retained-transform-only operation.
-    fn refresh_virtual_ranges(&mut self) {
-        let pending = self
-            .renders
-            .iter()
-            .filter_map(|(raw, render)| {
-                let RenderKind::VirtualList { config } = &render.kind else {
-                    return None;
-                };
-                let element = self.element_for_render(RenderObjectId(raw))?;
-                let element = self.elements.get(element.0)?;
-                let indices = &element.virtual_indices;
-                let desired = config.extent.materialized_range(
-                    config.item_count,
-                    physical_scroll_offset(&config.controller, config.reverse),
-                    scroll_viewport_extent(config.axis, render.size),
-                    config.cache_extent,
-                );
-                (element.virtual_structure_revision != config.extent.structure_revision()
-                    || indices.as_slice() != desired.clone().collect::<Vec<_>>().as_slice())
-                .then_some(RenderObjectId(raw))
-            })
-            .collect::<Vec<_>>();
-        for render in pending {
-            self.mark_render_dirty(render, DirtyFlags::LAYOUT, true);
+    /// Returns whether the current retained sliver children still cover the
+    /// viewport's requested cache window. A small scroll can therefore stay a
+    /// compositor-only transform; layout is needed only when a cache boundary
+    /// is crossed or the delegate itself changed.
+    fn sliver_cache_window_is_covered(
+        &self,
+        render_id: RenderObjectId,
+        element: &Element,
+        config: &SliverViewportConfig,
+    ) -> bool {
+        let Some(render) = self.renders.get(render_id.0) else {
+            return false;
+        };
+        let viewport = config.axis.main_extent(render.size).max(0.);
+        let cache = config.cache_extent.max(0.);
+        let content_end = (config.controller.max_offset() + viewport).max(0.);
+        let physical =
+            physical_scroll_offset(&config.controller, config.reverse).clamp(0., content_end);
+        if !physical.is_finite()
+            || !viewport.is_finite()
+            || !cache.is_finite()
+            || !content_end.is_finite()
+        {
+            return false;
         }
+        let wanted_start = (physical - cache).max(0.);
+        let wanted_end = (physical + viewport + cache)
+            .min(content_end)
+            .max(wanted_start);
+        let mut materialized_start = f32::INFINITY;
+        let mut materialized_end = f32::NEG_INFINITY;
+        for child in &element.children {
+            let Some(child_element) = self.elements.get(child.0) else {
+                return false;
+            };
+            let Some(child_render) = self.renders.get(child_element.render.0) else {
+                return false;
+            };
+            let child_start = match config.axis {
+                Axis::Horizontal => child_render.offset.x,
+                Axis::Vertical => child_render.offset.y,
+            };
+            let child_extent = config.axis.main_extent(child_render.size).max(0.);
+            if !child_start.is_finite() || !child_extent.is_finite() {
+                return false;
+            }
+            materialized_start = materialized_start.min(child_start);
+            materialized_end = materialized_end.max(child_start + child_extent);
+        }
+        if !materialized_start.is_finite() || !materialized_end.is_finite() {
+            return content_end == 0.;
+        }
+        const RANGE_EPSILON: f32 = 0.001;
+        materialized_start <= wanted_start + RANGE_EPSILON
+            && materialized_end + RANGE_EPSILON >= wanted_end
     }
 
+    /// A controller or sliver delegate can change independently of widget
+    /// BUILD. Mark the retained viewport dirty only when its sliver protocol
+    /// needs a new cache window or its delegate changed.
     fn refresh_sliver_ranges(&mut self) {
         let pending = self
             .renders
@@ -10413,8 +9838,16 @@ impl WidgetTree {
                 };
                 let element = self.element_for_render(RenderObjectId(raw))?;
                 let element = self.elements.get(element.0)?;
-                (element.sliver_delegate_revision != config.delegate.revision()
-                    || element.sliver_scroll_revision != config.controller.revision())
+                let delegate_changed =
+                    element.sliver_delegate_revision != config.delegate.revision();
+                let scroll_changed = element.sliver_scroll_revision != config.controller.revision();
+                (delegate_changed
+                    || (scroll_changed
+                        && !self.sliver_cache_window_is_covered(
+                            RenderObjectId(raw),
+                            element,
+                            config,
+                        )))
                 .then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
@@ -10487,7 +9920,6 @@ impl WidgetTree {
         let render = self.elements.get(id.0)?.render;
         match &self.renders.get(render.0)?.kind {
             RenderKind::Scroll { controller, .. } => Some(controller.clone()),
-            RenderKind::VirtualList { config } => Some(config.controller.clone()),
             RenderKind::SliverViewport { config } => Some(config.controller.clone()),
             _ => None,
         }
@@ -10695,11 +10127,6 @@ impl WidgetTree {
                 reverse,
                 ..
             } => CoreTransform::translation(scroll_translation(controller, *axis, *reverse)),
-            RenderKind::VirtualList { config } => CoreTransform::translation(scroll_translation(
-                &config.controller,
-                config.axis,
-                config.reverse,
-            )),
             RenderKind::SliverViewport { config } => CoreTransform::translation(
                 scroll_translation(&config.controller, config.axis, config.reverse),
             ),
@@ -10755,10 +10182,6 @@ impl WidgetTree {
                     reverse,
                     ..
                 } => origin = origin + scroll_translation(controller, *axis, *reverse),
-                RenderKind::VirtualList { config } => {
-                    origin =
-                        origin + scroll_translation(&config.controller, config.axis, config.reverse)
-                }
                 RenderKind::SliverViewport { config } => {
                     origin =
                         origin + scroll_translation(&config.controller, config.axis, config.reverse)
@@ -10800,10 +10223,6 @@ impl WidgetTree {
                         reverse,
                         ..
                     } => origin = origin + scroll_translation(controller, *axis, *reverse),
-                    RenderKind::VirtualList { config } => {
-                        origin = origin
-                            + scroll_translation(&config.controller, config.axis, config.reverse)
-                    }
                     RenderKind::SliverViewport { config } => {
                         origin = origin
                             + scroll_translation(&config.controller, config.axis, config.reverse)
@@ -11405,6 +10824,9 @@ impl WidgetTree {
                 );
 
                 for _ in 0..3 {
+                    let physical_before =
+                        physical_scroll_offset(&config.controller, config.reverse);
+                    let anchor_before = sliver_anchor(&sliver_layout, physical_before);
                     self.materialize_sliver_children(id, &config, &sliver_layout);
                     let materialized = self
                         .renders
@@ -11429,15 +10851,64 @@ impl WidgetTree {
                     if !pass_changed {
                         break;
                     }
-                    sliver_layout = config.delegate.perform_layout(make_constraints(
-                        physical_scroll_offset(&config.controller, config.reverse),
-                        viewport_extent,
-                    ));
+                    let mut next_layout = config
+                        .delegate
+                        .perform_layout(make_constraints(physical_before, viewport_extent));
                     config.controller.update_extents_with_physics(
-                        sliver_layout.geometry.scroll_extent,
+                        next_layout.geometry.scroll_extent,
                         viewport_extent,
                         config.physics,
                     );
+                    // A reversed viewport's physical origin depends on the
+                    // newly measured max offset. Recompute the layout after
+                    // updating extents before comparing anchors; otherwise a
+                    // first-frame estimate change can turn logical offset 0
+                    // into an artificial scroll to the middle of the list.
+                    let physical_after_extent =
+                        physical_scroll_offset(&config.controller, config.reverse);
+                    if physical_after_extent != physical_before {
+                        next_layout = config.delegate.perform_layout(make_constraints(
+                            physical_after_extent,
+                            viewport_extent,
+                        ));
+                        config.controller.update_extents_with_physics(
+                            next_layout.geometry.scroll_extent,
+                            viewport_extent,
+                            config.physics,
+                        );
+                    }
+                    if let Some((anchor_id, anchor_offset)) = anchor_before
+                        && let Some(updated) = next_layout
+                            .children
+                            .iter()
+                            .find(|child| child.id == anchor_id)
+                    {
+                        // Compare visual positions, not raw content offsets.
+                        // The physical origin may have changed when a reverse
+                        // viewport learned its real content extent.
+                        let delta = (updated.offset - physical_after_extent)
+                            - (anchor_offset - physical_before);
+                        if delta.is_finite() && delta.abs() > f32::EPSILON {
+                            let corrected_physical = (physical_after_extent + delta).max(0.);
+                            let corrected_logical = if config.reverse {
+                                (config.controller.max_offset() - corrected_physical).max(0.)
+                            } else {
+                                corrected_physical
+                            };
+                            if config.controller.jump_to(corrected_logical) {
+                                next_layout = config.delegate.perform_layout(make_constraints(
+                                    physical_scroll_offset(&config.controller, config.reverse),
+                                    viewport_extent,
+                                ));
+                                config.controller.update_extents_with_physics(
+                                    next_layout.geometry.scroll_extent,
+                                    viewport_extent,
+                                    config.physics,
+                                );
+                            }
+                        }
+                    }
+                    sliver_layout = next_layout;
                 }
                 if let Some(correction) = sliver_layout.geometry.scroll_offset_correction {
                     let physical = (physical_scroll_offset(&config.controller, config.reverse)
@@ -11945,144 +11416,6 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::VirtualList { config } => {
-                let viewport_hint = if config.axis.is_horizontal() && constraints.is_width_bounded()
-                {
-                    constraints.max_width
-                } else if config.axis.is_vertical() && constraints.is_height_bounded() {
-                    constraints.max_height
-                } else {
-                    0.
-                };
-                let content_extent = config
-                    .extent
-                    .content_extent_for_viewport(config.item_count, viewport_hint);
-                let natural = config.axis.size(
-                    if config.axis.is_horizontal() && constraints.is_width_bounded() {
-                        constraints.max_width
-                    } else if config.axis.is_vertical() && constraints.is_height_bounded() {
-                        constraints.max_height
-                    } else {
-                        content_extent
-                    },
-                    if config.axis.is_horizontal() && constraints.is_height_bounded() {
-                        constraints.max_height
-                    } else if config.axis.is_vertical() && constraints.is_width_bounded() {
-                        constraints.max_width
-                    } else {
-                        0.
-                    },
-                );
-                let size = constraints.constrain(natural);
-                let viewport_extent = scroll_viewport_extent(config.axis, size);
-                config.controller.update_extents_with_physics(
-                    config
-                        .extent
-                        .content_extent_for_viewport(config.item_count, viewport_extent),
-                    viewport_extent,
-                    config.physics,
-                );
-                self.materialize_virtual_children(id, &config, size, constraints);
-                let materialized = self.renders.get(id.0).expect("live").children.clone();
-                let item_indices = self
-                    .elements
-                    .get(self.element_for_render(id).expect("virtual element").0)
-                    .expect("virtual element")
-                    .virtual_indices
-                    .clone();
-                // Anchor the first visible logical row before applying any
-                // post-layout extent corrections. Measurements above that row
-                // are compensated in the controller so content does not jump.
-                let anchor = match &config.extent {
-                    VirtualListExtent::Variable(index) => index
-                        .index_at_offset(physical_scroll_offset(&config.controller, config.reverse))
-                        .map(|item| {
-                            let leading = index.offset_for_index(item);
-                            (
-                                item,
-                                physical_scroll_offset(&config.controller, config.reverse)
-                                    - leading,
-                            )
-                        }),
-                    VirtualListExtent::Fixed(_) | VirtualListExtent::Viewport(_) => None,
-                };
-                let anchor_before = anchor
-                    .as_ref()
-                    .map(|(item, _)| config.extent.offset_for_index(*item, viewport_extent));
-                let mut measured_changed = false;
-                for (child, item) in materialized.into_iter().zip(item_indices) {
-                    let child_constraints = match &config.extent {
-                        VirtualListExtent::Fixed(item_extent) => {
-                            item_constraints(config.axis, constraints, Some(*item_extent))
-                        }
-                        VirtualListExtent::Viewport(_) => {
-                            viewport_item_constraints(config.axis, constraints, viewport_extent)
-                        }
-                        // Variable rows receive normal loose vertical
-                        // constraints; their resolved height feeds the shared
-                        // measured-prefix index after this layout.
-                        VirtualListExtent::Variable(_) => {
-                            item_constraints(config.axis, constraints, None)
-                        }
-                    };
-                    self.layout_render(child, child_constraints);
-                    if let VirtualListExtent::Variable(index) = &config.extent {
-                        let measured = config
-                            .axis
-                            .main_extent(self.renders.get(child.0).expect("live").size);
-                        measured_changed |= index.set_measured_extent(item, measured);
-                    }
-                    let child = self.renders.get_mut(child.0).expect("live");
-                    let offset = config
-                        .axis
-                        .offset(config.extent.offset_for_index(item, viewport_extent), 0.);
-                    child.offset = offset;
-                    self.compositor
-                        .update_transform(child.layer, CoreTransform::translation(offset));
-                }
-                if measured_changed {
-                    config.controller.update_extents_with_physics(
-                        config
-                            .extent
-                            .content_extent_for_viewport(config.item_count, viewport_extent),
-                        viewport_extent,
-                        config.physics,
-                    );
-                    if let (Some((item, _)), Some(before)) = (anchor, anchor_before) {
-                        let after = config.extent.offset_for_index(item, viewport_extent);
-                        // `update_extents` must precede this jump so an
-                        // enlarged estimate does not clamp the correction.
-                        let physical = physical_scroll_offset(&config.controller, config.reverse)
-                            + after
-                            - before;
-                        let logical = if config.reverse {
-                            config.controller.max_offset() - physical
-                        } else {
-                            physical
-                        };
-                        config.controller.jump_to(logical);
-                    }
-                    // Positions may have changed for later materialized rows.
-                    let children = self.renders.get(id.0).expect("live").children.clone();
-                    let indices = self
-                        .elements
-                        .get(self.element_for_render(id).expect("virtual element").0)
-                        .expect("virtual element")
-                        .virtual_indices
-                        .clone();
-                    for (child, item) in children.into_iter().zip(indices) {
-                        let offset = config
-                            .axis
-                            .offset(config.extent.offset_for_index(item, viewport_extent), 0.);
-                        let child = self.renders.get_mut(child.0).expect("live");
-                        child.offset = offset;
-                        self.compositor
-                            .update_transform(child.layer, CoreTransform::translation(offset));
-                    }
-                }
-                self.diagnostics.lazy_layouts += 1;
-                (size, Vec::new())
-            }
             RenderKind::Translate { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
@@ -12563,9 +11896,6 @@ impl WidgetTree {
                 RenderKind::Scroll { controller, .. } => {
                     self.paint_scrollbar(id, size, &controller, &mut cache);
                 }
-                RenderKind::VirtualList { config } => {
-                    self.paint_scrollbar(id, size, &config.controller, &mut cache);
-                }
                 RenderKind::SliverViewport { config } => {
                     self.paint_scrollbar(id, size, &config.controller, &mut cache);
                 }
@@ -12746,9 +12076,6 @@ impl WidgetTree {
                 reverse,
                 ..
             } => current + scroll_translation(controller, *axis, *reverse),
-            RenderKind::VirtualList { config } => {
-                current + scroll_translation(&config.controller, config.axis, config.reverse)
-            }
             RenderKind::SliverViewport { config } => {
                 current + scroll_translation(&config.controller, config.axis, config.reverse)
             }
@@ -12800,7 +12127,6 @@ impl WidgetTree {
         let node = self.renders.get(render.0)?;
         let controller = match &node.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
-            RenderKind::VirtualList { config } => config.controller.clone(),
             RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,
         };
@@ -12817,7 +12143,6 @@ impl WidgetTree {
         let node = self.renders.get(render.0)?;
         let controller = match &node.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
-            RenderKind::VirtualList { config } => config.controller.clone(),
             RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,
         };
@@ -12871,9 +12196,7 @@ fn semantic_action_is_executable(
         SemanticActionKind::ScrollForward | SemanticActionKind::ScrollBackward => {
             matches!(
                 kind,
-                WidgetKind::Scroll { .. }
-                    | WidgetKind::VirtualList { .. }
-                    | WidgetKind::SliverViewport { .. }
+                WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. }
             )
         }
         SemanticActionKind::Increment | SemanticActionKind::Decrement => {
@@ -12980,7 +12303,6 @@ impl RenderKind {
             RenderKind::AspectRatio { .. } => "AspectRatio",
             RenderKind::Scroll { .. } => "ScrollView",
             RenderKind::PersistentHeader { .. } => "PersistentHeader",
-            RenderKind::VirtualList { .. } => "VirtualList",
             RenderKind::SliverViewport { .. } => "SliverViewport",
             RenderKind::LayoutBuilder => "LayoutBuilder",
             RenderKind::Translate { .. } => "Translate",
@@ -13348,9 +12670,6 @@ fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> RenderKind
             pinned: *pinned,
         },
         WidgetKind::NotificationListener { .. } => RenderKind::Gesture,
-        WidgetKind::VirtualList { config } => RenderKind::VirtualList {
-            config: config.clone(),
-        },
         WidgetKind::SliverViewport { config } => RenderKind::SliverViewport {
             config: config.clone(),
         },
@@ -14053,6 +13372,7 @@ mod tests {
     use super::*;
     use crate::drag_drop::DragDropContext;
     use crate::internal::ActionSurface;
+    use crate::scrolling::{CustomScrollView, SliverFixedExtentList, SliverList};
     use crate::{
         AbsorbPointer, DismissDirection, Dismissible, DragTarget, Draggable, Expanded,
         ExplicitSemantics, Flexible, IgnorePointer, IndexedStack, Positioned, SizedBox, Spacer,
@@ -14060,6 +13380,24 @@ mod tests {
 
     #[derive(Default)]
     struct MemoryRestorationBackend(RefCell<BTreeMap<Vec<RestorationKey>, Value>>);
+
+    fn fixed_sliver_list<W>(
+        item_count: usize,
+        item_extent: f32,
+        controller: ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        CustomScrollView::new(vec![Box::new(SliverFixedExtentList::new(
+            item_count,
+            item_extent,
+            builder,
+        )) as Box<dyn crate::scrolling::Sliver>])
+        .controller(controller)
+        .into()
+    }
 
     impl incular_core::RestorationBackend for MemoryRestorationBackend {
         fn read_value(&self, path: &[RestorationKey]) -> Option<Value> {
@@ -15680,30 +15018,12 @@ mod tests {
     }
 
     #[test]
-    fn fixed_extent_range_handles_edges_and_large_indices() {
-        assert_eq!(fixed_extent_materialized_range(0, 40., 0., 100., 80.), 0..0);
-        assert_eq!(fixed_extent_materialized_range(10, 40., 0., 100., 0.), 0..3);
-        assert_eq!(
-            fixed_extent_materialized_range(10, 40., 40., 100., 0.),
-            1..4
-        );
-        assert_eq!(
-            fixed_extent_materialized_range(10, 40., 123.25, 100., 0.),
-            3..6
-        );
-        assert_eq!(
-            fixed_extent_materialized_range(1_000_000, 40., 35_999_960., 600., 240.),
-            899_993..900_020
-        );
-    }
-
-    #[test]
-    fn million_item_list_materializes_only_viewport_and_cache() {
+    fn million_item_sliver_list_materializes_only_viewport_and_cache() {
         let controller = ScrollController::new();
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::fixed_extent_with_controller(
+        tree.mount(fixed_sliver_list(
             1_000_000,
             40.,
             controller.clone(),
@@ -15714,12 +15034,12 @@ mod tests {
         ))
         .unwrap();
         tree.layout(Constraints::tight(Size::new(100., 600.)));
-        let initial = tree.virtual_list_diagnostics().unwrap();
+        let initial = tree.sliver_viewport_diagnostics().unwrap();
         assert!(initial.materialized_item_count < 100);
         assert_eq!(calls.get(), initial.materialized_item_count);
         assert!(controller.jump_to(900_000. * 40.));
         tree.layout(Constraints::tight(Size::new(100., 600.)));
-        let jumped = tree.virtual_list_diagnostics().unwrap();
+        let jumped = tree.sliver_viewport_diagnostics().unwrap();
         assert!(jumped.materialized_range.contains(&900_000));
         assert!(jumped.materialized_item_count < 100);
         // Direct arithmetic builds only the destination cache range, never
@@ -15730,90 +15050,64 @@ mod tests {
     }
 
     #[test]
-    fn million_item_variable_list_deep_jump_builds_only_destination_rows() {
+    fn million_item_sliver_list_deep_jump_builds_only_destination_rows() {
         let controller = ScrollController::new();
-        let index = MeasuredExtentIndex::new(1_000_000, 40.);
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::variable_extent_with_index(
-            index.clone(),
-            controller.clone(),
-            move |item| {
-                observed.set(observed.get() + 1);
-                Widget::box_(
-                    Size::new(80., if item % 2 == 0 { 32. } else { 56. }),
-                    Color::rgba(item as u8, 0, 0, 255),
-                )
-            },
-        ))
+        tree.mount(
+            CustomScrollView::new(vec![
+                Box::new(SliverList::builder(1_000_000, 40., move |item| {
+                    observed.set(observed.get() + 1);
+                    Widget::box_(
+                        Size::new(80., if item % 2 == 0 { 32. } else { 56. }),
+                        Color::rgba(item as u8, 0, 0, 255),
+                    )
+                })) as Box<dyn crate::scrolling::Sliver>,
+            ])
+            .controller(controller.clone())
+            .into(),
+        )
         .unwrap();
         let constraints = Constraints::tight(Size::new(100., 600.));
         tree.layout(constraints);
         assert!(controller.jump_to(900_000. * 40.));
         tree.layout(constraints);
-        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
         assert!(diagnostics.materialized_range.contains(&900_000));
         assert!(diagnostics.materialized_item_count < 100);
         assert!(calls.get() < 200);
         // The cache window, not the skipped prefix, is what becomes exact.
-        assert!(index.measured_count() < 200);
+        assert!(tree.children(tree.root().unwrap()).unwrap().len() < 100);
     }
 
     #[test]
     fn variable_measurements_above_visible_anchor_compensate_scroll_offset() {
         let controller = ScrollController::new();
-        let index = MeasuredExtentIndex::new(1_000_000, 40.);
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::variable_extent_with_index(
-            index,
-            controller.clone(),
-            |item| {
+        tree.mount(
+            CustomScrollView::new(vec![Box::new(SliverList::builder(1_000_000, 40., |item| {
                 Widget::box_(
                     Size::new(80., if item < 900_000 { 80. } else { 40. }),
                     Color::WHITE,
                 )
-            },
-        ))
+            })) as Box<dyn crate::scrolling::Sliver>])
+            .controller(controller.clone())
+            .into(),
+        )
         .unwrap();
         let constraints = Constraints::tight(Size::new(100., 600.));
         tree.layout(constraints);
         let target = 900_000. * 40.;
         assert!(controller.jump_to(target));
         tree.layout(constraints);
-        // Six cached rows before the first visible row grew by 40px. The
+        // Seven cached rows before the first visible row grew by 40px. The
         // controller compensates so logical row 900_000 stays in place.
-        assert_eq!(controller.offset(), target + 240.);
+        assert_eq!(controller.offset(), target + 280.);
     }
 
     #[test]
-    fn variable_index_structure_change_rematerializes_only_visible_rows() {
-        let controller = ScrollController::new();
-        let index = MeasuredExtentIndex::new(10_000, 40.);
-        let calls = Rc::new(Cell::new(0));
-        let observed = calls.clone();
-        let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::variable_extent_with_index(
-            index.clone(),
-            controller,
-            move |item| {
-                observed.set(observed.get() + 1);
-                Widget::box_(Size::new(80., 40.), Color::rgba(item as u8, 0, 0, 255))
-            },
-        ))
-        .unwrap();
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
-        let before = calls.get();
-        index.insert(2, 3);
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
-        let diagnostics = tree.virtual_list_diagnostics().unwrap();
-        assert!(calls.get() - before < 30);
-        assert!(diagnostics.materialized_item_count < 30);
-        assert_eq!(diagnostics.logical_item_count, 10_003);
-    }
-
-    #[test]
-    fn restored_virtual_list_offset_stays_viewport_bounded() {
+    fn restored_sliver_list_offset_stays_viewport_bounded() {
         let scope = restoration_scope();
         let key = restoration_key("million-items");
         scope.set_json(&key, json!({ "offset": 900_000. * 40. }));
@@ -15821,7 +15115,7 @@ mod tests {
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::fixed_extent_with_controller(
+        tree.mount(fixed_sliver_list(
             1_000_000,
             40.,
             controller.clone(),
@@ -15833,7 +15127,7 @@ mod tests {
         .unwrap();
 
         tree.layout(Constraints::tight(Size::new(100., 600.)));
-        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
         assert!(diagnostics.materialized_range.contains(&900_000));
         assert!(diagnostics.materialized_item_count < 100);
         assert!(calls.get() < 100);
@@ -15851,16 +15145,13 @@ mod tests {
     }
 
     #[test]
-    fn virtual_children_retain_identity_inside_the_cache_and_release_outside() {
+    fn sliver_children_retain_identity_inside_the_cache_and_release_outside() {
         let controller = ScrollController::new();
         let mut tree = WidgetTree::new();
         let root = tree
-            .mount(VirtualList::fixed_extent_with_controller(
-                10_000,
-                40.,
-                controller.clone(),
-                |i| Widget::box_(Size::new(80., 40.), Color::rgba(i as u8, 0, 0, 255)),
-            ))
+            .mount(fixed_sliver_list(10_000, 40., controller.clone(), |i| {
+                Widget::box_(Size::new(80., 40.), Color::rgba(i as u8, 0, 0, 255))
+            }))
             .unwrap();
         let constraints = Constraints::tight(Size::new(100., 100.));
         tree.layout(constraints);
@@ -15872,29 +15163,26 @@ mod tests {
         tree.layout(constraints);
         assert!(before.iter().any(|id| !tree.element_exists(*id)));
         assert!(before.iter().any(|id| tree.element_exists(*id)));
-        let after = tree.virtual_list_diagnostics().unwrap();
+        let after = tree.sliver_viewport_diagnostics().unwrap();
         assert!(after.element_count < 30);
         assert!(tree.diagnostics().items_unmounted > 0);
     }
 
     #[test]
-    fn virtual_count_changes_retain_valid_rows_and_release_invalid_ones() {
+    fn sliver_count_changes_retain_valid_rows_and_release_invalid_ones() {
         let controller = ScrollController::new();
         let constraints = Constraints::tight(Size::new(100., 100.));
         let mut tree = WidgetTree::new();
         let root = tree
-            .mount(VirtualList::fixed_extent_with_controller(
-                100,
-                40.,
-                controller.clone(),
-                |_| Widget::box_(Size::new(80., 40.), Color::WHITE),
-            ))
+            .mount(fixed_sliver_list(100, 40., controller.clone(), |_| {
+                Widget::box_(Size::new(80., 40.), Color::WHITE)
+            }))
             .unwrap();
         tree.layout(constraints);
         let retained = tree.children(root).unwrap()[0];
         tree.update(
             root,
-            VirtualList::fixed_extent_with_controller(80, 40., controller.clone(), |_| {
+            fixed_sliver_list(80, 40., controller.clone(), |_| {
                 Widget::box_(Size::new(80., 40.), Color::WHITE)
             }),
         )
@@ -15905,7 +15193,7 @@ mod tests {
         tree.layout(constraints);
         tree.update(
             root,
-            VirtualList::fixed_extent_with_controller(0, 40., controller.clone(), |_| {
+            fixed_sliver_list(0, 40., controller.clone(), |_| {
                 Widget::box_(Size::new(80., 40.), Color::WHITE)
             }),
         )
@@ -16051,15 +15339,12 @@ mod tests {
     }
 
     #[test]
-    fn virtual_list_small_thumb_drag_is_continuous_and_reversible() {
+    fn sliver_list_small_thumb_drag_is_continuous_and_reversible() {
         let controller = ScrollController::new();
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::fixed_extent_with_controller(
-            100,
-            40.,
-            controller.clone(),
-            |_| Widget::fixed_box(Size::new(100., 40.), Color::WHITE),
-        ))
+        tree.mount(fixed_sliver_list(100, 40., controller.clone(), |_| {
+            Widget::fixed_box(Size::new(100., 40.), Color::WHITE)
+        }))
         .unwrap();
         tree.layout(Constraints::tight(Size::new(100., 600.)));
         let geometry = tree.scrollbar_diagnostics().pop().unwrap();
@@ -16078,10 +15363,10 @@ mod tests {
     }
 
     #[test]
-    fn virtual_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
+    fn sliver_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
         let controller = ScrollController::new();
         let mut tree = WidgetTree::new();
-        tree.mount(VirtualList::fixed_extent_with_controller(
+        tree.mount(fixed_sliver_list(
             1_000_000,
             40.,
             controller.clone(),
@@ -16101,7 +15386,7 @@ mod tests {
         let middle = controller.offset();
         assert!(middle > controller.max_offset() * 0.45 && middle < controller.max_offset() * 0.55);
         tree.layout(Constraints::tight(Size::new(100., 600.)));
-        let middle_rows = tree.virtual_list_diagnostics().unwrap();
+        let middle_rows = tree.sliver_viewport_diagnostics().unwrap();
         assert!(middle_rows.materialized_range.contains(&(500_000usize)));
         assert!(middle_rows.materialized_item_count < 100);
         assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 588.)));

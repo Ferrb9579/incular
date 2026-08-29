@@ -20,12 +20,12 @@ uses the same API. Persistence is never enabled for an unbound controller.
 
 ## Variable-extent indexes
 
-`MeasuredExtentIndex` is the shared measured-prefix structure used by
-`VirtualList` and `ListView` variable rows. It starts every row at a supplied
-estimate, records exact extents only after a row is laid out, and provides
-offset-to-index, index-to-offset, total-estimate, and viewport-range queries
-without walking preceding rows. The chunked Fenwick index keeps deep seeks
-bounded even for million-row data sets.
+`MeasuredExtentIndex` is the measured-prefix structure used internally by
+retained sliver render objects such as `SliverList`. It starts every row at a
+supplied estimate, records exact extents only after a row is laid out, and
+provides offset-to-index, index-to-offset, total-estimate, and viewport-range
+queries without walking preceding rows. The chunked Fenwick index keeps deep
+seeks bounded even for million-row data sets.
 
 Keep an index outside rebuilt widget descriptions when data can change, then
 use `set_measured_extent`, `invalidate_extent`, `insert`, `remove`, or

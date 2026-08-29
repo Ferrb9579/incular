@@ -98,9 +98,6 @@ path = "../../examples/text_field.rs"
 name = "text_quality"
 path = "../../examples/text_quality.rs"
 [[example]]
-name = "virtual_list"
-path = "../../examples/virtual_list.rs"
-[[example]]
 name = "core_defaults"
 path = "../../examples/core_defaults.rs"
 [[example]]

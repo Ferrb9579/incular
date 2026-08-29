@@ -150,6 +150,4 @@ pub use utilities::{
 // `pub(crate)`: sibling crates use the documented `internal` bridge instead
 // of observing retained-tree implementation types as Widgets API.
 pub(crate) use gestures::GestureCallbacks;
-pub(crate) use tree::{
-    Blur, BlurController, DropShadow, ExplicitSemantics, VirtualList, WidgetKind,
-};
+pub(crate) use tree::{Blur, BlurController, DropShadow, ExplicitSemantics, WidgetKind};

@@ -11,7 +11,7 @@ because Flutter exports those symbols from `widgets.dart`; Material
 `incular-material`.
 
 The public root is curated rather than glob-re-exported. Retained IDs, render
-objects, action surfaces, virtual-list helpers, and other implementation-only
+objects, action surfaces, lazy sliver helpers, and other implementation-only
 types are available to sibling framework crates through the hidden
 `incular_widgets::internal` bridge. Applications should use the root Widgets
 surface or `incular::prelude::*`, never that bridge.
@@ -100,17 +100,19 @@ remain internal implementation details while the public API follows Flutter's
 Scrollable viewports draw a logical-pixel overlay `ScrollbarStyle` by default.
 The proportional vertical thumb reads the shared controller's content/viewport
 extents, captures pointer drags, and track clicks page by one viewport.
-The retained viewport implementation keeps materialized rows bounded, so a
-thumb jump computes its destination offset without materializing intermediate
-rows. Incular-specific `VirtualList` and diagnostic types are internal services
-rather than Widgets exports.
+The retained `SliverViewport` keeps materialized rows bounded, so a thumb jump
+computes its destination offset without materializing intermediate rows. The
+same viewport is used by `ListView`, `GridView`, `PageView`, and
+`CustomScrollView`; applications do not need a separate lazy-list primitive.
 
-## Lazy fixed-extent viewports
+## Lazy sliver viewports
 
-`ScrollView` remains the eager choice for ordinary, arbitrary child trees.
-`ListView.builder` and the sliver builders are the lazy vertical vocabulary for
-large indexed data. Their retained implementation builds only the visible
-range plus a bounded cache and never expands `0..item_count` into Widget values.
+`SingleChildScrollView`/`ScrollView` remains the eager choice for ordinary,
+arbitrary child trees. `ListView.builder`, `SliverList.builder`,
+`SliverFixedExtentList`, `SliverGrid`, and `SliverFillViewport` are the native
+lazy vocabulary for large indexed data. Their retained `SliverViewport`
+implementation builds only the visible range plus a bounded cache and never
+expands `0..item_count` into Widget values.
 
 The fixed path computes content extent as checked/saturating
 `item_count * item_extent`, then derives an exclusive range with direct
@@ -122,30 +124,26 @@ indices unmount (there is deliberately no unsafe state recycling), which drops
 their callbacks and reactive subscriptions through the runtime's normal
 generational lifetime path.
 
-## Lazy variable-extent viewports
+## Lazy variable-extent slivers
 
-The variable-extent list implementation uses that same retained viewport for
-rows whose height is known only after layout. It begins
-with an estimate and update a shared `MeasuredExtentIndex` as cached rows are
-laid out. Offset/index lookup and range selection remain bounded, so jumping
-near row 900,000 of one million items does not construct the preceding rows.
+`SliverList` uses the same retained viewport for rows whose height is known
+only after layout. It starts with an estimate, records exact extents as cached
+children are laid out, and compensates the visible anchor when rows above it
+change size. Offset/index lookup and range selection remain bounded, so
+jumping near row 900,000 of one million items does not construct the preceding
+rows. `SliverVariedExtentList` provides Flutter-shaped item extent builders
+when the application has a deterministic extent function.
 
-For mutable data, keep a `MeasuredExtentIndex` and use
-`variable_extent_with_index`. Its insertion, removal, move, and invalidation
-operations update the logical mapping while the viewport rebuilds only its
-visible cache. Measurements before the visible anchor compensate the scroll
-offset to avoid a content jump.
-
-The virtual viewport owns an outer layout layer, local clip, and inner
+The sliver viewport owns an outer layout layer, local clip, and inner
 `-scroll_offset` content transform, just like `ScrollView`. A scroll inside the
 same materialized range updates only that retained transform. Crossing a cache
 boundary mounts/unmounts only the changed edge rows and leaves retained rows
 unchanged. Runtime diagnostics expose logical count, range, viewport/cache
 sizes, and live Element/RenderObject/PictureLayer counts for debugging.
 
-Fixed- and variable-extent virtualization are implementation details behind the
-public ListView/sliver surface. Future semantics can expose logical child count
-and materialized item indices without creating semantic nodes for every logical
+Fixed- and variable-extent materialization are implementation details behind
+the public ListView/sliver surface. Semantics expose logical child counts and
+materialized item indices without creating one semantic node for every logical
 row.
 
 ## Retained layout closure

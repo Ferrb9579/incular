@@ -226,15 +226,16 @@ retain the direct presentation fast path. Backdrop effects, inner shadows,
 custom filters, and further advanced blend modes remain future work on this
 offscreen foundation.
 
-## Lazy viewports and fixed-extent virtualization
+## Lazy sliver viewports
 
 `ScrollView` is intentionally eager: it accepts an arbitrary already-mounted
 child tree and uses a retained clip/content transform for inexpensive movement.
-`VirtualList` is the indexed lazy viewport protocol implemented for large,
-fixed-height vertical datasets. Its declarative configuration owns item count,
-fixed logical item extent, a persistent `ScrollController`, bounded cache
-extent, and an `Fn(index) -> Widget` item factory. Application code never sees
-Element, render, layer, or materialization IDs.
+`SliverViewport` is the indexed lazy viewport protocol used by Flutter-shaped
+`ListView`, `SliverList`, `SliverFixedExtentList`, `SliverGrid`, and
+`SliverFillViewport` APIs. Its delegate owns item count, extent policy, a
+persistent `ScrollController`, bounded cache extent, and an
+`Fn(index) -> Widget` item factory. Application code never sees Element,
+render, layer, or materialization IDs.
 
 The lazy viewport gets its logical scroll offset and constrained viewport
 extent during layout. Fixed extent gives O(1) content geometry:
@@ -283,11 +284,12 @@ The frame order is BUILD, LAYOUT, retained COMPOSITE, semantics synchronization,
 PAINT, then platform delivery. Bounds use the same world-coordinate traversal
 as hit testing, including ancestor scroll and translation transforms. Offscreen
 eager scroll descendants remain logical semantic descendants but retain their
-actual (possibly clipped/off-viewport) world bounds. A VirtualList contributes
-one List node plus only its mounted rows; row metadata includes logical index
-and set size, so a million logical rows never creates a million Element or
-semantic nodes. Future adapters can request an offscreen item by index, scroll
-the existing controller, materialize it, and then focus its new semantic node.
+actual (possibly clipped/off-viewport) world bounds. A SliverViewport
+contributes one scroll/list node plus only its mounted rows; row metadata
+includes logical index and set size, so a million logical rows never creates a
+million Element or semantic nodes. Future adapters can request an offscreen
+item by index, scroll the existing controller, materialize it, and then focus
+its new semantic node.
 
 Semantic actions are owned requests (`Focus`, `Activate`, `SetText`,
 `SetSelection`, and scroll actions) resolved through IDs by Runtime. They use
@@ -298,9 +300,10 @@ IME preedit is not reported as committed semantic text. Caret blink changes no
 semantic state. The visual overlay scrollbar is intentionally not an additional
 semantic control: its ScrollView/List exposes the scrolling actions.
 
-Variable-height virtualization, estimated/remembered extents, lazy grids and
-sliver-style composition are deliberately future work; Phase 5 implements the
-production fixed-extent path only.
+Variable-height measured extents, lazy grids, viewport-filling pages, and
+sliver-style composition share the same production sliver protocol. The public
+API selects the appropriate Flutter-shaped sliver delegate; no separate
+lazy-list abstraction is required.
 
 ## Editing correction and shared scrollbars
 
@@ -318,7 +321,7 @@ line-by-line selection rectangles. Its internal vertical offset is paint-local
 and changes without reshaping an unchanged paragraph.
 
 `ScrollController` owns offset, viewport extent, content extent and maximum
-extent for both `ScrollView` and `VirtualList`. Their framework-rendered
+extent for both `ScrollView` and `SliverViewport`. Their framework-rendered
 vertical overlay scrollbar uses `raw_thumb = track * viewport/content`, clamped
 to the configured minimum size. With `M = max(content - viewport, 0)` and
 `travel = max(track - actual_thumb, 0)`, the authoritative inverse mappings

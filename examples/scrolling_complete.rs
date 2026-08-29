@@ -2,26 +2,27 @@
 //!
 //! The inner list is deliberately scrollable inside an outer header/content
 //! viewport. At its top or bottom, wheel remainder transfers to the outer
-//! viewport exactly once. The variable rows use the same retained list path.
+//! viewport exactly once. The variable rows use the retained sliver list path.
 use incular::prelude::*;
-use incular::widgets::internal::{MeasuredExtentIndex, ScrollView, VirtualList};
+use incular::widgets::internal::ScrollView;
 
 fn main() {
     let outer = ScrollController::new();
     let inner = ScrollController::new();
-    let extents = MeasuredExtentIndex::new(2_000, 36.);
     // Applications may drive kinetic completion from their monotonic frame
     // callback with this policy; the retained wheel path uses clamped nested
     // transfer by default.
     let _touch_policy = ScrollPhysics::clamping().bouncing().page_snapping(320.);
     let app = Application::new(move |_| {
-        let list =
-            VirtualList::variable_extent_with_index(extents.clone(), inner.clone(), |item| {
+        let list: Widget =
+            CustomScrollView::new(vec![Box::new(SliverList::builder(2_000, 36., |item| {
                 Widget::fixed_box(
                     Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                     Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
                 )
-            });
+            })) as Box<dyn Sliver>])
+            .controller(inner.clone())
+            .into();
         let inner_view: Widget = SizedBox::from_size(Size::new(360., 320.))
             .child(list)
             .into();

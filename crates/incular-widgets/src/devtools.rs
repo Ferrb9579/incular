@@ -241,7 +241,7 @@ impl WidgetTree {
                             ..
                         }
                         | WidgetKind::Scroll { .. }
-                        | WidgetKind::VirtualList { .. }
+                        | WidgetKind::SliverViewport { .. }
                 )
             })
             .filter_map(|(raw, _)| self.element_bounds(ElementId(raw)).map(rect_array))
@@ -249,15 +249,15 @@ impl WidgetTree {
             .collect()
     }
 
-    /// Actual retained scroll viewport bounds. Virtual-list materialization
-    /// remains visible through its existing child layout rectangles.
+    /// Actual retained scroll viewport bounds. Sliver materialization remains
+    /// visible through its existing child layout rectangles.
     pub fn devtools_scroll_viewports(&self, limit: usize) -> Vec<[f32; 4]> {
         self.dev_elements()
             .iter()
             .filter(|(_, element)| {
                 matches!(
                     element.widget.kind,
-                    WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. }
+                    WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. }
                 )
             })
             .filter_map(|(raw, _)| self.element_bounds(ElementId(raw)).map(rect_array))
@@ -494,10 +494,10 @@ impl WidgetTree {
                 min_scroll: 0.,
                 max_scroll: controller.max_offset(),
             },
-            WidgetKind::VirtualList { .. } => {
-                self.devtools_virtual_list_diagnostics(id).map_or_else(
+            WidgetKind::SliverViewport { .. } => {
+                self.devtools_sliver_viewport_diagnostics(id).map_or_else(
                     || LayoutDetails::Custom {
-                        layout_kind: "VirtualList (unavailable)".into(),
+                        layout_kind: "SliverViewport (unavailable)".into(),
                     },
                     |diagnostics| LayoutDetails::LazyViewport {
                         item_count: diagnostics.logical_item_count,

@@ -221,18 +221,18 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
                 DebugValue::Float(f64::from(controller.content_extent())),
             ));
         }
-        WidgetKind::VirtualList { config, .. } => {
+        WidgetKind::SliverViewport { config } => {
             out.push(prop(
                 "itemCount",
-                DebugValue::Uint(config.dev_item_count() as u64),
+                DebugValue::Uint(config.delegate.child_count().unwrap_or(0) as u64),
             ));
             out.push(prop(
-                "materializedItems",
-                DebugValue::Uint(config.dev_materialized() as u64),
+                "sliverCount",
+                DebugValue::Uint(config.delegate.sliver_count() as u64),
             ));
             out.push(prop(
                 "cacheExtent",
-                DebugValue::Float(f64::from(config.dev_cache_extent())),
+                DebugValue::Float(f64::from(config.cache_extent)),
             ));
         }
         WidgetKind::Visibility { visible, child } => {
@@ -380,7 +380,6 @@ pub fn kind_display_name(kind: &WidgetKind) -> String {
         WidgetKind::Table { .. } => "Table",
         WidgetKind::Stack { .. } => "Stack",
         WidgetKind::IndexedStack { .. } => "IndexedStack",
-        WidgetKind::VirtualList { .. } => "VirtualList",
         WidgetKind::SliverViewport { .. } => "SliverViewport",
         WidgetKind::LayoutBuilder { .. } => "LayoutBuilder",
         WidgetKind::Opacity { .. } => "Opacity",
@@ -427,7 +426,6 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
         RenderKind::AspectRatio { .. } => "AspectRatio",
         RenderKind::Scroll { .. } => "ScrollView",
         RenderKind::PersistentHeader { .. } => "PersistentHeader",
-        RenderKind::VirtualList { .. } => "VirtualList",
         RenderKind::SliverViewport { .. } => "SliverViewport",
         RenderKind::LayoutBuilder => "LayoutBuilder",
         RenderKind::Translate { .. } => "Translate",

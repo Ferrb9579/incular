@@ -1,15 +1,15 @@
 //! Standalone Incular DevTools, built with Incular itself.
 //!
 //! The inspector retains data rows, not widget rows. A 100k-node target thus
-//! keeps a compact id/depth index while [`VirtualList`] creates only rows at
-//! the viewport.
+//! keeps a compact id/depth index while the retained sliver viewport creates
+//! only rows near the viewport.
 
 use futures_util::{SinkExt, StreamExt};
 use incular::controls::TextField;
 use incular::material::RawMaterialButton;
 use incular::prelude::*;
 use incular::widgets::internal::icons;
-use incular::widgets::internal::{ScrollView, TextEditingController, VirtualList};
+use incular::widgets::internal::{ScrollView, TextEditingController};
 use incular_devtools_protocol::{
     DebugOption, DebugProperty, DebugValue, DeepFrameTrace, DevSignalId, DevWidgetId, DevWindowId,
     DevtoolsProfilerMode, DiscoveryRecord, EditableValue, FrameRecordEvent, Hello, LayoutDetails,
@@ -1969,154 +1969,157 @@ fn main() {
             let list_shared = Arc::clone(&app_shared);
             let list_bridge = app_bridge.clone();
             let list_tick = app_tick.clone();
-            let tree_list = VirtualList::fixed_extent_with_controller(
-                row_count,
-                32.,
-                app_tree_scroll.clone(),
-                move |index| {
-                    let snapshot = list_shared.lock().ok().and_then(|state| {
-                        let row = state.rows.get(index)?.clone();
-                        let node = state.nodes.get(&row.id)?;
-                        Some((
-                            state.row_label(&row),
-                            row,
-                            state.selected,
-                            state.hovered,
-                            state.expanded.contains(&node.id),
-                            !node.child_ids.is_empty(),
-                        ))
-                    });
-                    let Some((label, row, selected, hovered, expanded, has_children)) = snapshot
-                    else {
-                        return Widget::text("<stale row>");
-                    };
-                    let color = if selected == Some(row.id) {
-                        Color::rgba(46, 112, 202, 255)
-                    } else if hovered == Some(row.id) {
-                        Color::rgba(43, 57, 78, 255)
-                    } else {
-                        Color::rgba(25, 32, 45, 255)
-                    };
-                    let hover_shared = Arc::clone(&list_shared);
-                    let hover_bridge = list_bridge.clone();
-                    let hover_tick = list_tick.clone();
-                    let hover_id = row.id;
-                    let exit_shared = Arc::clone(&list_shared);
-                    let exit_bridge = list_bridge.clone();
-                    let exit_tick = list_tick.clone();
-                    let exit_id = row.id;
-                    let press_shared = Arc::clone(&list_shared);
-                    let press_bridge = list_bridge.clone();
-                    let press_tick = list_tick.clone();
-                    let disclosure: Widget = if has_children {
-                        let icon: Widget = Icon::new(icons::chevron_right())
-                            .size(14.)
-                            .brush(if selected == Some(row.id) {
-                                TEXT_PRIMARY
-                            } else {
-                                TEXT_MUTED
-                            })
-                            .into();
-                        let icon = if expanded {
-                            Transform::rotation(std::f32::consts::FRAC_PI_2, icon).into()
-                        } else {
-                            icon
+            let tree_list: Widget =
+                CustomScrollView::new(vec![Box::new(SliverFixedExtentList::new(
+                    row_count,
+                    32.,
+                    move |index| {
+                        let snapshot = list_shared.lock().ok().and_then(|state| {
+                            let row = state.rows.get(index)?.clone();
+                            let node = state.nodes.get(&row.id)?;
+                            Some((
+                                state.row_label(&row),
+                                row,
+                                state.selected,
+                                state.hovered,
+                                state.expanded.contains(&node.id),
+                                !node.child_ids.is_empty(),
+                            ))
+                        });
+                        let Some((label, row, selected, hovered, expanded, has_children)) =
+                            snapshot
+                        else {
+                            return Widget::text("<stale row>");
                         };
-                        let toggle_shared = Arc::clone(&list_shared);
-                        let toggle_tick = list_tick.clone();
-                        RawMaterialButton::new(if expanded { "Collapse" } else { "Expand" })
-                            .size(Size::new(28., 28.))
-                            .padding(EdgeInsets::all(6.))
-                            .content(icon)
-                            .color(Color::TRANSPARENT)
-                            .on_press(move || {
-                                if let Ok(mut state) = toggle_shared.lock() {
-                                    state.toggle_expanded(row.id);
-                                }
-                                toggle_tick.update(|value| *value = value.wrapping_add(1));
-                            })
-                            .into()
-                    } else {
-                        gap(28., 28.)
-                    };
-                    let content = Align::new(
-                        Alignment::CENTER_LEFT,
-                        Padding::new(
-                            EdgeInsets::symmetric(8., 6.),
-                            ui_text(
-                                label.clone(),
-                                13.,
-                                if selected == Some(row.id) {
+                        let color = if selected == Some(row.id) {
+                            Color::rgba(46, 112, 202, 255)
+                        } else if hovered == Some(row.id) {
+                            Color::rgba(43, 57, 78, 255)
+                        } else {
+                            Color::rgba(25, 32, 45, 255)
+                        };
+                        let hover_shared = Arc::clone(&list_shared);
+                        let hover_bridge = list_bridge.clone();
+                        let hover_tick = list_tick.clone();
+                        let hover_id = row.id;
+                        let exit_shared = Arc::clone(&list_shared);
+                        let exit_bridge = list_bridge.clone();
+                        let exit_tick = list_tick.clone();
+                        let exit_id = row.id;
+                        let press_shared = Arc::clone(&list_shared);
+                        let press_bridge = list_bridge.clone();
+                        let press_tick = list_tick.clone();
+                        let disclosure: Widget = if has_children {
+                            let icon: Widget = Icon::new(icons::chevron_right())
+                                .size(14.)
+                                .brush(if selected == Some(row.id) {
                                     TEXT_PRIMARY
                                 } else {
                                     TEXT_MUTED
-                                },
-                            ),
-                        ),
-                    );
-                    let selection: Widget = RawMaterialButton::new(label)
-                        .size(Size::new(0., 30.))
-                        .content(content)
-                        .color(color)
-                        .on_hover(move || {
-                            let window = hover_shared.lock().ok().and_then(|mut state| {
-                                state.hovered = Some(hover_id);
-                                state.active_window
-                            });
-                            if let Some(window) = window {
-                                hover_bridge.send(RequestMethod::HighlightNode {
-                                    window,
-                                    id: Some(hover_id),
-                                });
-                            }
-                            hover_tick.update(|value| *value = value.wrapping_add(1));
-                        })
-                        .on_exit(move || {
-                            let (window, selected) = exit_shared
-                                .lock()
-                                .ok()
-                                .map(|mut state| {
-                                    if state.hovered == Some(exit_id) {
-                                        state.hovered = None;
-                                    }
-                                    (state.active_window, state.selected)
                                 })
-                                .unwrap_or((None, None));
-                            if let Some(window) = window {
-                                exit_bridge.send(RequestMethod::HighlightNode {
-                                    window,
-                                    id: selected,
-                                });
-                            }
-                            exit_tick.update(|value| *value = value.wrapping_add(1));
-                        })
-                        .on_press(move || {
-                            let window = if let Ok(mut state) = press_shared.lock() {
-                                state.selected = Some(row.id);
-                                state.reveal(row.id);
-                                state.active_window
+                                .into();
+                            let icon = if expanded {
+                                Transform::rotation(std::f32::consts::FRAC_PI_2, icon).into()
                             } else {
-                                None
+                                icon
                             };
-                            if let Some(window) = window {
-                                press_bridge.send(RequestMethod::GetNodeDetails { id: row.id });
-                                press_bridge.send(RequestMethod::HighlightNode {
-                                    window,
-                                    id: Some(row.id),
+                            let toggle_shared = Arc::clone(&list_shared);
+                            let toggle_tick = list_tick.clone();
+                            RawMaterialButton::new(if expanded { "Collapse" } else { "Expand" })
+                                .size(Size::new(28., 28.))
+                                .padding(EdgeInsets::all(6.))
+                                .content(icon)
+                                .color(Color::TRANSPARENT)
+                                .on_press(move || {
+                                    if let Ok(mut state) = toggle_shared.lock() {
+                                        state.toggle_expanded(row.id);
+                                    }
+                                    toggle_tick.update(|value| *value = value.wrapping_add(1));
+                                })
+                                .into()
+                        } else {
+                            gap(28., 28.)
+                        };
+                        let content = Align::new(
+                            Alignment::CENTER_LEFT,
+                            Padding::new(
+                                EdgeInsets::symmetric(8., 6.),
+                                ui_text(
+                                    label.clone(),
+                                    13.,
+                                    if selected == Some(row.id) {
+                                        TEXT_PRIMARY
+                                    } else {
+                                        TEXT_MUTED
+                                    },
+                                ),
+                            ),
+                        );
+                        let selection: Widget = RawMaterialButton::new(label)
+                            .size(Size::new(0., 30.))
+                            .content(content)
+                            .color(color)
+                            .on_hover(move || {
+                                let window = hover_shared.lock().ok().and_then(|mut state| {
+                                    state.hovered = Some(hover_id);
+                                    state.active_window
                                 });
-                            }
-                            press_tick.update(|value| *value = value.wrapping_add(1));
-                        })
-                        .into();
-                    Row::new([
-                        gap(row.depth as f32 * 16., 1.),
-                        disclosure,
-                        gap(4., 1.),
-                        Expanded::new(selection).into(),
-                    ])
-                    .into()
-                },
-            );
+                                if let Some(window) = window {
+                                    hover_bridge.send(RequestMethod::HighlightNode {
+                                        window,
+                                        id: Some(hover_id),
+                                    });
+                                }
+                                hover_tick.update(|value| *value = value.wrapping_add(1));
+                            })
+                            .on_exit(move || {
+                                let (window, selected) = exit_shared
+                                    .lock()
+                                    .ok()
+                                    .map(|mut state| {
+                                        if state.hovered == Some(exit_id) {
+                                            state.hovered = None;
+                                        }
+                                        (state.active_window, state.selected)
+                                    })
+                                    .unwrap_or((None, None));
+                                if let Some(window) = window {
+                                    exit_bridge.send(RequestMethod::HighlightNode {
+                                        window,
+                                        id: selected,
+                                    });
+                                }
+                                exit_tick.update(|value| *value = value.wrapping_add(1));
+                            })
+                            .on_press(move || {
+                                let window = if let Ok(mut state) = press_shared.lock() {
+                                    state.selected = Some(row.id);
+                                    state.reveal(row.id);
+                                    state.active_window
+                                } else {
+                                    None
+                                };
+                                if let Some(window) = window {
+                                    press_bridge.send(RequestMethod::GetNodeDetails { id: row.id });
+                                    press_bridge.send(RequestMethod::HighlightNode {
+                                        window,
+                                        id: Some(row.id),
+                                    });
+                                }
+                                press_tick.update(|value| *value = value.wrapping_add(1));
+                            })
+                            .into();
+                        Row::new([
+                            gap(row.depth as f32 * 16., 1.),
+                            disclosure,
+                            gap(4., 1.),
+                            Expanded::new(selection).into(),
+                        ])
+                        .into()
+                    },
+                )) as Box<dyn Sliver>])
+                .controller(app_tree_scroll.clone())
+                .into();
 
             let mut property_editor = Vec::new();
             if active_inspector_section == InspectorSection::Properties

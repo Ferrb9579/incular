@@ -17,11 +17,12 @@ use typed_builder::TypedBuilder;
 
 use crate::drag_drop::DragDropContext;
 use crate::tree::WidgetKind;
-use crate::{
-    Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox, VirtualList, Widget,
-};
+use crate::{Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox, Widget};
 
 type SliverLayoutBuilderFn = Rc<dyn Fn(&ScrollController, SliverConstraints) -> Widget>;
+
+const DEFAULT_LAZY_ITEM_EXTENT: f32 = 48.0;
+const DEFAULT_SLIVER_CACHE_EXTENT: f32 = 250.0;
 
 /// A first-class scrollable box that scrolls a single child.
 #[derive(Clone, TypedBuilder)]
@@ -534,92 +535,59 @@ impl ListView {
 impl From<ListView> for Widget {
     fn from(value: ListView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let list_widget = match value
+        let mut sliver: Box<dyn RenderSliver> = match value
             .strategy
             .unwrap_or_else(|| ListViewStrategy::Children(value.children))
         {
             ListViewStrategy::Children(children) => {
-                let content: Widget = match value.scroll_direction {
-                    Axis::Vertical => Column::new(children).into(),
-                    Axis::Horizontal => Row::new(children).into(),
-                };
-                SingleChildScrollView::new(content)
-                    .scroll_direction(value.scroll_direction)
-                    .reverse(value.reverse)
-                    .controller(controller)
-                    .physics(value.physics.unwrap_or_default())
-                    .clip_behavior(value.clip_behavior)
-                    .into()
+                let children = Rc::new(children);
+                Box::new(VariableExtentRenderSliver::new(
+                    MeasuredExtentIndex::new(children.len(), DEFAULT_LAZY_ITEM_EXTENT),
+                    Rc::new(move |index| children[index].clone()),
+                ))
             }
             ListViewStrategy::Builder {
                 item_count,
                 builder,
-            } => VirtualList::variable_extent_with_index_and_cache_config(
-                MeasuredExtentIndex::new(item_count, VirtualList::DEFAULT_ITEM_EXTENT),
-                value
-                    .cache_extent
-                    .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
-                controller,
-                value.scroll_direction,
-                value.reverse,
-                value.physics.unwrap_or_default(),
-                move |i| builder(i),
-            ),
+            } => Box::new(VariableExtentRenderSliver::new(
+                MeasuredExtentIndex::new(item_count, DEFAULT_LAZY_ITEM_EXTENT),
+                builder,
+            )),
             ListViewStrategy::FixedExtent {
                 item_count,
                 item_extent,
                 builder,
-            } => VirtualList::fixed_extent_with_controller_and_cache_config(
+            } => Box::new(FixedExtentRenderSliver::new(
                 item_count,
                 item_extent,
-                value
-                    .cache_extent
-                    .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
-                controller,
-                value.scroll_direction,
-                value.reverse,
-                value.physics.unwrap_or_default(),
-                move |i| builder(i),
-            ),
+                builder,
+            )),
             ListViewStrategy::VariableExtent {
                 item_count,
                 estimated_extent,
                 index,
                 builder,
-            } => {
-                if let Some(idx) = index {
-                    VirtualList::variable_extent_with_index_and_cache_config(
-                        idx,
-                        value
-                            .cache_extent
-                            .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
-                        controller,
-                        value.scroll_direction,
-                        value.reverse,
-                        value.physics.unwrap_or_default(),
-                        move |i| builder(i),
-                    )
-                } else {
-                    VirtualList::variable_extent_with_index_and_cache_config(
-                        MeasuredExtentIndex::new(item_count, estimated_extent),
-                        value
-                            .cache_extent
-                            .unwrap_or(VirtualList::DEFAULT_CACHE_EXTENT),
-                        controller,
-                        value.scroll_direction,
-                        value.reverse,
-                        value.physics.unwrap_or_default(),
-                        move |i| builder(i),
-                    )
-                }
-            }
+            } => Box::new(VariableExtentRenderSliver::new(
+                index.unwrap_or_else(|| MeasuredExtentIndex::new(item_count, estimated_extent)),
+                builder,
+            )),
         };
 
         if let Some(padding) = value.padding {
-            Padding::new(padding, list_widget).into()
-        } else {
-            list_widget
+            sliver = Box::new(PaddingRenderSliver {
+                inner: RefCell::new(sliver),
+                padding,
+            });
         }
+        single_sliver_viewport(
+            controller,
+            value.scroll_direction,
+            value.reverse,
+            value.physics.unwrap_or_default(),
+            value.cache_extent.unwrap_or(DEFAULT_SLIVER_CACHE_EXTENT),
+            value.clip_behavior,
+            sliver,
+        )
     }
 }
 
@@ -769,10 +737,12 @@ impl GridView {
 impl From<GridView> for Widget {
     fn from(value: GridView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let grid_widget: Widget = match value.strategy.unwrap_or_else(|| GridViewStrategy::Count {
-            cross_axis_count: value.cross_axis_count,
-            children: value.children,
-            row_extent: value.row_extent,
+        let mut sliver: Box<dyn RenderSliver> = match value.strategy.unwrap_or_else(|| {
+            GridViewStrategy::Count {
+                cross_axis_count: value.cross_axis_count,
+                children: value.children,
+                row_extent: value.row_extent,
+            }
         }) {
             GridViewStrategy::Count {
                 cross_axis_count,
@@ -780,23 +750,17 @@ impl From<GridView> for Widget {
                 row_extent,
             } => {
                 let columns = cross_axis_count.max(1);
-                let rows = children.len().div_ceil(columns);
                 let children = Rc::new(children);
                 let extent = row_extent.unwrap_or(80.0);
-                VirtualList::fixed_extent_with_controller_and_cache_config(
-                    rows,
+                Box::new(FixedExtentRenderSliver::new(
+                    children.len().div_ceil(columns),
                     extent,
-                    VirtualList::DEFAULT_CACHE_EXTENT,
-                    controller,
-                    value.scroll_direction,
-                    value.reverse,
-                    value.physics.unwrap_or_default(),
-                    move |row| {
+                    Rc::new(move |row| {
                         let start = row * columns;
                         let end = (start + columns).min(children.len());
                         Widget::from(Row::new(children[start..end].iter().cloned()))
-                    },
-                )
+                    }),
+                ))
             }
             GridViewStrategy::Builder {
                 item_count,
@@ -806,29 +770,34 @@ impl From<GridView> for Widget {
             } => {
                 let columns = cross_axis_count.max(1);
                 let rows = item_count.div_ceil(columns);
-                VirtualList::fixed_extent_with_controller_and_cache_config(
+                Box::new(FixedExtentRenderSliver::new(
                     rows,
                     row_extent,
-                    VirtualList::DEFAULT_CACHE_EXTENT,
-                    controller,
-                    value.scroll_direction,
-                    value.reverse,
-                    value.physics.unwrap_or_default(),
-                    move |row| {
+                    Rc::new(move |row| {
                         let start = row * columns;
                         Widget::from(Row::new(
                             (start..(start + columns).min(item_count)).map(|index| builder(index)),
                         ))
-                    },
-                )
+                    }),
+                ))
             }
         };
 
         if let Some(padding) = value.padding {
-            Padding::new(padding, grid_widget).into()
-        } else {
-            grid_widget
+            sliver = Box::new(PaddingRenderSliver {
+                inner: RefCell::new(sliver),
+                padding,
+            });
         }
+        single_sliver_viewport(
+            controller,
+            value.scroll_direction,
+            value.reverse,
+            value.physics.unwrap_or_default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            sliver,
+        )
     }
 }
 
@@ -1000,17 +969,20 @@ impl From<PageView> for Widget {
             .unwrap_or_else(|| PageViewStrategy::Children(value.children))
         {
             PageViewStrategy::Children(children) => {
-                let page_count = children.len();
-                let children = Rc::new(children);
-                VirtualList::viewport_extent_with_controller_and_cache_config(
-                    page_count,
-                    600.0 * fraction,
-                    VirtualList::DEFAULT_CACHE_EXTENT,
+                let snap_extent = 600.0 * fraction;
+                let sliver = SliverFillViewport::new(children)
+                    .viewport_fraction(fraction)
+                    .fallback_extent(600.0);
+                let render =
+                    sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse);
+                single_sliver_viewport(
                     controller,
                     value.scroll_direction,
                     value.reverse,
-                    physics_for_extent(600.0 * fraction),
-                    move |index| children[index].clone(),
+                    physics_for_extent(snap_extent),
+                    DEFAULT_SLIVER_CACHE_EXTENT,
+                    Clip::HardEdge,
+                    render,
                 )
             }
             PageViewStrategy::Builder {
@@ -1018,16 +990,20 @@ impl From<PageView> for Widget {
                 page_extent,
                 builder,
             } => {
-                let page_extent = page_extent * fraction;
-                VirtualList::fixed_extent_with_controller_and_cache_config(
-                    page_count,
-                    page_extent,
-                    VirtualList::DEFAULT_CACHE_EXTENT,
+                let snap_extent = page_extent * fraction;
+                let sliver = SliverFillViewport::builder(page_count, move |index| builder(index))
+                    .viewport_fraction(fraction)
+                    .fallback_extent(page_extent);
+                let render =
+                    sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse);
+                single_sliver_viewport(
                     controller,
                     value.scroll_direction,
                     value.reverse,
-                    physics_for_extent(page_extent),
-                    move |i| builder(i),
+                    physics_for_extent(snap_extent),
+                    DEFAULT_SLIVER_CACHE_EXTENT,
+                    Clip::HardEdge,
+                    render,
                 )
             }
         }
@@ -1046,6 +1022,12 @@ pub struct SliverChildId(pub u64);
 impl SliverChildId {
     const fn list_item(index: usize) -> Self {
         Self(index as u64 + 1)
+    }
+
+    pub(crate) fn item_index(self) -> Option<usize> {
+        self.0
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index & u32::MAX as u64).ok())
     }
 
     fn scoped(sliver: usize, child: Self) -> Self {
@@ -1109,6 +1091,12 @@ impl SliverLayout {
 pub trait RenderSliver {
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout;
 
+    /// Returns the logical child count when this sliver is backed by an
+    /// indexed child delegate. Non-indexed slivers leave it unknown.
+    fn child_count(&self) -> Option<usize> {
+        None
+    }
+
     /// Records the exact extent measured by the retained child tree.
     fn set_child_extent(&mut self, _child: SliverChildId, _extent: f32) -> bool {
         false
@@ -1141,6 +1129,7 @@ pub(crate) trait SliverViewportDelegate {
     fn set_child_extent(&self, child: SliverChildId, extent: f32) -> bool;
     fn revision(&self) -> u64;
     fn sliver_count(&self) -> usize;
+    fn child_count(&self) -> Option<usize>;
     fn tick(&self, now: Instant) -> bool;
     fn is_animating(&self) -> bool;
 }
@@ -1318,6 +1307,10 @@ impl FixedExtentRenderSliver {
 }
 
 impl RenderSliver for FixedExtentRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        Some(self.item_count)
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let total = self.item_count as f32 * self.item_extent;
         let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
@@ -1379,6 +1372,10 @@ impl VariableExtentRenderSliver {
 }
 
 impl RenderSliver for VariableExtentRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        Some(self.index.len())
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
         let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
@@ -1611,14 +1608,45 @@ impl RenderSliver for FillRemainingRenderSliver {
 }
 
 struct ViewportExtentRenderSliver {
-    children: Rc<Vec<Widget>>,
+    item_count: usize,
+    children: Option<Rc<Vec<Widget>>>,
+    builder: Option<Rc<dyn Fn(usize) -> Widget>>,
+    widgets: HashMap<usize, Widget>,
     viewport_fraction: f32,
+    fallback_extent: f32,
+}
+
+impl ViewportExtentRenderSliver {
+    fn child_widget(&mut self, index: usize) -> Widget {
+        if let Some(widget) = self.widgets.get(&index) {
+            return widget.clone();
+        }
+        let widget = self
+            .children
+            .as_ref()
+            .and_then(|children| children.get(index).cloned())
+            .or_else(|| self.builder.as_ref().map(|builder| builder(index)))
+            .unwrap_or_else(|| Widget::from(SizedBox::shrink()));
+        self.widgets.insert(index, widget.clone());
+        widget
+    }
 }
 
 impl RenderSliver for ViewportExtentRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        Some(self.item_count)
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
-        let extent = (constraints.viewport_main_axis_extent * self.viewport_fraction).max(0.);
-        let total = self.children.len() as f32 * extent;
+        let viewport_extent = if constraints.viewport_main_axis_extent.is_finite()
+            && constraints.viewport_main_axis_extent > 0.
+        {
+            constraints.viewport_main_axis_extent
+        } else {
+            self.fallback_extent
+        };
+        let extent = (viewport_extent * self.viewport_fraction).max(0.);
+        let total = self.item_count as f32 * extent;
         let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
         let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
         let start = if extent > 0. {
@@ -1631,23 +1659,25 @@ impl RenderSliver for ViewportExtentRenderSliver {
         } else {
             0
         };
-        let range = start.min(self.children.len())
-            ..end
-                .min(self.children.len())
-                .max(start.min(self.children.len()));
+        let range =
+            start.min(self.item_count)..end.min(self.item_count).max(start.min(self.item_count));
+        self.widgets.retain(|index, _| range.contains(index));
         let children = range
-            .map(|index| SliverChildLayout {
-                id: SliverChildId::list_item(index),
-                widget: self.children[index].clone(),
-                offset: index as f32 * extent,
-                cross_offset: 0.,
-                constraints: sliver_child_constraints(
-                    constraints.axis,
-                    constraints.cross_axis_extent,
-                    Some(extent),
-                ),
-                extent,
-                pinned: false,
+            .map(|index| {
+                let widget = self.child_widget(index);
+                SliverChildLayout {
+                    id: SliverChildId::list_item(index),
+                    widget,
+                    offset: index as f32 * extent,
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        Some(extent),
+                    ),
+                    extent,
+                    pinned: false,
+                }
             })
             .collect();
         SliverLayout {
@@ -1689,6 +1719,10 @@ struct PaddingRenderSliver {
 }
 
 impl RenderSliver for PaddingRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        self.inner.borrow().child_count()
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let before = main_before(constraints.axis, self.padding);
         let after = main_after(constraints.axis, self.padding);
@@ -2056,6 +2090,15 @@ impl SequenceRenderSliver {
 }
 
 impl RenderSliver for SequenceRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        self.children.iter().try_fold(0usize, |count, child| {
+            child
+                .borrow()
+                .child_count()
+                .map(|child_count| count + child_count)
+        })
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         self.layout_sequence(constraints)
     }
@@ -2120,6 +2163,10 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
         self.sequence.borrow().children.len()
     }
 
+    fn child_count(&self) -> Option<usize> {
+        self.sequence.borrow().child_count()
+    }
+
     fn tick(&self, now: Instant) -> bool {
         self.sequence.borrow_mut().tick(now)
     }
@@ -2127,6 +2174,30 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
     fn is_animating(&self) -> bool {
         self.sequence.borrow().is_animating()
     }
+}
+
+/// Builds a viewport for one sliver. Box scrollables such as `ListView` and
+/// `PageView` use this same retained sliver protocol as `CustomScrollView`
+/// instead of maintaining a second lazy-list implementation.
+fn single_sliver_viewport(
+    controller: ScrollController,
+    axis: Axis,
+    reverse: bool,
+    physics: ScrollPhysics,
+    cache_extent: f32,
+    clip_behavior: Clip,
+    sliver: Box<dyn RenderSliver>,
+) -> Widget {
+    Widget::sliver_viewport_with_delegate_options(
+        controller,
+        axis,
+        reverse,
+        physics,
+        cache_extent,
+        false,
+        clip_behavior,
+        Rc::new(SequenceViewportDelegate::new(vec![sliver])),
+    )
 }
 
 fn sliver_child_constraints(axis: Axis, cross: f32, extent: Option<f32>) -> Constraints {
@@ -2333,7 +2404,6 @@ fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
         // its parent; guessing it from the child would make a prototype list
         // report a different extent from the actual viewport.
         WidgetKind::Scroll { .. }
-        | WidgetKind::VirtualList { .. }
         | WidgetKind::SliverViewport { .. }
         | WidgetKind::LayoutBuilder { .. }
         | WidgetKind::AspectRatio { .. }
@@ -2519,12 +2589,14 @@ impl SliverList {
 
 impl Sliver for SliverList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let builder = self.builder.clone();
-        VirtualList::fixed_extent_with_controller(
-            self.item_count,
-            self.item_extent,
+        single_sliver_viewport(
             controller.clone(),
-            move |index| builder(index),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -2572,20 +2644,14 @@ impl SliverGrid {
 
 impl Sliver for SliverGrid {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let columns = self.cross_axis_count;
-        let rows = self.item_count.div_ceil(columns);
-        let item_count = self.item_count;
-        let builder = self.builder.clone();
-        VirtualList::fixed_extent_with_controller(
-            rows,
-            self.row_extent,
+        single_sliver_viewport(
             controller.clone(),
-            move |row| {
-                let start = row * columns;
-                Widget::from(Row::new(
-                    (start..(start + columns).min(item_count)).map(|index| builder(index)),
-                ))
-            },
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -3473,12 +3539,14 @@ impl SliverFixedExtentList {
 
 impl Sliver for SliverFixedExtentList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let builder = self.builder.clone();
-        VirtualList::fixed_extent_with_controller(
-            self.item_count,
-            self.item_extent,
+        single_sliver_viewport(
             controller.clone(),
-            move |i| builder(i),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -3528,12 +3596,14 @@ impl SliverVariedExtentList {
 
 impl Sliver for SliverVariedExtentList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let ib = self.item_builder.clone();
-        VirtualList::variable_extent_with_controller(
-            self.item_count,
-            48.0,
+        single_sliver_viewport(
             controller.clone(),
-            move |i| ib(i),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -3585,15 +3655,14 @@ impl SliverPrototypeExtentList {
 
 impl Sliver for SliverPrototypeExtentList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let builder = self.builder.clone();
-        let prototype_extent = widget_main_extent_hint(&self.prototype_item, Axis::Vertical)
-            .unwrap_or(48.)
-            .max(1.);
-        VirtualList::fixed_extent_with_controller(
-            self.item_count,
-            prototype_extent,
+        single_sliver_viewport(
             controller.clone(),
-            move |i| builder(i),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -3669,18 +3738,25 @@ impl Sliver for SliverFillRemaining {
 
 /// Sliver with children each filling the entire viewport.
 #[derive(TypedBuilder)]
+#[builder(builder_method(name = typed_builder))]
 pub struct SliverFillViewport {
     #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
         children.into_iter().map(Into::into).collect::<Vec<Widget>>()
     }))]
     children: Vec<Widget>,
+    #[builder(default, setter(skip))]
+    builder: Option<Rc<dyn Fn(usize) -> Widget>>,
+    #[builder(default, setter(skip))]
+    item_count: Option<usize>,
     #[builder(default = 1.0, setter(transform = |fraction: f32| fraction.max(0.01)))]
     viewport_fraction: f32,
+    #[builder(default = 600.0, setter(transform = |extent: f32| extent.max(1.0)))]
+    fallback_extent: f32,
 }
 
 impl Default for SliverFillViewport {
     fn default() -> Self {
-        Self::builder().build()
+        Self::typed_builder().build()
     }
 }
 
@@ -3689,13 +3765,40 @@ impl SliverFillViewport {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
+            builder: None,
+            item_count: None,
             viewport_fraction: 1.0,
+            fallback_extent: 600.0,
+        }
+    }
+
+    /// Creates a lazy viewport-filling sliver from an indexed child builder.
+    #[must_use]
+    pub fn builder<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            children: Vec::new(),
+            builder: Some(Rc::new(move |index| builder(index).into())),
+            item_count: Some(item_count),
+            viewport_fraction: 1.0,
+            fallback_extent: 600.0,
         }
     }
 
     #[must_use]
     pub fn viewport_fraction(mut self, fraction: f32) -> Self {
         self.viewport_fraction = fraction.max(0.01);
+        self
+    }
+
+    /// Sets the extent used when the sliver receives unbounded viewport
+    /// constraints. Bounded viewports always derive the page extent from the
+    /// viewport itself, matching Flutter's `SliverFillViewport`.
+    #[must_use]
+    pub fn fallback_extent(mut self, extent: f32) -> Self {
+        self.fallback_extent = extent.max(1.0);
         self
     }
 
@@ -3706,8 +3809,17 @@ impl SliverFillViewport {
 }
 
 impl Sliver for SliverFillViewport {
-    fn build(&self, _controller: &ScrollController) -> Widget {
-        Column::new(self.children.clone()).into()
+    fn build(&self, controller: &ScrollController) -> Widget {
+        let render = self.create_render_sliver(controller, Axis::Vertical, false);
+        single_sliver_viewport(
+            controller.clone(),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            render,
+        )
     }
 
     fn create_render_sliver(
@@ -3716,10 +3828,14 @@ impl Sliver for SliverFillViewport {
         _axis: Axis,
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
-        let children = Rc::new(self.children.clone());
+        let item_count = self.item_count.unwrap_or(self.children.len());
         Box::new(ViewportExtentRenderSliver {
-            children,
+            item_count,
+            children: (!self.children.is_empty()).then(|| Rc::new(self.children.clone())),
+            builder: self.builder.clone(),
+            widgets: HashMap::new(),
             viewport_fraction: self.viewport_fraction,
+            fallback_extent: self.fallback_extent,
         })
     }
 }
@@ -4910,12 +5026,14 @@ impl SliverReorderableList {
 
 impl Sliver for SliverReorderableList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let b = self.builder.clone();
-        VirtualList::variable_extent_with_controller(
-            self.controller.item_count(),
-            48.0,
+        single_sliver_viewport(
             controller.clone(),
-            move |i| b(i),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 
@@ -5392,12 +5510,14 @@ impl SliverAnimatedList {
 
 impl Sliver for SliverAnimatedList {
     fn build(&self, controller: &ScrollController) -> Widget {
-        let b = self.builder.clone();
-        VirtualList::fixed_extent_with_controller(
-            self.controller.item_count(),
-            48.0,
+        single_sliver_viewport(
             controller.clone(),
-            move |i| b(i),
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            DEFAULT_SLIVER_CACHE_EXTENT,
+            Clip::HardEdge,
+            self.create_render_sliver(controller, Axis::Vertical, false),
         )
     }
 

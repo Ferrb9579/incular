@@ -13,8 +13,7 @@
 use incular::material::RawMaterialButton;
 use incular::prelude::*;
 use incular::widgets::internal::{
-    Effects, Key, MeasuredExtentIndex, PathView, ScrollView, TranslationController, VirtualList,
-    performance_overlay_placeholder,
+    Effects, Key, PathView, ScrollView, TranslationController, performance_overlay_placeholder,
 };
 use std::time::{Duration, Instant};
 
@@ -487,18 +486,23 @@ fn document_edit(edits: &Signal<u64>) -> Widget {
 }
 
 fn hundred_thousand_widgets() -> Widget {
-    // 100k retained widgets across a virtual list of fixed rows: materialized
-    // work stays bounded while the logical tree is huge.
+    // 100k logical rows backed by a native fixed-extent sliver: materialized
+    // work stays bounded while the logical child count is huge.
     let controller = ScrollController::new();
     labeled(
-        "100k logical widgets (virtualized)",
-        VirtualList::fixed_extent_with_controller(100_000, 36., controller.clone(), move |index| {
-            stress_row(
-                format!("Retained widget {index}"),
-                36.,
-                Color::rgba(40 + (index % 5) as u8 * 20, 70, 140, 255),
-            )
-        }),
+        "100k logical widgets (lazy sliver)",
+        CustomScrollView::new(vec![Box::new(SliverFixedExtentList::new(
+            100_000,
+            36.,
+            move |index| {
+                stress_row(
+                    format!("Retained widget {index}"),
+                    36.,
+                    Color::rgba(40 + (index % 5) as u8 * 20, 70, 140, 255),
+                )
+            },
+        )) as Box<dyn Sliver>])
+        .controller(controller),
     )
 }
 
@@ -506,38 +510,41 @@ fn million_fixed_list() -> Widget {
     let controller = ScrollController::new();
     labeled(
         "1,000,000 fixed rows",
-        VirtualList::fixed_extent_with_controller(1_000_000, 40., controller.clone(), |index| {
-            GestureDetector::new(stress_row(
-                format!("Item {index}"),
-                40.,
-                if index % 2 == 0 {
-                    Color::rgba(42, 67, 112, 255)
-                } else {
-                    Color::rgba(35, 56, 94, 255)
-                },
-            ))
-            .on_tap(move || {
-                if index % 100_000 == 0 {
-                    eprintln!("clicked Item {index}");
-                }
-            })
-        }),
+        CustomScrollView::new(vec![
+            Box::new(SliverFixedExtentList::new(1_000_000, 40., |index| {
+                GestureDetector::new(stress_row(
+                    format!("Item {index}"),
+                    40.,
+                    if index % 2 == 0 {
+                        Color::rgba(42, 67, 112, 255)
+                    } else {
+                        Color::rgba(35, 56, 94, 255)
+                    },
+                ))
+                .on_tap(move || {
+                    if index % 100_000 == 0 {
+                        eprintln!("clicked Item {index}");
+                    }
+                })
+            })) as Box<dyn Sliver>,
+        ])
+        .controller(controller),
     )
 }
 
 fn million_variable_list() -> Widget {
     let controller = ScrollController::new();
-    let extents = MeasuredExtentIndex::new(1_000_000, 40.);
     labeled(
         "1,000,000 variable rows (jump near 900k by dragging)",
-        VirtualList::variable_extent_with_index(extents.clone(), controller.clone(), |item| {
+        CustomScrollView::new(vec![Box::new(SliverList::builder(1_000_000, 40., |item| {
             let height = if item % 3 == 0 { 56. } else { 28. };
             stress_row(
                 format!("Variable item {item}  ·  {height:.0}px"),
                 height,
                 Color::rgba(60, 90 + (item % 4) as u8 * 30, 120, 255),
             )
-        }),
+        })) as Box<dyn Sliver>])
+        .controller(controller),
     )
 }
 
@@ -713,14 +720,15 @@ fn effects_stack() -> Widget {
 fn nested_scroll() -> Widget {
     let outer = ScrollController::new();
     let inner = ScrollController::new();
-    let extents = MeasuredExtentIndex::new(2_000, 36.);
-    let inner_list =
-        VirtualList::variable_extent_with_index(extents.clone(), inner.clone(), |item| {
+    let inner_list: Widget =
+        CustomScrollView::new(vec![Box::new(SliverList::builder(2_000, 36., |item| {
             Widget::fixed_box(
                 Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                 Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
             )
-        });
+        })) as Box<dyn Sliver>])
+        .controller(inner.clone())
+        .into();
     labeled(
         "Nested scrolling with boundary transfer",
         ScrollView::vertical(
@@ -766,12 +774,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gallery_virtual_list_receives_a_bounded_nonempty_viewport() {
+    fn gallery_sliver_list_receives_a_bounded_nonempty_viewport() {
         let mut tree = incular_widgets::WidgetTree::new();
         tree.mount(hundred_thousand_widgets()).unwrap();
         tree.layout(Constraints::tight(Size::new(760., 640.)));
 
-        let diagnostics = tree.virtual_list_diagnostics().unwrap();
+        let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
         assert_eq!(diagnostics.logical_item_count, 100_000);
         assert!(diagnostics.viewport_extent > 0.);
         assert!(diagnostics.viewport_extent <= 520.);
@@ -780,7 +788,7 @@ mod tests {
 
         tree.mount(million_variable_list()).unwrap();
         tree.layout(Constraints::tight(Size::new(760., 640.)));
-        let variable = tree.virtual_list_diagnostics().unwrap();
+        let variable = tree.sliver_viewport_diagnostics().unwrap();
         assert_eq!(variable.logical_item_count, 1_000_000);
         assert!(variable.viewport_extent > 0.);
         assert!(variable.materialized_item_count > 0);

@@ -4956,8 +4956,11 @@ mod tests {
     use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
-    use incular_widgets::internal::{GestureCallbacks, TextEditingController, VirtualList};
-    use incular_widgets::{DecoratedBox, GestureDetector, Text, internal::ActionSurface};
+    use incular_widgets::internal::{GestureCallbacks, TextEditingController};
+    use incular_widgets::{
+        CustomScrollView, DecoratedBox, GestureDetector, SliverFixedExtentList, Text,
+        internal::ActionSurface,
+    };
     use std::time::{Duration, Instant};
     use std::{
         cell::Cell,
@@ -4966,6 +4969,24 @@ mod tests {
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
     };
+
+    fn fixed_sliver_list<W>(
+        item_count: usize,
+        item_extent: f32,
+        controller: incular_widgets::ScrollController,
+        builder: impl Fn(usize) -> W + 'static,
+    ) -> Widget
+    where
+        W: Into<Widget> + 'static,
+    {
+        CustomScrollView::new(vec![Box::new(SliverFixedExtentList::new(
+            item_count,
+            item_extent,
+            builder,
+        )) as Box<dyn incular_widgets::Sliver>])
+        .controller(controller)
+        .into()
+    }
 
     #[derive(Default)]
     struct TestWake(AtomicU64);
@@ -5212,9 +5233,9 @@ mod tests {
     }
 
     #[test]
-    fn virtual_list_semantics_are_bounded_and_follow_materialization() {
+    fn sliver_list_semantics_are_bounded_and_follow_materialization() {
         let controller = incular_widgets::ScrollController::new();
-        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+        let mut runtime = Runtime::new(fixed_sliver_list(
             1_000_000,
             40.,
             controller.clone(),
@@ -5226,16 +5247,14 @@ mod tests {
             .unwrap();
         let initial = runtime.tree().semantics().len();
         assert!(initial < 100, "{initial}");
-        let list = semantic_node(&runtime, SemanticRole::List);
+        let _viewport = semantic_node(&runtime, SemanticRole::ScrollView);
         assert_eq!(
             runtime
                 .tree()
-                .semantics()
-                .node(list)
+                .sliver_viewport_diagnostics()
                 .unwrap()
-                .state
-                .set_size,
-            Some(1_000_000)
+                .logical_item_count,
+            1_000_000
         );
         controller.jump_to(900_000. * 40.);
         runtime
@@ -6390,11 +6409,11 @@ mod tests {
     }
 
     #[test]
-    fn virtual_list_keeps_small_scrolls_compositor_only_and_direct_jumps_bounded() {
+    fn sliver_list_keeps_small_scrolls_compositor_only_and_direct_jumps_bounded() {
         let controller = incular_widgets::ScrollController::new();
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
-        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+        let mut runtime = Runtime::new(fixed_sliver_list(
             1_000_000,
             40.,
             controller.clone(),
@@ -6437,7 +6456,7 @@ mod tests {
 
         assert!(controller.jump_to(900_000. * 40.));
         let (_, jumped) = runtime.run_frame(constraints).unwrap();
-        let diagnostics = runtime.tree().virtual_list_diagnostics().unwrap();
+        let diagnostics = runtime.tree().sliver_viewport_diagnostics().unwrap();
         assert!(diagnostics.materialized_range.contains(&900_000));
         assert!(diagnostics.materialized_item_count < 100);
         assert!(calls.get() < 200);
@@ -6446,11 +6465,11 @@ mod tests {
     }
 
     #[test]
-    fn virtual_button_rows_hit_their_logical_index_and_drop_stale_handlers() {
+    fn sliver_button_rows_hit_their_logical_index_and_drop_stale_handlers() {
         let controller = incular_widgets::ScrollController::new();
         let hit = Rc::new(Cell::new(None));
         let observed = hit.clone();
-        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+        let mut runtime = Runtime::new(fixed_sliver_list(
             2_000,
             40.,
             controller.clone(),
@@ -6482,9 +6501,9 @@ mod tests {
     }
 
     #[test]
-    fn long_virtual_scroll_keeps_retained_resources_bounded() {
+    fn long_sliver_scroll_keeps_retained_resources_bounded() {
         let controller = incular_widgets::ScrollController::new();
-        let mut runtime = Runtime::new(VirtualList::fixed_extent_with_controller(
+        let mut runtime = Runtime::new(fixed_sliver_list(
             50_000,
             40.,
             controller.clone(),
@@ -6496,7 +6515,7 @@ mod tests {
         for index in (97..10_000).step_by(97) {
             assert!(controller.jump_to(index as f32 * 40.));
             runtime.run_frame(constraints).unwrap();
-            let view = runtime.tree().virtual_list_diagnostics().unwrap();
+            let view = runtime.tree().sliver_viewport_diagnostics().unwrap();
             assert!(view.materialized_item_count < 30);
             assert!(view.element_count < 100);
             assert!(view.render_object_count < 100);

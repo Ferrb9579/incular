@@ -58,7 +58,6 @@ fn incular_only_extensions_are_not_root_widgets_exports() {
         "Blur",
         "DropShadow",
         "Effects",
-        "VirtualList",
         "WidgetTree",
         "WidgetKind",
         "RenderObject",
