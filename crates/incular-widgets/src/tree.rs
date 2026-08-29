@@ -33,7 +33,8 @@ use incular_rendering::{
     Stroke, normalize_opacity, normalize_sigma,
 };
 use incular_scroll::{
-    MeasuredExtentIndex, ScrollController, ScrollPhysics, ScrollbarGeometry, scrollbar_geometry,
+    MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollNotificationSubscription,
+    ScrollPhysics, ScrollbarGeometry, SliverConstraints, scrollbar_geometry,
 };
 use incular_semantics::{
     Role as SemanticRole, SemanticActionKind, SemanticNode, SemanticNodeId, SemanticState,
@@ -53,6 +54,9 @@ use crate::gestures::{
     GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
     GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
     ScaleGestureDetector,
+};
+use crate::scrolling::{
+    SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };
 use crate::selection::SelectionAreaController;
 
@@ -1152,8 +1156,15 @@ pub enum WidgetKind {
         pinned: bool,
         child: Box<Widget>,
     },
+    NotificationListener {
+        callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
+        child: Box<Widget>,
+    },
     VirtualList {
         config: Rc<VirtualListConfig>,
+    },
+    SliverViewport {
+        config: Rc<SliverViewportConfig>,
     },
     Translate {
         controller: TranslationController,
@@ -1409,6 +1420,21 @@ fn scroll_size(axis: Axis, constraints: Constraints, content: Size) -> Size {
     } else {
         axis.cross_extent(content)
     };
+    constraints.constrain(axis.size(main, cross))
+}
+
+#[inline]
+fn sliver_viewport_size(axis: Axis, constraints: Constraints, shrink_wrap: bool) -> Size {
+    let biggest = constraints.biggest();
+    let main = if shrink_wrap
+        && ((axis.is_vertical() && !constraints.is_height_bounded())
+            || (axis.is_horizontal() && !constraints.is_width_bounded()))
+    {
+        0.
+    } else {
+        axis.main_extent(biggest)
+    };
+    let cross = axis.cross_extent(biggest);
     constraints.constrain(axis.size(main, cross))
 }
 
@@ -1878,11 +1904,19 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Scroll { .. } => f.debug_struct("ScrollView").finish(),
             Self::PersistentHeader { .. } => f.debug_struct("PersistentHeader").finish(),
+            Self::NotificationListener { child, .. } => f
+                .debug_struct("NotificationListener")
+                .field("child", child)
+                .finish(),
             Self::VirtualList { config } => f
                 .debug_struct("VirtualList")
                 .field("item_count", &config.extent.item_count(config.item_count))
                 .field("extent", &config.extent)
                 .field("cache_extent", &config.cache_extent)
+                .finish(),
+            Self::SliverViewport { config } => f
+                .debug_struct("SliverViewport")
+                .field("config", config)
                 .finish(),
             Self::Translate { .. } => f.debug_struct("Translate").finish(),
             Self::Transform {
@@ -2425,6 +2459,7 @@ impl PartialEq for WidgetKind {
                     && a.physics == b.physics
                     && Rc::ptr_eq(&a.builder, &b.builder)
             }
+            (Self::SliverViewport { config: a }, Self::SliverViewport { config: b }) => a == b,
             (
                 Self::Translate {
                     controller: a,
@@ -2745,6 +2780,23 @@ impl PartialEq for WidgetKind {
                 Self::AspectRatio { ratio: a, child: b },
                 Self::AspectRatio { ratio: c, child: d },
             ) => a == c && b == d,
+            (
+                Self::NotificationListener {
+                    callback: a,
+                    child: b,
+                },
+                Self::NotificationListener {
+                    callback: c,
+                    child: d,
+                },
+            ) => {
+                let callback_equal = match (a, c) {
+                    (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+                    (None, None) => true,
+                    _ => false,
+                };
+                callback_equal && b.as_ref() == d.as_ref()
+            }
             _ => false,
         }
     }
@@ -2829,7 +2881,9 @@ enum WidgetType {
     AspectRatio,
     Scroll,
     PersistentHeader,
+    NotificationListener,
     VirtualList,
+    SliverViewport,
     Translate,
     Transform,
     Scale,
@@ -3044,6 +3098,7 @@ impl Widget {
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
+            | WidgetKind::NotificationListener { child, .. }
             | WidgetKind::Translate { child, .. }
             | WidgetKind::Transform { child, .. }
             | WidgetKind::Scale { child, .. }
@@ -3055,7 +3110,9 @@ impl Widget {
             | WidgetKind::ColorFiltered { child, .. }
             | WidgetKind::Blend { child, .. } => child.bind_callbacks(allocate),
             WidgetKind::SelectionArea { child, .. } => child.bind_callbacks(allocate),
-            WidgetKind::VirtualList { .. } | WidgetKind::LayoutBuilder { .. } => {}
+            WidgetKind::VirtualList { .. }
+            | WidgetKind::SliverViewport { .. }
+            | WidgetKind::LayoutBuilder { .. } => {}
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
@@ -3738,12 +3795,62 @@ impl Widget {
             semantics: SemanticProperties::default(),
         }
     }
+
+    /// Creates a retained notification-listener wrapper. The wrapper has no
+    /// visual effect; the tree installs the callback on descendant scroll
+    /// positions after those positions are mounted.
+    pub(crate) fn notification_listener(
+        callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
+        child: Self,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::NotificationListener {
+                callback,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
     #[must_use]
     fn virtual_list(config: VirtualListConfig) -> Self {
         Self {
             key: None,
             kind: WidgetKind::VirtualList {
                 config: Rc::new(config),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained sliver viewport. Sliver children are materialized by
+    /// the viewport delegate during layout, so they are not represented as a
+    /// declarative `Column` child list.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn sliver_viewport_with_delegate_options(
+        controller: ScrollController,
+        axis: Axis,
+        reverse: bool,
+        physics: ScrollPhysics,
+        cache_extent: f32,
+        shrink_wrap: bool,
+        clip_behavior: Clip,
+        delegate: Rc<dyn SliverViewportDelegate>,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SliverViewport {
+                config: Rc::new(SliverViewportConfig {
+                    controller,
+                    axis,
+                    reverse,
+                    physics,
+                    cache_extent: cache_extent.max(0.),
+                    shrink_wrap,
+                    clip_behavior,
+                    delegate,
+                }),
             },
             semantics: SemanticProperties::default(),
         }
@@ -4065,7 +4172,9 @@ impl Widget {
             WidgetKind::AspectRatio { .. } => WidgetType::AspectRatio,
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
             WidgetKind::PersistentHeader { .. } => WidgetType::PersistentHeader,
+            WidgetKind::NotificationListener { .. } => WidgetType::NotificationListener,
             WidgetKind::VirtualList { .. } => WidgetType::VirtualList,
+            WidgetKind::SliverViewport { .. } => WidgetType::SliverViewport,
             WidgetKind::Translate { .. } => WidgetType::Translate,
             WidgetKind::Transform { .. } => WidgetType::Transform,
             WidgetKind::Scale { .. } => WidgetType::Scale,
@@ -4116,6 +4225,7 @@ impl Widget {
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
+            | WidgetKind::NotificationListener { child, .. }
             | WidgetKind::Translate { child, .. }
             | WidgetKind::Transform { child, .. }
             | WidgetKind::Scale { child, .. }
@@ -4133,7 +4243,9 @@ impl Widget {
             | WidgetKind::Table { children, .. }
             | WidgetKind::Stack { children, .. }
             | WidgetKind::IndexedStack { children, .. } => children.iter().collect(),
-            WidgetKind::VirtualList { .. } | WidgetKind::LayoutBuilder { .. } => Vec::new(),
+            WidgetKind::VirtualList { .. }
+            | WidgetKind::SliverViewport { .. }
+            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
         }
     }
 }
@@ -5746,6 +5858,18 @@ pub struct Element {
     /// Parallel to `children` only for a virtual-list element. Item indices
     /// are identity, never reusable visible-slot numbers.
     virtual_indices: Vec<usize>,
+    /// Parallel to `children` for a sliver viewport. IDs are viewport-scoped
+    /// and remain stable while the cache window moves.
+    sliver_child_ids: Vec<SliverChildId>,
+    /// Pinned children are painted above normal flow children while logical
+    /// accessibility order remains unchanged.
+    sliver_pinned_ids: HashSet<SliverChildId>,
+    /// RAII subscriptions for a NotificationListener. They are rebuilt after
+    /// layout so lazily materialized sliver viewports are included without
+    /// keeping dead controller listeners alive.
+    notification_subscriptions: Vec<ScrollNotificationSubscription>,
+    sliver_delegate_revision: u64,
+    sliver_scroll_revision: u64,
     /// Structural mutations of a variable-extent index require remapping the
     /// visible index-to-widget descriptions even when its numeric range did
     /// not change. Pure post-layout measurements do not disturb identity.
@@ -6026,6 +6150,9 @@ pub enum RenderKind {
     },
     VirtualList {
         config: Rc<VirtualListConfig>,
+    },
+    SliverViewport {
+        config: Rc<SliverViewportConfig>,
     },
     Translate {
         controller: TranslationController,
@@ -6394,6 +6521,7 @@ impl WidgetTree {
         }
         let root = self.mount_element(None, widget)?;
         self.root = Some(root);
+        self.refresh_notification_listeners();
         Ok(root)
     }
     #[must_use]
@@ -7395,6 +7523,55 @@ impl WidgetTree {
                             .insert(DirtyFlags::PAINT);
                     }
                 }
+                RenderKind::SliverViewport { config } => {
+                    if config.delegate.tick(now) {
+                        changed = true;
+                        self.diagnostics.animation_ticks += 1;
+                        self.mark_render_dirty(
+                            _render,
+                            DirtyFlags::LAYOUT | DirtyFlags::PAINT,
+                            true,
+                        );
+                    }
+                    active |= config.delegate.is_animating();
+                    if let Some(content) = content_layer
+                        && self.compositor.update_transform(
+                            content,
+                            CoreTransform::translation(scroll_translation(
+                                &config.controller,
+                                config.axis,
+                                config.reverse,
+                            )),
+                        )
+                    {
+                        changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
+                        self.diagnostics.scroll_offset_updates += 1;
+                        self.renders
+                            .get_mut(_render.0)
+                            .expect("live")
+                            .dirty
+                            .insert(DirtyFlags::PAINT);
+                        // Pinned placement is part of sliver layout rather
+                        // than the generic box transform. Queue one retained
+                        // layout refresh so its push-away geometry follows
+                        // the new scroll offset.
+                        self.mark_render_dirty(_render, DirtyFlags::LAYOUT, true);
+                        if let Some(constraints) = self
+                            .renders
+                            .get(_render.0)
+                            .and_then(|render| render.constraints)
+                        {
+                            // Standalone WidgetTree users do not have a
+                            // runtime layout phase between a controller jump
+                            // and this compositor call. Run the already-known
+                            // viewport layout now so pinned placement is
+                            // observable immediately; the runtime reuses the
+                            // cached result on its next layout.
+                            self.layout_render(_render, constraints);
+                        }
+                    }
+                }
                 RenderKind::PersistentHeader {
                     controller,
                     axis,
@@ -7653,6 +7830,12 @@ impl WidgetTree {
                     config.reverse,
                     config.physics,
                 )),
+                RenderKind::SliverViewport { config } => viewports.push((
+                    config.controller.clone(),
+                    config.axis,
+                    config.reverse,
+                    config.physics,
+                )),
                 _ => {}
             }
             let Some(parent) = self.parent(element) else {
@@ -7674,7 +7857,12 @@ impl WidgetTree {
             } else {
                 physical_remaining
             };
+            controller.notify_user_scroll(logical);
             let result = controller.apply_physics(physics, logical);
+            // Pointer-wheel samples are complete user activities in this
+            // high-level adapter. Drag recognizers can keep an activity open
+            // by calling the controller's begin/end methods directly.
+            controller.end_activity();
             let physical_consumed = if reverse {
                 -result.consumed
             } else {
@@ -7710,6 +7898,9 @@ impl WidgetTree {
                 physics,
             } => (controller.clone(), *reverse, *physics),
             RenderKind::VirtualList { config } => {
+                (config.controller.clone(), config.reverse, config.physics)
+            }
+            RenderKind::SliverViewport { config } => {
                 (config.controller.clone(), config.reverse, config.physics)
             }
             _ => return false,
@@ -7850,7 +8041,11 @@ impl WidgetTree {
         if !self.elements.contains(id.0) {
             return Err(TreeError::MissingElement(id));
         }
-        self.update_existing(id, &widget)
+        let result = self.update_existing(id, &widget);
+        if result.is_ok() {
+            self.refresh_notification_listeners();
+        }
+        result
     }
     pub fn mark_paint(&mut self, id: ElementId) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
@@ -7860,10 +8055,12 @@ impl WidgetTree {
     pub fn layout(&mut self, constraints: Constraints) {
         self.refresh_text_fields();
         self.refresh_virtual_ranges();
+        self.refresh_sliver_ranges();
         self.refresh_stateful_layout_builders();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints);
         }
+        self.refresh_notification_listeners();
     }
 
     /// Marks local-state layout builders dirty before the normal retained
@@ -8084,6 +8281,20 @@ impl WidgetTree {
                         SemanticActionKind::ScrollBackward,
                     ],
                 ),
+                WidgetKind::SliverViewport { config } => (
+                    Some(SemanticRole::ScrollView),
+                    None,
+                    Some(format!(
+                        "{:.0}/{:.0}",
+                        config.controller.offset(),
+                        config.controller.max_offset()
+                    )),
+                    SemanticState::default(),
+                    vec![
+                        SemanticActionKind::ScrollForward,
+                        SemanticActionKind::ScrollBackward,
+                    ],
+                ),
                 WidgetKind::VirtualList { config } => (
                     Some(SemanticRole::List),
                     None,
@@ -8124,6 +8335,16 @@ impl WidgetTree {
                     if let Some(slot) = parent.children.iter().position(|child| *child == element) {
                         state.item_index = parent.virtual_indices.get(slot).copied();
                         state.set_size = Some(config.extent.item_count(config.item_count));
+                    }
+                } else if let WidgetKind::SliverViewport { config } = &parent.widget.kind {
+                    if let Some(slot) = parent.children.iter().position(|child| *child == element) {
+                        state.item_index = parent
+                            .sliver_child_ids
+                            .get(slot)
+                            .map(|id| (id.0 & u64::from(u32::MAX)) as usize)
+                            .filter(|index| *index > 0)
+                            .map(|index| index - 1);
+                        state.set_size = Some(config.delegate.sliver_count());
                     }
                 }
             }
@@ -8881,6 +9102,7 @@ impl WidgetTree {
                 | WidgetKind::Image { .. }
                 | WidgetKind::Scroll { .. }
                 | WidgetKind::VirtualList { .. }
+                | WidgetKind::SliverViewport { .. }
         )
         .then(|| {
             self.compositor.create_picture(
@@ -8908,7 +9130,9 @@ impl WidgetTree {
             color_filter_layer,
             blend_layer,
         ) = match &widget.kind {
-            WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. } => {
+            WidgetKind::Scroll { .. }
+            | WidgetKind::VirtualList { .. }
+            | WidgetKind::SliverViewport { .. } => {
                 let clip = self
                     .compositor
                     .create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
@@ -9034,6 +9258,11 @@ impl WidgetTree {
             render: RenderObjectId(render),
             dirty: DirtyFlags::NONE,
             virtual_indices: Vec::new(),
+            sliver_child_ids: Vec::new(),
+            sliver_pinned_ids: HashSet::new(),
+            notification_subscriptions: Vec::new(),
+            sliver_delegate_revision: 0,
+            sliver_scroll_revision: 0,
             virtual_structure_revision: 0,
             layout_builder_constraints: None,
             layout_builder_revision: 0,
@@ -9273,7 +9502,10 @@ impl WidgetTree {
         // map, not by `Widget::children()`. Recreating a VirtualList
         // description must preserve every still-valid mounted row; the next
         // layout pass will add/drop only indices required by the new config.
-        if matches!(widget.kind, WidgetKind::VirtualList { .. }) {
+        if matches!(
+            widget.kind,
+            WidgetKind::VirtualList { .. } | WidgetKind::SliverViewport { .. }
+        ) {
             #[cfg(feature = "devtools")]
             self.devtools_trace_end(trace);
             return Ok(());
@@ -9496,6 +9728,85 @@ impl WidgetTree {
         element.virtual_structure_revision = config.extent.structure_revision();
         self.sync_render_children(element_id);
     }
+
+    /// Reconciles the indexed child window produced by the retained sliver
+    /// protocol. Unlike a box list, each child carries a viewport-scoped
+    /// identity and an explicit sliver placement/constraint record.
+    fn materialize_sliver_children(
+        &mut self,
+        id: RenderObjectId,
+        config: &SliverViewportConfig,
+        layout: &SliverViewportLayout,
+    ) {
+        let element_id = self
+            .element_for_render(id)
+            .expect("sliver viewport element");
+        let (old_ids, old_children) = {
+            let element = self
+                .elements
+                .get(element_id.0)
+                .expect("sliver viewport element");
+            (element.sliver_child_ids.clone(), element.children.clone())
+        };
+        let existing = old_ids
+            .into_iter()
+            .zip(old_children.iter().copied())
+            .collect::<HashMap<_, _>>();
+        let mut next_ids = Vec::with_capacity(layout.children.len());
+        let mut next_children = Vec::with_capacity(layout.children.len());
+        let mut pinned = HashSet::new();
+        for child in &layout.children {
+            let child_id = child.id;
+            let retained = if let Some(existing) = existing.get(&child_id).copied() {
+                self.update_existing(existing, &child.widget)
+                    .expect("sliver child update must remain valid");
+                existing
+            } else {
+                let mut widget = child.widget.clone();
+                let handlers = &mut self.pending_handlers;
+                let next = &mut self.next_action;
+                widget.bind_callbacks(&mut |callback| {
+                    let action = ActionId(*next);
+                    *next += 1;
+                    handlers.push((action, callback));
+                    action
+                });
+                self.diagnostics.items_built += 1;
+                match self.mount_element(Some(element_id), widget) {
+                    Ok(child) => {
+                        self.diagnostics.items_mounted += 1;
+                        child
+                    }
+                    Err(error) => panic!("sliver child {child_id:?} could not mount: {error:?}"),
+                }
+            };
+            if child.pinned {
+                pinned.insert(child_id);
+            }
+            next_ids.push(child_id);
+            next_children.push(retained);
+        }
+        let retained = next_children.iter().copied().collect::<HashSet<_>>();
+        for child in old_children {
+            if !retained.contains(&child) {
+                self.unmount_element(child);
+                self.diagnostics.items_unmounted += 1;
+            } else {
+                self.diagnostics.items_reused += 1;
+            }
+        }
+        let element = self
+            .elements
+            .get_mut(element_id.0)
+            .expect("sliver viewport element");
+        element.children = next_children;
+        element.sliver_child_ids = next_ids;
+        element.sliver_pinned_ids = pinned;
+        element.sliver_delegate_revision = config.delegate.revision();
+        element.sliver_scroll_revision = config.controller.revision();
+        self.sync_render_children(element_id);
+    }
+
     fn materialize_layout_builder(&mut self, id: RenderObjectId, constraints: Constraints) {
         let element_id = self.element_for_render(id).expect("layout builder element");
         let (builder, revision, previous_constraints, previous_revision, previous_children) = {
@@ -9580,6 +9891,119 @@ impl WidgetTree {
             self.mark_render_dirty(render, DirtyFlags::LAYOUT, true);
         }
     }
+
+    fn refresh_sliver_ranges(&mut self) {
+        let pending = self
+            .renders
+            .iter()
+            .filter_map(|(raw, render)| {
+                let RenderKind::SliverViewport { config } = &render.kind else {
+                    return None;
+                };
+                let element = self.element_for_render(RenderObjectId(raw))?;
+                let element = self.elements.get(element.0)?;
+                (element.sliver_delegate_revision != config.delegate.revision()
+                    || element.sliver_scroll_revision != config.controller.revision())
+                .then_some(RenderObjectId(raw))
+            })
+            .collect::<Vec<_>>();
+        for render in pending {
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT, true);
+        }
+    }
+
+    /// Rebuilds the retained notification subscriptions after layout. A
+    /// sliver viewport owns its materialized children, so installing these
+    /// subscriptions after materialization lets an ancestor listener observe
+    /// both ordinary and newly visible nested viewports without rebuilding the
+    /// application widget description.
+    fn refresh_notification_listeners(&mut self) {
+        let mut listeners = self
+            .elements
+            .iter()
+            .filter_map(|(raw, element)| {
+                let WidgetKind::NotificationListener {
+                    callback: Some(callback),
+                    ..
+                } = &element.widget.kind
+                else {
+                    return None;
+                };
+                let id = ElementId(raw);
+                Some((id, callback.clone(), self.element_depth(id)))
+            })
+            .collect::<Vec<_>>();
+
+        // Drop old registrations first. This also removes listeners for
+        // children that left a lazy cache window.
+        for (_, element) in self.elements.iter_mut() {
+            element.notification_subscriptions.clear();
+        }
+
+        // Controller dispatch is stop-on-true. Register the deepest wrapper
+        // first so an inner listener gets first refusal, matching bubbling up
+        // through Flutter's notification tree.
+        listeners.sort_by_key(|(_, _, depth)| std::cmp::Reverse(*depth));
+        for (listener, callback, _) in listeners {
+            let mut sources = Vec::new();
+            self.collect_scroll_sources(listener, 0, &mut sources);
+            let subscriptions = sources
+                .into_iter()
+                .map(|(controller, depth)| {
+                    let callback = callback.clone();
+                    controller.add_listener(move |mut notification| {
+                        notification.depth = depth;
+                        callback(notification)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if let Some(element) = self.elements.get_mut(listener.0) {
+                element.notification_subscriptions = subscriptions;
+            }
+        }
+    }
+
+    fn element_depth(&self, mut id: ElementId) -> usize {
+        let mut depth = 0;
+        while let Some(parent) = self.elements.get(id.0).and_then(|element| element.parent) {
+            depth += 1;
+            id = parent;
+        }
+        depth
+    }
+
+    fn scroll_controller_for_element(&self, id: ElementId) -> Option<ScrollController> {
+        let render = self.elements.get(id.0)?.render;
+        match &self.renders.get(render.0)?.kind {
+            RenderKind::Scroll { controller, .. } => Some(controller.clone()),
+            RenderKind::VirtualList { config } => Some(config.controller.clone()),
+            RenderKind::SliverViewport { config } => Some(config.controller.clone()),
+            _ => None,
+        }
+    }
+
+    fn collect_scroll_sources(
+        &self,
+        id: ElementId,
+        viewport_depth: usize,
+        out: &mut Vec<(ScrollController, usize)>,
+    ) {
+        let Some(element) = self.elements.get(id.0) else {
+            return;
+        };
+        let next_depth = if let Some(controller) = self.scroll_controller_for_element(id) {
+            if !out.iter().any(|(existing, _)| *existing == controller) {
+                out.push((controller, viewport_depth));
+            }
+            viewport_depth + 1
+        } else {
+            viewport_depth
+        };
+        for child in &element.children {
+            self.collect_scroll_sources(*child, next_depth, out);
+        }
+    }
+
     fn refresh_text_fields(&mut self) {
         let pending = self
             .renders
@@ -9680,6 +10104,9 @@ impl WidgetTree {
                 config.axis,
                 config.reverse,
             )),
+            RenderKind::SliverViewport { config } => CoreTransform::translation(
+                scroll_translation(&config.controller, config.axis, config.reverse),
+            ),
             RenderKind::PersistentHeader {
                 controller,
                 axis,
@@ -9736,6 +10163,10 @@ impl WidgetTree {
                     origin =
                         origin + scroll_translation(&config.controller, config.axis, config.reverse)
                 }
+                RenderKind::SliverViewport { config } => {
+                    origin =
+                        origin + scroll_translation(&config.controller, config.axis, config.reverse)
+                }
                 RenderKind::PersistentHeader {
                     controller,
                     axis,
@@ -9774,6 +10205,10 @@ impl WidgetTree {
                         ..
                     } => origin = origin + scroll_translation(controller, *axis, *reverse),
                     RenderKind::VirtualList { config } => {
+                        origin = origin
+                            + scroll_translation(&config.controller, config.axis, config.reverse)
+                    }
+                    RenderKind::SliverViewport { config } => {
                         origin = origin
                             + scroll_translation(&config.controller, config.axis, config.reverse)
                     }
@@ -10012,6 +10447,25 @@ impl WidgetTree {
             .collect::<Vec<_>>();
         if let RenderKind::IndexedStack { index, .. } = kind {
             child_layers = child_layers.get(index).copied().into_iter().collect();
+        } else if matches!(kind, RenderKind::SliverViewport { .. }) {
+            let pinned = self
+                .element_for_render(render)
+                .and_then(|element| self.elements.get(element.0))
+                .map(|element| element.sliver_pinned_ids.clone())
+                .unwrap_or_default();
+            let mut order = (0..render_children.len()).collect::<Vec<_>>();
+            order.sort_by_key(|index| {
+                let child_id = self
+                    .element_for_render(render)
+                    .and_then(|element| self.elements.get(element.0))
+                    .and_then(|element| element.sliver_child_ids.get(*index))
+                    .copied();
+                usize::from(child_id.is_some_and(|id| pinned.contains(&id)))
+            });
+            child_layers = order
+                .into_iter()
+                .filter_map(|index| child_layers.get(index).copied())
+                .collect();
         }
         if let Some(opacity) = opacity_layer {
             self.compositor.set_children(opacity, child_layers);
@@ -10278,6 +10732,130 @@ impl WidgetTree {
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
+            }
+            RenderKind::SliverViewport { config } => {
+                config
+                    .controller
+                    .set_metrics_context(config.axis, config.reverse);
+                let mut size = sliver_viewport_size(config.axis, constraints, config.shrink_wrap);
+                let mut viewport_extent = scroll_viewport_extent(config.axis, size);
+                let cache_extent = config.cache_extent.max(0.);
+                let cross_extent = config.axis.cross_extent(size);
+                let make_constraints = |physical_offset: f32, viewport: f32| {
+                    // Match RenderViewport's forward layout contract for
+                    // overscroll: a negative physical position is represented
+                    // as leading overlap and a reduced paint extent, while
+                    // the sliver scroll offset itself stays non-negative.
+                    let overlap = physical_offset.min(0.);
+                    SliverConstraints::new(
+                        config.axis,
+                        config.reverse,
+                        physical_offset.max(0.),
+                        0.,
+                        overlap,
+                        (viewport + overlap).max(0.),
+                        cross_extent,
+                        viewport,
+                        viewport + cache_extent * 2.,
+                        -cache_extent,
+                    )
+                };
+                let mut sliver_layout = config.delegate.perform_layout(make_constraints(
+                    physical_scroll_offset(&config.controller, config.reverse),
+                    viewport_extent,
+                ));
+                config.controller.update_extents_with_physics(
+                    sliver_layout.geometry.scroll_extent,
+                    viewport_extent,
+                    config.physics,
+                );
+
+                // A shrink-wrapping viewport derives its own main-axis size
+                // from the sliver geometry. The first pass supplies a
+                // provisional zero/unbounded extent, then the real viewport
+                // extent is laid out again before children are materialized.
+                if config.shrink_wrap {
+                    let content_extent = sliver_layout.geometry.scroll_extent.max(0.);
+                    let main = if config.axis.is_vertical() {
+                        content_extent.clamp(constraints.min_height, constraints.max_height)
+                    } else {
+                        content_extent.clamp(constraints.min_width, constraints.max_width)
+                    };
+                    size = constraints.constrain(config.axis.size(main, cross_extent));
+                    viewport_extent = scroll_viewport_extent(config.axis, size);
+                    sliver_layout = config.delegate.perform_layout(make_constraints(
+                        physical_scroll_offset(&config.controller, config.reverse),
+                        viewport_extent,
+                    ));
+                    config.controller.update_extents_with_physics(
+                        sliver_layout.geometry.scroll_extent,
+                        viewport_extent,
+                        config.physics,
+                    );
+                }
+
+                // Extent updates can clamp a restored/programmatic offset or
+                // establish the physical origin of a reversed viewport. One
+                // corrective layout keeps geometry and the retained range in
+                // the same coordinate space from the first frame.
+                sliver_layout = config.delegate.perform_layout(make_constraints(
+                    physical_scroll_offset(&config.controller, config.reverse),
+                    viewport_extent,
+                ));
+                config.controller.update_extents_with_physics(
+                    sliver_layout.geometry.scroll_extent,
+                    viewport_extent,
+                    config.physics,
+                );
+
+                for _ in 0..3 {
+                    self.materialize_sliver_children(id, &config, &sliver_layout);
+                    let materialized = self
+                        .renders
+                        .get(id.0)
+                        .expect("sliver viewport render")
+                        .children
+                        .clone();
+                    let mut pass_changed = false;
+                    for (child, layout) in materialized.into_iter().zip(&sliver_layout.children) {
+                        self.layout_render(child, layout.constraints);
+                        let measured = config
+                            .axis
+                            .main_extent(self.renders.get(child.0).expect("sliver child").size);
+                        pass_changed |= config.delegate.set_child_extent(layout.id, measured);
+                        let child = self.renders.get_mut(child.0).expect("sliver child");
+                        child.offset = config.axis.offset(layout.offset, layout.cross_offset);
+                        self.compositor.update_transform(
+                            child.layer,
+                            CoreTransform::translation(child.offset),
+                        );
+                    }
+                    if !pass_changed {
+                        break;
+                    }
+                    sliver_layout = config.delegate.perform_layout(make_constraints(
+                        physical_scroll_offset(&config.controller, config.reverse),
+                        viewport_extent,
+                    ));
+                    config.controller.update_extents_with_physics(
+                        sliver_layout.geometry.scroll_extent,
+                        viewport_extent,
+                        config.physics,
+                    );
+                }
+                if let Some(correction) = sliver_layout.geometry.scroll_offset_correction {
+                    let physical = (physical_scroll_offset(&config.controller, config.reverse)
+                        + correction)
+                        .max(0.);
+                    let logical = if config.reverse {
+                        (config.controller.max_offset() - physical).max(0.)
+                    } else {
+                        physical
+                    };
+                    config.controller.jump_to(logical);
+                }
+                self.diagnostics.lazy_layouts += 1;
+                (size, Vec::new())
             }
             RenderKind::Align {
                 alignment,
@@ -11389,6 +11967,9 @@ impl WidgetTree {
                 RenderKind::VirtualList { config } => {
                     self.paint_scrollbar(id, size, &config.controller, &mut cache);
                 }
+                RenderKind::SliverViewport { config } => {
+                    self.paint_scrollbar(id, size, &config.controller, &mut cache);
+                }
                 _ => {}
             }
             if let Some(focus_ring) = focus_ring.filter(|color| color.alpha > 0) {
@@ -11569,14 +12150,42 @@ impl WidgetTree {
             RenderKind::VirtualList { config } => {
                 current + scroll_translation(&config.controller, config.axis, config.reverse)
             }
+            RenderKind::SliverViewport { config } => {
+                current + scroll_translation(&config.controller, config.axis, config.reverse)
+            }
             RenderKind::Translate { .. } => current,
             _ => current,
         };
-        let hit_children: Vec<_> = match node.kind {
-            RenderKind::IndexedStack { index, .. } => {
-                node.children.get(index).copied().into_iter().collect()
+        let hit_children: Vec<_> = if matches!(node.kind, RenderKind::SliverViewport { .. }) {
+            let pinned = self
+                .element_for_render(id)
+                .and_then(|element| self.elements.get(element.0))
+                .map(|element| element.sliver_pinned_ids.clone())
+                .unwrap_or_default();
+            let mut ordered = node.children.clone();
+            ordered.sort_by_key(|child| {
+                let child_element = self.element_for_render(*child);
+                child_element
+                    .and_then(|element| self.elements.get(element.0))
+                    .and_then(|element| element.parent)
+                    .and_then(|parent| self.elements.get(parent.0))
+                    .and_then(|parent| {
+                        parent
+                            .children
+                            .iter()
+                            .position(|candidate| Some(*candidate) == child_element)
+                            .and_then(|slot| parent.sliver_child_ids.get(slot))
+                    })
+                    .map_or(0, |child_id| usize::from(pinned.contains(child_id)))
+            });
+            ordered
+        } else {
+            match &node.kind {
+                RenderKind::IndexedStack { index, .. } => {
+                    node.children.get(*index).copied().into_iter().collect()
+                }
+                _ => node.children.clone(),
             }
-            _ => node.children.clone(),
         };
         for child in hit_children.iter().rev() {
             if let Some(hit) = self.hit_test_render(*child, point, child_origin) {
@@ -11593,6 +12202,7 @@ impl WidgetTree {
         let controller = match &node.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
             RenderKind::VirtualList { config } => config.controller.clone(),
+            RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,
         };
         let mut geometry = scrollbar_geometry(node.size, &controller, controller.scrollbar_style());
@@ -11609,6 +12219,7 @@ impl WidgetTree {
         let controller = match &node.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
             RenderKind::VirtualList { config } => config.controller.clone(),
+            RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,
         };
         Some((
@@ -11654,7 +12265,9 @@ fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) 
         SemanticActionKind::ScrollForward | SemanticActionKind::ScrollBackward => {
             matches!(
                 kind,
-                WidgetKind::Scroll { .. } | WidgetKind::VirtualList { .. }
+                WidgetKind::Scroll { .. }
+                    | WidgetKind::VirtualList { .. }
+                    | WidgetKind::SliverViewport { .. }
             )
         }
         // Incular currently has no retained slider/spin controller action
@@ -11678,6 +12291,7 @@ fn widget_text(widget: &Widget) -> Option<String> {
         | WidgetKind::Visibility { child, .. }
         | WidgetKind::AspectRatio { child, .. }
         | WidgetKind::Scroll { child, .. }
+        | WidgetKind::NotificationListener { child, .. }
         | WidgetKind::Translate { child, .. }
         | WidgetKind::Transform { child, .. }
         | WidgetKind::Scale { child, .. }
@@ -11758,6 +12372,7 @@ impl RenderKind {
             RenderKind::Scroll { .. } => "ScrollView",
             RenderKind::PersistentHeader { .. } => "PersistentHeader",
             RenderKind::VirtualList { .. } => "VirtualList",
+            RenderKind::SliverViewport { .. } => "SliverViewport",
             RenderKind::LayoutBuilder => "LayoutBuilder",
             RenderKind::Translate { .. } => "Translate",
             RenderKind::Transform { .. } => "Transform",
@@ -12123,7 +12738,11 @@ fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> RenderKind
             reverse: *reverse,
             pinned: *pinned,
         },
+        WidgetKind::NotificationListener { .. } => RenderKind::Gesture,
         WidgetKind::VirtualList { config } => RenderKind::VirtualList {
+            config: config.clone(),
+        },
+        WidgetKind::SliverViewport { config } => RenderKind::SliverViewport {
             config: config.clone(),
         },
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
@@ -14283,8 +14902,10 @@ mod tests {
             )
             .unwrap();
         tree.layout(Constraints::tight(Size::new(100., 100.)));
-        let flow = tree.children(root).expect("scroll content")[0];
-        let header = tree.children(flow).expect("sliver children")[0];
+        // A real sliver viewport retains its materialized sliver children
+        // directly; there is no synthetic Column/flow box between the
+        // viewport and its sliver children.
+        let header = tree.children(root).expect("sliver children")[0];
         let header_render = tree.render_id(header).unwrap();
         assert_eq!(tree.render_size(header_render), Some(Size::new(100., 20.)));
         assert_eq!(tree.render_origin(header_render), Offset::ZERO);
@@ -14318,8 +14939,7 @@ mod tests {
                 )
                 .unwrap();
             tree.layout(Constraints::tight(Size::new(100., 40.)));
-            let flow = tree.children(root).expect("scroll content")[0];
-            let header = tree.children(flow).expect("sliver children")[0];
+            let header = tree.children(root).expect("sliver children")[0];
             (tree, controller, header)
         };
 
@@ -14340,6 +14960,55 @@ mod tests {
             reverse.render_origin(reverse.render_id(header).unwrap()).x,
             80.
         );
+    }
+
+    #[test]
+    fn notification_listener_bubbles_sliver_events_and_honors_stop() {
+        use incular_scroll::ScrollNotificationType;
+
+        let controller = ScrollController::new();
+        let inner_events = Rc::new(RefCell::new(Vec::new()));
+        let outer_events = Rc::new(RefCell::new(Vec::new()));
+        let observed_inner = inner_events.clone();
+        let observed_outer = outer_events.clone();
+        let sliver: Box<dyn crate::scrolling::Sliver> =
+            Box::new(crate::scrolling::SliverToBoxAdapter::new(
+                Widget::fixed_box(Size::new(100., 240.), Color::WHITE),
+            ));
+        let view: Widget = crate::scrolling::CustomScrollView::new(vec![sliver])
+            .controller(controller.clone())
+            .into();
+        let inner: Widget = crate::scrolling::NotificationListener::new(view)
+            .on_notification(move |notification| {
+                observed_inner
+                    .borrow_mut()
+                    .push((notification.kind, notification.depth));
+                true
+            })
+            .into();
+        let mut tree = WidgetTree::new();
+        let _root = tree
+            .mount(
+                crate::scrolling::NotificationListener::new(inner)
+                    .on_notification(move |notification| {
+                        observed_outer
+                            .borrow_mut()
+                            .push((notification.kind, notification.depth));
+                        false
+                    })
+                    .into(),
+            )
+            .expect("notification listener mount");
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+
+        assert!(controller.jump_to(40.));
+        assert!(
+            inner_events
+                .borrow()
+                .iter()
+                .any(|(kind, depth)| *kind == ScrollNotificationType::Update && *depth == 0)
+        );
+        assert!(outer_events.borrow().is_empty());
     }
 
     #[test]

@@ -1,8 +1,15 @@
 //! Widget-independent scroll state, physics, and scrollbar geometry.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
 
 use incular_core::{Color, Offset, Rect, RestorationKey, RestorationScope, Size};
+
+mod sliver;
+
+pub use sliver::{SliverConstraints, SliverGeometry};
 
 /// A shared, chunked prefix index for lazily measured item extents.
 ///
@@ -234,6 +241,25 @@ impl MeasuredExtentIndex {
             state: Rc::new(RefCell::new(state)),
             metrics,
         }
+    }
+
+    /// Creates an index with per-item initial estimates. Estimates are used
+    /// for seeking and virtualization immediately, then can be replaced by
+    /// exact post-layout measurements without changing child identity.
+    #[must_use]
+    pub fn with_estimates(
+        item_count: usize,
+        fallback_extent: f32,
+        estimate: impl Fn(usize) -> f32,
+    ) -> Self {
+        let index = Self::new(item_count, fallback_extent);
+        for item in 0..item_count {
+            let extent = estimate(item);
+            if extent.is_finite() && extent >= 0. {
+                index.set_measured_extent(item, extent);
+            }
+        }
+        index
     }
 
     /// Structural operation counters since creation. Shared across clones.
@@ -583,7 +609,14 @@ struct ScrollState {
     restoration: Option<ScrollRestoration>,
     pending_restored_offset: Option<f32>,
     pending_jump_offset: Option<f32>,
+    notification_listeners: Rc<RefCell<Vec<(u64, ScrollNotificationListener)>>>,
+    next_notification_listener: u64,
+    notification_context: Option<(incular_config::Axis, bool)>,
+    activity_active: bool,
 }
+
+type ScrollNotificationListener = Rc<dyn Fn(ScrollNotification) -> bool>;
+
 #[derive(Clone)]
 struct ScrollRestoration {
     scope: RestorationScope,
@@ -640,6 +673,147 @@ impl ScrollController {
         self.state.borrow().viewport_extent
     }
 
+    /// Returns the current metrics snapshot used by scroll notifications and
+    /// accessibility adapters.
+    #[must_use]
+    pub fn metrics(&self) -> ScrollMetrics {
+        let state = self.state.borrow();
+        let (axis, reverse) = state
+            .notification_context
+            .unwrap_or((incular_config::Axis::Vertical, false));
+        ScrollMetrics {
+            pixels: state.offset,
+            min_scroll_extent: 0.,
+            max_scroll_extent: state.max_offset,
+            viewport_dimension: state.viewport_extent,
+            axis,
+            axis_direction: match (axis, reverse) {
+                (incular_config::Axis::Horizontal, false) => incular_config::AxisDirection::Right,
+                (incular_config::Axis::Horizontal, true) => incular_config::AxisDirection::Left,
+                (incular_config::Axis::Vertical, false) => incular_config::AxisDirection::Down,
+                (incular_config::Axis::Vertical, true) => incular_config::AxisDirection::Up,
+            },
+            device_pixel_ratio: 1.,
+        }
+    }
+
+    /// Associates the controller with a viewport's axis and direction. This
+    /// does not alter scroll position; it only makes notifications and
+    /// metrics describe the physical viewport correctly.
+    pub fn set_metrics_context(&self, axis: incular_config::Axis, reverse: bool) {
+        self.state.borrow_mut().notification_context = Some((axis, reverse));
+    }
+
+    /// Subscribes to normalized scroll notifications. The returned handle
+    /// removes the listener when dropped. Returning `true` stops dispatch to
+    /// later listeners for the same scroll activity, matching Flutter's
+    /// `NotificationListener` contract.
+    #[must_use]
+    pub fn add_notification_listener(
+        &self,
+        listener: impl Fn(ScrollNotification) -> bool + 'static,
+    ) -> ScrollNotificationSubscription {
+        let mut state = self.state.borrow_mut();
+        let id = state.next_notification_listener;
+        state.next_notification_listener = id.wrapping_add(1);
+        state
+            .notification_listeners
+            .borrow_mut()
+            .push((id, Rc::new(listener)));
+        ScrollNotificationSubscription {
+            state: Rc::downgrade(&self.state),
+            id,
+        }
+    }
+
+    /// Alias matching the usual controller listener spelling.
+    #[must_use]
+    pub fn add_listener(
+        &self,
+        listener: impl Fn(ScrollNotification) -> bool + 'static,
+    ) -> ScrollNotificationSubscription {
+        self.add_notification_listener(listener)
+    }
+
+    /// Begins a user-driven scroll activity and emits one `Start` event.
+    /// Repeated pointer/wheel samples in the same gesture do not emit
+    /// duplicate starts.
+    pub fn begin_activity(&self) -> bool {
+        let started = {
+            let mut state = self.state.borrow_mut();
+            if state.activity_active {
+                false
+            } else {
+                state.activity_active = true;
+                true
+            }
+        };
+        if started {
+            self.dispatch_notification(ScrollNotificationType::Start, 0., 0.);
+        }
+        started
+    }
+
+    /// Ends a user-driven scroll activity and emits one `End` event.
+    pub fn end_activity(&self) -> bool {
+        let ended = {
+            let mut state = self.state.borrow_mut();
+            if !state.activity_active {
+                false
+            } else {
+                state.activity_active = false;
+                true
+            }
+        };
+        if ended {
+            self.dispatch_notification(ScrollNotificationType::End, 0., 0.);
+        }
+        ended
+    }
+
+    /// Emits a user-scroll direction sample. The first sample implicitly
+    /// starts the activity, matching Flutter's start/update/user-scroll event
+    /// ordering while keeping input adapters small.
+    pub fn notify_user_scroll(&self, delta: f32) -> bool {
+        if !delta.is_finite() || delta.abs() <= f32::EPSILON {
+            return false;
+        }
+        self.begin_activity();
+        self.dispatch_notification(ScrollNotificationType::UserScroll, delta, 0.);
+        true
+    }
+
+    fn dispatch_notification(&self, kind: ScrollNotificationType, delta: f32, overscroll: f32) {
+        let notification = ScrollNotification {
+            kind,
+            metrics: self.metrics(),
+            delta,
+            overscroll,
+            depth: 0,
+        };
+        let listeners = self
+            .state
+            .borrow()
+            .notification_listeners
+            .borrow()
+            .iter()
+            .map(|(_, listener)| listener.clone())
+            .collect::<Vec<_>>();
+        for listener in listeners {
+            if listener(notification) {
+                break;
+            }
+        }
+    }
+
+    /// Monotonic state revision for retained viewports. Layout owners use this
+    /// to refresh sliver cache windows and pinned placements without requiring
+    /// the application to rebuild its widget description.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
+    }
+
     /// Returns the style used when a retained viewport paints its overlay
     /// scrollbar.
     #[must_use]
@@ -683,7 +857,7 @@ impl ScrollController {
     }
     /// Moves the offset after clamping it to the current content bounds.
     pub fn jump_to(&self, offset: f32) -> bool {
-        let (restoration, value) = {
+        let (restoration, value, delta) = {
             let mut state = self.state.borrow_mut();
             if !offset.is_finite() {
                 return false;
@@ -692,12 +866,14 @@ impl ScrollController {
             if value == state.offset {
                 return false;
             }
+            let previous = state.offset;
             state.offset = value;
             state.pending_restored_offset = None;
             state.revision += 1;
-            (state.restoration.clone(), value)
+            (state.restoration.clone(), value, value - previous)
         };
         persist_scroll_offset(restoration, value);
+        self.dispatch_notification(ScrollNotificationType::Update, delta, 0.);
         true
     }
 
@@ -723,8 +899,16 @@ impl ScrollController {
     /// [`ScrollPhysics::spring_step`] rather than being restored as a logical
     /// position.
     pub fn apply_physics(&self, physics: ScrollPhysics, delta: f32) -> ScrollDelta {
-        let result = physics.apply_delta(self.offset(), delta, 0., self.max_offset());
-        if result.position == self.offset() {
+        let previous = self.offset();
+        let result = physics.apply_delta(previous, delta, 0., self.max_offset());
+        if result.position == previous {
+            if result.overscroll != 0. {
+                self.dispatch_notification(
+                    ScrollNotificationType::Overscroll,
+                    0.,
+                    result.overscroll,
+                );
+            }
             return result;
         }
         let persistence = {
@@ -738,17 +922,32 @@ impl ScrollController {
         if let Some((restoration, offset)) = persistence {
             persist_scroll_offset(restoration, offset);
         }
+        self.dispatch_notification(
+            ScrollNotificationType::Update,
+            result.position - previous,
+            0.,
+        );
+        if result.overscroll != 0. {
+            self.dispatch_notification(
+                ScrollNotificationType::Overscroll,
+                result.position - previous,
+                result.overscroll,
+            );
+        }
         result
     }
 
     /// Stores a spring result produced with a monotonic frame duration.
     pub fn apply_spring_step(&self, step: ScrollSpringStep) -> bool {
-        if !step.position.is_finite() || step.position == self.offset() {
+        let previous = self.offset();
+        if !step.position.is_finite() || step.position == previous {
             return false;
         }
         let mut state = self.state.borrow_mut();
         state.offset = step.position;
         state.revision += 1;
+        drop(state);
+        self.dispatch_notification(ScrollNotificationType::Update, step.position - previous, 0.);
         true
     }
     /// Updates content and viewport extents after a viewport layout pass.
@@ -770,6 +969,10 @@ impl ScrollController {
     /// at the end.  The ordinary `update_extents` API remains available for
     /// callers that want simple clamping.
     pub fn update_extents_with_physics(&self, content: f32, viewport: f32, physics: ScrollPhysics) {
+        let (old_offset, old_content, old_viewport) = {
+            let state = self.state.borrow();
+            (state.offset, state.content_extent, state.viewport_extent)
+        };
         let persistence = {
             let mut state = self.state.borrow_mut();
             let old_max_offset = state.max_offset;
@@ -824,6 +1027,19 @@ impl ScrollController {
         };
         if let Some((restoration, offset)) = persistence {
             persist_scroll_offset(restoration, offset);
+        }
+        let next_offset = self.offset();
+        if (content.max(0.) - old_content).abs() > f32::EPSILON
+            || (viewport.max(0.) - old_viewport).abs() > f32::EPSILON
+        {
+            self.dispatch_notification(ScrollNotificationType::Metrics, 0., 0.);
+        }
+        if (next_offset - old_offset).abs() > f32::EPSILON {
+            self.dispatch_notification(
+                ScrollNotificationType::Update,
+                next_offset - old_offset,
+                0.,
+            );
         }
     }
 
@@ -1368,6 +1584,50 @@ impl ScrollMetrics {
     }
 }
 
+/// Kind of normalized notification emitted by a [`ScrollController`].
+///
+/// The payload deliberately stays renderer-independent, so the same stream
+/// can feed widgets, accessibility, tests, or an inspector panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScrollNotificationType {
+    Start,
+    Update,
+    Overscroll,
+    End,
+    UserScroll,
+    Metrics,
+}
+
+/// A scroll event paired with the complete current viewport metrics.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollNotification {
+    pub kind: ScrollNotificationType,
+    pub metrics: ScrollMetrics,
+    pub delta: f32,
+    pub overscroll: f32,
+    /// Nested viewport depth. Direct controller subscriptions observe depth
+    /// zero; a widget bubbling adapter can increase it while forwarding.
+    pub depth: usize,
+}
+
+/// RAII subscription returned by [`ScrollController::add_listener`].
+pub struct ScrollNotificationSubscription {
+    state: Weak<RefCell<ScrollState>>,
+    id: u64,
+}
+
+impl Drop for ScrollNotificationSubscription {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.upgrade() {
+            state
+                .borrow()
+                .notification_listeners
+                .borrow_mut()
+                .retain(|(id, _)| *id != self.id);
+        }
+    }
+}
+
 /// Cache extent strategy for pre-rendering lazy list items.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollCacheExtent {
@@ -1551,6 +1811,58 @@ mod tests {
         controller.update_extents(40., 20.);
         assert_eq!(controller.offset(), 20.);
     }
+
+    #[test]
+    fn scroll_notifications_follow_activity_lifecycle_and_unsubscribe() {
+        let controller = ScrollController::new();
+        controller.set_metrics_context(incular_config::Axis::Horizontal, true);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let observed = events.clone();
+        let subscription = controller.add_listener(move |notification| {
+            observed.borrow_mut().push(notification);
+            false
+        });
+
+        controller.update_extents(500., 100.);
+        assert!(controller.begin_activity());
+        assert!(!controller.begin_activity());
+        assert!(controller.notify_user_scroll(12.));
+        assert!(
+            controller
+                .apply_physics(ScrollPhysics::clamping(), 12.)
+                .accepted
+        );
+        assert!(controller.end_activity());
+        assert!(!controller.end_activity());
+
+        let observed_events = events.borrow();
+        assert_eq!(
+            observed_events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ScrollNotificationType::Metrics,
+                ScrollNotificationType::Start,
+                ScrollNotificationType::UserScroll,
+                ScrollNotificationType::Update,
+                ScrollNotificationType::End,
+            ]
+        );
+        assert_eq!(
+            observed_events[0].metrics.axis,
+            incular_config::Axis::Horizontal
+        );
+        assert_eq!(
+            observed_events[0].metrics.axis_direction,
+            incular_config::AxisDirection::Left
+        );
+        drop(observed_events);
+        drop(subscription);
+        assert!(controller.jump_to(20.));
+        assert_eq!(events.borrow().len(), 5);
+    }
+
     #[test]
     fn scrollbar_round_trips_offset() {
         let controller = ScrollController::new();

@@ -1,13 +1,27 @@
-use std::rc::Rc;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use incular_config::{Axis, Clip, EdgeInsets};
+use incular_animation::AnimationController;
+use incular_config::{Axis, Clip, Constraints, EdgeInsets};
+use incular_core::Size;
 use incular_scroll::{
-    DragStartBehavior, MeasuredExtentIndex, ScrollCacheExtent, ScrollController, ScrollPhysics,
-    ScrollViewKeyboardDismissBehavior,
+    DragStartBehavior, MeasuredExtentIndex, ScrollCacheExtent, ScrollController,
+    ScrollNotification, ScrollPhysics, ScrollViewKeyboardDismissBehavior, SliverConstraints,
+    SliverGeometry,
 };
 use typed_builder::TypedBuilder;
 
-use crate::{Column, DecoratedBox, Padding, Row, SizedBox, VirtualList, Widget};
+use crate::drag_drop::DragDropContext;
+use crate::tree::WidgetKind;
+use crate::{
+    Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox, VirtualList, Widget,
+};
+
+type SliverLayoutBuilderFn = Rc<dyn Fn(&ScrollController, SliverConstraints) -> Widget>;
 
 /// A first-class scrollable box that scrolls a single child.
 #[derive(Clone, TypedBuilder)]
@@ -1020,9 +1034,1402 @@ impl From<PageView> for Widget {
     }
 }
 
-/// Unified sliver protocol. A sliver returns a normal retained widget.
+/// Stable identity for a child materialized by a sliver.
+///
+/// The low 32 bits are owned by the leaf sliver. The high 32 bits contain a
+/// compact stack of eight-bit group scopes, with the innermost scope in the
+/// least-significant byte. Keeping the scope path in the ID means nested main
+/// and cross-axis groups cannot accidentally reuse each other's child state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SliverChildId(pub u64);
+
+impl SliverChildId {
+    const fn list_item(index: usize) -> Self {
+        Self(index as u64 + 1)
+    }
+
+    fn scoped(sliver: usize, child: Self) -> Self {
+        let path = child.0 >> 32;
+        let scope = (sliver as u64).saturating_add(1).min(u8::MAX as u64);
+        let path = (((path & 0x00ff_ffff) << 8) | scope) & u32::MAX as u64;
+        Self((path << 32) | (child.0 & u32::MAX as u64))
+    }
+
+    fn scope(self) -> usize {
+        let scope = (self.0 >> 32) & u8::MAX as u64;
+        scope
+            .checked_sub(1)
+            .map_or(usize::MAX, |value| value as usize)
+    }
+
+    fn local(self) -> Self {
+        Self((((self.0 >> 32) >> 8) << 32) | (self.0 & u32::MAX as u64))
+    }
+}
+
+/// One child placement returned by a render sliver.
+#[derive(Clone, Debug)]
+pub struct SliverChildLayout {
+    pub id: SliverChildId,
+    pub widget: Widget,
+    /// Main-axis content offset before the viewport scroll transform.
+    pub offset: f32,
+    /// Cross-axis content offset.
+    pub cross_offset: f32,
+    /// Box constraints used when the retained child is laid out.
+    pub constraints: Constraints,
+    /// Measured/estimated main-axis extent used for anchor and pinning math.
+    pub extent: f32,
+    /// Pinned children are painted above normal flowing children.
+    pub pinned: bool,
+}
+
+/// Result of laying out one render sliver.
+#[derive(Clone, Debug)]
+pub struct SliverLayout {
+    pub geometry: SliverGeometry,
+    pub children: Vec<SliverChildLayout>,
+    /// Overlap absorbed for a following nested viewport.
+    pub absorbed_overlap: f32,
+}
+
+impl SliverLayout {
+    fn empty(geometry: SliverGeometry) -> Self {
+        Self {
+            geometry,
+            children: Vec::new(),
+            absorbed_overlap: 0.,
+        }
+    }
+}
+
+/// Retained sliver protocol. Implementations receive viewport constraints and
+/// return geometry plus only the children needed for the current paint/cache
+/// interval. This is the analogue of Flutter's `RenderSliver` contract.
+pub trait RenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout;
+
+    /// Records the exact extent measured by the retained child tree.
+    fn set_child_extent(&mut self, _child: SliverChildId, _extent: f32) -> bool {
+        false
+    }
+
+    /// Structural/measurement revision used to invalidate a viewport's
+    /// materialized child range without rebuilding the application.
+    fn revision(&self) -> u64 {
+        0
+    }
+
+    /// Advances retained sliver-local animation state without rebuilding the
+    /// application widget description. The viewport calls this from the
+    /// compositor phase, and schedules layout only when geometry changed.
+    fn tick(&mut self, _now: Instant) -> bool {
+        false
+    }
+
+    /// Whether another frame is required for sliver-local animation.
+    fn is_animating(&self) -> bool {
+        false
+    }
+}
+
+/// Private bridge consumed by the retained widget tree. The public sliver
+/// protocol remains renderer-neutral; this bridge adds widget materialization
+/// and stable viewport-scoped child IDs.
+pub(crate) trait SliverViewportDelegate {
+    fn perform_layout(&self, constraints: SliverConstraints) -> SliverViewportLayout;
+    fn set_child_extent(&self, child: SliverChildId, extent: f32) -> bool;
+    fn revision(&self) -> u64;
+    fn sliver_count(&self) -> usize;
+    fn tick(&self, now: Instant) -> bool;
+    fn is_animating(&self) -> bool;
+}
+
+pub struct SliverViewportConfig {
+    pub(crate) controller: ScrollController,
+    pub(crate) axis: Axis,
+    pub(crate) reverse: bool,
+    pub(crate) physics: ScrollPhysics,
+    pub(crate) cache_extent: f32,
+    pub(crate) shrink_wrap: bool,
+    pub(crate) clip_behavior: Clip,
+    pub(crate) delegate: Rc<dyn SliverViewportDelegate>,
+}
+
+impl std::fmt::Debug for SliverViewportConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SliverViewportConfig")
+            .field("axis", &self.axis)
+            .field("reverse", &self.reverse)
+            .field("physics", &self.physics)
+            .field("cache_extent", &self.cache_extent)
+            .field("shrink_wrap", &self.shrink_wrap)
+            .field("clip_behavior", &self.clip_behavior)
+            .field("sliver_count", &self.delegate.sliver_count())
+            .finish()
+    }
+}
+
+impl PartialEq for SliverViewportConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.controller == other.controller
+            && self.axis == other.axis
+            && self.reverse == other.reverse
+            && self.physics == other.physics
+            && self.cache_extent == other.cache_extent
+            && self.shrink_wrap == other.shrink_wrap
+            && self.clip_behavior == other.clip_behavior
+            && Rc::ptr_eq(&self.delegate, &other.delegate)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SliverViewportLayout {
+    pub geometry: SliverGeometry,
+    pub children: Vec<SliverChildLayout>,
+}
+
+struct BoxRenderSliver {
+    child: Widget,
+    extent: Cell<f32>,
+    pinned: bool,
+}
+
+/// Geometry shared by the pinned persistent-header variants.
+///
+/// A pinned header has a normal scroll extent, but its paint extent continues
+/// at the leading edge after its layout extent has collapsed.  Keeping that
+/// distinction in the sliver geometry is what lets the viewport compute the
+/// same obstruction/overlap values as Flutter's persistent-header render
+/// objects instead of relying only on a post-layout position adjustment.
+fn pinned_geometry(
+    constraints: SliverConstraints,
+    scroll_extent: f32,
+    child_extent: f32,
+) -> SliverGeometry {
+    let scroll_extent = scroll_extent.max(0.);
+    let child_extent = child_extent.max(0.);
+    let effective_remaining_paint_extent =
+        (constraints.remaining_paint_extent - constraints.overlap).max(0.);
+    let paint_extent = child_extent.min(effective_remaining_paint_extent);
+    let layout_extent =
+        (scroll_extent - constraints.scroll_offset).clamp(0., effective_remaining_paint_extent);
+    let cache_extent = if layout_extent > 0. {
+        (-constraints.cache_origin + layout_extent).max(0.)
+    } else {
+        layout_extent
+    };
+    SliverGeometry {
+        scroll_extent,
+        paint_extent,
+        layout_extent,
+        max_paint_extent: scroll_extent,
+        hit_test_extent: paint_extent,
+        paint_origin: constraints.overlap,
+        cache_extent,
+        visible: paint_extent > 0.,
+        has_visual_overflow: true,
+        scroll_offset_correction: None,
+    }
+}
+
+impl BoxRenderSliver {
+    fn new(child: Widget) -> Self {
+        Self {
+            child,
+            extent: Cell::new(48.),
+            pinned: false,
+        }
+    }
+
+    fn pinned(child: Widget) -> Self {
+        Self {
+            pinned: true,
+            ..Self::new(child)
+        }
+    }
+}
+
+impl RenderSliver for BoxRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let extent = self.extent.get().max(0.);
+        let geometry = if self.pinned {
+            pinned_geometry(constraints, extent, extent)
+        } else {
+            SliverGeometry::from_scroll_extent(constraints, extent)
+        };
+        SliverLayout {
+            geometry,
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                offset: 0.,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    None,
+                ),
+                extent,
+                pinned: self.pinned,
+            }],
+            absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        if child.0 != 0 || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let extent = extent.max(0.);
+        if (self.extent.get() - extent).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.extent.set(extent);
+        true
+    }
+}
+
+struct FixedExtentRenderSliver {
+    item_count: usize,
+    item_extent: f32,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    widgets: HashMap<usize, Widget>,
+}
+
+impl FixedExtentRenderSliver {
+    fn new(item_count: usize, item_extent: f32, builder: Rc<dyn Fn(usize) -> Widget>) -> Self {
+        Self {
+            item_count,
+            item_extent: item_extent.max(1.),
+            builder,
+            widgets: HashMap::new(),
+        }
+    }
+
+    fn child_widget(&mut self, index: usize) -> Widget {
+        if let Some(widget) = self.widgets.get(&index) {
+            return widget.clone();
+        }
+        let widget = (self.builder)(index);
+        self.widgets.insert(index, widget.clone());
+        widget
+    }
+}
+
+impl RenderSliver for FixedExtentRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let total = self.item_count as f32 * self.item_extent;
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let start = (cache_start / self.item_extent).floor() as usize;
+        let end = (cache_end / self.item_extent).ceil() as usize;
+        let range =
+            start.min(self.item_count)..end.min(self.item_count).max(start.min(self.item_count));
+        self.widgets.retain(|index, _| range.contains(index));
+        let children = range
+            .map(|index| {
+                let widget = self.child_widget(index);
+                SliverChildLayout {
+                    id: SliverChildId::list_item(index),
+                    widget,
+                    offset: index as f32 * self.item_extent,
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        Some(self.item_extent),
+                    ),
+                    extent: self.item_extent,
+                    pinned: false,
+                }
+            })
+            .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, total),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+}
+
+struct VariableExtentRenderSliver {
+    index: MeasuredExtentIndex,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    widgets: HashMap<usize, Widget>,
+}
+
+impl VariableExtentRenderSliver {
+    fn new(index: MeasuredExtentIndex, builder: Rc<dyn Fn(usize) -> Widget>) -> Self {
+        Self {
+            index,
+            builder,
+            widgets: HashMap::new(),
+        }
+    }
+
+    fn child_widget(&mut self, index: usize) -> Widget {
+        if let Some(widget) = self.widgets.get(&index) {
+            return widget.clone();
+        }
+        let widget = (self.builder)(index);
+        self.widgets.insert(index, widget.clone());
+        widget
+    }
+}
+
+impl RenderSliver for VariableExtentRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let range =
+            self.index
+                .materialized_range(cache_start, (cache_end - cache_start).max(0.), 0.);
+        self.widgets.retain(|index, _| range.contains(index));
+        let children = range
+            .map(|index| {
+                let widget = self.child_widget(index);
+                SliverChildLayout {
+                    id: SliverChildId::list_item(index),
+                    widget,
+                    offset: self.index.offset_for_index(index),
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        None,
+                    ),
+                    extent: self.index.offset_for_index(index + 1)
+                        - self.index.offset_for_index(index),
+                    pinned: false,
+                }
+            })
+            .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, self.index.total_extent()),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        child
+            .0
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+            .is_some_and(|index| self.index.set_measured_extent(index, extent))
+    }
+
+    fn revision(&self) -> u64 {
+        self.index.revision()
+    }
+}
+
+struct HeaderRenderSliver {
+    child: Widget,
+    extent: f32,
+    pinned: bool,
+}
+
+impl HeaderRenderSliver {
+    fn new(child: Widget, extent: f32, pinned: bool) -> Self {
+        Self {
+            child,
+            extent: extent.max(0.),
+            pinned,
+        }
+    }
+}
+
+/// Retained floating-header state. A floating header follows the normal
+/// scroll offset while moving forward, but reveals by the same delta when the
+/// viewport starts moving back toward the leading edge.
+struct FloatingHeaderRenderSliver {
+    child: Widget,
+    extent: Cell<f32>,
+    last_scroll_offset: Option<f32>,
+    effective_scroll_offset: f32,
+}
+
+impl RenderSliver for FloatingHeaderRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let extent = self.extent.get().max(0.);
+        let scroll_offset = constraints.scroll_offset.max(0.);
+        if let Some(previous) = self.last_scroll_offset {
+            self.effective_scroll_offset = (self.effective_scroll_offset
+                + (scroll_offset - previous))
+                .clamp(0., scroll_offset.max(extent));
+        } else {
+            self.effective_scroll_offset = scroll_offset;
+        }
+        self.last_scroll_offset = Some(scroll_offset);
+
+        let effective_remaining_paint_extent =
+            (constraints.remaining_paint_extent - constraints.overlap).max(0.);
+        let paint_extent = (extent - self.effective_scroll_offset)
+            .max(0.)
+            .min(effective_remaining_paint_extent);
+        let layout_extent = (extent - scroll_offset)
+            .clamp(0., effective_remaining_paint_extent)
+            .min(paint_extent);
+        let geometry = SliverGeometry {
+            scroll_extent: extent,
+            paint_extent,
+            layout_extent,
+            max_paint_extent: extent,
+            hit_test_extent: paint_extent,
+            paint_origin: constraints.overlap.min(0.),
+            cache_extent: if layout_extent > 0. {
+                (-constraints.cache_origin + layout_extent).max(0.)
+            } else {
+                0.
+            },
+            visible: paint_extent > 0.,
+            has_visual_overflow: true,
+            scroll_offset_correction: None,
+        };
+        SliverLayout {
+            geometry,
+            // The sequence converts this back through the viewport transform.
+            // `extent - effective` is not a normal flow offset: it exposes
+            // the child at the leading edge while the header is floating.
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                offset: scroll_offset - self.effective_scroll_offset,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    Some(extent),
+                ),
+                extent,
+                pinned: false,
+            }],
+            absorbed_overlap: (paint_extent - layout_extent).max(0.),
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        if child.0 != 0 || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let extent = extent.max(0.);
+        if (self.extent.get() - extent).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.extent.set(extent);
+        true
+    }
+}
+
+impl RenderSliver for HeaderRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let geometry = if self.pinned {
+            pinned_geometry(constraints, self.extent, self.extent)
+        } else {
+            SliverGeometry::from_scroll_extent(constraints, self.extent)
+        };
+        SliverLayout {
+            geometry,
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                offset: 0.,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    Some(self.extent),
+                ),
+                extent: self.extent,
+                pinned: self.pinned,
+            }],
+            absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
+        }
+    }
+}
+
+struct ResizingHeaderRenderSliver {
+    child: Widget,
+    min_extent: f32,
+    max_extent: f32,
+}
+
+struct FillRemainingRenderSliver {
+    child: Widget,
+    has_scroll_body: bool,
+    extent: Cell<f32>,
+}
+
+impl RenderSliver for FillRemainingRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let child_hint = widget_main_extent_hint(&self.child, constraints.axis).unwrap_or(0.);
+        let remaining_extent =
+            (constraints.viewport_main_axis_extent - constraints.preceding_scroll_extent).max(0.);
+        let extent = if self.has_scroll_body {
+            (constraints.remaining_paint_extent - constraints.overlap.min(0.)).max(0.)
+        } else {
+            self.extent.get().max(remaining_extent).max(child_hint)
+        };
+        self.extent.set(extent);
+        let scroll_extent = if self.has_scroll_body {
+            constraints.viewport_main_axis_extent.max(0.)
+        } else {
+            extent
+        };
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, scroll_extent),
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                // The parent sequence contributes the preceding scroll
+                // extent; a sliver child is always positioned in this
+                // sliver's local coordinate space.
+                offset: 0.,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    Some(extent),
+                ),
+                extent,
+                pinned: false,
+            }],
+            absorbed_overlap: 0.,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        if child.0 != 0 || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let changed = (self.extent.get() - extent).abs() > f32::EPSILON;
+        self.extent.set(extent);
+        changed
+    }
+}
+
+struct ViewportExtentRenderSliver {
+    children: Rc<Vec<Widget>>,
+    viewport_fraction: f32,
+}
+
+impl RenderSliver for ViewportExtentRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let extent = (constraints.viewport_main_axis_extent * self.viewport_fraction).max(0.);
+        let total = self.children.len() as f32 * extent;
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let start = if extent > 0. {
+            (cache_start / extent).floor() as usize
+        } else {
+            0
+        };
+        let end = if extent > 0. {
+            (cache_end / extent).ceil() as usize
+        } else {
+            0
+        };
+        let range = start.min(self.children.len())
+            ..end
+                .min(self.children.len())
+                .max(start.min(self.children.len()));
+        let children = range
+            .map(|index| SliverChildLayout {
+                id: SliverChildId::list_item(index),
+                widget: self.children[index].clone(),
+                offset: index as f32 * extent,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    Some(extent),
+                ),
+                extent,
+                pinned: false,
+            })
+            .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, total),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+}
+
+impl RenderSliver for ResizingHeaderRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let current =
+            (self.max_extent - constraints.scroll_offset).clamp(self.min_extent, self.max_extent);
+        let geometry = pinned_geometry(constraints, self.max_extent, current);
+        SliverLayout {
+            geometry,
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                offset: 0.,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    Some(current),
+                ),
+                extent: current,
+                pinned: true,
+            }],
+            absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
+        }
+    }
+}
+
+struct PaddingRenderSliver {
+    inner: RefCell<Box<dyn RenderSliver>>,
+    padding: EdgeInsets,
+}
+
+impl RenderSliver for PaddingRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let before = main_before(constraints.axis, self.padding);
+        let after = main_after(constraints.axis, self.padding);
+        let total_padding = before + after;
+        let paint_offset = |from: f32, to: f32| {
+            let start = from.max(constraints.scroll_offset);
+            let end = to.min(constraints.scroll_offset + constraints.remaining_paint_extent);
+            (end - start).max(0.)
+        };
+        let cache_offset = |from: f32, to: f32| {
+            let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+            let start = from.max(cache_start);
+            let end = to.min(cache_start + constraints.remaining_cache_extent);
+            (end - start).max(0.)
+        };
+        let reduced_cross = (constraints.cross_axis_extent
+            - cross_before(constraints.axis, self.padding)
+            - cross_after(constraints.axis, self.padding))
+        .max(0.);
+        let before_paint_extent = paint_offset(0., before);
+        let before_cache_extent = cache_offset(0., before);
+        let inner_scroll = (constraints.scroll_offset - before).max(0.);
+        let inner_constraints = SliverConstraints::new(
+            constraints.axis,
+            constraints.reverse,
+            inner_scroll,
+            constraints.preceding_scroll_extent + before,
+            if constraints.overlap > 0. {
+                (constraints.overlap - before_paint_extent).max(0.)
+            } else {
+                constraints.overlap
+            },
+            (constraints.remaining_paint_extent - before_paint_extent).max(0.),
+            reduced_cross,
+            constraints.viewport_main_axis_extent,
+            (constraints.remaining_cache_extent - before_cache_extent).max(0.),
+            (constraints.cache_origin + before).min(0.),
+        );
+        let mut layout = self.inner.borrow_mut().perform_layout(inner_constraints);
+        let inner_geometry = layout.geometry.normalized();
+        if let Some(correction) = inner_geometry.scroll_offset_correction {
+            let mut geometry = SliverGeometry::ZERO;
+            geometry.scroll_offset_correction = Some(correction);
+            return SliverLayout::empty(geometry);
+        }
+        for child in &mut layout.children {
+            child.offset += before;
+            child.cross_offset += cross_before(constraints.axis, self.padding);
+        }
+        let scroll_extent = total_padding + inner_geometry.scroll_extent;
+        let after_paint_extent = paint_offset(
+            before + inner_geometry.scroll_extent,
+            total_padding + inner_geometry.scroll_extent,
+        );
+        let after_cache_extent = cache_offset(
+            before + inner_geometry.scroll_extent,
+            total_padding + inner_geometry.scroll_extent,
+        );
+        let paint_extent = (before_paint_extent
+            + inner_geometry
+                .paint_extent
+                .max(inner_geometry.layout_extent + after_paint_extent))
+        .min(constraints.remaining_paint_extent)
+        .max(0.);
+        let layout_extent =
+            (before_paint_extent + after_paint_extent + inner_geometry.layout_extent)
+                .min(paint_extent)
+                .max(0.);
+        layout.geometry = SliverGeometry {
+            paint_origin: inner_geometry.paint_origin,
+            scroll_extent,
+            paint_extent,
+            layout_extent,
+            cache_extent: (before_cache_extent + after_cache_extent + inner_geometry.cache_extent)
+                .min(constraints.remaining_cache_extent)
+                .max(0.),
+            max_paint_extent: total_padding + inner_geometry.max_paint_extent,
+            hit_test_extent: (before_paint_extent
+                + after_paint_extent
+                + inner_geometry.paint_extent)
+                .max(before_paint_extent + inner_geometry.hit_test_extent),
+            visible: paint_extent > 0.,
+            has_visual_overflow: inner_geometry.has_visual_overflow,
+            scroll_offset_correction: None,
+        };
+        layout
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        self.inner.borrow_mut().set_child_extent(child, extent)
+    }
+
+    fn revision(&self) -> u64 {
+        self.inner.borrow().revision()
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        self.inner.borrow_mut().tick(now)
+    }
+
+    fn is_animating(&self) -> bool {
+        self.inner.borrow().is_animating()
+    }
+}
+
+struct WidgetWrapRenderSliver {
+    inner: RefCell<Box<dyn RenderSliver>>,
+    wrap: Rc<dyn Fn(Widget) -> Widget>,
+}
+
+struct LayoutBuilderRenderSliver {
+    controller: ScrollController,
+    builder: SliverLayoutBuilderFn,
+    child: Widget,
+    extent: Cell<f32>,
+    last_constraints: Option<SliverConstraints>,
+    revision: u64,
+}
+
+impl RenderSliver for LayoutBuilderRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        if self.last_constraints != Some(constraints) {
+            self.child = (self.builder)(&self.controller, constraints);
+            self.last_constraints = Some(constraints);
+            self.revision = self.revision.wrapping_add(1);
+        }
+        let extent = self.extent.get().max(0.);
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, extent),
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                offset: 0.,
+                cross_offset: 0.,
+                constraints: sliver_child_constraints(
+                    constraints.axis,
+                    constraints.cross_axis_extent,
+                    None,
+                ),
+                extent,
+                pinned: false,
+            }],
+            absorbed_overlap: 0.,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        if child.0 != 0 || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let changed = (self.extent.get() - extent).abs() > f32::EPSILON;
+        self.extent.set(extent.max(0.));
+        changed
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
+/// Shared overlap state between an outer absorber and an inner injector.
+#[derive(Clone, Default)]
+pub struct SliverOverlapHandle {
+    extent: Rc<Cell<f32>>,
+}
+
+impl SliverOverlapHandle {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn extent(&self) -> f32 {
+        self.extent.get()
+    }
+
+    fn set_extent(&self, extent: f32) {
+        self.extent.set(extent.max(0.));
+    }
+}
+
+struct OverlapAbsorberRenderSliver {
+    inner: RefCell<Box<dyn RenderSliver>>,
+    handle: SliverOverlapHandle,
+}
+
+impl RenderSliver for OverlapAbsorberRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let layout = self.inner.borrow_mut().perform_layout(constraints);
+        self.handle.set_extent(layout.absorbed_overlap);
+        layout
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        self.inner.borrow_mut().set_child_extent(child, extent)
+    }
+
+    fn revision(&self) -> u64 {
+        self.inner.borrow().revision()
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        self.inner.borrow_mut().tick(now)
+    }
+
+    fn is_animating(&self) -> bool {
+        self.inner.borrow().is_animating()
+    }
+}
+
+struct OverlapInjectorRenderSliver {
+    handle: SliverOverlapHandle,
+}
+
+impl RenderSliver for OverlapInjectorRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let extent = self.handle.extent();
+        SliverLayout::empty(SliverGeometry::from_scroll_extent(constraints, extent))
+    }
+}
+
+impl RenderSliver for WidgetWrapRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let mut layout = self.inner.borrow_mut().perform_layout(constraints);
+        for child in &mut layout.children {
+            child.widget = (self.wrap)(child.widget.clone());
+        }
+        layout
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        self.inner.borrow_mut().set_child_extent(child, extent)
+    }
+
+    fn revision(&self) -> u64 {
+        self.inner.borrow().revision()
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        self.inner.borrow_mut().tick(now)
+    }
+
+    fn is_animating(&self) -> bool {
+        self.inner.borrow().is_animating()
+    }
+}
+
+/// Sequential viewport implementation shared by `CustomScrollView` and
+/// sliver groups. It computes the same per-sliver constraint fields used by a
+/// real viewport and scopes child identity at each boundary.
+struct SequenceRenderSliver {
+    children: Vec<RefCell<Box<dyn RenderSliver>>>,
+}
+
+impl SequenceRenderSliver {
+    fn new(children: Vec<Box<dyn RenderSliver>>) -> Self {
+        Self {
+            children: children.into_iter().map(RefCell::new).collect(),
+        }
+    }
+
+    fn layout_sequence(&self, constraints: SliverConstraints) -> SliverLayout {
+        // These are the same independent cursors used by Flutter's
+        // RenderViewport.layoutChildSequence. `preceding_scroll_extent` is
+        // the logical scroll range consumed by previous slivers, while
+        // `layout_offset` is the paint/layout cursor. They intentionally
+        // diverge when a sliver is pinned, overlaps content, or has already
+        // moved past the trailing edge of the viewport.
+        let initial_layout_offset = 0.;
+        let mut layout_offset = initial_layout_offset;
+        let mut remaining_cache_extent = constraints.remaining_cache_extent;
+        let mut cache_origin = constraints.cache_origin;
+        let mut scroll_offset = constraints.scroll_offset;
+        let mut max_paint_offset = layout_offset + constraints.overlap;
+        let mut preceding = 0.;
+        let mut children = Vec::new();
+        let mut total_correction = None;
+        for (sliver_index, sliver) in self.children.iter().enumerate() {
+            let sliver_scroll_offset = scroll_offset.max(0.);
+            // A sliver must not be asked to cache content before its local
+            // scroll offset. This is the same corrected cache-origin rule
+            // used by Flutter's viewport and is important when a viewport is
+            // partially scrolled into a preceding sliver.
+            let corrected_cache_origin = cache_origin.max(-sliver_scroll_offset);
+            let cache_extent_correction = cache_origin - corrected_cache_origin;
+            let sliver_constraints = SliverConstraints::new(
+                constraints.axis,
+                constraints.reverse,
+                sliver_scroll_offset,
+                preceding,
+                max_paint_offset - layout_offset,
+                (constraints.remaining_paint_extent - layout_offset + initial_layout_offset)
+                    .max(0.),
+                constraints.cross_axis_extent,
+                constraints.viewport_main_axis_extent,
+                (remaining_cache_extent + cache_extent_correction).max(0.),
+                corrected_cache_origin,
+            );
+            let layout = sliver.borrow_mut().perform_layout(sliver_constraints);
+            let geometry = layout.geometry.normalized();
+            if total_correction.is_none() {
+                total_correction = geometry.scroll_offset_correction;
+            }
+
+            // Flutter restarts the sequence at the first correction. Keep the
+            // already laid out prefix so the retained tree remains coherent;
+            // the viewport will apply the correction and run this sequence
+            // again before painting.
+            if geometry.scroll_offset_correction.is_some() {
+                break;
+            }
+
+            let effective_layout_offset = layout_offset + geometry.paint_origin;
+            // Once a sliver is past the trailing edge its effective paint
+            // offset is no longer meaningful. Its increasing scroll cursor is
+            // still useful for retaining a stable content ordering, matching
+            // RenderViewport's fallback placement for invisible slivers.
+            let sliver_paint_offset = if geometry.visible || scroll_offset > 0. {
+                effective_layout_offset
+            } else {
+                -scroll_offset + initial_layout_offset
+            };
+            for mut child in layout.children {
+                child.id = SliverChildId::scoped(sliver_index, child.id);
+                // The retained tree applies one viewport-level transform.
+                // Convert Flutter's paint-space child position back into the
+                // sequence's content space so that transform produces the
+                // same result for normal, overlapping, and pinned slivers.
+                child.offset = sliver_paint_offset + child.offset - sliver_scroll_offset
+                    + constraints.scroll_offset;
+                children.push(child);
+            }
+
+            max_paint_offset =
+                max_paint_offset.max(effective_layout_offset + geometry.paint_extent);
+            preceding += geometry.scroll_extent;
+            scroll_offset -= geometry.scroll_extent;
+            layout_offset += geometry.layout_extent;
+            if geometry.cache_extent != 0. {
+                remaining_cache_extent -= geometry.cache_extent - cache_extent_correction;
+                cache_origin = (corrected_cache_origin + geometry.cache_extent).min(0.);
+            }
+            // Custom slivers may expose an overlap that is not represented by
+            // their paint extent. Preserve it as an explicit obstruction;
+            // built-in pinned headers report exactly paintExtent-layoutExtent
+            // here, so this does not double-count them.
+            max_paint_offset =
+                max_paint_offset.max(layout_offset + layout.absorbed_overlap.max(0.));
+        }
+        apply_pinned_offsets_with_direction(
+            &mut children,
+            constraints.scroll_offset,
+            constraints.viewport_main_axis_extent,
+            constraints.reverse,
+        );
+        let mut geometry = SliverGeometry::from_scroll_extent(constraints, preceding);
+        geometry.scroll_offset_correction = total_correction;
+        SliverLayout {
+            geometry,
+            children,
+            absorbed_overlap: (max_paint_offset - layout_offset).max(0.),
+        }
+    }
+}
+
+impl RenderSliver for SequenceRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        self.layout_sequence(constraints)
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        let index = child.scope();
+        self.children
+            .get(index)
+            .is_some_and(|sliver| sliver.borrow_mut().set_child_extent(child.local(), extent))
+    }
+
+    fn revision(&self) -> u64 {
+        self.children
+            .iter()
+            .map(|child| child.borrow().revision())
+            .fold(0, u64::wrapping_add)
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        self.children
+            .iter()
+            .any(|child| child.borrow_mut().tick(now))
+    }
+
+    fn is_animating(&self) -> bool {
+        self.children
+            .iter()
+            .any(|child| child.borrow().is_animating())
+    }
+}
+
+struct SequenceViewportDelegate {
+    sequence: RefCell<SequenceRenderSliver>,
+}
+
+impl SequenceViewportDelegate {
+    fn new(slivers: Vec<Box<dyn RenderSliver>>) -> Self {
+        Self {
+            sequence: RefCell::new(SequenceRenderSliver::new(slivers)),
+        }
+    }
+}
+
+impl SliverViewportDelegate for SequenceViewportDelegate {
+    fn perform_layout(&self, constraints: SliverConstraints) -> SliverViewportLayout {
+        let layout = self.sequence.borrow_mut().perform_layout(constraints);
+        SliverViewportLayout {
+            geometry: layout.geometry,
+            children: layout.children,
+        }
+    }
+
+    fn set_child_extent(&self, child: SliverChildId, extent: f32) -> bool {
+        self.sequence.borrow_mut().set_child_extent(child, extent)
+    }
+
+    fn revision(&self) -> u64 {
+        self.sequence.borrow().revision()
+    }
+
+    fn sliver_count(&self) -> usize {
+        self.sequence.borrow().children.len()
+    }
+
+    fn tick(&self, now: Instant) -> bool {
+        self.sequence.borrow_mut().tick(now)
+    }
+
+    fn is_animating(&self) -> bool {
+        self.sequence.borrow().is_animating()
+    }
+}
+
+fn sliver_child_constraints(axis: Axis, cross: f32, extent: Option<f32>) -> Constraints {
+    let cross = cross.max(0.);
+    match (axis, extent) {
+        (Axis::Vertical, Some(extent)) => Constraints::new(cross, cross, extent, extent),
+        (Axis::Horizontal, Some(extent)) => Constraints::new(extent, extent, cross, cross),
+        (Axis::Vertical, None) => Constraints::new(cross, cross, 0., f32::INFINITY),
+        (Axis::Horizontal, None) => Constraints::new(0., f32::INFINITY, cross, cross),
+    }
+}
+
+/// Returns a conservative main-axis size for a widget that is used as a
+/// sliver prototype. This is deliberately limited to dimensions that are
+/// independent of the eventual viewport; widgets whose size depends on
+/// ambient constraints return `None` and are measured by the retained child
+/// pass instead.
+fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
+    fn finite(value: f32) -> Option<f32> {
+        value.is_finite().then_some(value.max(0.))
+    }
+
+    fn dimension(size: Size, axis: Axis) -> Option<f32> {
+        finite(axis.main_extent(size))
+    }
+
+    fn constrained(child: &Widget, axis: Axis, min: f32, max: f32) -> Option<f32> {
+        let min = finite(min).unwrap_or(0.);
+        let child = widget_main_extent_hint(child, axis);
+        if max.is_finite() {
+            let max = max.max(min);
+            child
+                .map(|value| value.clamp(min, max))
+                .or_else(|| finite(max))
+        } else {
+            child.or_else(|| (min > 0.).then_some(min))
+        }
+    }
+
+    let result = match &widget.kind {
+        WidgetKind::Box { size, .. } => dimension(*size, axis),
+        WidgetKind::Shape { size, path, .. } => {
+            size.and_then(|size| dimension(size, axis)).or_else(|| {
+                path.bounds()
+                    .and_then(|bounds| dimension(bounds.size, axis))
+            })
+        }
+        WidgetKind::CustomPaint { size, .. } => dimension(*size, axis),
+        WidgetKind::Decorated { size, child, .. } => size
+            .and_then(|size| dimension(size, axis))
+            .or_else(|| widget_main_extent_hint(child, axis)),
+        WidgetKind::Button { size, child, .. } => dimension(*size, axis)
+            .filter(|extent| *extent > 0.)
+            .or_else(|| {
+                child
+                    .as_deref()
+                    .and_then(|child| widget_main_extent_hint(child, axis))
+            })
+            .or_else(|| dimension(*size, axis)),
+        WidgetKind::Text { style, .. } | WidgetKind::SelectableText { style, .. } => {
+            let font_size = style.size.max(1.);
+            let line_height = style
+                .line_height
+                .map_or(font_size * 1.2, |height| match height {
+                    incular_text::LineHeight::Normal => font_size * 1.2,
+                    incular_text::LineHeight::Multiplier(multiplier) => {
+                        font_size * multiplier.max(0.)
+                    }
+                    incular_text::LineHeight::Absolute(pixels) => pixels.max(0.),
+                });
+            finite(line_height)
+        }
+        WidgetKind::Image { width, height, .. } => finite(match axis {
+            Axis::Horizontal => width.unwrap_or(0.),
+            Axis::Vertical => height.unwrap_or(0.),
+        })
+        .filter(|extent| *extent > 0.),
+        WidgetKind::TextField { size, .. } => dimension(*size, axis),
+        WidgetKind::Padding { padding, child } => {
+            widget_main_extent_hint(child, axis).map(|extent| {
+                extent
+                    + if axis.is_vertical() {
+                        padding.top + padding.bottom
+                    } else {
+                        padding.left + padding.right
+                    }
+            })
+        }
+        WidgetKind::Constrained { constraints, child } => constrained(
+            child,
+            axis,
+            if axis.is_vertical() {
+                constraints.min_height
+            } else {
+                constraints.min_width
+            },
+            if axis.is_vertical() {
+                constraints.max_height
+            } else {
+                constraints.max_width
+            },
+        ),
+        WidgetKind::Limited {
+            max_width,
+            max_height,
+            child,
+        } => {
+            let max = if axis.is_vertical() {
+                *max_height
+            } else {
+                *max_width
+            };
+            widget_main_extent_hint(child, axis)
+                .map(|extent| extent.min(max))
+                .or_else(|| finite(max))
+        }
+        WidgetKind::Overflow {
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            child,
+        } => {
+            let min = if axis.is_vertical() {
+                min_height.unwrap_or(0.)
+            } else {
+                min_width.unwrap_or(0.)
+            };
+            let max = if axis.is_vertical() {
+                max_height.unwrap_or(f32::INFINITY)
+            } else {
+                max_width.unwrap_or(f32::INFINITY)
+            };
+            constrained(child, axis, min, max)
+        }
+        WidgetKind::Positioned {
+            width,
+            height,
+            child,
+            ..
+        } => {
+            let explicit = if axis.is_vertical() { *height } else { *width };
+            explicit
+                .and_then(finite)
+                .or_else(|| widget_main_extent_hint(child, axis))
+        }
+        WidgetKind::Visibility { visible, child } => {
+            if *visible {
+                widget_main_extent_hint(child, axis)
+            } else {
+                Some(0.)
+            }
+        }
+        WidgetKind::Align { child, .. }
+        | WidgetKind::SafeArea { child, .. }
+        | WidgetKind::ClipRect { child, .. }
+        | WidgetKind::ClipRRect { child, .. }
+        | WidgetKind::ClipOval { child, .. }
+        | WidgetKind::ClipPath { child, .. }
+        | WidgetKind::Gesture { child, .. }
+        | WidgetKind::Draggable { child, .. }
+        | WidgetKind::DragTarget { child, .. }
+        | WidgetKind::IgnorePointer { child, .. }
+        | WidgetKind::AbsorbPointer { child, .. }
+        | WidgetKind::Unconstrained { child, .. }
+        | WidgetKind::RepaintBoundary { child }
+        | WidgetKind::FittedBox { child, .. }
+        | WidgetKind::Opacity { child, .. }
+        | WidgetKind::Blur { child, .. }
+        | WidgetKind::DropShadow { child, .. }
+        | WidgetKind::ColorFiltered { child, .. }
+        | WidgetKind::Blend { child, .. }
+        | WidgetKind::Translate { child, .. }
+        | WidgetKind::Transform { child, .. }
+        | WidgetKind::Scale { child, .. }
+        | WidgetKind::Rotation { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::Baseline { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::Flexible { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::Flex {
+            axis: flex_axis,
+            children,
+            spacing,
+            ..
+        } => {
+            let hints = children
+                .iter()
+                .map(|child| widget_main_extent_hint(child, axis))
+                .collect::<Option<Vec<_>>>()?;
+            if *flex_axis == axis {
+                let spacing = spacing.max(0.) * children.len().saturating_sub(1) as f32;
+                finite(hints.into_iter().sum::<f32>() + spacing)
+            } else {
+                hints.into_iter().reduce(f32::max).or(Some(0.))
+            }
+        }
+        WidgetKind::Stack { children, .. } | WidgetKind::IndexedStack { children, .. } => children
+            .iter()
+            .filter_map(|child| widget_main_extent_hint(child, axis))
+            .reduce(f32::max),
+        WidgetKind::SelectionArea { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::PersistentHeader { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::NotificationListener { child, .. } => widget_main_extent_hint(child, axis),
+        // A scrollable or a layout builder obtains its main-axis extent from
+        // its parent; guessing it from the child would make a prototype list
+        // report a different extent from the actual viewport.
+        WidgetKind::Scroll { .. }
+        | WidgetKind::VirtualList { .. }
+        | WidgetKind::SliverViewport { .. }
+        | WidgetKind::LayoutBuilder { .. }
+        | WidgetKind::AspectRatio { .. }
+        | WidgetKind::Fractional { .. }
+        | WidgetKind::Wrap { .. }
+        | WidgetKind::Table { .. } => None,
+    };
+    result.and_then(finite)
+}
+
+fn main_before(axis: Axis, padding: EdgeInsets) -> f32 {
+    if axis.is_vertical() {
+        padding.top
+    } else {
+        padding.left
+    }
+}
+
+fn main_after(axis: Axis, padding: EdgeInsets) -> f32 {
+    if axis.is_vertical() {
+        padding.bottom
+    } else {
+        padding.right
+    }
+}
+
+fn cross_before(axis: Axis, padding: EdgeInsets) -> f32 {
+    if axis.is_vertical() {
+        padding.left
+    } else {
+        padding.top
+    }
+}
+
+fn cross_after(axis: Axis, padding: EdgeInsets) -> f32 {
+    if axis.is_vertical() {
+        padding.right
+    } else {
+        padding.bottom
+    }
+}
+
+fn apply_pinned_offsets_with_direction(
+    children: &mut [SliverChildLayout],
+    scroll: f32,
+    viewport: f32,
+    reverse: bool,
+) {
+    let viewport = viewport.max(0.);
+    let pinned = children
+        .iter()
+        .enumerate()
+        .filter_map(|(index, child)| child.pinned.then_some(index))
+        .collect::<Vec<_>>();
+    if reverse {
+        // In a reversed viewport the leading edge is the physical trailing
+        // edge. Walk backwards so multiple pinned headers stack from right to
+        // left (or bottom to top) in the same way Flutter's viewport does.
+        let mut stack = viewport;
+        for child_index in pinned.into_iter().rev() {
+            let normal = children[child_index].offset;
+            let extent = children[child_index].extent.max(0.).min(viewport);
+            let current = normal - scroll;
+            let target = stack - extent;
+            if current <= target {
+                children[child_index].offset = normal + target - current;
+                stack = target;
+            }
+        }
+    } else {
+        // Pinned headers reserve a slot at the leading edge once their normal
+        // position reaches that slot. Every subsequent pinned header uses the
+        // end of the previous slot, preventing overlap while preserving the
+        // normal flow position before it reaches the stack.
+        let mut stack = 0.;
+        for child_index in pinned {
+            let normal = children[child_index].offset;
+            let extent = children[child_index].extent.max(0.).min(viewport);
+            let current = normal - scroll;
+            if current <= stack {
+                children[child_index].offset = normal + stack - current;
+                stack += extent;
+            }
+        }
+    }
+}
+
+/// Unified sliver protocol. A sliver creates a retained render-sliver node.
 pub trait Sliver {
     fn build(&self, controller: &ScrollController) -> Widget;
+
+    /// Cross-axis groups use this flex when the sliver is wrapped in
+    /// [`SliverCrossAxisExpanded`]. Ordinary slivers occupy one equal lane.
+    fn cross_axis_flex(&self) -> Option<usize> {
+        None
+    }
 
     /// Builds a sliver with the owning viewport's axis and direction.  The
     /// default keeps existing custom slivers source-compatible; built-in
@@ -1035,6 +2442,21 @@ pub trait Sliver {
         _reverse: bool,
     ) -> Widget {
         self.build(controller)
+    }
+
+    /// Creates the retained sliver protocol implementation. The default is a
+    /// true `SliverToBoxAdapter`, which preserves source compatibility for
+    /// custom slivers while built-ins override it with lazy geometry-aware
+    /// implementations.
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(BoxRenderSliver::new(
+            self.build_with_config(controller, axis, reverse),
+        ))
     }
 }
 
@@ -1057,6 +2479,15 @@ impl SliverToBoxAdapter {
 impl Sliver for SliverToBoxAdapter {
     fn build(&self, _: &ScrollController) -> Widget {
         self.child.clone()
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(BoxRenderSliver::new(self.child.clone()))
     }
 }
 
@@ -1095,6 +2526,18 @@ impl Sliver for SliverList {
             controller.clone(),
             move |index| builder(index),
         )
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(VariableExtentRenderSliver::new(
+            MeasuredExtentIndex::new(self.item_count, self.item_extent),
+            self.builder.clone(),
+        ))
     }
 }
 
@@ -1145,6 +2588,27 @@ impl Sliver for SliverGrid {
             },
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let columns = self.cross_axis_count;
+        let item_count = self.item_count;
+        let builder = self.builder.clone();
+        Box::new(FixedExtentRenderSliver::new(
+            item_count.div_ceil(columns),
+            self.row_extent,
+            Rc::new(move |row| {
+                let start = row * columns;
+                Widget::from(Row::new(
+                    (start..(start + columns).min(item_count)).map(|index| builder(index)),
+                ))
+            }),
+        ))
+    }
 }
 
 /// Insets around a sliver child.
@@ -1171,6 +2635,18 @@ impl SliverPadding {
 impl Sliver for SliverPadding {
     fn build(&self, controller: &ScrollController) -> Widget {
         Padding::new(self.padding, self.sliver.build(controller)).into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(PaddingRenderSliver {
+            inner: RefCell::new(self.sliver.create_render_sliver(controller, axis, reverse)),
+            padding: self.padding,
+        })
     }
 }
 
@@ -1237,6 +2713,19 @@ impl Sliver for SliverPersistentHeader {
             self.pinned,
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(HeaderRenderSliver::new(
+            self.child.clone(),
+            self.height,
+            self.pinned,
+        ))
+    }
 }
 
 /// A framework-neutral app bar sliver.
@@ -1288,6 +2777,19 @@ impl Sliver for SliverAppBar {
             .pinned(self.pinned)
             .build_with_config(controller, axis, reverse)
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(HeaderRenderSliver::new(
+            self.title.clone(),
+            self.expanded_height,
+            self.pinned,
+        ))
+    }
 }
 
 /// A first-class CustomScrollView coordinating a sequence of slivers.
@@ -1308,6 +2810,8 @@ pub struct CustomScrollView {
     reverse: bool,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(default = 250.0, setter(transform = |extent: f32| extent.max(0.0)))]
+    cache_extent: f32,
     #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
 }
@@ -1328,6 +2832,7 @@ impl CustomScrollView {
             scroll_direction: Axis::Vertical,
             reverse: false,
             physics: None,
+            cache_extent: 250.,
             clip_behavior: Clip::HardEdge,
         }
     }
@@ -1360,6 +2865,15 @@ impl CustomScrollView {
         self
     }
 
+    /// Sets the amount of logical content laid out before and after the
+    /// visible viewport. A nonzero cache keeps scrolling from synchronously
+    /// constructing the next child at the edge.
+    #[must_use]
+    pub fn cache_extent(mut self, extent: f32) -> Self {
+        self.cache_extent = extent.max(0.);
+        self
+    }
+
     /// Sets clipping behavior.
     #[must_use]
     pub fn clip_behavior(mut self, clip: Clip) -> Self {
@@ -1381,23 +2895,23 @@ impl CustomScrollView {
 impl From<CustomScrollView> for Widget {
     fn from(value: CustomScrollView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let built_children: Vec<Widget> = value
+        let render_slivers = value
             .slivers
-            .into_iter()
+            .iter()
             .map(|sliver| {
-                sliver.build_with_config(&controller, value.scroll_direction, value.reverse)
+                sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse)
             })
             .collect();
-        let content: Widget = match value.scroll_direction {
-            Axis::Horizontal => Row::new(built_children).into(),
-            Axis::Vertical => Column::new(built_children).into(),
-        };
-        SingleChildScrollView::new(content)
-            .scroll_direction(value.scroll_direction)
-            .reverse(value.reverse)
-            .physics(value.physics.unwrap_or_default())
-            .controller(controller)
-            .into()
+        Widget::sliver_viewport_with_delegate_options(
+            controller,
+            value.scroll_direction,
+            value.reverse,
+            value.physics.unwrap_or_default(),
+            value.cache_extent,
+            false,
+            value.clip_behavior,
+            Rc::new(SequenceViewportDelegate::new(render_slivers)),
+        )
     }
 }
 
@@ -1481,15 +2995,9 @@ impl NestedScrollView {
 impl From<NestedScrollView> for Widget {
     fn from(value: NestedScrollView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let mut slivers: Vec<Widget> = value
-            .header_slivers
-            .into_iter()
-            .map(|s| s.build(&controller))
-            .collect();
-        slivers.push(value.body);
-        SingleChildScrollView::new(Column::new(slivers))
-            .controller(controller)
-            .into()
+        let mut slivers = value.header_slivers;
+        slivers.push(Box::new(SliverToBoxAdapter::new(value.body)) as Box<dyn Sliver>);
+        CustomScrollView::new(slivers).controller(controller).into()
     }
 }
 
@@ -1545,7 +3053,11 @@ impl Viewport {
 
 impl From<Viewport> for Widget {
     fn from(value: Viewport) -> Self {
-        CustomScrollView::new(value.slivers).into()
+        CustomScrollView::new(value.slivers)
+            .scroll_direction(value.axis_direction)
+            .controller(value.controller.unwrap_or_default())
+            .cache_extent(0.)
+            .into()
     }
 }
 
@@ -1578,7 +3090,22 @@ impl ShrinkWrappingViewport {
 
 impl From<ShrinkWrappingViewport> for Widget {
     fn from(value: ShrinkWrappingViewport) -> Self {
-        CustomScrollView::new(value.slivers).into()
+        let controller = ScrollController::new();
+        let render_slivers = value
+            .slivers
+            .iter()
+            .map(|sliver| sliver.create_render_sliver(&controller, Axis::Vertical, false))
+            .collect();
+        Widget::sliver_viewport_with_delegate_options(
+            controller,
+            Axis::Vertical,
+            false,
+            ScrollPhysics::default(),
+            250.,
+            true,
+            Clip::HardEdge,
+            Rc::new(SequenceViewportDelegate::new(render_slivers)),
+        )
     }
 }
 
@@ -1769,6 +3296,8 @@ impl From<DraggableScrollableActuator> for Widget {
 /// Listens for notifications bubbling up the widget tree.
 #[derive(Clone, TypedBuilder)]
 pub struct NotificationListener {
+    #[builder(default)]
+    callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
     #[builder(setter(into))]
     child: Widget,
 }
@@ -1777,14 +3306,26 @@ impl NotificationListener {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
+            callback: None,
             child: child.into(),
         }
+    }
+
+    /// Receives scroll notifications from descendant viewports. Returning
+    /// `true` stops the notification from reaching an outer listener.
+    #[must_use]
+    pub fn on_notification(
+        mut self,
+        callback: impl Fn(ScrollNotification) -> bool + 'static,
+    ) -> Self {
+        self.callback = Some(Rc::new(callback));
+        self
     }
 }
 
 impl From<NotificationListener> for Widget {
     fn from(value: NotificationListener) -> Self {
-        value.child
+        Widget::notification_listener(value.callback, value.child)
     }
 }
 
@@ -1940,6 +3481,19 @@ impl Sliver for SliverFixedExtentList {
             move |i| builder(i),
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(FixedExtentRenderSliver::new(
+            self.item_count,
+            self.item_extent,
+            self.builder.clone(),
+        ))
+    }
 }
 
 /// Sliver list with variable item extents.
@@ -1982,6 +3536,21 @@ impl Sliver for SliverVariedExtentList {
             move |i| ib(i),
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let index = MeasuredExtentIndex::with_estimates(self.item_count, 48., |index| {
+            (self.extent_builder)(index)
+        });
+        Box::new(VariableExtentRenderSliver::new(
+            index,
+            self.item_builder.clone(),
+        ))
+    }
 }
 
 /// Sliver list taking extent from a prototype widget.
@@ -2017,12 +3586,35 @@ impl SliverPrototypeExtentList {
 impl Sliver for SliverPrototypeExtentList {
     fn build(&self, controller: &ScrollController) -> Widget {
         let builder = self.builder.clone();
+        let prototype_extent = widget_main_extent_hint(&self.prototype_item, Axis::Vertical)
+            .unwrap_or(48.)
+            .max(1.);
         VirtualList::fixed_extent_with_controller(
             self.item_count,
-            48.0,
+            prototype_extent,
             controller.clone(),
             move |i| builder(i),
         )
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        // Flutter's prototype sliver lays out one prototype and forces every
+        // child to that main-axis extent. Use explicit widget dimensions when
+        // available; constraint-dependent prototypes fall back to the normal
+        // warm-up estimate and are corrected by the retained child pass.
+        let prototype_extent = widget_main_extent_hint(&self.prototype_item, axis)
+            .unwrap_or(48.)
+            .max(1.);
+        Box::new(FixedExtentRenderSliver::new(
+            self.item_count,
+            prototype_extent,
+            self.builder.clone(),
+        ))
     }
 }
 
@@ -2060,6 +3652,19 @@ impl Sliver for SliverFillRemaining {
     fn build(&self, _controller: &ScrollController) -> Widget {
         self.child.clone()
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(FillRemainingRenderSliver {
+            child: self.child.clone(),
+            has_scroll_body: self.has_scroll_body,
+            extent: Cell::new(0.),
+        })
+    }
 }
 
 /// Sliver with children each filling the entire viewport.
@@ -2069,6 +3674,8 @@ pub struct SliverFillViewport {
         children.into_iter().map(Into::into).collect::<Vec<Widget>>()
     }))]
     children: Vec<Widget>,
+    #[builder(default = 1.0, setter(transform = |fraction: f32| fraction.max(0.01)))]
+    viewport_fraction: f32,
 }
 
 impl Default for SliverFillViewport {
@@ -2082,7 +3689,19 @@ impl SliverFillViewport {
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
             children: children.into_iter().map(Into::into).collect(),
+            viewport_fraction: 1.0,
         }
+    }
+
+    #[must_use]
+    pub fn viewport_fraction(mut self, fraction: f32) -> Self {
+        self.viewport_fraction = fraction.max(0.01);
+        self
+    }
+
+    #[must_use]
+    pub fn viewport_fraction_value(&self) -> f32 {
+        self.viewport_fraction
     }
 }
 
@@ -2090,11 +3709,24 @@ impl Sliver for SliverFillViewport {
     fn build(&self, _controller: &ScrollController) -> Widget {
         Column::new(self.children.clone()).into()
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let children = Rc::new(self.children.clone());
+        Box::new(ViewportExtentRenderSliver {
+            children,
+            viewport_fraction: self.viewport_fraction,
+        })
+    }
 }
 
-/// Sliver builder receiving constraints.
+/// Sliver builder receiving the owning scroll controller.
 pub struct SliverLayoutBuilder {
-    builder: Rc<dyn Fn(&ScrollController) -> Widget>,
+    builder: SliverLayoutBuilderFn,
 }
 
 impl SliverLayoutBuilder {
@@ -2104,14 +3736,49 @@ impl SliverLayoutBuilder {
         W: Into<Widget> + 'static,
     {
         Self {
-            builder: Rc::new(move |c| builder(c).into()),
+            builder: Rc::new(move |c, _| builder(c).into()),
+        }
+    }
+
+    /// Creates a layout builder that observes the complete sliver protocol
+    /// constraints. It is rebuilt only when those constraints change, just as
+    /// Flutter's `SliverLayoutBuilder` is driven by sliver layout rather than
+    /// by ordinary box constraints.
+    #[must_use]
+    pub fn new_with_sliver_constraints<W>(
+        builder: impl Fn(SliverConstraints) -> W + 'static,
+    ) -> Self
+    where
+        W: Into<Widget> + 'static,
+    {
+        Self {
+            builder: Rc::new(move |_, constraints| builder(constraints).into()),
         }
     }
 }
 
 impl Sliver for SliverLayoutBuilder {
     fn build(&self, controller: &ScrollController) -> Widget {
-        (self.builder)(controller)
+        (self.builder)(
+            controller,
+            SliverConstraints::new(Axis::Vertical, false, 0., 0., 0., 0., 0., 0., 0., 0.),
+        )
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(LayoutBuilderRenderSliver {
+            controller: controller.clone(),
+            builder: self.builder.clone(),
+            child: SizedBox::shrink().into(),
+            extent: Cell::new(48.),
+            last_constraints: None,
+            revision: 0,
+        })
     }
 }
 
@@ -2151,6 +3818,20 @@ impl Sliver for SliverMainAxisGroup {
             .collect::<Vec<_>>();
         Column::new(built).into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(SequenceRenderSliver::new(
+            self.slivers
+                .iter()
+                .map(|sliver| sliver.create_render_sliver(controller, axis, reverse))
+                .collect(),
+        ))
+    }
 }
 
 /// Groups multiple slivers across the cross axis.
@@ -2189,6 +3870,114 @@ impl Sliver for SliverCrossAxisGroup {
             .collect::<Vec<_>>();
         Row::new(built).into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(CrossAxisGroupRenderSliver::new(
+            self.slivers
+                .iter()
+                .map(|sliver| {
+                    (
+                        sliver.create_render_sliver(controller, axis, reverse),
+                        sliver.cross_axis_flex().unwrap_or(1),
+                    )
+                })
+                .collect(),
+        ))
+    }
+}
+
+/// Lays out several slivers against the same main-axis scroll position while
+/// dividing the cross axis into flex lanes. Each lane has independent sliver
+/// geometry, but the group consumes the maximum lane scroll extent.
+struct CrossAxisGroupRenderSliver {
+    children: Vec<(RefCell<Box<dyn RenderSliver>>, usize)>,
+}
+
+impl CrossAxisGroupRenderSliver {
+    fn new(children: Vec<(Box<dyn RenderSliver>, usize)>) -> Self {
+        Self {
+            children: children
+                .into_iter()
+                .map(|(child, flex)| (RefCell::new(child), flex.max(1)))
+                .collect(),
+        }
+    }
+}
+
+impl RenderSliver for CrossAxisGroupRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let total_flex = self
+            .children
+            .iter()
+            .map(|(_, flex)| *flex as f32)
+            .sum::<f32>()
+            .max(1.);
+        let mut cross_offset = 0.;
+        let mut scroll_extent: f32 = 0.;
+        let mut absorbed_overlap: f32 = 0.;
+        let mut children = Vec::new();
+        for (lane, (sliver, flex)) in self.children.iter().enumerate() {
+            let lane_extent = constraints.cross_axis_extent * (*flex as f32 / total_flex);
+            let lane_constraints = SliverConstraints::new(
+                constraints.axis,
+                constraints.reverse,
+                constraints.scroll_offset,
+                constraints.preceding_scroll_extent,
+                constraints.overlap,
+                constraints.remaining_paint_extent,
+                lane_extent,
+                constraints.viewport_main_axis_extent,
+                constraints.remaining_cache_extent,
+                constraints.cache_origin,
+            );
+            let layout = sliver.borrow_mut().perform_layout(lane_constraints);
+            let geometry = layout.geometry.normalized();
+            scroll_extent = scroll_extent.max(geometry.scroll_extent);
+            absorbed_overlap = absorbed_overlap.max(layout.absorbed_overlap);
+            for mut child in layout.children {
+                child.id = SliverChildId::scoped(lane, child.id);
+                child.cross_offset += cross_offset;
+                children.push(child);
+            }
+            cross_offset += lane_extent;
+        }
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, scroll_extent),
+            children,
+            absorbed_overlap,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        let lane = child.scope();
+        self.children
+            .get(lane)
+            .is_some_and(|(sliver, _)| sliver.borrow_mut().set_child_extent(child.local(), extent))
+    }
+
+    fn revision(&self) -> u64 {
+        self.children
+            .iter()
+            .map(|(sliver, _)| sliver.borrow().revision())
+            .fold(0, u64::wrapping_add)
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        self.children
+            .iter()
+            .any(|(sliver, _)| sliver.borrow_mut().tick(now))
+    }
+
+    fn is_animating(&self) -> bool {
+        self.children
+            .iter()
+            .any(|(sliver, _)| sliver.borrow().is_animating())
+    }
 }
 
 /// Expands a sliver across cross-axis group space.
@@ -2217,6 +4006,19 @@ impl Sliver for SliverCrossAxisExpanded {
         crate::layout::Expanded::new(self.sliver.build(controller))
             .flex(self.flex as u32)
             .into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        self.sliver.create_render_sliver(controller, axis, reverse)
+    }
+
+    fn cross_axis_flex(&self) -> Option<usize> {
+        Some(self.flex)
     }
 }
 
@@ -2252,6 +4054,30 @@ impl Sliver for SliverConstrainedCrossAxis {
         )
         .into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let max_extent = self.max_extent;
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(move |widget| {
+                crate::layout::ConstrainedBox::new(
+                    if axis.is_vertical() {
+                        Constraints::new(0., max_extent, 0., f32::INFINITY)
+                    } else {
+                        Constraints::new(0., f32::INFINITY, 0., max_extent)
+                    },
+                    widget,
+                )
+                .into()
+            }),
+        })
+    }
 }
 
 /// Paints decoration behind a sliver.
@@ -2284,6 +4110,26 @@ impl Sliver for DecoratedSliver {
         let child = self.sliver.build(controller);
         DecoratedBox::new(child).into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let decoration = self.decoration.clone();
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            // `Decoration` is renderer-owned and the existing DecoratedBox
+            // widget accepts BoxDecoration. Preserve the sliver geometry and
+            // retain the child while that richer decoration bridge is added.
+            wrap: Rc::new(move |widget| {
+                let _ = &decoration;
+                DecoratedBox::new(widget).into()
+            }),
+        })
+    }
 }
 
 /// Sliver opacity wrapper.
@@ -2310,6 +4156,20 @@ impl SliverOpacity {
 impl Sliver for SliverOpacity {
     fn build(&self, controller: &ScrollController) -> Widget {
         crate::Opacity::new(self.opacity, self.sliver.build(controller)).into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let opacity = self.opacity;
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(move |widget| crate::Opacity::new(opacity, widget).into()),
+        })
     }
 }
 
@@ -2339,6 +4199,24 @@ impl Sliver for SliverOffstage {
             .offstage(self.offstage)
             .into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let offstage = self.offstage;
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(move |widget| {
+                crate::layout::Offstage::new(widget)
+                    .offstage(offstage)
+                    .into()
+            }),
+        })
+    }
 }
 
 /// Sliver ignore pointer wrapper.
@@ -2367,6 +4245,22 @@ impl Sliver for SliverIgnorePointer {
             .ignoring(self.ignoring)
             .into()
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let ignoring = self.ignoring;
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(move |widget| {
+                crate::IgnorePointer::new(widget).ignoring(ignoring).into()
+            }),
+        })
+    }
 }
 
 /// Sliver safe area insets wrapper.
@@ -2390,6 +4284,19 @@ impl SliverSafeArea {
 impl Sliver for SliverSafeArea {
     fn build(&self, controller: &ScrollController) -> Widget {
         crate::SafeArea::new(self.sliver.build(controller)).into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(|widget| crate::SafeArea::new(widget).into()),
+        })
     }
 }
 
@@ -2418,6 +4325,24 @@ impl Sliver for SliverVisibility {
         crate::layout::Visibility::new(self.sliver.build(controller))
             .visible(self.visible)
             .into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let visible = self.visible;
+        let inner = self.sliver.create_render_sliver(controller, axis, reverse);
+        Box::new(WidgetWrapRenderSliver {
+            inner: RefCell::new(inner),
+            wrap: Rc::new(move |widget| {
+                crate::layout::Visibility::new(widget)
+                    .visible(visible)
+                    .into()
+            }),
+        })
     }
 }
 
@@ -2458,6 +4383,15 @@ impl Sliver for PinnedHeaderSliver {
             true,
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(BoxRenderSliver::pinned(self.child.clone()))
+    }
 }
 
 /// Floating header sliver.
@@ -2487,9 +4421,32 @@ impl Sliver for SliverFloatingHeader {
         axis: Axis,
         reverse: bool,
     ) -> Widget {
-        SliverPersistentHeader::new(48.0, self.child.clone())
-            .pinned(false)
-            .build_with_config(controller, axis, reverse)
+        SliverPersistentHeader::new(
+            widget_main_extent_hint(&self.child, axis)
+                .unwrap_or(48.0)
+                .max(1.0),
+            self.child.clone(),
+        )
+        .pinned(false)
+        .build_with_config(controller, axis, reverse)
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(FloatingHeaderRenderSliver {
+            child: self.child.clone(),
+            extent: Cell::new(
+                widget_main_extent_hint(&self.child, axis)
+                    .unwrap_or(48.)
+                    .max(1.),
+            ),
+            last_scroll_offset: None,
+            effective_scroll_offset: 0.,
+        })
     }
 }
 
@@ -2539,6 +4496,19 @@ impl Sliver for SliverResizingHeader {
         SliverPersistentHeader::new(self.max_extent, self.child.clone())
             .build_with_config(controller, axis, reverse)
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(ResizingHeaderRenderSliver {
+            child: self.child.clone(),
+            min_extent: self.min_extent,
+            max_extent: self.max_extent,
+        })
+    }
 }
 
 /// Sliver overlap absorber for nested scroll view coordinators.
@@ -2548,6 +4518,8 @@ pub struct SliverOverlapAbsorber {
         Box::new(sliver) as Box<dyn Sliver>
     }))]
     sliver: Box<dyn Sliver>,
+    #[builder(default)]
+    handle: SliverOverlapHandle,
 }
 
 impl SliverOverlapAbsorber {
@@ -2555,7 +4527,14 @@ impl SliverOverlapAbsorber {
     pub fn new(sliver: impl Sliver + 'static) -> Self {
         Self {
             sliver: Box::new(sliver),
+            handle: SliverOverlapHandle::new(),
         }
+    }
+
+    /// Returns the handle consumed by an inner `SliverOverlapInjector`.
+    #[must_use]
+    pub fn handle(&self) -> SliverOverlapHandle {
+        self.handle.clone()
     }
 }
 
@@ -2563,11 +4542,23 @@ impl Sliver for SliverOverlapAbsorber {
     fn build(&self, controller: &ScrollController) -> Widget {
         self.sliver.build(controller)
     }
+
+    fn create_render_sliver(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(OverlapAbsorberRenderSliver {
+            inner: RefCell::new(self.sliver.create_render_sliver(controller, axis, reverse)),
+            handle: self.handle.clone(),
+        })
+    }
 }
 
 /// Sliver overlap injector for nested scroll view coordinators.
 pub struct SliverOverlapInjector {
-    handle: (),
+    handle: SliverOverlapHandle,
 }
 
 impl Default for SliverOverlapInjector {
@@ -2579,11 +4570,27 @@ impl Default for SliverOverlapInjector {
 impl SliverOverlapInjector {
     #[must_use]
     pub fn new() -> Self {
-        Self { handle: () }
+        Self {
+            handle: SliverOverlapHandle::new(),
+        }
     }
 
-    pub fn handle(&self) {
-        let () = self.handle;
+    /// Creates an injector backed by an absorber's shared handle.
+    #[must_use]
+    pub fn with_handle(handle: SliverOverlapHandle) -> Self {
+        Self { handle }
+    }
+
+    /// Naming-compatible constructor for code that mirrors Flutter's
+    /// `SliverOverlapInjector` factory style.
+    #[must_use]
+    pub fn new_with_handle(handle: SliverOverlapHandle) -> Self {
+        Self::with_handle(handle)
+    }
+
+    #[must_use]
+    pub fn overlap_extent(&self) -> f32 {
+        self.handle.extent()
     }
 }
 
@@ -2591,12 +4598,280 @@ impl Sliver for SliverOverlapInjector {
     fn build(&self, _controller: &ScrollController) -> Widget {
         crate::layout::SizedBox::shrink().into()
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(OverlapInjectorRenderSliver {
+            handle: self.handle.clone(),
+        })
+    }
 }
 
-/// Reorderable sliver list.
-pub struct SliverReorderableList {
-    item_count: usize,
+/// Retained state for a reorderable sliver. The order stores logical item
+/// identities rather than visible slots, so moving an item preserves its
+/// element state and measured extent.
+#[derive(Clone)]
+pub struct SliverReorderController {
+    state: Rc<RefCell<SliverReorderState>>,
+}
+
+struct SliverReorderState {
+    order: Vec<usize>,
+    next_item: usize,
+    revision: u64,
+}
+
+impl SliverReorderController {
+    #[must_use]
+    pub fn new(item_count: usize) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(SliverReorderState {
+                order: (0..item_count).collect(),
+                next_item: item_count,
+                revision: 0,
+            })),
+        }
+    }
+
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.state.borrow().order.len()
+    }
+
+    /// Returns the logical item IDs in their current visual order.
+    #[must_use]
+    pub fn order(&self) -> Vec<usize> {
+        self.state.borrow().order.clone()
+    }
+
+    #[must_use]
+    pub fn item_at(&self, position: usize) -> Option<usize> {
+        self.state.borrow().order.get(position).copied()
+    }
+
+    #[must_use]
+    pub fn position_of(&self, item: usize) -> Option<usize> {
+        self.state
+            .borrow()
+            .order
+            .iter()
+            .position(|candidate| *candidate == item)
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
+    }
+
+    /// Moves `from` to `to`, where `to` is the final position after removal.
+    /// This is the same operation used by the retained sliver drop target.
+    pub fn move_item(&self, from: usize, to: usize) -> bool {
+        let mut state = self.state.borrow_mut();
+        if from >= state.order.len() || to >= state.order.len() || from == to {
+            return false;
+        }
+        let item = state.order.remove(from);
+        state.order.insert(to, item);
+        state.revision = state.revision.wrapping_add(1);
+        true
+    }
+
+    /// Applies Flutter's `onReorder(oldIndex, newIndex)` convention. Flutter
+    /// reports `newIndex` before the old item is removed, so destinations after
+    /// the source are shifted back by one.
+    pub fn reorder(&self, old_index: usize, new_index: usize) -> bool {
+        let len = self.item_count();
+        if old_index >= len || new_index > len {
+            return false;
+        }
+        let destination = if old_index < new_index {
+            new_index.saturating_sub(1)
+        } else {
+            new_index
+        };
+        self.move_item(old_index, destination.min(len.saturating_sub(1)))
+    }
+
+    /// Changes the number of logical items. Newly appended items receive
+    /// fresh identities; existing identities and their retained state remain.
+    pub fn set_item_count(&self, item_count: usize) {
+        let mut state = self.state.borrow_mut();
+        if item_count == state.order.len() {
+            return;
+        }
+        if item_count < state.order.len() {
+            state.order.truncate(item_count);
+        } else {
+            while state.order.len() < item_count {
+                let item = state.next_item;
+                state.next_item = state.next_item.wrapping_add(1);
+                state.order.push(item);
+            }
+        }
+        state.revision = state.revision.wrapping_add(1);
+    }
+}
+
+struct ReorderableRenderSliver {
+    index: MeasuredExtentIndex,
     builder: Rc<dyn Fn(usize) -> Widget>,
+    controller: SliverReorderController,
+    drag_context: DragDropContext<usize>,
+    on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
+    widgets: HashMap<usize, Widget>,
+    order: Vec<usize>,
+    controller_revision: u64,
+}
+
+impl ReorderableRenderSliver {
+    fn new(
+        controller: SliverReorderController,
+        builder: Rc<dyn Fn(usize) -> Widget>,
+        drag_context: DragDropContext<usize>,
+        on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
+    ) -> Self {
+        let order = controller.order();
+        Self {
+            index: MeasuredExtentIndex::new(order.len(), 48.),
+            builder,
+            controller_revision: controller.revision(),
+            controller,
+            drag_context,
+            on_reorder,
+            widgets: HashMap::new(),
+            order,
+        }
+    }
+
+    fn sync_controller(&mut self) {
+        let revision = self.controller.revision();
+        if revision == self.controller_revision {
+            return;
+        }
+        let next_order = self.controller.order();
+        if self.order.len() == next_order.len() {
+            let mut current = self.order.clone();
+            for (destination, item) in next_order.iter().copied().enumerate() {
+                let Some(source) = current.iter().position(|candidate| *candidate == item) else {
+                    continue;
+                };
+                if source != destination {
+                    let _ = self.index.move_item(source, destination);
+                    let moved = current.remove(source);
+                    current.insert(destination, moved);
+                }
+            }
+        } else {
+            self.index.set_len(next_order.len());
+        }
+        // A cached target captures its old destination position. Recreate the
+        // lightweight drag wrappers after an order mutation while retaining
+        // the underlying element by its stable logical item ID.
+        if self.order != next_order {
+            self.widgets.clear();
+        }
+        self.widgets
+            .retain(|item, _| next_order.iter().any(|candidate| candidate == item));
+        self.order = next_order;
+        self.controller_revision = revision;
+    }
+
+    fn child_widget(&mut self, position: usize, item: usize) -> Widget {
+        if let Some(widget) = self.widgets.get(&item) {
+            return widget.clone();
+        }
+        let child = (self.builder)(item);
+        let context = self.drag_context.clone();
+        let controller = self.controller.clone();
+        let on_reorder = self.on_reorder.clone();
+        let draggable: Widget = Draggable::new(context.clone(), item, child).into();
+        let target = DragTarget::new(context, draggable).on_drop(move |source_item| {
+            let Some(source_position) = controller.position_of(source_item) else {
+                return;
+            };
+            if controller.move_item(source_position, position)
+                && let Some(callback) = &on_reorder
+            {
+                callback(source_position, position);
+            }
+        });
+        let widget: Widget = target.into();
+        self.widgets.insert(item, widget.clone());
+        widget
+    }
+}
+
+impl RenderSliver for ReorderableRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        self.sync_controller();
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let range =
+            self.index
+                .materialized_range(cache_start, (cache_end - cache_start).max(0.), 0.);
+        self.widgets
+            .retain(|item, _| self.order.iter().any(|candidate| candidate == item));
+        let order = self.order.clone();
+        let children = range
+            .map(|position| {
+                let item = order[position];
+                let offset = self.index.offset_for_index(position);
+                let extent = self.index.offset_for_index(position + 1) - offset;
+                SliverChildLayout {
+                    id: SliverChildId::list_item(item),
+                    widget: self.child_widget(position, item),
+                    offset,
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        Some(extent),
+                    ),
+                    extent,
+                    pinned: false,
+                }
+            })
+            .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, self.index.total_extent()),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        let Some(item) = child
+            .0
+            .checked_sub(1)
+            .and_then(|id| usize::try_from(id).ok())
+        else {
+            return false;
+        };
+        self.order
+            .iter()
+            .position(|candidate| *candidate == item)
+            .is_some_and(|position| self.index.set_measured_extent(position, extent))
+    }
+
+    fn revision(&self) -> u64 {
+        self.controller
+            .revision()
+            .wrapping_add(self.index.revision())
+    }
+}
+
+/// Reorderable sliver list. Items are wrapped in retained drag sources and
+/// targets, so a normal pointer drag performs the same logical operation as a
+/// Flutter reorderable list without OS-level input injection.
+pub struct SliverReorderableList {
+    controller: SliverReorderController,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    drag_context: DragDropContext<usize>,
+    on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
 }
 
 impl SliverReorderableList {
@@ -2606,21 +4881,56 @@ impl SliverReorderableList {
         W: Into<Widget> + 'static,
     {
         Self {
-            item_count,
+            controller: SliverReorderController::new(item_count),
             builder: Rc::new(move |i| builder(i).into()),
+            drag_context: DragDropContext::new(),
+            on_reorder: None,
         }
+    }
+
+    /// Replaces the retained order controller.
+    #[must_use]
+    pub fn controller(mut self, controller: SliverReorderController) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    #[must_use]
+    pub fn reorder_controller(&self) -> SliverReorderController {
+        self.controller.clone()
+    }
+
+    /// Receives `(old_position, new_position)` after a successful drop.
+    #[must_use]
+    pub fn on_reorder(mut self, callback: impl Fn(usize, usize) + 'static) -> Self {
+        self.on_reorder = Some(Rc::new(callback));
+        self
     }
 }
 
 impl Sliver for SliverReorderableList {
     fn build(&self, controller: &ScrollController) -> Widget {
         let b = self.builder.clone();
-        VirtualList::fixed_extent_with_controller(
-            self.item_count,
+        VirtualList::variable_extent_with_controller(
+            self.controller.item_count(),
             48.0,
             controller.clone(),
             move |i| b(i),
         )
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(ReorderableRenderSliver::new(
+            self.controller.clone(),
+            self.builder.clone(),
+            self.drag_context.clone(),
+            self.on_reorder.clone(),
+        ))
     }
 }
 
@@ -2709,10 +5019,351 @@ impl From<AnimatedGrid> for Widget {
     }
 }
 
-/// Animated list sliver.
-pub struct SliverAnimatedList {
-    item_count: usize,
+struct AnimatedListEntry {
+    id: u64,
+    animation: AnimationController,
+    removing: bool,
+}
+
+#[derive(Clone, Copy)]
+struct AnimatedListEntrySnapshot {
+    id: u64,
+    value: f32,
+    removing: bool,
+}
+
+struct SliverAnimatedListState {
+    entries: Vec<AnimatedListEntry>,
+    next_id: u64,
+    duration: Duration,
+    revision: u64,
+    structure_revision: u64,
+}
+
+/// Retained insertion/removal state for [`SliverAnimatedList`]. Calling
+/// `insert` or `remove` changes only this small state object; the viewport
+/// then drives the size transition from its normal frame clock.
+#[derive(Clone)]
+pub struct SliverAnimatedListController {
+    state: Rc<RefCell<SliverAnimatedListState>>,
+}
+
+impl SliverAnimatedListController {
+    #[must_use]
+    pub fn new(item_count: usize) -> Self {
+        Self::with_duration(item_count, Duration::from_millis(250))
+    }
+
+    #[must_use]
+    pub fn with_duration(item_count: usize, duration: Duration) -> Self {
+        let entries = (0..item_count)
+            .map(|id| {
+                let animation = AnimationController::new(duration);
+                animation.set_value(1.);
+                AnimatedListEntry {
+                    id: id as u64,
+                    animation,
+                    removing: false,
+                }
+            })
+            .collect();
+        Self {
+            state: Rc::new(RefCell::new(SliverAnimatedListState {
+                entries,
+                next_id: item_count as u64,
+                duration,
+                revision: 0,
+                structure_revision: 0,
+            })),
+        }
+    }
+
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.state.borrow().entries.len()
+    }
+
+    #[must_use]
+    pub fn duration(&self) -> Duration {
+        self.state.borrow().duration
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
+    }
+
+    /// Inserts one logical item and starts its expansion from zero extent.
+    pub fn insert(&self, index: usize) -> bool {
+        self.insert_at(index, Instant::now())
+    }
+
+    /// Deterministic-clock form of [`Self::insert`], useful for tests.
+    pub fn insert_at(&self, index: usize, now: Instant) -> bool {
+        let mut state = self.state.borrow_mut();
+        let duration = state.duration;
+        let id = state.next_id;
+        state.next_id = state.next_id.wrapping_add(1);
+        let animation = AnimationController::new(duration);
+        animation.forward(now);
+        let index = index.min(state.entries.len());
+        state.entries.insert(
+            index,
+            AnimatedListEntry {
+                id,
+                animation,
+                removing: false,
+            },
+        );
+        state.revision = state.revision.wrapping_add(1);
+        state.structure_revision = state.structure_revision.wrapping_add(1);
+        true
+    }
+
+    /// Starts shrinking the item at `index`. It remains in the sliver until
+    /// the reverse animation reaches zero, so the retained element and drag
+    /// state are not destroyed halfway through the transition.
+    pub fn remove(&self, index: usize) -> bool {
+        self.remove_at(index, Instant::now())
+    }
+
+    /// Deterministic-clock form of [`Self::remove`], useful for tests.
+    pub fn remove_at(&self, index: usize, now: Instant) -> bool {
+        let state = self.state.borrow_mut();
+        let Some(entry) = state.entries.get(index) else {
+            return false;
+        };
+        if entry.removing {
+            return false;
+        }
+        entry.animation.reverse(now);
+        drop(state);
+        let mut state = self.state.borrow_mut();
+        if let Some(entry) = state.entries.get_mut(index) {
+            entry.removing = true;
+            state.revision = state.revision.wrapping_add(1);
+            state.structure_revision = state.structure_revision.wrapping_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Advances all active insert/remove transitions and removes entries that
+    /// have completed their reverse animation.
+    pub fn tick(&self, now: Instant) -> bool {
+        let mut state = self.state.borrow_mut();
+        let mut changed = false;
+        for entry in &state.entries {
+            changed |= entry.animation.tick(now);
+        }
+        let before = state.entries.len();
+        state.entries.retain(|entry| {
+            !(entry.removing && !entry.animation.is_active() && entry.animation.value() <= 0.)
+        });
+        if state.entries.len() != before {
+            changed = true;
+            state.structure_revision = state.structure_revision.wrapping_add(1);
+        }
+        if changed {
+            state.revision = state.revision.wrapping_add(1);
+        }
+        changed
+    }
+
+    #[must_use]
+    pub fn is_animating(&self) -> bool {
+        self.state
+            .borrow()
+            .entries
+            .iter()
+            .any(|entry| entry.animation.is_active())
+    }
+
+    fn structure_revision(&self) -> u64 {
+        self.state.borrow().structure_revision
+    }
+
+    fn snapshot(&self) -> Vec<AnimatedListEntrySnapshot> {
+        self.state
+            .borrow()
+            .entries
+            .iter()
+            .map(|entry| AnimatedListEntrySnapshot {
+                id: entry.id,
+                value: entry.animation.value().clamp(0., 1.),
+                removing: entry.removing,
+            })
+            .collect()
+    }
+}
+
+struct AnimatedExtentRenderSliver {
+    controller: SliverAnimatedListController,
     builder: Rc<dyn Fn(usize) -> Widget>,
+    index: MeasuredExtentIndex,
+    entries: Vec<AnimatedListEntrySnapshot>,
+    base_extents: HashMap<u64, f32>,
+    widgets: HashMap<u64, Widget>,
+    structure_revision: u64,
+    estimated_extent: f32,
+}
+
+impl AnimatedExtentRenderSliver {
+    fn new(
+        controller: SliverAnimatedListController,
+        builder: Rc<dyn Fn(usize) -> Widget>,
+        estimated_extent: f32,
+    ) -> Self {
+        let entries = controller.snapshot();
+        Self {
+            index: MeasuredExtentIndex::new(entries.len(), estimated_extent),
+            controller,
+            builder,
+            entries,
+            base_extents: HashMap::new(),
+            widgets: HashMap::new(),
+            structure_revision: u64::MAX,
+            estimated_extent: estimated_extent.max(1.),
+        }
+    }
+
+    fn sync_entries(&mut self) {
+        let next = self.controller.snapshot();
+        let structure_revision = self.controller.structure_revision();
+        if structure_revision != self.structure_revision {
+            self.index = MeasuredExtentIndex::new(next.len(), self.estimated_extent);
+            let live = next.iter().map(|entry| entry.id).collect::<Vec<_>>();
+            self.base_extents
+                .retain(|id, _| live.iter().any(|candidate| candidate == id));
+            self.widgets
+                .retain(|id, _| live.iter().any(|candidate| candidate == id));
+            for (position, entry) in next.iter().enumerate() {
+                let base = self
+                    .base_extents
+                    .get(&entry.id)
+                    .copied()
+                    .unwrap_or(self.estimated_extent);
+                let _ = self.index.set_measured_extent(position, base * entry.value);
+            }
+            self.structure_revision = structure_revision;
+        } else {
+            for (position, (old, next)) in self.entries.iter().zip(&next).enumerate() {
+                if (old.value - next.value).abs() > f32::EPSILON {
+                    let base = self
+                        .base_extents
+                        .get(&next.id)
+                        .copied()
+                        .unwrap_or(self.estimated_extent);
+                    let _ = self.index.set_measured_extent(position, base * next.value);
+                }
+            }
+        }
+        self.entries = next;
+    }
+
+    fn child_widget(&mut self, position: usize, id: u64) -> Widget {
+        if let Some(widget) = self.widgets.get(&id) {
+            return widget.clone();
+        }
+        let widget = (self.builder)(position);
+        self.widgets.insert(id, widget.clone());
+        widget
+    }
+}
+
+impl RenderSliver for AnimatedExtentRenderSliver {
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        self.sync_entries();
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let mut positions = self
+            .index
+            .materialized_range(cache_start, (cache_end - cache_start).max(0.), 0.)
+            .collect::<Vec<_>>();
+        // A freshly inserted zero-size entry does not intersect an offset
+        // interval mathematically, but it must still be retained so its size
+        // transition can paint on the next frame.
+        positions.extend(
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.value < 1. || entry.removing)
+                .map(|(position, _)| position),
+        );
+        positions.sort_unstable();
+        positions.dedup();
+        let children = positions
+            .into_iter()
+            .map(|position| {
+                let entry = self.entries[position];
+                let offset = self.index.offset_for_index(position);
+                let extent = (self.index.offset_for_index(position + 1) - offset).max(0.);
+                SliverChildLayout {
+                    id: SliverChildId::list_item(entry.id as usize),
+                    widget: self.child_widget(position, entry.id),
+                    offset,
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        Some(extent),
+                    ),
+                    extent,
+                    pinned: false,
+                }
+            })
+            .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, self.index.total_extent()),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        let Some(id) = child.0.checked_sub(1) else {
+            return false;
+        };
+        let Some((position, entry)) = self
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.id == id)
+        else {
+            return false;
+        };
+        if entry.value <= f32::EPSILON || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let base = (extent / entry.value).max(0.);
+        self.base_extents.insert(id, base);
+        self.index.set_measured_extent(position, extent)
+    }
+
+    fn revision(&self) -> u64 {
+        self.controller
+            .revision()
+            .wrapping_add(self.index.revision())
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        let changed = self.controller.tick(now);
+        if changed {
+            self.sync_entries();
+        }
+        changed
+    }
+
+    fn is_animating(&self) -> bool {
+        self.controller.is_animating()
+    }
+}
+
+/// Animated list sliver with retained insertion/removal transitions.
+pub struct SliverAnimatedList {
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    controller: SliverAnimatedListController,
 }
 
 impl SliverAnimatedList {
@@ -2722,9 +5373,20 @@ impl SliverAnimatedList {
         W: Into<Widget> + 'static,
     {
         Self {
-            item_count,
+            controller: SliverAnimatedListController::new(item_count),
             builder: Rc::new(move |i| builder(i).into()),
         }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: SliverAnimatedListController) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    #[must_use]
+    pub fn animation_controller(&self) -> SliverAnimatedListController {
+        self.controller.clone()
     }
 }
 
@@ -2732,19 +5394,34 @@ impl Sliver for SliverAnimatedList {
     fn build(&self, controller: &ScrollController) -> Widget {
         let b = self.builder.clone();
         VirtualList::fixed_extent_with_controller(
-            self.item_count,
+            self.controller.item_count(),
             48.0,
             controller.clone(),
             move |i| b(i),
         )
     }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(AnimatedExtentRenderSliver::new(
+            self.controller.clone(),
+            self.builder.clone(),
+            48.,
+        ))
+    }
 }
 
-/// Animated grid sliver.
+/// Animated grid sliver. Rows use the same retained size-transition engine;
+/// each row builder still receives the original cell indices.
 pub struct SliverAnimatedGrid {
     item_count: usize,
     cross_axis_count: usize,
     builder: Rc<dyn Fn(usize) -> Widget>,
+    controller: SliverAnimatedListController,
 }
 
 impl SliverAnimatedGrid {
@@ -2757,11 +5434,24 @@ impl SliverAnimatedGrid {
     where
         W: Into<Widget> + 'static,
     {
+        let cross_axis_count = cross_axis_count.max(1);
         Self {
             item_count,
-            cross_axis_count: cross_axis_count.max(1),
+            cross_axis_count,
+            controller: SliverAnimatedListController::new(item_count.div_ceil(cross_axis_count)),
             builder: Rc::new(move |i| builder(i).into()),
         }
+    }
+
+    #[must_use]
+    pub fn controller(mut self, controller: SliverAnimatedListController) -> Self {
+        self.controller = controller;
+        self
+    }
+
+    #[must_use]
+    pub fn animation_controller(&self) -> SliverAnimatedListController {
+        self.controller.clone()
     }
 }
 
@@ -2771,5 +5461,26 @@ impl Sliver for SliverAnimatedGrid {
         GridView::builder(self.item_count, self.cross_axis_count, 80.0, move |i| b(i))
             .controller(controller.clone())
             .into()
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        _axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        let columns = self.cross_axis_count;
+        let count = self.item_count;
+        let builder = self.builder.clone();
+        Box::new(AnimatedExtentRenderSliver::new(
+            self.controller.clone(),
+            Rc::new(move |row| {
+                let start = row * columns;
+                Widget::from(Row::new(
+                    (start..(start + columns).min(count)).map(|index| builder(index)),
+                ))
+            }),
+            80.,
+        ))
     }
 }

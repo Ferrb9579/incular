@@ -38,7 +38,9 @@ pub use animation_transitions::{
     AlignTransition, DecoratedBoxTransition, DefaultTextStyleTransition, DualTransitionBuilder,
     MatrixTransition, PositionedTransition, RelativePositionedTransition, SizeTransition,
 };
-pub use drag_drop::{DismissDirection, Dismissible, DragTarget, Draggable, LongPressDraggable};
+pub use drag_drop::{
+    DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable, LongPressDraggable,
+};
 pub use environment::{
     DefaultSelectionStyle, DefaultTextStyle, Directionality, IconTheme, Localizations,
     LookupBoundary, MediaQuery, MediaQueryData, Orientation, OrientationBuilder,
@@ -85,8 +87,9 @@ pub use incular_rendering::{
     RadialGradient, Shader, Shadow, SweepGradient,
 };
 pub use incular_scroll::{
-    ClampingScrollPhysics, ScrollController, ScrollMetrics, ScrollPhysics,
-    ScrollViewKeyboardDismissBehavior,
+    ClampingScrollPhysics, ScrollController, ScrollMetrics, ScrollNotification,
+    ScrollNotificationSubscription, ScrollNotificationType, ScrollPhysics,
+    ScrollViewKeyboardDismissBehavior, ScrollbarStyle, SliverConstraints, SliverGeometry,
 };
 pub use incular_text::{
     FontFeature, FontVariation, FontWeight, IconData, RichText, StrutStyle, TextAlign,
@@ -120,14 +123,16 @@ pub use safe_area::SafeArea;
 pub use scrolling::{
     AnimatedGrid, AnimatedList, CustomScrollView, DecoratedSliver, DraggableScrollableActuator,
     DraggableScrollableSheet, GridView, ListBody, ListView, ListWheelScrollView, NestedScrollView,
-    NotificationListener, PageController, PageView, PinnedHeaderSliver, RawScrollbar,
+    NotificationListener, PageController, PageView, PinnedHeaderSliver, RawScrollbar, RenderSliver,
     ScrollNotificationObserver, Scrollable, SingleChildScrollView, Sliver, SliverAnimatedGrid,
-    SliverAnimatedList, SliverConstrainedCrossAxis, SliverCrossAxisExpanded, SliverCrossAxisGroup,
-    SliverFillRemaining, SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader,
-    SliverGrid, SliverIgnorePointer, SliverLayoutBuilder, SliverList, SliverMainAxisGroup,
-    SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapInjector, SliverPadding,
-    SliverPersistentHeader, SliverPrototypeExtentList, SliverReorderableList, SliverResizingHeader,
-    SliverSafeArea, SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, TreeSliver,
+    SliverAnimatedList, SliverAnimatedListController, SliverChildId, SliverChildLayout,
+    SliverConstrainedCrossAxis, SliverCrossAxisExpanded, SliverCrossAxisGroup, SliverFillRemaining,
+    SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader, SliverGrid,
+    SliverIgnorePointer, SliverLayout, SliverLayoutBuilder, SliverList, SliverMainAxisGroup,
+    SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
+    SliverOverlapInjector, SliverPadding, SliverPersistentHeader, SliverPrototypeExtentList,
+    SliverReorderController, SliverReorderableList, SliverResizingHeader, SliverSafeArea,
+    SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, TreeSliver,
     TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport, Viewport,
 };
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
