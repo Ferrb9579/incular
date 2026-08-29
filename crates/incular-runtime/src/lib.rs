@@ -1,5 +1,6 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
 mod profiling;
+mod reactive;
 mod restoration;
 mod tasks;
 mod undo;
@@ -48,6 +49,7 @@ pub use profiling::{
     ProfilerMode, RenderFrameMetrics, SchedulerCounters, TextCacheSnapshot, WidgetWorkSnapshot,
     WindowPerformance,
 };
+pub use reactive::{Action, ActionDispatchError, ActionError, ActionState, Effect, Memo};
 pub use restoration::{
     DEFAULT_RESTORATION_DEBOUNCE, DEFAULT_RESTORATION_SNAPSHOT_LIMIT,
     FRAMEWORK_RESTORATION_FORMAT_VERSION, FileRestorationStore, InMemoryRestorationStore,
@@ -397,8 +399,20 @@ fn environment_change_mask(previous: &RuntimeEnvironment, next: &RuntimeEnvironm
 }
 
 type ReactiveRootId = u64;
+type ReactiveNodeId = u64;
+type ReactiveNodeDependents =
+    HashMap<ReactiveRootId, HashMap<ReactiveNodeId, Weak<dyn ReactiveNode>>>;
 
 static NEXT_REACTIVE_ROOT: AtomicU64 = AtomicU64::new(1);
+static NEXT_REACTIVE_NODE: AtomicU64 = AtomicU64::new(1);
+
+trait ReactiveNode {
+    fn id(&self) -> ReactiveNodeId;
+    fn mark_dirty(&self);
+    fn run(&self, root: ReactiveRootId);
+    fn record_dependency(&self, dependency: Weak<dyn Dependency>);
+    fn dispose(&self, root: ReactiveRootId);
+}
 
 trait Dependency {
     fn subscribe(
@@ -408,11 +422,22 @@ trait Dependency {
         queue: Weak<RefCell<ReactiveQueue>>,
     );
     fn remove(&self, root: ReactiveRootId, element: ElementId);
+    fn subscribe_node(
+        &self,
+        root: ReactiveRootId,
+        node: ReactiveNodeId,
+        subscriber: Weak<dyn ReactiveNode>,
+        queue: Weak<RefCell<ReactiveQueue>>,
+    );
+    fn remove_node(&self, root: ReactiveRootId, node: ReactiveNodeId);
 }
 struct ReactiveQueue {
     root: ReactiveRootId,
     queued: HashSet<ElementId>,
     order: VecDeque<ElementId>,
+    queued_nodes: HashSet<ReactiveNodeId>,
+    node_order: VecDeque<ReactiveNodeId>,
+    nodes: HashMap<ReactiveNodeId, Weak<dyn ReactiveNode>>,
     dependencies: HashMap<ElementId, Vec<Weak<dyn Dependency>>>,
     /// Focus-scope subscriptions registered by builders. Keeping the token in
     /// the same lifetime bucket as signal dependencies makes unmount and
@@ -428,6 +453,9 @@ impl ReactiveQueue {
             root: NEXT_REACTIVE_ROOT.fetch_add(1, Ordering::Relaxed),
             queued: HashSet::new(),
             order: VecDeque::new(),
+            queued_nodes: HashSet::new(),
+            node_order: VecDeque::new(),
+            nodes: HashMap::new(),
             dependencies: HashMap::new(),
             focus_scopes: HashMap::new(),
             #[cfg(feature = "devtools")]
@@ -439,6 +467,15 @@ impl ReactiveQueue {
         if self.queued.insert(id) {
             self.order.push_back(id);
         }
+    }
+    fn enqueue_node(&mut self, id: ReactiveNodeId, node: Weak<dyn ReactiveNode>) {
+        self.register_node(id, node);
+        if self.queued_nodes.insert(id) {
+            self.node_order.push_back(id);
+        }
+    }
+    fn register_node(&mut self, id: ReactiveNodeId, node: Weak<dyn ReactiveNode>) {
+        self.nodes.insert(id, node);
     }
     #[cfg(feature = "devtools")]
     fn note_cause(&mut self, id: ElementId, cause: InvalidationCause) {
@@ -457,6 +494,14 @@ impl ReactiveQueue {
         let id = self.order.pop_front()?;
         self.queued.remove(&id);
         Some(id)
+    }
+    fn take_node(&mut self) -> Option<(ReactiveRootId, Weak<dyn ReactiveNode>)> {
+        let id = self.node_order.pop_front()?;
+        self.queued_nodes.remove(&id);
+        self.nodes.get(&id).cloned().map(|node| (self.root, node))
+    }
+    fn has_work(&self) -> bool {
+        !self.queued.is_empty() || !self.queued_nodes.is_empty()
     }
     fn refresh(&mut self, id: ElementId) {
         if let Some(deps) = self.dependencies.remove(&id) {
@@ -496,6 +541,13 @@ impl ReactiveQueue {
         }
         self.queued.clear();
         self.order.clear();
+        let nodes: Vec<_> = self.nodes.values().filter_map(Weak::upgrade).collect();
+        self.queued_nodes.clear();
+        self.node_order.clear();
+        self.nodes.clear();
+        for node in nodes {
+            node.dispose(self.root);
+        }
         #[cfg(feature = "devtools")]
         self.causes.clear();
     }
@@ -537,6 +589,8 @@ struct BuildScope {
     element: Option<ElementId>,
     queue: Weak<RefCell<ReactiveQueue>>,
     initial_dependencies: Option<Rc<RefCell<InitialBuildDependencies>>>,
+    spawner: tasks::RuntimeSpawner,
+    owner_scope: tasks::TaskScope,
 }
 thread_local! { static BUILD_SCOPE: RefCell<Option<BuildScope>> = const { RefCell::new(None) }; }
 #[cfg(feature = "devtools")]
@@ -545,6 +599,8 @@ struct SignalInner<T> {
     value: RefCell<T>,
     dependents: RefCell<HashMap<ReactiveRootId, HashSet<ElementId>>>,
     queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
+    node_dependents: RefCell<ReactiveNodeDependents>,
+    node_queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
     /// DevTools write counter; always present, only read under the feature.
     dev_write_count: std::cell::Cell<u64>,
     #[cfg(feature = "devtools")]
@@ -580,6 +636,35 @@ impl<T> Dependency for SignalInner<T> {
             if elements.is_empty() {
                 dependents.remove(&root);
                 self.queues.borrow_mut().remove(&root);
+            }
+        }
+    }
+
+    fn subscribe_node(
+        &self,
+        root: ReactiveRootId,
+        node: ReactiveNodeId,
+        subscriber: Weak<dyn ReactiveNode>,
+        queue: Weak<RefCell<ReactiveQueue>>,
+    ) {
+        if let Some(queue) = queue.upgrade() {
+            queue.borrow_mut().register_node(node, subscriber.clone());
+        }
+        self.node_queues.borrow_mut().insert(root, queue);
+        self.node_dependents
+            .borrow_mut()
+            .entry(root)
+            .or_default()
+            .insert(node, subscriber);
+    }
+
+    fn remove_node(&self, root: ReactiveRootId, node: ReactiveNodeId) {
+        let mut dependents = self.node_dependents.borrow_mut();
+        if let Some(nodes) = dependents.get_mut(&root) {
+            nodes.remove(&node);
+            if nodes.is_empty() {
+                dependents.remove(&root);
+                self.node_queues.borrow_mut().remove(&root);
             }
         }
     }
@@ -635,6 +720,8 @@ impl<T: 'static> Signal<T> {
                 value: RefCell::new(value),
                 dependents: RefCell::new(HashMap::new()),
                 queues: RefCell::new(HashMap::new()),
+                node_dependents: RefCell::new(HashMap::new()),
+                node_queues: RefCell::new(HashMap::new()),
                 dev_write_count: std::cell::Cell::new(0),
                 #[cfg(feature = "devtools")]
                 dev_signal_id: std::cell::Cell::new(None),
@@ -761,21 +848,7 @@ impl<T: 'static> Signal<T> {
         T: Clone,
     {
         scheduler_counters::SIGNAL_READS.fetch_add(1, Ordering::Relaxed);
-        BUILD_SCOPE.with(|scope| {
-            if let Some(scope) = scope.borrow().as_ref() {
-                let dependency: Rc<dyn Dependency> = self.inner.clone();
-                if let Some(element) = scope.element {
-                    dependency.subscribe(scope.root, element, scope.queue.clone());
-                    if let Some(queue) = scope.queue.upgrade() {
-                        queue
-                            .borrow_mut()
-                            .record(element, Rc::downgrade(&dependency));
-                    }
-                } else if let Some(initial_dependencies) = &scope.initial_dependencies {
-                    initial_dependencies.borrow_mut().record_signal(dependency);
-                }
-            }
-        });
+        reactive::track_dependency(self.inner.clone());
         self.inner.value.borrow().clone()
     }
     pub fn set(&self, value: T) -> bool
@@ -853,6 +926,21 @@ impl<T: 'static> Signal<T> {
             .iter()
             .map(|(root, elements)| (*root, elements.iter().copied().collect::<Vec<_>>()))
             .collect();
+        let nodes: Vec<_> = self
+            .inner
+            .node_dependents
+            .borrow()
+            .iter()
+            .map(|(root, nodes)| {
+                (
+                    *root,
+                    nodes
+                        .iter()
+                        .map(|(id, node)| (*id, node.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
         let queues = self.inner.queues.borrow();
         #[cfg(feature = "devtools")]
         let cause = self.inner.dev_signal_id.get().map(|id| {
@@ -879,6 +967,18 @@ impl<T: 'static> Signal<T> {
                         }
                     }
                     enqueued += 1;
+                }
+            }
+        }
+        let node_queues = self.inner.node_queues.borrow();
+        for (root, nodes) in nodes {
+            if let Some(queue) = node_queues.get(&root).and_then(Weak::upgrade) {
+                let mut queue = queue.borrow_mut();
+                for (node_id, weak_node) in nodes {
+                    if let Some(node) = weak_node.upgrade() {
+                        node.mark_dirty();
+                    }
+                    queue.enqueue_node(node_id, weak_node);
                 }
             }
         }
@@ -1211,7 +1311,7 @@ impl Runtime {
         for work in work {
             self.process_ui_work(&scheduler, work);
         }
-        if !self.reactive.borrow().queued.is_empty() || !self.pending.is_empty() {
+        if self.reactive.borrow().has_work() || !self.pending.is_empty() {
             self.frame_requested = true;
         }
     }
@@ -1266,7 +1366,7 @@ impl Runtime {
                 });
             }
         }
-        if !self.reactive.borrow().queued.is_empty() || !self.pending.is_empty() {
+        if self.reactive.borrow().has_work() || !self.pending.is_empty() {
             self.frame_requested = true;
         }
     }
@@ -1586,7 +1686,7 @@ impl Runtime {
     }
     #[must_use]
     pub fn frame_requested(&self) -> bool {
-        self.frame_requested || !self.reactive.borrow().queued.is_empty()
+        self.frame_requested || self.reactive.borrow().has_work()
     }
     #[must_use]
     pub fn handle_input(&mut self, event: InputEvent) -> Option<EventTarget> {
@@ -2024,14 +2124,24 @@ impl Runtime {
                 }
             }
         }
-        while let Some(id) = { self.reactive.borrow_mut().take() } {
-            if self.tree.element_exists(id) && self.builders.contains_key(&id) {
-                #[cfg(feature = "devtools")]
-                for cause in self.reactive.borrow_mut().take_causes(id) {
-                    self.tree.note_invalidation(id, cause);
+        loop {
+            while let Some((root, node)) = { self.reactive.borrow_mut().take_node() } {
+                if let Some(node) = node.upgrade() {
+                    node.run(root);
                 }
-                self.rebuild_from_builder(id)?;
-                updated += 1;
+            }
+            while let Some(id) = { self.reactive.borrow_mut().take() } {
+                if self.tree.element_exists(id) && self.builders.contains_key(&id) {
+                    #[cfg(feature = "devtools")]
+                    for cause in self.reactive.borrow_mut().take_causes(id) {
+                        self.tree.note_invalidation(id, cause);
+                    }
+                    self.rebuild_from_builder(id)?;
+                    updated += 1;
+                }
+            }
+            if !self.reactive.borrow().has_work() {
+                break;
             }
         }
         for id in self.tree.take_unmounted() {
@@ -2078,9 +2188,8 @@ impl Runtime {
         let display_list = self.tree.paint();
         let paint = paint_span.elapsed_us();
         drop(_paint_guard);
-        self.frame_requested = !self.pending.is_empty()
-            || !self.reactive.borrow().queued.is_empty()
-            || animations_active;
+        self.frame_requested =
+            !self.pending.is_empty() || self.reactive.borrow().has_work() || animations_active;
         let after = self.tree.diagnostics();
         let timings = FrameTimings {
             event_processing: std::mem::take(&mut self.pending_event_processing_us),
@@ -2126,6 +2235,12 @@ impl Runtime {
                 element: Some(id),
                 queue: Rc::downgrade(&self.reactive),
                 initial_dependencies: None,
+                spawner: self.spawner(),
+                owner_scope: self
+                    .owner_scopes
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| self.window_scope.clone()),
             }))
         });
         let widget = self.builders.get_mut(&id).expect("registered builder")();
@@ -2758,6 +2873,8 @@ impl WindowManager {
                     element: None,
                     queue: Rc::downgrade(&reactive),
                     initial_dependencies: Some(initial_dependencies.clone()),
+                    spawner: spawner.clone(),
+                    owner_scope: root_scope.clone(),
                 }))
             });
             let result = (build.borrow_mut())(&mut build_context);
@@ -4778,6 +4895,255 @@ mod tests {
         assert!(!runtime.tree().is_build_dirty(children[0]));
         assert!(!signal.set(3));
     }
+
+    #[test]
+    fn memo_tracks_sources_without_a_build_context_and_rebuilds_its_consumers() {
+        let source = Signal::new(1_u32);
+        let computations = Rc::new(Cell::new(0));
+        let memo = Memo::new({
+            let source = source.clone();
+            let computations = computations.clone();
+            move || {
+                computations.set(computations.get() + 1);
+                source.get() * 2
+            }
+        });
+        let builds = Rc::new(Cell::new(0));
+        let mut runtime = Application::new({
+            let memo = memo.clone();
+            let builds = builds.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Widget::text(memo.with(ToString::to_string))
+            }
+        })
+        .unwrap()
+        .into_runtime();
+        let constraints = Constraints::tight(Size::new(100., 30.));
+
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(computations.get(), 1);
+        assert_eq!(builds.get(), 1);
+
+        source.set(2);
+        let (_, stats) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(computations.get(), 2);
+        assert_eq!(builds.get(), 2);
+        assert_eq!(stats.updated_elements, 1);
+    }
+
+    #[test]
+    fn memo_filters_unchanged_results_before_invalidating_widgets() {
+        let source = Signal::new(0_u32);
+        let computations = Rc::new(Cell::new(0));
+        let memo = Memo::new({
+            let source = source.clone();
+            let computations = computations.clone();
+            move || {
+                computations.set(computations.get() + 1);
+                source.get() % 2
+            }
+        });
+        let builds = Rc::new(Cell::new(0));
+        let mut runtime = Application::new({
+            let memo = memo.clone();
+            let builds = builds.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Widget::text(memo.get().to_string())
+            }
+        })
+        .unwrap()
+        .into_runtime();
+        let constraints = Constraints::tight(Size::new(100., 30.));
+        runtime.run_frame(constraints).unwrap();
+
+        source.set(2);
+        let (_, stats) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(computations.get(), 2);
+        assert_eq!(builds.get(), 1);
+        assert_eq!(stats.updated_elements, 0);
+
+        source.set(3);
+        let (_, stats) = runtime.run_frame(constraints).unwrap();
+        assert_eq!(computations.get(), 3);
+        assert_eq!(builds.get(), 2);
+        assert_eq!(stats.updated_elements, 1);
+    }
+
+    #[test]
+    fn shared_memo_tracks_each_window_without_losing_a_root_subscription() {
+        let source = Signal::new(0_u32);
+        let computations = Rc::new(Cell::new(0));
+        let memo = Memo::new({
+            let source = source.clone();
+            let computations = computations.clone();
+            move || {
+                computations.set(computations.get() + 1);
+                source.get() + 1
+            }
+        });
+        let builds_a = Rc::new(Cell::new(0));
+        let mut application = Application::new({
+            let memo = memo.clone();
+            let builds_a = builds_a.clone();
+            move |_| {
+                builds_a.set(builds_a.get() + 1);
+                Widget::text(memo.get().to_string())
+            }
+        })
+        .unwrap();
+        let builds_b = Rc::new(Cell::new(0));
+        let window_b = application
+            .open_window_with(test_window_options("memo", 100., 30.), {
+                let memo = memo.clone();
+                let builds_b = builds_b.clone();
+                move |_| {
+                    builds_b.set(builds_b.get() + 1);
+                    Widget::text(memo.get().to_string())
+                }
+            })
+            .unwrap()
+            .id();
+        let window_a = application.primary_window();
+        let constraints = Constraints::tight(Size::new(100., 30.));
+        for window in [window_a, window_b] {
+            application
+                .run_window_frame_at(window, constraints, Instant::now())
+                .unwrap();
+        }
+        assert_eq!(builds_a.get(), 1);
+        assert_eq!(builds_b.get(), 1);
+
+        source.set(1);
+        application
+            .run_window_frame_at(window_b, constraints, Instant::now())
+            .unwrap();
+        application
+            .run_window_frame_at(window_a, constraints, Instant::now())
+            .unwrap();
+        assert_eq!(builds_a.get(), 2);
+        assert_eq!(builds_b.get(), 2);
+        assert_eq!(computations.get(), 3);
+    }
+
+    #[test]
+    fn memo_replaces_dynamic_branch_dependencies_after_a_switch() {
+        let branch = Signal::new(true);
+        let first = Signal::new(1_u32);
+        let second = Signal::new(2_u32);
+        let memo = Memo::new({
+            let branch = branch.clone();
+            let first = first.clone();
+            let second = second.clone();
+            move || {
+                if branch.get() {
+                    first.get()
+                } else {
+                    second.get()
+                }
+            }
+        });
+        let builds = Rc::new(Cell::new(0));
+        let mut runtime = Application::new({
+            let memo = memo.clone();
+            let builds = builds.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Widget::text(memo.get().to_string())
+            }
+        })
+        .unwrap()
+        .into_runtime();
+        let constraints = Constraints::tight(Size::new(100., 30.));
+        runtime.run_frame(constraints).unwrap();
+
+        first.set(3);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(builds.get(), 2);
+
+        branch.set(false);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(builds.get(), 3);
+
+        first.set(4);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(builds.get(), 3);
+
+        second.set(5);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(builds.get(), 4);
+    }
+
+    #[test]
+    fn mounted_effect_runs_once_then_retracks_signal_dependencies() {
+        let source = Signal::new(1_u32);
+        let trigger = Signal::new(0_u32);
+        let runs = Rc::new(Cell::new(0));
+        let observed = Rc::new(Cell::new(0));
+        let effect = Effect::new({
+            let source = source.clone();
+            let observed = observed.clone();
+            let runs = runs.clone();
+            move || {
+                runs.set(runs.get() + 1);
+                observed.set(source.get());
+            }
+        });
+        let mut runtime = Application::new({
+            let effect = effect.clone();
+            let trigger = trigger.clone();
+            move |_| {
+                assert!(effect.mount());
+                let _ = trigger.get();
+                Widget::text("effect")
+            }
+        })
+        .unwrap()
+        .into_runtime();
+        let constraints = Constraints::tight(Size::new(100., 30.));
+
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(runs.get(), 1);
+        assert_eq!(observed.get(), 1);
+
+        trigger.set(1);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(runs.get(), 1);
+
+        source.set(2);
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(runs.get(), 2);
+        assert_eq!(observed.get(), 2);
+
+        runtime.run_frame(constraints).unwrap();
+        assert_eq!(runs.get(), 2);
+    }
+
+    #[test]
+    fn action_is_lazy_tracks_state_and_ignores_stale_completions() {
+        let action =
+            super::Action::<u32, u32, &'static str>::new(|input| async move { Ok(input + 1) });
+        let mut runtime = Application::new({
+            let action = action.clone();
+            move |_| Widget::text(format!("{:?}", action.state()))
+        })
+        .unwrap()
+        .into_runtime();
+        let wake = Arc::new(TestWake::default());
+        runtime.set_wake_handler(wake.clone());
+        let constraints = Constraints::tight(Size::new(100., 30.));
+        runtime.run_frame(constraints).unwrap();
+        assert!(matches!(action.state(), ActionState::Idle));
+
+        action.dispatch(4).unwrap();
+        assert!(matches!(action.state(), ActionState::Loading));
+        wait_for_wake(&wake);
+        runtime.process_runtime_work();
+        runtime.run_frame(constraints).unwrap();
+        assert!(matches!(action.state(), ActionState::Ready(5)));
+    }
+
     #[cfg(feature = "devtools")]
     #[test]
     fn named_signal_write_reaches_dependent_rebuild_cause() {

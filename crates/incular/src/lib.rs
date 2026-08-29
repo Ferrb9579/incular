@@ -25,6 +25,15 @@ pub use incular_semantics as semantics;
 pub use incular_text as text;
 pub use incular_widgets as widgets;
 
+/// Reactive values and owner-mounted asynchronous primitives. This namespace
+/// keeps [`Effect`] and [`Action`] distinct from Incular's rendering and
+/// widget types with the same conventional names.
+pub mod reactive {
+    pub use incular_runtime::{
+        Action, ActionDispatchError, ActionError, ActionState, Effect, Memo,
+    };
+}
+
 /// Common application-facing types for the initial native UI slice.
 pub mod prelude {
     pub use incular_animation::{
@@ -75,13 +84,13 @@ pub mod prelude {
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
         AsyncState, AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics,
         FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics,
-        GpuSample, InMemoryRestorationStore, LastWindowPolicy, NativeWindowCommand, PerformanceHub,
-        PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable, RestorableWindowFactory,
-        RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
-        RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics, RuntimeErrorReport,
-        SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
-        UiDispatcher, UndoHistoryController, UndoHistoryState, WindowDiagnostics, WindowError,
-        WindowHandle, WindowOpener, WindowRestorationId,
+        GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo, NativeWindowCommand,
+        PerformanceHub, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable,
+        RestorableWindowFactory, RestorationConfig, RestorationDiagnostics, RestorationHandle,
+        RestorationMigration, RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics,
+        RuntimeErrorReport, SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope,
+        TokioHandle, UiDispatcher, UndoHistoryController, UndoHistoryState, WindowDiagnostics,
+        WindowError, WindowHandle, WindowOpener, WindowRestorationId,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,

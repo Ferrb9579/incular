@@ -74,6 +74,9 @@ path = "../../examples/scrolling_complete.rs"
 name = "responsive_layout"
 path = "../../examples/responsive_layout.rs"
 [[example]]
+name = "reactive"
+path = "../../examples/reactive.rs"
+[[example]]
 name = "restoration"
 path = "../../examples/restoration.rs"
 [[example]]

@@ -60,6 +60,8 @@ Additional visual feature demos:
 - `cargo run -p incular --example async_runtime` — Tokio timers,
   component-scoped cancellation, Tokio `spawn_blocking`, UI-thread signal
   completion, and direct Tokio-handle access without networking.
+- `cargo run -p incular --example reactive` — no-`cx` `Memo`, owner-mounted
+  `Effect`, and explicitly dispatched `Action` primitives.
 - `cargo run -p incular --example environment` — typed logical viewport/DPI,
   scale, locale/direction, and runtime-resolved SafeArea padding.
 - `cargo run -p incular --example localization` — ICU4X parent-locale

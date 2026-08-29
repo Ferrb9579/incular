@@ -78,6 +78,30 @@ window idle. Physical metrics, DPI, safe/view insets, and native activation are
 window fields. Locale, direction, and text scale may still originate from an
 application default but resolve through the owning `BuildContext`.
 
+## Derived values and asynchronous reactive work
+
+`Memo<T>` is the opt-in graph path for an expensive or shared derived value. It
+is created like a `Signal`, without a `BuildContext`, and attaches lazily when
+its `get` method is first read by a builder. Its computation tracks signals and
+other memos dynamically; a dirty memo is evaluated once per queued runtime
+phase and only notifies consumers when its output changes. Cheap expressions
+should remain ordinary Rust expressions because a memo has bookkeeping and
+comparison overhead.
+
+`Effect` is an owner-mounted side effect. Create a stable handle outside a
+rebuilding builder, call `mount` from that builder, and the initial run is
+queued for the reactive phase rather than executing during build. Mounting is
+idempotent, source reads are retracked after every run, and disposing the
+runtime detaches its source subscriptions.
+
+`Action<I, O, E>` is an explicitly dispatched asynchronous operation. Reading
+its state binds it to the current owner; constructing it never starts work.
+`dispatch` marks the state as loading, runs through the existing Tokio/UI task
+bridge, and exposes success, application failure, or runtime cancellation.
+Dispatches are latest-wins, so a late completion cannot overwrite a newer
+request. The public facade exposes these names under `incular::reactive` so
+they do not collide with the rendering `Effect` or widget `Action` types.
+
 ## Native accessibility
 
 The runtime keeps the retained `SemanticsTree` independent of paint and native
