@@ -2982,7 +2982,11 @@ impl Widget {
                 child: Some(Box::new(label)),
             },
             semantics: SemanticProperties {
-                label: Some(semantic_label),
+                // An action surface with a custom child has no label of its
+                // own. Keep the field unset so an outer control's explicit
+                // semantics (for example Button("Save")) or the child's
+                // text can provide the accessible label.
+                label: (!semantic_label.is_empty()).then_some(semantic_label),
                 ..SemanticProperties::default()
             },
         }

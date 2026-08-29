@@ -844,6 +844,15 @@ pub struct RenderStats {
     /// target-format changes aside, this must remain zero.
     pub pipelines_created: u32,
 }
+
+/// A GPU readback of one rendered Incular frame. The renderer converts the
+/// native surface channel order to tightly packed RGBA8 before returning it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapturedFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
 impl RenderStats {
     /// Total instances across every instance-driven pipeline family.
     #[must_use]
@@ -2076,6 +2085,9 @@ pub struct WgpuRenderer {
     /// Renderer frame ids waiting for `wgpu-profiler`'s asynchronous mapping.
     profiler_frames: VecDeque<u64>,
     latest_gpu_timing: Option<GpuFrameTimings>,
+    capture_requested: bool,
+    last_capture: Option<Result<CapturedFrame, String>>,
+    capture_supported: bool,
     rectangle_pipeline: wgpu::RenderPipeline,
     text_pipeline: wgpu::RenderPipeline,
     image_pipeline: wgpu::RenderPipeline,
@@ -2176,9 +2188,26 @@ impl WgpuRenderer {
                 limit: texture_limit,
             });
         }
-        let config = surface
+        let mut config = surface
             .get_default_config(&shared.inner.adapter, size.width.max(1), size.height.max(1))
             .expect("surface config");
+        // Surface readback is optional in wgpu. Request it only when the
+        // adapter advertises COPY_SRC; the renderer reports capture as
+        // unavailable on surfaces that cannot be copied safely.
+        let capture_supported = surface
+            .get_capabilities(&shared.inner.adapter)
+            .usages
+            .contains(wgpu::TextureUsages::COPY_SRC)
+            && matches!(
+                config.format,
+                wgpu::TextureFormat::Rgba8Unorm
+                    | wgpu::TextureFormat::Rgba8UnormSrgb
+                    | wgpu::TextureFormat::Bgra8Unorm
+                    | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
+        if capture_supported {
+            config.usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         if !size.is_zero() {
             surface.configure(&device, &config);
         }
@@ -2268,6 +2297,9 @@ impl WgpuRenderer {
             profiler_next_pass: false,
             profiler_frames: VecDeque::new(),
             latest_gpu_timing: None,
+            capture_requested: false,
+            last_capture: None,
+            capture_supported,
             rectangle_pipeline,
             text_pipeline,
             image_pipeline,
@@ -2377,6 +2409,14 @@ impl WgpuRenderer {
         let target_width = config.width;
         let target_height = config.height;
         let device_generation = shared.inner.device_generation;
+        let capture_supported = config.usage.contains(wgpu::TextureUsages::COPY_SRC)
+            && matches!(
+                config.format,
+                wgpu::TextureFormat::Rgba8Unorm
+                    | wgpu::TextureFormat::Rgba8UnormSrgb
+                    | wgpu::TextureFormat::Bgra8Unorm
+                    | wgpu::TextureFormat::Bgra8UnormSrgb
+            );
         let gpu_profiler = create_gpu_profiler(&device)?;
         Ok(Self {
             shared,
@@ -2394,6 +2434,9 @@ impl WgpuRenderer {
             profiler_next_pass: false,
             profiler_frames: VecDeque::new(),
             latest_gpu_timing: None,
+            capture_requested: false,
+            last_capture: None,
+            capture_supported,
             rectangle_pipeline: pipelines.rectangle_pipeline.clone(),
             text_pipeline: pipelines.text_pipeline.clone(),
             image_pipeline: pipelines.image_pipeline.clone(),
@@ -3550,6 +3593,10 @@ impl WgpuRenderer {
             self.queue.submit(Some(encoder.finish()));
             result
         };
+        if self.capture_requested {
+            self.last_capture = Some(self.capture_surface_texture(&frame.texture));
+            self.capture_requested = false;
+        }
         self.queue.present(frame);
         if self.gpu_timing_supported() {
             // wgpu-profiler drops the newest pending frame when its bounded
@@ -4179,6 +4226,126 @@ impl WgpuRenderer {
                 main_pass_us,
             });
         }
+    }
+
+    /// Schedules a readback of the next successfully rendered surface frame.
+    /// The request is consumed by [`Self::render`], so ordinary frames do not
+    /// pay for a GPU-to-CPU copy.
+    pub fn request_capture(&mut self) {
+        self.capture_requested = true;
+    }
+
+    /// Takes the most recent completed capture, if one was requested.
+    pub fn take_capture(&mut self) -> Option<Result<CapturedFrame, String>> {
+        self.last_capture.take()
+    }
+
+    fn capture_surface_texture(&self, texture: &wgpu::Texture) -> Result<CapturedFrame, String> {
+        if !self.capture_supported {
+            return Err(
+                "the surface does not support COPY_SRC or is not an RGBA8-compatible format".into(),
+            );
+        }
+        let width = self.config.width;
+        let height = self.config.height;
+        let row_bytes = width
+            .checked_mul(4)
+            .ok_or_else(|| "capture row size overflowed".to_owned())?;
+        let padded_row_bytes = row_bytes
+            .checked_add(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT - 1)
+            .ok_or_else(|| "capture padded row size overflowed".to_owned())?
+            / wgpu::COPY_BYTES_PER_ROW_ALIGNMENT
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer_size = u64::from(padded_row_bytes)
+            .checked_mul(u64::from(height))
+            .ok_or_else(|| "capture buffer size overflowed".to_owned())?;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("incular simulator screenshot readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular simulator screenshot copy"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row_bytes),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = self.queue.submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(Duration::from_secs(5)),
+            })
+            .map_err(|error| format!("GPU capture readback timed out: {error}"))?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("GPU capture mapping did not complete: {error}"))?
+            .map_err(|error| format!("GPU capture mapping failed: {error:?}"))?;
+        let mapped = buffer
+            .slice(..)
+            .get_mapped_range()
+            .map_err(|error| format!("GPU capture mapping could not be read: {error:?}"))?;
+        let is_bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let mut rgba8 = Vec::with_capacity(
+            usize::try_from(row_bytes)
+                .ok()
+                .and_then(|row| {
+                    usize::try_from(height)
+                        .ok()
+                        .and_then(|height| row.checked_mul(height))
+                })
+                .ok_or_else(|| "capture output size overflowed".to_owned())?,
+        );
+        let padded_row_bytes = usize::try_from(padded_row_bytes)
+            .map_err(|_| "capture row size does not fit in usize".to_owned())?;
+        let row_bytes = usize::try_from(row_bytes)
+            .map_err(|_| "capture row size does not fit in usize".to_owned())?;
+        for row in mapped.chunks(padded_row_bytes).take(height as usize) {
+            if is_bgra {
+                for pixel in row[..row_bytes].chunks_exact(4) {
+                    rgba8.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+                }
+            } else {
+                rgba8.extend_from_slice(&row[..row_bytes]);
+            }
+        }
+        drop(mapped);
+        buffer.unmap();
+        Ok(CapturedFrame {
+            width,
+            height,
+            rgba8,
+        })
     }
 
     #[must_use]

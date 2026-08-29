@@ -2,6 +2,7 @@
 mod profiling;
 mod reactive;
 mod restoration;
+mod simulation;
 mod tasks;
 mod undo;
 
@@ -56,6 +57,7 @@ pub use restoration::{
     Restorable, RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
     RestorationStore, RestorationStoreError,
 };
+pub use simulation::{Screenshot, Simulation, SimulationError};
 pub use tasks::{
     AsyncState, AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure,
     TaskHandle, TaskScope, TokioHandle, UiDispatcher,
@@ -3098,6 +3100,11 @@ pub struct Application {
     registry: Rc<RefCell<WindowRegistry>>,
     manager: WindowManager,
     command_receiver: mpsc::Receiver<WindowCommand>,
+    simulation_receiver: mpsc::Receiver<simulation::SimulationRequest>,
+    simulation_bridge: Arc<simulation::SimulationBridge>,
+    simulation_frame_waiters: HashMap<WindowId, Vec<mpsc::SyncSender<Result<(), SimulationError>>>>,
+    simulation_capture_waiters:
+        HashMap<WindowId, Vec<mpsc::SyncSender<Result<Screenshot, SimulationError>>>>,
     native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     primary_window: WindowId,
     last_window_policy: LastWindowPolicy,
@@ -3181,6 +3188,8 @@ impl Application {
         let registry = Rc::new(RefCell::new(WindowRegistry::default()));
         let native_commands = Rc::new(RefCell::new(VecDeque::new()));
         let (sender, command_receiver) = mpsc::channel();
+        let (simulation_sender, simulation_receiver) = mpsc::channel();
+        let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let bridge = Arc::new(WindowCommandBridge {
             sender,
             wake: Mutex::new(None),
@@ -3200,6 +3209,10 @@ impl Application {
             registry,
             manager,
             command_receiver,
+            simulation_receiver,
+            simulation_bridge,
+            simulation_frame_waiters: HashMap::new(),
+            simulation_capture_waiters: HashMap::new(),
             native_commands,
             primary_window,
             last_window_policy: LastWindowPolicy::ExitOnLastWindow,
@@ -3782,7 +3795,16 @@ impl Application {
 
     pub fn set_wake_handler(&mut self, wake: Arc<dyn RuntimeWake>) {
         self.scheduler.borrow_mut().set_wake(wake.clone());
-        self.manager.bridge.set_wake(wake);
+        self.manager.bridge.set_wake(wake.clone());
+        self.simulation_bridge.set_wake(wake);
+    }
+
+    /// Returns a cloneable, in-process controller for the primary window.
+    /// Simulation commands are serviced by the native event loop and never
+    /// synthesize OS-level mouse or keyboard input.
+    #[must_use]
+    pub fn simulation(&self) -> Simulation {
+        Simulation::new(self.simulation_bridge.clone(), self.primary_window)
     }
 
     fn with_window_mut<R>(
@@ -3878,6 +3900,7 @@ impl Application {
             }
         }
         self.drain_window_commands();
+        self.process_simulation_requests();
     }
 
     pub fn process_runtime_work(&mut self) {
@@ -4334,6 +4357,7 @@ impl Application {
     }
 
     pub fn close_window(&mut self, window_id: WindowId) -> bool {
+        self.fail_simulation_window(window_id);
         let record = self.registry.borrow_mut().close(window_id);
         let Some(mut record) = record else {
             self.registry.borrow_mut().stale_window_commands += 1;
@@ -4538,12 +4562,14 @@ impl Application {
         self.flush_restoration_before_shutdown();
         let ids = self.active_window_ids();
         for id in ids {
+            self.fail_simulation_window(id);
             if let Some(mut record) = self.registry.borrow_mut().close(id) {
                 record.scope.cancel();
                 record.runtime.dispose_window();
             }
         }
         self.scheduler.borrow_mut().shutdown();
+        self.stop_simulation();
         self.should_exit = true;
     }
 

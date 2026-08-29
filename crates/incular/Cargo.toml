@@ -29,6 +29,9 @@ path = "../../examples/counter.rs"
 name = "custom"
 path = "../../examples/custom.rs"
 [[example]]
+name = "simulation"
+path = "../../examples/simulation.rs"
+[[example]]
 name = "effects"
 path = "../../examples/effects.rs"
 [[example]]

@@ -13,7 +13,7 @@ use incular_platform::{
     ime_event, key_event, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{
-    Application, ApplicationLifecycle, NativeWindowCommand, Runtime, RuntimeWake,
+    Application, ApplicationLifecycle, NativeWindowCommand, Runtime, RuntimeWake, Screenshot,
 };
 use incular_wgpu::{RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::internal::ActionId;
@@ -618,6 +618,11 @@ struct MultiApp {
 
 impl MultiApp {
     fn apply_window_commands(&mut self, target: &ActiveEventLoop) {
+        // Simulation requests arrive through the same event-loop wake as
+        // runtime work. They are serviced before native operations so a
+        // simulated callback can enqueue a title/visibility/redraw command in
+        // this same turn.
+        self.application.process_simulation_requests();
         for command in self.application.take_native_window_commands() {
             match command {
                 NativeWindowCommand::Create { window_id, options } => {
@@ -791,6 +796,9 @@ impl MultiApp {
             return;
         };
         let metrics = state.metrics;
+        if self.application.simulation_capture_pending(id) {
+            state.renderer.request_capture();
+        }
         #[cfg(feature = "devtools")]
         self.devtools_state
             .begin_deep_frame(&mut self.application, id);
@@ -812,6 +820,14 @@ impl MultiApp {
                 match state.renderer.render(&list, metrics.scale_factor) {
                     Ok(stats) => {
                         self.application.note_presented(id, stats.presented);
+                        let capture = state.renderer.take_capture().map(|result| {
+                            result.and_then(|frame| {
+                                Screenshot::from_rgba8(frame.width, frame.height, frame.rgba8)
+                                    .map_err(|error| error.to_string())
+                            })
+                        });
+                        self.application
+                            .complete_simulation_frame(id, stats.presented, capture);
                         #[cfg(feature = "devtools")]
                         {
                             let frame = &devtools_frame;
@@ -882,6 +898,8 @@ impl MultiApp {
                     }
                     Err(RendererError::OutOfMemory) => {
                         eprintln!("Incular renderer stopped: out of GPU memory");
+                        self.application
+                            .fail_simulation_frame(id, "renderer stopped: out of GPU memory");
                         #[cfg(feature = "devtools")]
                         self.devtools_state.push_frame(
                             incular_devtools_protocol::TargetEvent::Log {
@@ -893,6 +911,8 @@ impl MultiApp {
                     }
                     Err(error) => {
                         eprintln!("Incular renderer error: {error}");
+                        self.application
+                            .fail_simulation_frame(id, error.to_string());
                         #[cfg(feature = "devtools")]
                         self.devtools_state.push_frame(
                             incular_devtools_protocol::TargetEvent::Log {
@@ -907,6 +927,8 @@ impl MultiApp {
             Ok(None) => self.application.note_presented(id, false),
             Err(error) => {
                 eprintln!("Incular runtime error: {error:?}");
+                self.application
+                    .fail_simulation_frame(id, format!("{error:?}"));
                 #[cfg(feature = "devtools")]
                 self.devtools_state
                     .push_frame(incular_devtools_protocol::TargetEvent::Log {

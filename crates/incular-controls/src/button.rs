@@ -770,6 +770,23 @@ mod tests {
     }
 
     #[test]
+    fn button_semantics_preserve_the_public_label() {
+        let mut tree = WidgetTree::new();
+        tree.mount(Button::new("Increment").on_click(|| ()).into())
+            .unwrap();
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        tree.update_semantics();
+
+        let semantic = tree
+            .semantics()
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("Increment"))
+            .map(|(_, node)| node)
+            .expect("button semantics");
+        assert_eq!(semantic.label.as_deref(), Some("Increment"));
+    }
+
+    #[test]
     fn primary_button_has_no_decorative_default_border() {
         let mut tree = WidgetTree::new();
         let root = tree.mount(PrimaryButton::new("Save").into()).unwrap();

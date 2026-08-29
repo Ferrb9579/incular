@@ -34,6 +34,13 @@ pub mod reactive {
     };
 }
 
+/// High-level application testing tools. These drive Incular's normalized
+/// input/event path in-process and capture rendered application frames without
+/// injecting OS input or capturing the desktop.
+pub mod testing {
+    pub use incular_runtime::{Screenshot, Simulation, SimulationError};
+}
+
 /// Common application-facing types for the initial native UI slice.
 pub mod prelude {
     pub use incular_animation::{
