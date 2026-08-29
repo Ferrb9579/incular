@@ -4,7 +4,7 @@
 //! owns all font discovery, fallback selection and shaping; this module only
 //! translates its positioned glyph runs into `incular-rendering` commands.
 
-use super::{FontFamily, FontStyle, TextAlign, TextOverflow, TextStyle};
+use super::{FontFamily, FontStyle, TextAffinity, TextAlign, TextOverflow, TextStyle};
 use icu_segmenter::GraphemeClusterSegmenter;
 use incular_assets::FontHandle;
 pub use incular_assets::FontId;
@@ -50,11 +50,26 @@ pub struct FontRunDebug {
     pub direction: &'static str,
 }
 
+/// A visual insertion point emitted by the shaping engine.
+///
+/// A logical byte offset can have two distinct visual positions at a bidi run
+/// boundary. `affinity` keeps those positions separate, matching the concept
+/// used by Parley's cursor implementation and preventing an arrow key from
+/// jumping through a right-to-left run in logical UTF-8 order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextCaretPosition {
+    pub offset: usize,
+    pub affinity: TextAffinity,
+    pub x: f32,
+    pub line: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct TextLayout {
     pub lines: Arc<[TextLine]>,
     pub metrics: TextMetrics,
     pub font_runs: Arc<[FontRunDebug]>,
+    pub caret_positions: Arc<[TextCaretPosition]>,
     /// Whether the source had content outside the retained layout's visible
     /// bounds. `Visible` layouts deliberately leave this false.
     pub overflowed: bool,
@@ -112,6 +127,27 @@ impl TextLayout {
     #[must_use]
     pub fn glyph_count(&self) -> usize {
         self.lines.iter().map(|line| line.glyphs.len()).sum()
+    }
+
+    /// Returns the visual insertion points for one laid-out line in
+    /// left-to-right screen order.
+    #[must_use]
+    pub fn line_caret_positions(&self, line: usize) -> &[TextCaretPosition] {
+        let Some(start) = self
+            .caret_positions
+            .iter()
+            .position(|position| position.line == line)
+        else {
+            return &[];
+        };
+        let end = start
+            + self
+                .caret_positions
+                .iter()
+                .skip(start)
+                .take_while(|position| position.line == line)
+                .count();
+        &self.caret_positions[start..end]
     }
 }
 
@@ -323,6 +359,7 @@ impl TextEngine {
         let mut byte_start = 0usize;
         let mut lines: Vec<TextLine> = Vec::new();
         let mut font_runs = Vec::new();
+        let mut caret_positions = Vec::new();
         let mut width = 0f32;
         let mut height = 0f32;
         let mut line_height = 0f32;
@@ -341,6 +378,13 @@ impl TextEngine {
                 self.store(key, built.clone());
                 built
             };
+            let line_start = lines.len();
+            for position in paragraph_layout.caret_positions.iter() {
+                let mut rebased = *position;
+                rebased.offset += byte_start;
+                rebased.line += line_start;
+                caret_positions.push(rebased);
+            }
             for line in paragraph_layout.lines.iter() {
                 let glyphs: Vec<GlyphPosition> = line
                     .glyphs
@@ -407,6 +451,7 @@ impl TextEngine {
                 line_height,
             },
             font_runs: font_runs.into(),
+            caret_positions: caret_positions.into(),
             overflowed,
         }
     }
@@ -552,6 +597,7 @@ impl TextEngine {
     fn translate_layout(&mut self, layout: &Layout<()>) -> TextLayout {
         let mut lines = Vec::new();
         let mut font_runs = Vec::new();
+        let mut caret_positions = Vec::new();
         let mut used_fonts = HashSet::new();
         // First glyph run decides the primary font; resolve its handle before
         // the mutable translation loop so borrowck stays trivial.
@@ -562,12 +608,13 @@ impl TextEngine {
             .map(|run| self.font_handle_for(run.font()));
         let primary = primary_handle.as_ref().map(FontHandle::id);
 
-        for line in layout.lines() {
+        for (line_index, line) in layout.lines().enumerate() {
             let metrics = line.metrics();
             let range = line.text_range();
             let mut runs = Vec::new();
             let mut glyphs = Vec::new();
             let mut caret_end = range.start;
+            let caret_start = caret_positions.len();
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(parley_run) = item else {
                     continue;
@@ -637,6 +684,56 @@ impl TextEngine {
                         cluster,
                     })
                     .collect();
+                // Keep the authoritative visual cluster sequence alongside
+                // positioned glyphs. A cluster may contain several glyphs
+                // (ligatures, combining marks, or fallback fragments), so
+                // group adjacent glyphs with the same text range before
+                // creating its two visual caret edges.
+                let mut cluster_positions: Vec<(std::ops::Range<usize>, f32, f32)> = Vec::new();
+                for (glyph, cluster_range) in
+                    parley_run.positioned_glyphs().zip(clusters.iter().cloned())
+                {
+                    let edge = glyph.x + glyph.advance;
+                    let left = glyph.x.min(edge);
+                    let right = glyph.x.max(edge);
+                    if let Some((previous_range, _, previous_right)) = cluster_positions.last_mut()
+                        && *previous_range == cluster_range
+                    {
+                        *previous_right = (*previous_right).max(right);
+                    } else {
+                        cluster_positions.push((cluster_range, left, right));
+                    }
+                }
+                let rtl = run.is_rtl();
+                for (cluster_range, left, right) in cluster_positions {
+                    if rtl {
+                        caret_positions.push(TextCaretPosition {
+                            offset: cluster_range.end,
+                            affinity: TextAffinity::Upstream,
+                            x: left,
+                            line: line_index,
+                        });
+                        caret_positions.push(TextCaretPosition {
+                            offset: cluster_range.start,
+                            affinity: TextAffinity::Downstream,
+                            x: right,
+                            line: line_index,
+                        });
+                    } else {
+                        caret_positions.push(TextCaretPosition {
+                            offset: cluster_range.start,
+                            affinity: TextAffinity::Downstream,
+                            x: left,
+                            line: line_index,
+                        });
+                        caret_positions.push(TextCaretPosition {
+                            offset: cluster_range.end,
+                            affinity: TextAffinity::Upstream,
+                            x: right,
+                            line: line_index,
+                        });
+                    }
+                }
                 glyphs.extend(positions.iter().copied());
                 runs.push(Arc::new(GlyphRun {
                     font,
@@ -652,6 +749,37 @@ impl TextEngine {
                     direction: if run.is_rtl() { "rtl" } else { "ltr" },
                 });
             }
+            let mut line_stops: Vec<_> = caret_positions.drain(caret_start..).collect();
+            if line_stops.is_empty() {
+                line_stops.push(TextCaretPosition {
+                    offset: range.start,
+                    affinity: TextAffinity::Downstream,
+                    x: metrics.offset,
+                    line: line_index,
+                });
+            }
+            if !line_stops.iter().any(|stop| stop.offset == range.start) {
+                line_stops.push(TextCaretPosition {
+                    offset: range.start,
+                    affinity: TextAffinity::Downstream,
+                    x: metrics.offset,
+                    line: line_index,
+                });
+            }
+            if caret_end > range.start && !line_stops.iter().any(|stop| stop.offset == caret_end) {
+                line_stops.push(TextCaretPosition {
+                    offset: caret_end,
+                    affinity: TextAffinity::Upstream,
+                    x: metrics.offset + metrics.advance,
+                    line: line_index,
+                });
+            }
+            line_stops.sort_by(|left, right| {
+                left.x
+                    .total_cmp(&right.x)
+                    .then_with(|| left.offset.cmp(&right.offset))
+            });
+            caret_positions.extend(line_stops);
             lines.push(TextLine {
                 runs: runs.into(),
                 glyphs: glyphs.into(),
@@ -673,6 +801,12 @@ impl TextEngine {
                 caret_end: 0,
                 end: 0,
             });
+            caret_positions.push(TextCaretPosition {
+                offset: 0,
+                affinity: TextAffinity::Downstream,
+                x: 0.0,
+                line: 0,
+            });
         }
         self.diagnostics.fallback_fonts_used += used_fonts.len().saturating_sub(1) as u64;
         let baseline = lines[0].baseline;
@@ -688,6 +822,7 @@ impl TextEngine {
                 line_height,
             },
             font_runs: font_runs.into(),
+            caret_positions: caret_positions.into(),
             overflowed: false,
         }
     }

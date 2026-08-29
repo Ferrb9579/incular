@@ -61,7 +61,8 @@ use incular_widgets::internal::{SelectionAreaController, TextEditingController};
 use incular_widgets::{
     AbsorbPointer, AutovalidateMode, Border, BorderRadius, BoxDecoration, Container,
     DefaultSelectionStyle, Directionality, EditableText as RawEditableText, FocusNode, Form,
-    FormField, GestureDetector, HitTestBehavior, Semantics, Text, TextInputFormatter, Widget,
+    FormField, GestureDetector, HitTestBehavior, Semantics, Text, TextInputActionHint,
+    TextInputFormatter, TextInputTypeHint, Widget,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -69,6 +70,39 @@ use typed_builder::TypedBuilder;
 
 type Validator = Rc<dyn Fn(&str) -> Option<String>>;
 type ChangedCallback = Rc<dyn Fn(&str)>;
+
+fn text_input_type_hint(input_type: TextInputType) -> TextInputTypeHint {
+    match input_type {
+        TextInputType::Text
+        | TextInputType::Datetime
+        | TextInputType::Name
+        | TextInputType::StreetAddress
+        | TextInputType::None => TextInputTypeHint::Text,
+        TextInputType::Multiline => TextInputTypeHint::Multiline,
+        TextInputType::Number => TextInputTypeHint::Number,
+        TextInputType::Phone => TextInputTypeHint::Phone,
+        TextInputType::EmailAddress => TextInputTypeHint::Email,
+        TextInputType::Url => TextInputTypeHint::Url,
+        TextInputType::VisiblePassword => TextInputTypeHint::Password,
+    }
+}
+
+fn text_input_action_hint(action: TextInputAction) -> TextInputActionHint {
+    match action {
+        TextInputAction::Unspecified => TextInputActionHint::Unspecified,
+        TextInputAction::None => TextInputActionHint::None,
+        TextInputAction::Done
+        | TextInputAction::Continue
+        | TextInputAction::Join
+        | TextInputAction::EmergencyCall => TextInputActionHint::Done,
+        TextInputAction::Go | TextInputAction::Route => TextInputActionHint::Go,
+        TextInputAction::Search => TextInputActionHint::Search,
+        TextInputAction::Send => TextInputActionHint::Send,
+        TextInputAction::Next => TextInputActionHint::Next,
+        TextInputAction::Previous => TextInputActionHint::Previous,
+        TextInputAction::Newline => TextInputActionHint::Newline,
+    }
+}
 
 pub use incular_controls::theme::TypographyTokens;
 pub use incular_controls::theme::{
@@ -679,7 +713,9 @@ impl TextField {
                     .unwrap_or(Color::rgba(72, 120, 220, 150)),
             )
             .placeholder(self.placeholder.clone())
-            .style(self.style.clone().color(foreground));
+            .style(self.style.clone().color(foreground))
+            .input_type(text_input_type_hint(self.keyboard_type))
+            .input_action(text_input_action_hint(self.text_input_action));
         if self.on_submit.is_some() || self.on_editing_complete.is_some() {
             let on_submit = self.on_submit.clone();
             let on_editing_complete = self.on_editing_complete.clone();
@@ -764,14 +800,6 @@ impl TextField {
             }
             content = selection.into();
         }
-        let _ = (
-            self.cursor_width,
-            self.cursor_height,
-            self.cursor_radius,
-            self.show_cursor,
-            self.keyboard_type,
-            self.text_input_action,
-        );
         if let Some(node) = self.focus_node.as_ref() {
             node.set_can_request_focus(self.can_request_focus);
         }

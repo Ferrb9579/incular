@@ -30,6 +30,14 @@ pub enum Role {
     Image,
     Heading,
     Link,
+    Group,
+    Tab,
+    TabList,
+    TabPanel,
+    MenuItem,
+    ProgressBar,
+    Meter,
+    SearchField,
 }
 
 pub type SemanticRole = Role;
@@ -82,7 +90,7 @@ pub struct TextSelection {
     pub extent: usize,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SemanticState {
     pub enabled: bool,
     pub focused: bool,
@@ -101,6 +109,20 @@ pub struct SemanticState {
     pub selection: Option<TextSelection>,
     pub item_index: Option<usize>,
     pub set_size: Option<usize>,
+    /// Indicates that the node's value is still being produced.
+    pub busy: bool,
+    /// Validation state exposed independently from enabled/read-only state.
+    pub invalid: bool,
+    /// Whether the user must provide a value.
+    pub required: bool,
+    /// Numeric range/value metadata used by sliders, meters, and progress
+    /// indicators. Values stay floating point because Flutter controls do.
+    pub numeric_value: Option<f64>,
+    pub numeric_min: Option<f64>,
+    pub numeric_max: Option<f64>,
+    pub numeric_step: Option<f64>,
+    /// Heading level in the portable tree (1 is the most prominent level).
+    pub heading_level: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

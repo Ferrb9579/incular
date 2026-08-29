@@ -567,6 +567,7 @@ impl From<AutofillGroup> for Widget {
 #[derive(Clone, Debug, PartialEq)]
 pub struct UndoHistory {
     child: Widget,
+    max_entries: usize,
 }
 
 impl UndoHistory {
@@ -574,7 +575,23 @@ impl UndoHistory {
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
             child: child.into(),
+            max_entries: 100,
         }
+    }
+
+    /// Limits the number of committed editor states retained by the runtime
+    /// history controller. Zero disables recording while leaving editing
+    /// enabled.
+    #[must_use]
+    pub fn max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+}
+
+impl From<UndoHistory> for Widget {
+    fn from(value: UndoHistory) -> Self {
+        value.child.with_undo_history_max_entries(value.max_entries)
     }
 }
 

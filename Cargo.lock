@@ -1729,6 +1729,7 @@ dependencies = [
 name = "incular-android"
 version = "0.1.0"
 dependencies = [
+ "incular-accessibility",
  "incular-core",
  "incular-platform",
 ]
@@ -1839,6 +1840,7 @@ dependencies = [
 name = "incular-ios"
 version = "0.1.0"
 dependencies = [
+ "incular-accessibility",
  "incular-core",
  "incular-platform",
 ]

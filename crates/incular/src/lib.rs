@@ -77,8 +77,10 @@ pub mod prelude {
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
-        Fullscreen, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
-        WindowOperation, WindowOptions, WindowOptionsError,
+        Fullscreen, MemoryTextInputAdapter, TextInputAction, TextInputAdapter, TextInputClientId,
+        TextInputCommand, TextInputConfiguration, TextInputState, TextInputType, WindowCommand,
+        WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
+        WindowOptionsError,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -105,10 +107,11 @@ pub mod prelude {
     };
     pub use incular_text::{
         EditableText as TextEditingModel, FontFamily, FontFeature, FontStyle, FontVariation,
-        FontWeight, IconData, LineHeight, RichText, StrutStyle, TextAlign, TextBaseline,
-        TextDecoration, TextDecorationStyle, TextEditingController, TextEditingValue,
-        TextHeightBehavior, TextLayoutOptions, TextLeadingDistribution, TextOverflow, TextRange,
-        TextScaler, TextSelection, TextShadow, TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
+        FontWeight, IconData, LineHeight, RichText, StrutStyle, TextAffinity, TextAlign,
+        TextBaseline, TextCaretPosition, TextDecoration, TextDecorationStyle,
+        TextEditingController, TextEditingValue, TextHeightBehavior, TextLayoutOptions,
+        TextLeadingDistribution, TextOverflow, TextRange, TextScaler, TextSelection, TextShadow,
+        TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
     };
     pub use incular_widgets::{
         AbsorbPointer, Action, ActionListener, ActionResult, Actions, Align, AlignTransition,
@@ -161,10 +164,11 @@ pub mod prelude {
         SliverPrototypeExtentList, SliverReorderController, SliverReorderableList,
         SliverResizingHeader, SliverSafeArea, SliverToBoxAdapter, SliverVariedExtentList,
         SliverVisibility, SnapshotWidget, Spacer, Stack, Table, TableCell, TapRegion,
-        TapRegionSurface, Text, TextFieldTapRegion, TickerMode, TileMode, Title, Transform,
-        TreeSliver, TweenAnimationBuilder, TwoDimensionalScrollView, TwoDimensionalScrollable,
-        TwoDimensionalViewport, UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, View,
-        ViewAnchor, Visibility, Widget, WidgetOrderTraversalPolicy, WidgetsApp, Wrap,
+        TapRegionSurface, Text, TextFieldTapRegion, TextInputActionHint, TextInputTypeHint,
+        TickerMode, TileMode, Title, Transform, TreeSliver, TweenAnimationBuilder,
+        TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport,
+        UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, View, ViewAnchor, Visibility,
+        Widget, WidgetOrderTraversalPolicy, WidgetsApp, Wrap,
     };
 }
 

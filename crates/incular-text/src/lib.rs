@@ -24,8 +24,8 @@ pub use style::{
 
 mod engine;
 pub use engine::{
-    FontId, FontRunDebug, TextDiagnostics, TextEngine, TextLayout, TextLayoutOptions, TextLine,
-    TextMetrics,
+    FontId, FontRunDebug, TextCaretPosition, TextDiagnostics, TextEngine, TextLayout,
+    TextLayoutOptions, TextLine, TextMetrics,
 };
 #[cfg(test)]
 mod tests {
@@ -58,6 +58,29 @@ mod tests {
                     .all(|run| run.range.start <= run.range.end)
             );
         }
+    }
+
+    #[test]
+    fn bidi_layout_exposes_visual_caret_stops_and_affinity() {
+        let mut engine = TextEngine::new();
+        let text = "abc אבג xyz";
+        let layout = engine.layout(text, &TextStyle::default(), None, TextAlign::Start);
+        let stops = layout.line_caret_positions(0);
+        assert!(!stops.is_empty());
+        assert!(stops.windows(2).all(|pair| pair[0].x <= pair[1].x));
+        assert!(
+            stops
+                .iter()
+                .any(|stop| stop.affinity == TextAffinity::Upstream)
+        );
+
+        let controller = TextEditingController::with_text(text);
+        let first = stops[0];
+        controller
+            .set_selection_with_affinity(TextSelection::collapsed(first.offset), first.affinity);
+        controller.move_right_visual(&layout, false);
+        assert_eq!(controller.selection().extent, stops[1].offset);
+        assert_eq!(controller.caret_affinity(), stops[1].affinity);
     }
     #[test]
     fn registered_fonts_advance_generation_and_invalidate_layouts() {

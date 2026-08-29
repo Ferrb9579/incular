@@ -31,8 +31,14 @@ single-window event stream. Application lifecycle remains separate from window
 visibility and focus lifecycle.
 
 Keyboard navigation, printable text and IME composition are normalized into
-separate `InputEvent` variants. `Clipboard` is the backend boundary; Linux
-installs an `arboard` system-clipboard bridge with a safe in-memory fallback.
+separate `InputEvent` variants. `TextInputConfiguration`, `TextInputState`, and
+`TextInputCommand` form the data-only native text-input bridge: the runtime
+selects the focused client, publishes selection/composing/caret state, and
+receives explicit soft-keyboard actions through `PlatformEvent`. Winit adapters
+apply those commands to the native IME; mobile hosts can consume the same
+commands without a window dependency. `Clipboard` is the backend boundary;
+Linux installs an `arboard` system-clipboard bridge with a safe in-memory
+fallback.
 
 The scroll convention is positive logical `delta.y` increasing the controller
 offset (content moves upward). Winit `LineDelta` is scaled by 40 logical px;

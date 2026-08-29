@@ -6,9 +6,9 @@ use incular_core::KeyboardEvent;
 #[allow(unused_imports)]
 pub use incular_gestures::{
     Action, ActionResult, Actions, Command, CommandId, FocusManager, FocusNode, FocusScopeNode,
-    FocusScopeSubscription, FocusTraversalPolicy, Intent, LogicalShortcutKey,
-    OrderedTraversalPolicy, ReadingOrderTraversalPolicy, ShortcutKey, ShortcutTrigger, Shortcuts,
-    WidgetOrderTraversalPolicy,
+    FocusScopeSubscription, FocusTraversalPolicy, FocusTraversalPolicyKind, Intent,
+    LogicalShortcutKey, OrderedTraversalPolicy, ReadingOrderTraversalPolicy, ShortcutKey,
+    ShortcutTrigger, Shortcuts, WidgetOrderTraversalPolicy,
 };
 
 use crate::{GestureDetector, Widget, WidgetKind};
@@ -84,6 +84,7 @@ impl From<Focus> for Widget {
 #[derive(Clone, Default)]
 pub struct FocusScope {
     autofocus: bool,
+    policy: FocusTraversalPolicyKind,
     child: Option<Widget>,
 }
 
@@ -93,6 +94,7 @@ impl FocusScope {
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
             autofocus: false,
+            policy: FocusTraversalPolicyKind::WidgetOrder,
             child: Some(child.into()),
         }
     }
@@ -103,6 +105,28 @@ impl FocusScope {
         self.autofocus = autofocus;
         self
     }
+
+    /// Selects the traversal policy for this scope's descendants.
+    #[must_use]
+    pub fn policy(mut self, policy: FocusTraversalPolicyKind) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn reading_order(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::ReadingOrder)
+    }
+
+    #[must_use]
+    pub fn widget_order(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::WidgetOrder)
+    }
+
+    #[must_use]
+    pub fn ordered(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::Ordered)
+    }
 }
 
 impl From<FocusScope> for Widget {
@@ -110,6 +134,8 @@ impl From<FocusScope> for Widget {
         value
             .child
             .unwrap_or_else(|| crate::SizedBox::shrink().into())
+            .with_focus_traversal_policy(value.policy)
+            .with_focus_scope_autofocus(value.autofocus)
     }
 }
 
@@ -369,6 +395,7 @@ impl From<FocusableActionDetector> for Widget {
 /// Establishes a focus traversal policy group for its descendants.
 #[derive(Clone, Default)]
 pub struct FocusTraversalGroup {
+    policy: FocusTraversalPolicyKind,
     child: Option<Widget>,
 }
 
@@ -376,25 +403,48 @@ impl FocusTraversalGroup {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
+            policy: FocusTraversalPolicyKind::ReadingOrder,
             child: Some(child.into()),
         }
+    }
+
+    /// Selects the policy used for descendants of this group.
+    #[must_use]
+    pub fn policy(mut self, policy: FocusTraversalPolicyKind) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn reading_order(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::ReadingOrder)
+    }
+
+    #[must_use]
+    pub fn widget_order(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::WidgetOrder)
+    }
+
+    #[must_use]
+    pub fn ordered(self) -> Self {
+        self.policy(FocusTraversalPolicyKind::Ordered)
     }
 }
 
 impl From<FocusTraversalGroup> for Widget {
     fn from(value: FocusTraversalGroup) -> Self {
-        FocusScope::new(
-            value
-                .child
-                .unwrap_or_else(|| crate::SizedBox::shrink().into()),
-        )
-        .into()
+        let policy = value.policy;
+        value
+            .child
+            .unwrap_or_else(|| crate::SizedBox::shrink().into())
+            .with_focus_traversal_policy(policy)
     }
 }
 
 /// Customizes the focus traversal ordering of a widget.
 #[derive(Clone, Default)]
 pub struct FocusTraversalOrder {
+    order: Option<f64>,
     child: Option<Widget>,
 }
 
@@ -402,16 +452,27 @@ impl FocusTraversalOrder {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
+            order: None,
             child: Some(child.into()),
         }
+    }
+
+    /// Supplies the explicit numeric order used by an ordered traversal
+    /// group. Equal orders retain widget order.
+    #[must_use]
+    pub fn order(mut self, order: f64) -> Self {
+        self.order = order.is_finite().then_some(order);
+        self
     }
 }
 
 impl From<FocusTraversalOrder> for Widget {
     fn from(value: FocusTraversalOrder) -> Self {
+        let order = value.order;
         value
             .child
             .unwrap_or_else(|| crate::SizedBox::shrink().into())
+            .with_focus_traversal_order(order)
     }
 }
 
@@ -440,7 +501,7 @@ impl ExcludeFocus {
 
 impl From<ExcludeFocus> for Widget {
     fn from(value: ExcludeFocus) -> Self {
-        value.child
+        value.child.with_excluded_focus(value.excluding)
     }
 }
 
@@ -469,7 +530,7 @@ impl ExcludeFocusTraversal {
 
 impl From<ExcludeFocusTraversal> for Widget {
     fn from(value: ExcludeFocusTraversal) -> Self {
-        value.child
+        value.child.with_excluded_focus_traversal(value.excluding)
     }
 }
 

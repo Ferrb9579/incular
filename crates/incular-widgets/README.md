@@ -65,8 +65,9 @@ state is kept by the runtime and the text-domain controller; callers should
 import the authoritative controller from `incular-text` (or use the facade)
 rather than depending on the Widgets crate's hidden retained-tree bridge.
 Material `TextField` adds themed chrome and exposes the Flutter-style
-`max_lines`/`multiline` API. Selection painting is line-by-line. Neither
-control implements bidi visual cursor movement yet.
+`max_lines`/`multiline` API. Selection painting is line-by-line, and both
+controls use the retained Parley caret stops for visual bidi cursor movement.
+Wrap an editor in `UndoHistory` to configure its runtime undo/redo capacity.
 
 ## Read-only selection
 

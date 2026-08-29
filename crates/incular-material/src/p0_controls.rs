@@ -1488,6 +1488,10 @@ impl From<RangeSlider> for Widget {
                         .state(SemanticState {
                             enabled,
                             focusable: enabled,
+                            numeric_value: Some(f64::from(values.start)),
+                            numeric_min: Some(f64::from(min)),
+                            numeric_max: Some(f64::from(max)),
+                            numeric_step: Some(f64::from(step)),
                             ..SemanticState::default()
                         })
                         .actions(if enabled {

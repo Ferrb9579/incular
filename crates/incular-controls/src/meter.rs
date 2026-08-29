@@ -137,12 +137,15 @@ impl Root {
             description.push_str(&format!(", optimum {optimum}"));
         }
         visual.semantics(
-            ExplicitSemantics::new(SemanticRole::GenericContainer)
+            ExplicitSemantics::new(SemanticRole::Meter)
                 .label(self.label.clone().unwrap_or_else(|| "Meter".to_owned()))
                 .value(value)
                 .description(description)
                 .state(SemanticState {
                     enabled: true,
+                    numeric_value: Some(f64::from(self.value)),
+                    numeric_min: Some(f64::from(self.min)),
+                    numeric_max: Some(f64::from(self.max)),
                     ..SemanticState::default()
                 }),
         )

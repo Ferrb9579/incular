@@ -51,9 +51,9 @@ pub use focus_keyboard::{
     Action, ActionListener, ActionResult, Actions, CallbackShortcuts, Command, CommandId,
     ExcludeFocus, ExcludeFocusTraversal, Focus, FocusManager, FocusNode, FocusScope,
     FocusScopeNode, FocusScopeSubscription, FocusTraversalGroup, FocusTraversalOrder,
-    FocusTraversalPolicy, FocusableActionDetector, Intent, KeyboardListener, LogicalShortcutKey,
-    OrderedTraversalPolicy, ReadingOrderTraversalPolicy, ShortcutKey, ShortcutTrigger, Shortcuts,
-    WidgetOrderTraversalPolicy,
+    FocusTraversalPolicy, FocusTraversalPolicyKind, FocusableActionDetector, Intent,
+    KeyboardListener, LogicalShortcutKey, OrderedTraversalPolicy, ReadingOrderTraversalPolicy,
+    ShortcutKey, ShortcutTrigger, Shortcuts, WidgetOrderTraversalPolicy,
 };
 pub use forms::{
     AutocompleteHighlightedOption, AutofillGroup, AutovalidateMode, FilteringTextInputFormatter,
@@ -138,7 +138,8 @@ pub use scrolling::{
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
 pub use tree::{
     BoxFit, ColorFiltered, DecoratedBox, EditableText, FadeTransition, Icon, Image, ImageRepeat,
-    Opacity, RotationTransition, ScaleTransition, SlideTransition, Text, Transform, Widget,
+    Opacity, RotationTransition, ScaleTransition, SlideTransition, Text, TextFieldInputSnapshot,
+    TextInputActionHint, TextInputTypeHint, Transform, Widget,
 };
 pub use utilities::{
     AutomaticKeepAlive, Banner, CheckedModeBanner, ErrorWidget, Expansible, IndexedSemantics,

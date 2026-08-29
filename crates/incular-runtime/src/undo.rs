@@ -23,6 +23,16 @@ struct History {
     current: TextEditingValue,
     undo: Vec<TextEditingValue>,
     redo: Vec<TextEditingValue>,
+    max_entries: usize,
+}
+
+const DEFAULT_MAX_ENTRIES: usize = 100;
+
+fn trim_history(entries: &mut Vec<TextEditingValue>, max_entries: usize) {
+    if entries.len() > max_entries {
+        let remove = entries.len() - max_entries;
+        entries.drain(..remove);
+    }
 }
 
 struct Inner {
@@ -56,9 +66,18 @@ impl Inner {
             let mut history = self.history.borrow_mut();
             if history.current == value {
                 false
+            } else if history.current.text == value.text {
+                // Selection/caret changes are part of the current editing
+                // state, but should not create an undo step by themselves.
+                history.current = value;
+                false
             } else {
                 let previous = std::mem::replace(&mut history.current, value);
-                history.undo.push(previous);
+                if history.max_entries > 0 {
+                    history.undo.push(previous);
+                    let max_entries = history.max_entries;
+                    trim_history(&mut history.undo, max_entries);
+                }
                 history.redo.clear();
                 true
             }
@@ -119,6 +138,7 @@ impl UndoHistoryController {
                     current: initial.clone(),
                     undo: Vec::new(),
                     redo: Vec::new(),
+                    max_entries: DEFAULT_MAX_ENTRIES,
                 }),
                 applying: Cell::new(false),
                 state: Signal::new(UndoHistoryState::default()),
@@ -160,6 +180,23 @@ impl UndoHistoryController {
         self.status().can_redo
     }
 
+    /// Limits the number of committed text states retained by this history.
+    /// A value of zero disables recording while keeping the current editor
+    /// value usable. Existing entries are trimmed immediately.
+    pub fn set_max_entries(&self, max_entries: usize) {
+        let mut history = self.inner.history.borrow_mut();
+        history.max_entries = max_entries;
+        trim_history(&mut history.undo, max_entries);
+        trim_history(&mut history.redo, max_entries);
+        drop(history);
+        self.inner.sync_state();
+    }
+
+    #[must_use]
+    pub fn max_entries(&self) -> usize {
+        self.inner.history.borrow().max_entries
+    }
+
     /// Moves the editor to the previous value, if one exists.
     #[must_use]
     pub fn undo(&self) -> bool {
@@ -169,7 +206,11 @@ impl UndoHistoryController {
                 return false;
             };
             let current = std::mem::replace(&mut history.current, target.clone());
-            history.redo.push(current);
+            if history.max_entries > 0 {
+                history.redo.push(current);
+                let max_entries = history.max_entries;
+                trim_history(&mut history.redo, max_entries);
+            }
             target
         };
         self.inner.apply_history_value(target);
@@ -185,7 +226,11 @@ impl UndoHistoryController {
                 return false;
             };
             let current = std::mem::replace(&mut history.current, target.clone());
-            history.undo.push(current);
+            if history.max_entries > 0 {
+                history.undo.push(current);
+                let max_entries = history.max_entries;
+                trim_history(&mut history.undo, max_entries);
+            }
             target
         };
         self.inner.apply_history_value(target);
@@ -206,6 +251,7 @@ impl UndoHistoryController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use incular_text::TextSelection;
 
     #[test]
     fn undo_controller_undo_redo() {
@@ -251,5 +297,19 @@ mod tests {
         );
         controller.clear();
         assert_eq!(state.get(), UndoHistoryState::default());
+    }
+
+    #[test]
+    fn selection_changes_do_not_create_undo_steps_and_capacity_is_bounded() {
+        let editor = TextEditingController::with_text("one");
+        let controller = UndoHistoryController::new(editor.clone());
+        controller.set_max_entries(1);
+        editor.set_selection(TextSelection::collapsed(0));
+        editor.set_text("two");
+        editor.set_text("three");
+        assert_eq!(controller.max_entries(), 1);
+        assert!(controller.undo());
+        assert_eq!(editor.text(), "two");
+        assert!(!controller.undo());
     }
 }

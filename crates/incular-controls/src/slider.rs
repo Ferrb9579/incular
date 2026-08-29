@@ -552,6 +552,10 @@ impl Root {
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
+                    numeric_value: Some(f64::from(range.clamp(current_value))),
+                    numeric_min: Some(f64::from(range.min)),
+                    numeric_max: Some(f64::from(range.max)),
+                    numeric_step: Some(f64::from(range.step)),
                     ..SemanticState::default()
                 })
                 .actions(if self.enabled {

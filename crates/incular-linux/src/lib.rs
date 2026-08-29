@@ -10,7 +10,8 @@ use incular_core::PointerPhase;
 use incular_platform::{
     Clipboard, PhysicalSize, PlatformEvent, WindowCommand, WindowEvent as IncularWindowEvent,
     WindowId as IncularWindowId, WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions,
-    ime_event, key_event, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
+    apply_text_input_command, ime_event, key_event, pointer_event, raw_window_handles, text_event,
+    touch_event, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, NativeWindowCommand, Runtime, RuntimeWake, Screenshot,
@@ -462,6 +463,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
         }
     }
     fn about_to_wait(&mut self, loop_target: &ActiveEventLoop) {
+        self.apply_text_input_commands();
         if self.runtime.as_ref().is_some_and(Runtime::frame_requested) {
             self.window
                 .as_ref()
@@ -476,9 +478,13 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
     fn user_event(&mut self, _: &ActiveEventLoop, event: RuntimeWakeEvent) {
         match event {
             RuntimeWakeEvent::Runtime => {
-                if let Some(runtime) = self.runtime.as_mut() {
-                    runtime.process_runtime_work();
-                    if runtime.frame_requested() {
+                if self.runtime.is_some() {
+                    self.runtime
+                        .as_mut()
+                        .expect("runtime exists")
+                        .process_runtime_work();
+                    self.apply_text_input_commands();
+                    if self.runtime.as_ref().is_some_and(Runtime::frame_requested) {
                         self.window
                             .as_ref()
                             .expect("window exists")
@@ -553,6 +559,21 @@ impl<F: FnMut(ActionId)> App<F> {
                         .update_if_active(|| update.into_accesskit());
                 }
             }
+        }
+        self.apply_text_input_commands();
+    }
+
+    fn apply_text_input_commands(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        let commands = self
+            .runtime
+            .as_mut()
+            .map(Runtime::take_text_input_commands)
+            .unwrap_or_default();
+        for command in commands {
+            apply_text_input_command(window, &command);
         }
     }
 
@@ -756,6 +777,7 @@ impl MultiApp {
     }
 
     fn request_frame_if_needed(&mut self, id: IncularWindowId) {
+        self.apply_text_input_commands(id);
         if self.application.frame_requested(id) {
             if let Some(native_id) = self.native_ids.get(&id).copied() {
                 if let Some(state) = self.windows.get(&native_id) {
@@ -951,8 +973,22 @@ impl MultiApp {
         }
         self.application
             .set_accessibility_diagnostics(id, state.accessibility.projection.diagnostics());
+        self.apply_text_input_commands(id);
         #[cfg(feature = "devtools")]
         self.devtools_state.stream_tree_updates(&self.application);
+    }
+
+    fn apply_text_input_commands(&mut self, id: IncularWindowId) {
+        let Some(native_id) = self.native_ids.get(&id).copied() else {
+            return;
+        };
+        let commands = self.application.take_window_text_input_commands(id);
+        let Some(state) = self.windows.get(&native_id) else {
+            return;
+        };
+        for command in commands {
+            apply_text_input_command(&state.window, &command);
+        }
     }
 
     fn route_window_event(&mut self, native_id: NativeWindowId, event: IncularWindowEvent) {

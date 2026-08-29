@@ -12,13 +12,14 @@ use incular_accessibility::{
 use incular_config::Constraints;
 use incular_config::RuntimeEnvironment;
 use incular_core::{
-    Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PointerPhase, RestorationKey,
-    RestorationScope,
+    Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PointerPhase, Rect,
+    RestorationKey, RestorationScope,
 };
 use incular_platform::{
-    Clipboard, MemoryClipboard, PlatformEvent, PlatformLifecycle, WindowCommand, WindowEvent,
-    WindowEventKind, WindowId, WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions,
-    WindowOptionsError,
+    Clipboard, MemoryClipboard, PlatformEvent, PlatformLifecycle, TextInputAction,
+    TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
+    WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowMetrics,
+    WindowOperation, WindowOptions, WindowOptionsError,
 };
 use incular_rendering::DisplayList;
 use incular_semantics::{SemanticAction, SemanticNodeId};
@@ -28,7 +29,9 @@ use incular_widgets::internal::{
     ActionId, Diagnostics, ElementId, Key, PointerEvent, TextRange, TextSelection, TreeError,
     WidgetTree,
 };
-use incular_widgets::{FocusScopeNode, FocusScopeSubscription, Widget};
+use incular_widgets::{
+    FocusScopeNode, FocusScopeSubscription, TextInputActionHint, TextInputTypeHint, Widget,
+};
 #[cfg(feature = "devtools")]
 use std::any::{Any, TypeId};
 use std::{
@@ -1098,6 +1101,12 @@ pub struct Runtime {
     focused: Option<ElementId>,
     captured_text_field: Option<ElementId>,
     captured_selectable_text: Option<ElementId>,
+    text_histories: HashMap<ElementId, UndoHistoryController>,
+    text_input_commands: VecDeque<TextInputCommand>,
+    text_input_client: Option<TextInputClientId>,
+    text_input_configuration: Option<TextInputConfiguration>,
+    text_input_state: Option<TextInputState>,
+    text_input_caret_rect: Option<Rect>,
     clipboard: Box<dyn Clipboard>,
     editing_diagnostics: EditingDiagnostics,
     frame_requested: bool,
@@ -1173,6 +1182,12 @@ impl Runtime {
             focused: None,
             captured_text_field: None,
             captured_selectable_text: None,
+            text_histories: HashMap::new(),
+            text_input_commands: VecDeque::new(),
+            text_input_client: None,
+            text_input_configuration: None,
+            text_input_state: None,
+            text_input_caret_rect: None,
             clipboard: Box::new(MemoryClipboard::default()),
             editing_diagnostics: EditingDiagnostics::default(),
             frame_requested: true,
@@ -1233,6 +1248,13 @@ impl Runtime {
     /// Marks only this retained root for a future presentation.
     pub fn request_frame(&mut self) {
         self.frame_requested = true;
+    }
+
+    /// Drains native text-input commands produced since the last platform
+    /// event-loop turn. A desktop runner applies these to Winit; mobile hosts
+    /// can translate the same data to their platform text services.
+    pub fn take_text_input_commands(&mut self) -> Vec<TextInputCommand> {
+        self.text_input_commands.drain(..).collect()
     }
 
     /// Opens a second retained root through the owning application. This can
@@ -1461,6 +1483,11 @@ impl Runtime {
     /// touching retained state. Native runners should call this before their
     /// renderer/window teardown.
     pub fn shutdown(&mut self) {
+        if self.focused.is_some() {
+            self.set_focus(None);
+        } else {
+            self.sync_text_input_client();
+        }
         let _ = self.transition_lifecycle(ApplicationLifecycle::Stopping);
         for (_, scope) in self.owner_scopes.drain() {
             scope.cancel();
@@ -1473,6 +1500,11 @@ impl Runtime {
     /// stopping the shared application scheduler. `Application` calls this
     /// before dropping a closed retained root.
     fn dispose_window(&mut self) {
+        if self.focused.is_some() {
+            self.set_focus(None);
+        } else {
+            self.sync_text_input_client();
+        }
         self.window_scope.cancel();
         for (_, scope) in self.owner_scopes.drain() {
             scope.cancel();
@@ -1482,7 +1514,12 @@ impl Runtime {
         self.pending.clear();
         self.order.clear();
         self.handlers.clear();
-        self.focused = None;
+        self.text_histories.clear();
+        self.text_input_commands.clear();
+        self.text_input_client = None;
+        self.text_input_configuration = None;
+        self.text_input_state = None;
+        self.text_input_caret_rect = None;
         self.captured_text_field = None;
         self.captured_selectable_text = None;
         self.hovered_button = None;
@@ -1541,11 +1578,19 @@ impl Runtime {
             }
             SemanticAction::Activate => self
                 .tree
-                .action_for_element(element)
-                .and_then(|action| self.handlers.get(&action).cloned())
+                .semantic_action_callback(element, incular_semantics::SemanticActionKind::Activate)
                 .map(|callback| {
                     callback();
                     true
+                })
+                .or_else(|| {
+                    self.tree
+                        .action_for_element(element)
+                        .and_then(|action| self.handlers.get(&action).cloned())
+                        .map(|callback| {
+                            callback();
+                            true
+                        })
                 })
                 .unwrap_or(false),
             SemanticAction::SetText(text) => {
@@ -1573,9 +1618,44 @@ impl Runtime {
                     true
                 })
                 .unwrap_or(false),
-            SemanticAction::ScrollForward => self.tree.semantic_scroll(element, true),
-            SemanticAction::ScrollBackward => self.tree.semantic_scroll(element, false),
-            SemanticAction::Increment | SemanticAction::Decrement => false,
+            SemanticAction::ScrollForward => self
+                .tree
+                .semantic_action_callback(
+                    element,
+                    incular_semantics::SemanticActionKind::ScrollForward,
+                )
+                .map(|callback| {
+                    callback();
+                    true
+                })
+                .unwrap_or_else(|| self.tree.semantic_scroll(element, true)),
+            SemanticAction::ScrollBackward => self
+                .tree
+                .semantic_action_callback(
+                    element,
+                    incular_semantics::SemanticActionKind::ScrollBackward,
+                )
+                .map(|callback| {
+                    callback();
+                    true
+                })
+                .unwrap_or_else(|| self.tree.semantic_scroll(element, false)),
+            SemanticAction::Increment => self
+                .tree
+                .semantic_action_callback(element, incular_semantics::SemanticActionKind::Increment)
+                .map(|callback| {
+                    callback();
+                    true
+                })
+                .unwrap_or_else(|| self.tree.dispatch_semantic_increment(element, true)),
+            SemanticAction::Decrement => self
+                .tree
+                .semantic_action_callback(element, incular_semantics::SemanticActionKind::Decrement)
+                .map(|callback| {
+                    callback();
+                    true
+                })
+                .unwrap_or_else(|| self.tree.dispatch_semantic_increment(element, false)),
         };
         if handled {
             self.frame_requested = true;
@@ -1604,6 +1684,10 @@ impl Runtime {
     pub fn handle_platform_event(&mut self, event: PlatformEvent) -> Option<EventTarget> {
         match event {
             PlatformEvent::Input(input) => self.handle_input(input),
+            PlatformEvent::TextInputAction(action) => {
+                self.handle_text_input_action(action);
+                None
+            }
             PlatformEvent::Metrics(metrics) => {
                 self.update_window_metrics(metrics);
                 None
@@ -1898,8 +1982,127 @@ impl Runtime {
         if let Some(current) = next {
             let _ = self.tree.set_focused(current, true, Instant::now());
             self.tree.set_keyboard_focus(current, true);
+            if self.tree.is_text_field(current) {
+                let _ = self.ensure_text_history(current);
+            }
         }
         self.frame_requested = true;
+        self.sync_text_input_client();
+    }
+
+    fn ensure_text_history(&mut self, field: ElementId) -> Option<UndoHistoryController> {
+        let editor = self.tree.text_controller(field)?;
+        let replace = self
+            .text_histories
+            .get(&field)
+            .is_none_or(|history| history.editor() != editor);
+        if replace {
+            self.text_histories
+                .insert(field, UndoHistoryController::new(editor));
+        }
+        let history = self.text_histories.get(&field).cloned()?;
+        if let Some(max_entries) = self.tree.text_field_history_max_entries(field)
+            && history.max_entries() != max_entries
+        {
+            history.set_max_entries(max_entries);
+        }
+        Some(history)
+    }
+
+    fn sync_text_input_client(&mut self) {
+        let snapshot = self
+            .focused
+            .and_then(|id| self.tree.text_field_input_snapshot(id));
+        let Some(snapshot) = snapshot else {
+            if let Some(client) = self.text_input_client.take() {
+                self.text_input_commands
+                    .push_back(TextInputCommand::Hide { client });
+                self.text_input_commands
+                    .push_back(TextInputCommand::Clear { client });
+            }
+            self.text_input_configuration = None;
+            self.text_input_state = None;
+            self.text_input_caret_rect = None;
+            return;
+        };
+
+        let client = TextInputClientId::new(snapshot.client_id);
+        let input_type = match snapshot.input_type {
+            TextInputTypeHint::Text if snapshot.multiline => TextInputType::Multiline,
+            TextInputTypeHint::Text => TextInputType::Text,
+            TextInputTypeHint::Multiline => TextInputType::Multiline,
+            TextInputTypeHint::Number => TextInputType::Number,
+            TextInputTypeHint::Phone => TextInputType::Phone,
+            TextInputTypeHint::Email => TextInputType::Email,
+            TextInputTypeHint::Url => TextInputType::Url,
+            TextInputTypeHint::Password => TextInputType::Password,
+        };
+        let action = match snapshot.input_action {
+            TextInputActionHint::Unspecified => {
+                if snapshot.multiline {
+                    TextInputAction::Newline
+                } else {
+                    TextInputAction::Done
+                }
+            }
+            TextInputActionHint::None => TextInputAction::None,
+            TextInputActionHint::Done => TextInputAction::Done,
+            TextInputActionHint::Go => TextInputAction::Go,
+            TextInputActionHint::Search => TextInputAction::Search,
+            TextInputActionHint::Send => TextInputAction::Send,
+            TextInputActionHint::Next => TextInputAction::Next,
+            TextInputActionHint::Previous => TextInputAction::Previous,
+            TextInputActionHint::Newline => TextInputAction::Newline,
+        };
+        let configuration = TextInputConfiguration {
+            client,
+            input_type: if snapshot.obscure_text {
+                TextInputType::Password
+            } else {
+                input_type
+            },
+            action,
+            multiline: snapshot.multiline,
+            enabled: snapshot.enabled,
+            read_only: snapshot.read_only,
+            obscure_text: snapshot.obscure_text,
+        };
+        let state = TextInputState {
+            text: snapshot.text,
+            selection_start: snapshot.selection.base,
+            selection_end: snapshot.selection.extent,
+            composing: snapshot.composing.map(|range| (range.start, range.end)),
+        };
+        let client_changed = self.text_input_client != Some(client);
+        let configuration_changed = self.text_input_configuration.as_ref() != Some(&configuration);
+        if client_changed || configuration_changed {
+            self.text_input_commands
+                .push_back(TextInputCommand::SetClient {
+                    configuration: configuration.clone(),
+                    state: state.clone(),
+                    caret_rect: snapshot.caret_rect,
+                });
+        } else if self.text_input_state.as_ref() != Some(&state) {
+            self.text_input_commands
+                .push_back(TextInputCommand::Update {
+                    client,
+                    state: state.clone(),
+                });
+        }
+        if !client_changed
+            && self.text_input_caret_rect != Some(snapshot.caret_rect)
+            && !configuration_changed
+        {
+            self.text_input_commands
+                .push_back(TextInputCommand::SetCaretRect {
+                    client,
+                    rect: snapshot.caret_rect,
+                });
+        }
+        self.text_input_client = Some(client);
+        self.text_input_configuration = Some(configuration);
+        self.text_input_state = Some(state);
+        self.text_input_caret_rect = Some(snapshot.caret_rect);
     }
     fn focus_next(&mut self, reverse: bool) {
         let fields = self.tree.focusable_elements();
@@ -1988,6 +2191,27 @@ impl Runtime {
             match event.code {
                 Code::KeyA => controller.select_all(),
                 Code::KeyC => self.clipboard.set_text(controller.selected_text()),
+                Code::KeyZ => {
+                    let Some(history) = self.ensure_text_history(field) else {
+                        return;
+                    };
+                    let changed = if event.modifiers.shift() {
+                        history.redo()
+                    } else {
+                        history.undo()
+                    };
+                    if !changed {
+                        return;
+                    }
+                }
+                Code::KeyY => {
+                    let Some(history) = self.ensure_text_history(field) else {
+                        return;
+                    };
+                    if !history.redo() {
+                        return;
+                    }
+                }
                 Code::KeyX => {
                     if !editable {
                         return;
@@ -2021,8 +2245,16 @@ impl Runtime {
                     controller.delete();
                     self.editing_diagnostics.delete_commands += 1;
                 }
-                Code::ArrowLeft => controller.move_left(extend),
-                Code::ArrowRight => controller.move_right(extend),
+                Code::ArrowLeft => {
+                    if !self.tree.text_field_move_horizontal(field, false, extend) {
+                        controller.move_left(extend);
+                    }
+                }
+                Code::ArrowRight => {
+                    if !self.tree.text_field_move_horizontal(field, true, extend) {
+                        controller.move_right(extend);
+                    }
+                }
                 Code::ArrowUp => {
                     let _ = self.tree.text_field_move_vertical(field, false, extend);
                 }
@@ -2071,6 +2303,51 @@ impl Runtime {
             controller.reset_caret(Instant::now());
             self.frame_requested = true;
         }
+    }
+
+    /// Handles the action chosen by a native software keyboard. Desktop
+    /// Winit backends reach the same code path through Enter, while mobile
+    /// hosts can preserve the IME's explicit Done/Next/Search intent.
+    pub fn handle_text_input_action(&mut self, action: TextInputAction) -> bool {
+        let Some(field) = self.focused.filter(|id| self.tree.is_text_field(*id)) else {
+            return false;
+        };
+        let editable = self.tree.text_field_is_editable(field);
+        if !editable {
+            return false;
+        }
+        let handled = match action {
+            TextInputAction::Newline => {
+                if self.tree.is_multiline_text_field(field) {
+                    self.tree.text_controller(field).is_some_and(|controller| {
+                        controller.insert("\n");
+                        controller.reset_caret(Instant::now());
+                        true
+                    })
+                } else {
+                    self.tree.submit_text_field(field)
+                }
+            }
+            TextInputAction::Next => {
+                let submitted = self.tree.submit_text_field(field);
+                self.focus_next(false);
+                submitted
+            }
+            TextInputAction::Previous => {
+                let submitted = self.tree.submit_text_field(field);
+                self.focus_next(true);
+                submitted
+            }
+            TextInputAction::Done
+            | TextInputAction::Go
+            | TextInputAction::Search
+            | TextInputAction::Send => self.tree.submit_text_field(field),
+            TextInputAction::Unspecified | TextInputAction::None => false,
+        };
+        if handled {
+            self.frame_requested = true;
+        }
+        handled
     }
     fn handle_ime(&mut self, event: ImeEvent) {
         self.editing_diagnostics.ime_events += 1;
@@ -2190,6 +2467,7 @@ impl Runtime {
         let display_list = self.tree.paint();
         let paint = paint_span.elapsed_us();
         drop(_paint_guard);
+        self.sync_text_input_client();
         self.frame_requested =
             !self.pending.is_empty() || self.reactive.borrow().has_work() || animations_active;
         let after = self.tree.diagnostics();
@@ -3940,6 +4218,12 @@ impl Application {
                     let _ = record.runtime.handle_input(input);
                 });
             }
+            WindowEventKind::Platform(PlatformEvent::TextInputAction(action)) => {
+                let _ = self.with_window_mut(window_id, |record| {
+                    record.input_events = record.input_events.wrapping_add(1);
+                    let _ = record.runtime.handle_text_input_action(action);
+                });
+            }
             WindowEventKind::Platform(PlatformEvent::Lifecycle(lifecycle)) => {
                 if matches!(lifecycle, PlatformLifecycle::Stopping) {
                     self.shutdown();
@@ -4000,6 +4284,18 @@ impl Application {
         let _ = self.with_window_mut(window_id, |record| {
             record.runtime.set_clipboard(clipboard);
         });
+    }
+
+    /// Drains text-input commands for one native window. The caller applies
+    /// them on that window's platform/UI thread.
+    pub fn take_window_text_input_commands(
+        &mut self,
+        window_id: WindowId,
+    ) -> Vec<TextInputCommand> {
+        self.with_window_mut(window_id, |record| {
+            record.runtime.take_text_input_commands()
+        })
+        .unwrap_or_default()
     }
 
     #[must_use]
@@ -4660,7 +4956,7 @@ mod tests {
     use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
-    use incular_widgets::internal::{GestureCallbacks, VirtualList};
+    use incular_widgets::internal::{GestureCallbacks, TextEditingController, VirtualList};
     use incular_widgets::{DecoratedBox, GestureDetector, Text, internal::ActionSurface};
     use std::time::{Duration, Instant};
     use std::{
@@ -4799,6 +5095,120 @@ mod tests {
             controller.value().selection,
             TextSelection { base: 1, extent: 4 }
         );
+    }
+
+    #[test]
+    fn semantic_callbacks_make_custom_controls_actionable() {
+        let activations = Rc::new(Cell::new(0));
+        let observed = activations.clone();
+        let mut runtime = Runtime::new(
+            incular_widgets::Semantics::new(Text::new("custom"))
+                .on_tap(move || observed.set(observed.get() + 1))
+                .into(),
+        )
+        .unwrap();
+        runtime
+            .run_frame(Constraints::tight(Size::new(200., 50.)))
+            .unwrap();
+        let node = semantic_node(&runtime, SemanticRole::Button);
+        assert!(runtime.dispatch_semantic_action(node, SemanticAction::Activate));
+        assert_eq!(activations.get(), 1);
+    }
+
+    #[test]
+    fn focused_editors_publish_native_text_input_state_and_actions() {
+        let submitted = Rc::new(Cell::new(0));
+        let observed = submitted.clone();
+        let controller = TextEditingController::new();
+        let mut runtime = Runtime::new(
+            incular_widgets::EditableText::new(controller.clone())
+                .on_submit(move |_| observed.set(observed.get() + 1))
+                .into(),
+        )
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(220., 50.));
+        runtime.run_frame(constraints).unwrap();
+        assert!(runtime.take_text_input_commands().is_empty());
+
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        let commands = runtime.take_text_input_commands();
+        assert!(matches!(
+            commands.as_slice(),
+            [incular_platform::TextInputCommand::SetClient {
+                configuration,
+                state,
+                ..
+            }] if configuration.input_type == incular_platform::TextInputType::Text
+                && state.text.is_empty()
+        ));
+
+        let _ = runtime.handle_input(InputEvent::Text("hello".into()));
+        runtime.run_frame(constraints).unwrap();
+        let commands = runtime.take_text_input_commands();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            incular_platform::TextInputCommand::Update { state, .. } if state.text == "hello"
+        )));
+
+        assert!(
+            runtime
+                .handle_platform_event(incular_platform::PlatformEvent::TextInputAction(
+                    incular_platform::TextInputAction::Done,
+                ),)
+                .is_none()
+        );
+        assert_eq!(submitted.get(), 1);
+    }
+
+    #[test]
+    fn native_text_input_hints_survive_editor_conversion() {
+        let controller = TextEditingController::new();
+        let mut runtime = Runtime::new(
+            incular_widgets::EditableText::new(controller)
+                .input_type(TextInputTypeHint::Email)
+                .input_action(TextInputActionHint::Search)
+                .into(),
+        )
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(220., 50.));
+        runtime.run_frame(constraints).unwrap();
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        let commands = runtime.take_text_input_commands();
+        assert!(matches!(
+            commands.as_slice(),
+            [incular_platform::TextInputCommand::SetClient { configuration, .. }]
+                if configuration.input_type == incular_platform::TextInputType::Email
+                    && configuration.action == incular_platform::TextInputAction::Search
+        ));
+    }
+
+    #[test]
+    fn undo_history_widget_configures_runtime_capacity() {
+        let controller = TextEditingController::new();
+        let mut runtime = Runtime::new(
+            incular_widgets::UndoHistory::new(incular_widgets::EditableText::new(
+                controller.clone(),
+            ))
+            .max_entries(1)
+            .into(),
+        )
+        .unwrap();
+        let constraints = Constraints::tight(Size::new(220., 50.));
+        runtime.run_frame(constraints).unwrap();
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase: PointerPhase::Down,
+            position: Offset::new(5., 5.),
+        });
+        let _ = runtime.handle_input(InputEvent::Text("one".into()));
+        let _ = runtime.handle_input(InputEvent::Text("two".into()));
+        let _ = runtime.handle_input(InputEvent::Key(shortcut_key_down(Code::KeyZ)));
+        assert_eq!(controller.text(), "one");
     }
 
     #[test]

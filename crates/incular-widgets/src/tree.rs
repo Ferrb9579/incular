@@ -20,7 +20,7 @@ use incular_config::{
     WrapCrossAlignment,
 };
 use incular_core::{
-    Arena, ArenaId, Color, DirtyFlags, KeyboardEvent, Offset, Rect, Size,
+    Arena, ArenaId, Color, DirtyFlags, KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size,
     Transform as CoreTransform,
 };
 #[cfg(test)]
@@ -50,6 +50,7 @@ use std::sync::Arc;
 use incular_devtools_protocol::{DebugValue, DevWidgetId, TraceEvent, TracePhase};
 
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
+use crate::focus_keyboard::FocusTraversalPolicyKind;
 use crate::gestures::{
     GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
     GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
@@ -181,6 +182,53 @@ pub struct ElementId(pub(crate) ArenaId);
 pub struct RenderObjectId(pub(crate) ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(pub u64);
+
+/// Retained text-input information exposed to the runtime/native boundary.
+/// The controller remains the source of truth; this value is a frame-local
+/// snapshot and contains no native handles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextInputTypeHint {
+    #[default]
+    Text,
+    Multiline,
+    Number,
+    Phone,
+    Email,
+    Url,
+    Password,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextInputActionHint {
+    #[default]
+    Unspecified,
+    None,
+    Done,
+    Go,
+    Search,
+    Send,
+    Next,
+    Previous,
+    Newline,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextFieldInputSnapshot {
+    /// Stable for the lifetime of the mounted text field and opaque to the
+    /// application. Native input bridges use it to reject stale updates.
+    pub client_id: u64,
+    pub text: String,
+    pub selection: TextSelection,
+    pub composing: Option<TextRange>,
+    pub multiline: bool,
+    pub enabled: bool,
+    pub read_only: bool,
+    pub obscure_text: bool,
+    pub input_type: TextInputTypeHint,
+    pub input_action: TextInputActionHint,
+    pub bounds: Rect,
+    pub caret_rect: Rect,
+}
 /// A window-local retained pointer-capture token.
 ///
 /// Capture keeps a mounted gesture sequence routed to its original retained
@@ -830,7 +878,7 @@ pub struct Widget {
 /// Application-authored semantic metadata for a visual widget that does not
 /// have a more specific built-in semantic role. Incular keeps this data in its
 /// retained `SemanticsTree`; native adapters only project that tree.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExplicitSemantics {
     pub role: SemanticRole,
     pub label: Option<String>,
@@ -884,7 +932,7 @@ impl ExplicitSemantics {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct SemanticProperties {
     label: Option<String>,
     description: Option<String>,
@@ -892,6 +940,74 @@ struct SemanticProperties {
     explicit: Option<ExplicitSemantics>,
     merge_descendants: bool,
     block_previous_siblings: bool,
+    focus_traversal_policy: Option<FocusTraversalPolicyKind>,
+    focus_traversal_order: Option<f64>,
+    exclude_focus: bool,
+    exclude_focus_traversal: bool,
+    undo_history_max_entries: Option<usize>,
+    focus_scope_autofocus: bool,
+    text_input_type: Option<TextInputTypeHint>,
+    text_input_action: Option<TextInputActionHint>,
+    callbacks: SemanticCallbacks,
+}
+
+#[derive(Clone, Default)]
+struct SemanticCallbacks {
+    activate: Option<Rc<dyn Fn() + 'static>>,
+    increment: Option<Rc<dyn Fn() + 'static>>,
+    decrement: Option<Rc<dyn Fn() + 'static>>,
+    scroll_forward: Option<Rc<dyn Fn() + 'static>>,
+    scroll_backward: Option<Rc<dyn Fn() + 'static>>,
+}
+
+impl std::fmt::Debug for SemanticCallbacks {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SemanticCallbacks")
+            .field("activate", &self.activate.is_some())
+            .field("increment", &self.increment.is_some())
+            .field("decrement", &self.decrement.is_some())
+            .field("scroll_forward", &self.scroll_forward.is_some())
+            .field("scroll_backward", &self.scroll_backward.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq for SemanticCallbacks {
+    fn eq(&self, other: &Self) -> bool {
+        fn same<T: ?Sized>(left: &Option<Rc<T>>, right: &Option<Rc<T>>) -> bool {
+            match (left, right) {
+                (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+
+        same(&self.activate, &other.activate)
+            && same(&self.increment, &other.increment)
+            && same(&self.decrement, &other.decrement)
+            && same(&self.scroll_forward, &other.scroll_forward)
+            && same(&self.scroll_backward, &other.scroll_backward)
+    }
+}
+
+impl SemanticCallbacks {
+    fn callback(&self, action: SemanticActionKind) -> Option<Rc<dyn Fn() + 'static>> {
+        match action {
+            SemanticActionKind::Activate => self.activate.clone(),
+            SemanticActionKind::Increment => self.increment.clone(),
+            SemanticActionKind::Decrement => self.decrement.clone(),
+            SemanticActionKind::ScrollForward => self.scroll_forward.clone(),
+            SemanticActionKind::ScrollBackward => self.scroll_backward.clone(),
+            SemanticActionKind::Focus
+            | SemanticActionKind::SetText
+            | SemanticActionKind::SetSelection => None,
+        }
+    }
+
+    fn supports(&self, action: SemanticActionKind) -> bool {
+        self.callback(action).is_some()
+    }
 }
 #[derive(Clone)]
 pub enum WidgetKind {
@@ -2906,6 +3022,85 @@ impl Widget {
         }
     }
 
+    /// Attaches retained focus traversal metadata to a transparent wrapper.
+    /// This is crate-internal because public callers use the Flutter-shaped
+    /// `FocusTraversal*` widgets.
+    #[doc(hidden)]
+    pub(crate) fn with_focus_traversal_policy(mut self, policy: FocusTraversalPolicyKind) -> Self {
+        self.semantics.focus_traversal_policy = Some(policy);
+        self
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn with_focus_traversal_order(mut self, order: Option<f64>) -> Self {
+        self.semantics.focus_traversal_order = order.filter(|value| value.is_finite());
+        self
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn with_excluded_focus(mut self, excluding: bool) -> Self {
+        self.semantics.exclude_focus = excluding;
+        self
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn with_excluded_focus_traversal(mut self, excluding: bool) -> Self {
+        self.semantics.exclude_focus_traversal = excluding;
+        self
+    }
+
+    /// Attaches the retained undo-history capacity to a text-field subtree.
+    /// The runtime consumes this metadata without making Widgets depend on
+    /// the runtime crate.
+    #[doc(hidden)]
+    pub(crate) fn with_undo_history_max_entries(mut self, max_entries: usize) -> Self {
+        self.semantics.undo_history_max_entries = Some(max_entries);
+        self
+    }
+
+    /// Marks this retained subtree as the initial focus scope.
+    #[doc(hidden)]
+    pub(crate) fn with_focus_scope_autofocus(mut self, autofocus: bool) -> Self {
+        self.semantics.focus_scope_autofocus = autofocus;
+        self
+    }
+
+    /// Attaches native text-input hints to the retained editor without making
+    /// the renderer-neutral widget depend on a platform window handle.
+    #[doc(hidden)]
+    pub(crate) fn with_text_input_hints(
+        mut self,
+        input_type: TextInputTypeHint,
+        input_action: TextInputActionHint,
+    ) -> Self {
+        self.semantics.text_input_type = Some(input_type);
+        self.semantics.text_input_action = Some(input_action);
+        self
+    }
+
+    #[doc(hidden)]
+    pub(crate) fn with_semantic_callback(
+        mut self,
+        action: SemanticActionKind,
+        callback: Rc<dyn Fn() + 'static>,
+    ) -> Self {
+        match action {
+            SemanticActionKind::Activate => self.semantics.callbacks.activate = Some(callback),
+            SemanticActionKind::Increment => self.semantics.callbacks.increment = Some(callback),
+            SemanticActionKind::Decrement => self.semantics.callbacks.decrement = Some(callback),
+            SemanticActionKind::ScrollForward => {
+                self.semantics.callbacks.scroll_forward = Some(callback)
+            }
+            SemanticActionKind::ScrollBackward => {
+                self.semantics.callbacks.scroll_backward = Some(callback)
+            }
+            SemanticActionKind::Focus
+            | SemanticActionKind::SetText
+            | SemanticActionKind::SetSelection => {}
+        }
+        self
+    }
+
     /// Text content when this widget is text-like (DevTools labels only).
     pub fn text_if_any(&self) -> Option<String> {
         match &self.kind {
@@ -4800,6 +4995,8 @@ pub struct EditableText {
     show_cursor: bool,
     cursor_color: Color,
     selection_color: Color,
+    input_type: TextInputTypeHint,
+    input_action: TextInputActionHint,
 }
 impl EditableText {
     #[must_use]
@@ -4824,6 +5021,8 @@ impl EditableText {
             show_cursor: true,
             cursor_color: Color::WHITE,
             selection_color: Color::rgba(72, 120, 220, 150),
+            input_type: TextInputTypeHint::Text,
+            input_action: TextInputActionHint::Unspecified,
         }
     }
     #[must_use]
@@ -4950,6 +5149,21 @@ impl EditableText {
         self.selection_color = color;
         self
     }
+
+    /// Selects the native keyboard/input method hint for this editor. The
+    /// runtime still validates and owns the committed text value.
+    #[must_use]
+    pub fn input_type(mut self, input_type: TextInputTypeHint) -> Self {
+        self.input_type = input_type;
+        self
+    }
+
+    /// Selects the action shown by a native software keyboard.
+    #[must_use]
+    pub fn input_action(mut self, input_action: TextInputActionHint) -> Self {
+        self.input_action = input_action;
+        self
+    }
 }
 impl From<EditableText> for Widget {
     fn from(value: EditableText) -> Self {
@@ -4974,6 +5188,7 @@ impl From<EditableText> for Widget {
             value.cursor_color,
             value.selection_color,
         )
+        .with_text_input_hints(value.input_type, value.input_action)
     }
 }
 
@@ -6425,6 +6640,93 @@ pub struct WidgetTree {
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,
 }
+
+struct FocusCandidate {
+    id: ElementId,
+    bounds: Rect,
+    order: Option<f64>,
+    sequence: usize,
+}
+
+enum FocusTraversalMember {
+    Candidate(FocusCandidate),
+    Group(FocusTraversalGroupMembers),
+}
+
+struct FocusTraversalGroupMembers {
+    policy: FocusTraversalPolicyKind,
+    members: Vec<FocusTraversalMember>,
+}
+
+impl FocusTraversalMember {
+    fn first_candidate(&self) -> Option<&FocusCandidate> {
+        match self {
+            Self::Candidate(candidate) => Some(candidate),
+            Self::Group(group) => group.members.iter().find_map(Self::first_candidate),
+        }
+    }
+
+    fn representative_bounds(&self) -> Rect {
+        self.first_candidate()
+            .map_or(Rect::default(), |candidate| candidate.bounds)
+    }
+
+    fn representative_order(&self) -> Option<f64> {
+        self.first_candidate().and_then(|candidate| candidate.order)
+    }
+
+    fn representative_sequence(&self) -> usize {
+        self.first_candidate()
+            .map_or(usize::MAX, |candidate| candidate.sequence)
+    }
+}
+
+fn sort_focus_members(policy: FocusTraversalPolicyKind, members: &mut [FocusTraversalMember]) {
+    match policy {
+        FocusTraversalPolicyKind::WidgetOrder => {}
+        FocusTraversalPolicyKind::ReadingOrder => {
+            members.sort_by(|left, right| {
+                let left_bounds = left.representative_bounds();
+                let right_bounds = right.representative_bounds();
+                let row_tolerance =
+                    (left_bounds.size.height.max(right_bounds.size.height) * 0.5) + 1.0;
+                let vertical = left_bounds.origin.y - right_bounds.origin.y;
+                if vertical.abs() > row_tolerance {
+                    left_bounds.origin.y.total_cmp(&right_bounds.origin.y)
+                } else {
+                    left_bounds.origin.x.total_cmp(&right_bounds.origin.x)
+                }
+                .then_with(|| {
+                    left.representative_sequence()
+                        .cmp(&right.representative_sequence())
+                })
+            });
+        }
+        FocusTraversalPolicyKind::Ordered => {
+            members.sort_by(|left, right| {
+                left.representative_order()
+                    .unwrap_or(f64::INFINITY)
+                    .total_cmp(&right.representative_order().unwrap_or(f64::INFINITY))
+                    .then_with(|| {
+                        left.representative_sequence()
+                            .cmp(&right.representative_sequence())
+                    })
+            });
+        }
+    }
+}
+
+fn flatten_focus_group(group: FocusTraversalGroupMembers, out: &mut Vec<ElementId>) {
+    let mut members = group.members;
+    sort_focus_members(group.policy, &mut members);
+    for member in members {
+        match member {
+            FocusTraversalMember::Candidate(candidate) => out.push(candidate.id),
+            FocusTraversalMember::Group(group) => flatten_focus_group(group, out),
+        }
+    }
+}
+
 impl Default for WidgetTree {
     fn default() -> Self {
         Self::new()
@@ -6837,6 +7139,20 @@ impl WidgetTree {
             WidgetKind::Button { action, .. } => Some(*action),
             _ => None,
         }
+    }
+    /// Returns an application-provided semantic action callback, if one was
+    /// attached by [`Semantics`](crate::Semantics). The callback is cloned
+    /// before the runtime invokes it, so it never runs while the tree is
+    /// borrowed mutably.
+    #[must_use]
+    pub fn semantic_action_callback(
+        &self,
+        id: ElementId,
+        action: SemanticActionKind,
+    ) -> Option<Rc<dyn Fn() + 'static>> {
+        self.elements
+            .get(id.0)
+            .and_then(|element| element.widget.semantics.callbacks.callback(action))
     }
     #[must_use]
     pub fn action_ids(&self) -> HashSet<ActionId> {
@@ -8325,9 +8641,26 @@ impl WidgetTree {
         }
         // A native adapter must never advertise an action that the retained
         // runtime cannot route to an existing controller/handler. Explicit
-        // semantic metadata configures roles/state, but does not manufacture a
-        // callback pathway for an arbitrary painted box.
-        actions.retain(|action| semantic_action_is_executable(&entry.widget.kind, *action));
+        // semantic metadata configures roles/state; the Semantics callbacks
+        // below are the opt-in pathway for arbitrary painted controls.
+        for action in [
+            SemanticActionKind::Activate,
+            SemanticActionKind::Increment,
+            SemanticActionKind::Decrement,
+            SemanticActionKind::ScrollForward,
+            SemanticActionKind::ScrollBackward,
+        ] {
+            if entry.widget.semantics.callbacks.supports(action) && !actions.contains(&action) {
+                actions.push(action);
+            }
+        }
+        actions.retain(|action| {
+            semantic_action_is_executable(
+                &entry.widget.kind,
+                *action,
+                &entry.widget.semantics.callbacks,
+            )
+        });
         let this_parent = if let Some(role) = role {
             let mut state = state;
             if let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0)) {
@@ -8409,10 +8742,39 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn focusable_elements(&self) -> Vec<ElementId> {
-        let mut result = Vec::new();
+        let mut members = Vec::new();
+        let mut sequence = 0;
         if let Some(root) = self.root {
-            self.collect_focusable(root, &mut result);
+            if self
+                .elements
+                .get(root.0)
+                .is_some_and(|element| element.widget.semantics.focus_traversal_policy.is_some())
+            {
+                self.collect_focus_group(
+                    root,
+                    FocusTraversalPolicyKind::WidgetOrder,
+                    false,
+                    &mut members,
+                    &mut sequence,
+                );
+            } else {
+                self.append_focus_members(
+                    root,
+                    FocusTraversalPolicyKind::WidgetOrder,
+                    false,
+                    &mut members,
+                    &mut sequence,
+                );
+            }
         }
+        let mut result = Vec::new();
+        flatten_focus_group(
+            FocusTraversalGroupMembers {
+                policy: FocusTraversalPolicyKind::WidgetOrder,
+                members,
+            },
+            &mut result,
+        );
         result
     }
 
@@ -8436,6 +8798,22 @@ impl WidgetTree {
         false
     }
 
+    /// Routes a native accessibility increment/decrement through the same
+    /// keyboard listener used by a slider. This keeps a control's value logic
+    /// in its existing callback rather than creating a second action path.
+    #[must_use]
+    pub fn dispatch_semantic_increment(&self, element: ElementId, increment: bool) -> bool {
+        let code = if increment {
+            incular_core::Code::ArrowRight
+        } else {
+            incular_core::Code::ArrowLeft
+        };
+        self.dispatch_keyboard(
+            Some(element),
+            KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::Unidentified), code),
+        )
+    }
+
     /// Finds the retained element associated with an externally managed focus
     /// node. This lets a `FocusScopeNode` request focus without coupling the
     /// gestures crate to runtime element IDs.
@@ -8456,7 +8834,8 @@ impl WidgetTree {
     /// receive focus.
     #[must_use]
     pub fn autofocus_element(&self) -> Option<ElementId> {
-        self.focusable_elements().into_iter().find(|id| {
+        let focusable = self.focusable_elements();
+        if let Some(listener) = focusable.iter().find(|id| {
             self.elements
                 .get(id.0)
                 .and_then(|element| match &element.widget.kind {
@@ -8467,7 +8846,19 @@ impl WidgetTree {
                     _ => None,
                 })
                 .is_some()
-        })
+        }) {
+            return Some(*listener);
+        }
+        self.elements
+            .iter()
+            .filter(|(_, element)| element.widget.semantics.focus_scope_autofocus)
+            .map(|(raw, _)| ElementId(raw))
+            .find_map(|scope| {
+                focusable
+                    .iter()
+                    .copied()
+                    .find(|candidate| self.is_descendant_or_self(*candidate, scope))
+            })
     }
 
     /// Mirrors runtime focus changes onto a listener's external focus node.
@@ -8609,13 +9000,44 @@ impl WidgetTree {
         } else {
             line.saturating_sub(1)
         };
-        let Some(target) = layout.lines.get(target_line) else {
+        if layout.lines.get(target_line).is_none() {
+            return false;
+        }
+        let x = controller.preferred_caret_x().unwrap_or_else(|| {
+            line_caret_x_for_affinity(&layout, line, current, controller.caret_affinity())
+        });
+        let (target, affinity) = caret_for_line_position(&layout, target_line, x);
+        controller.move_cursor_with_affinity(target, affinity, extend);
+        controller.set_preferred_caret_x(x);
+        self.renders
+            .get_mut(render.0)
+            .expect("live")
+            .dirty
+            .insert(DirtyFlags::PAINT);
+        true
+    }
+
+    /// Moves a text-field caret by visual screen order. Logical UTF-8 order is
+    /// not sufficient for bidi paragraphs because the next screen stop can
+    /// have a smaller byte offset.
+    pub fn text_field_move_horizontal(&mut self, id: ElementId, right: bool, extend: bool) -> bool {
+        let Some(render) = self.render_id(id) else {
             return false;
         };
-        let x = controller
-            .preferred_caret_x()
-            .unwrap_or_else(|| line_caret_x(&layout.lines[line], current));
-        controller.move_cursor_with_x(caret_for_line_x(target, x), extend, x);
+        let Some(node) = self.renders.get(render.0) else {
+            return false;
+        };
+        let RenderKind::TextField { controller, .. } = &node.kind else {
+            return false;
+        };
+        let Some(layout) = node.text_layout.clone() else {
+            return false;
+        };
+        if right {
+            controller.move_right_visual(&layout, extend);
+        } else {
+            controller.move_left_visual(&layout, extend);
+        }
         self.renders
             .get_mut(render.0)
             .expect("live")
@@ -8650,7 +9072,12 @@ impl WidgetTree {
         } else {
             layout.lines[line].start
         };
-        controller.move_cursor(target, extend);
+        let affinity = if end {
+            incular_text::TextAffinity::Upstream
+        } else {
+            incular_text::TextAffinity::Downstream
+        };
+        controller.move_cursor_with_affinity(target, affinity, extend);
         self.renders
             .get_mut(render.0)
             .expect("live")
@@ -8696,23 +9123,32 @@ impl WidgetTree {
         let x = local.x - 8. + scroll_x;
         let y = local.y - if multiline { 8. } else { 0. } + scroll_y;
         let text_len = controller.text().len();
-        let index = layout.as_ref().map_or(0, |layout| {
-            let line = layout
-                .lines
-                .get((y / layout.metrics.line_height).floor().max(0.) as usize)
-                .or_else(|| layout.lines.last());
-            line.map_or(0, |line| caret_for_line_x(line, x))
-                .min(text_len)
-        });
+        let (index, affinity) =
+            layout
+                .as_ref()
+                .map_or((0, incular_text::TextAffinity::Downstream), |layout| {
+                    let line_index = (y / layout.metrics.line_height).floor().max(0.) as usize;
+                    let line_index = line_index.min(layout.lines.len().saturating_sub(1));
+                    layout
+                        .lines
+                        .get(line_index)
+                        .map_or((0, incular_text::TextAffinity::Downstream), |_| {
+                            caret_for_line_position(layout, line_index, x)
+                        })
+                });
+        let index = index.min(text_len);
         let previous = controller.value().selection;
-        controller.set_selection(if extend {
-            TextSelection {
-                base: previous.base,
-                extent: index,
-            }
-        } else {
-            TextSelection::collapsed(index)
-        });
+        controller.set_selection_with_affinity(
+            if extend {
+                TextSelection {
+                    base: previous.base,
+                    extent: index,
+                }
+            } else {
+                TextSelection::collapsed(index)
+            },
+            affinity,
+        );
         controller.reset_caret(now);
         self.renders
             .get_mut(render.0)
@@ -8987,6 +9423,81 @@ impl WidgetTree {
             RenderKind::TextField { controller, .. } => Some(controller.clone()),
             _ => None,
         }
+    }
+
+    /// Returns the nearest [`UndoHistory`](crate::UndoHistory) capacity that
+    /// wraps this text field. The value is kept on widget metadata so the
+    /// renderer-neutral Widgets crate does not depend on Runtime.
+    #[must_use]
+    pub fn text_field_history_max_entries(&self, mut id: ElementId) -> Option<usize> {
+        loop {
+            let element = self.elements.get(id.0)?;
+            if let Some(max_entries) = element.widget.semantics.undo_history_max_entries {
+                return Some(max_entries);
+            }
+            id = element.parent?;
+        }
+    }
+
+    /// Captures the current text-input client state after layout. The runtime
+    /// turns this into a platform command; native window handles never enter
+    /// the retained tree.
+    #[must_use]
+    pub fn text_field_input_snapshot(&self, id: ElementId) -> Option<TextFieldInputSnapshot> {
+        let element = self.elements.get(id.0)?;
+        let WidgetKind::TextField {
+            controller,
+            multiline,
+            enabled,
+            read_only,
+            obscure_text,
+            ..
+        } = &element.widget.kind
+        else {
+            return None;
+        };
+        let bounds = self.element_bounds(id).unwrap_or_default();
+        let caret_rect = self
+            .render_id(id)
+            .and_then(|render| self.renders.get(render.0).map(|node| (render, node)))
+            .and_then(|(render, node)| {
+                let layout = node.text_layout.as_ref()?;
+                let (x, y, height) = caret_geometry(
+                    layout,
+                    controller.selection().extent,
+                    controller.caret_affinity(),
+                );
+                let top = if *multiline {
+                    8.0
+                } else {
+                    ((node.size.height - height) / 2.0).max(0.0)
+                };
+                Some(self.render_world_transform(render).transform_rect_bbox(
+                    Rect::from_origin_size(
+                        Offset::new(x - node.text_scroll_x + 8.0, y - node.text_scroll_y + top),
+                        Size::new(1.0, height.max(1.0)),
+                    ),
+                ))
+            })
+            .unwrap_or(bounds);
+        Some(TextFieldInputSnapshot {
+            client_id: (u64::from(id.0.generation()) << 32) | u64::from(id.0.index()),
+            text: controller.text(),
+            selection: controller.selection(),
+            composing: controller.composing(),
+            multiline: *multiline,
+            enabled: *enabled,
+            read_only: *read_only,
+            obscure_text: *obscure_text,
+            input_type: element.widget.semantics.text_input_type.unwrap_or_default(),
+            input_action: element
+                .widget
+                .semantics
+                .text_input_action
+                .unwrap_or_default(),
+            bounds,
+            caret_rect,
+        })
     }
     pub fn submit_text_field(&self, id: ElementId) -> bool {
         let Some(element) = self.elements.get(id.0) else {
@@ -10022,10 +10533,48 @@ impl WidgetTree {
             self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
         }
     }
-    fn collect_focusable(&self, id: ElementId, out: &mut Vec<ElementId>) {
+    fn collect_focus_group(
+        &self,
+        id: ElementId,
+        inherited_policy: FocusTraversalPolicyKind,
+        excluded_focus: bool,
+        out: &mut Vec<FocusTraversalMember>,
+        sequence: &mut usize,
+    ) {
         let Some(element) = self.elements.get(id.0) else {
             return;
         };
+        if element.widget.semantics.exclude_focus_traversal {
+            return;
+        }
+        let policy = element
+            .widget
+            .semantics
+            .focus_traversal_policy
+            .unwrap_or(inherited_policy);
+        let mut members = Vec::new();
+        self.append_focus_members(id, policy, excluded_focus, &mut members, sequence);
+        out.push(FocusTraversalMember::Group(FocusTraversalGroupMembers {
+            policy,
+            members,
+        }));
+    }
+
+    fn append_focus_members(
+        &self,
+        id: ElementId,
+        policy: FocusTraversalPolicyKind,
+        excluded_focus: bool,
+        out: &mut Vec<FocusTraversalMember>,
+        sequence: &mut usize,
+    ) {
+        let Some(element) = self.elements.get(id.0) else {
+            return;
+        };
+        if element.widget.semantics.exclude_focus_traversal {
+            return;
+        }
+        let excluded_focus = excluded_focus || element.widget.semantics.exclude_focus;
         let focusable = match &element.widget.kind {
             WidgetKind::Button {
                 enabled,
@@ -10040,9 +10589,38 @@ impl WidgetTree {
                 .is_some_and(|node| node.can_request_focus()),
             _ => false,
         };
-        if focusable {
-            out.push(id);
+        if focusable && !excluded_focus {
+            let bounds = self.element_bounds(id).unwrap_or_default();
+            let order = element.widget.semantics.focus_traversal_order;
+            if let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind
+                && let Some(node) = callbacks.focus_node.as_ref()
+            {
+                node.set_rect(bounds);
+                node.set_traversal_order(order);
+            }
+            out.push(FocusTraversalMember::Candidate(FocusCandidate {
+                id,
+                bounds,
+                order,
+                sequence: *sequence,
+            }));
+            *sequence = sequence.saturating_add(1);
         }
+        let (descendants_are_focusable, descendants_are_traversable) = match &element.widget.kind {
+            WidgetKind::Gesture { callbacks, .. } => {
+                callbacks.focus_node.as_ref().map_or((true, true), |node| {
+                    (
+                        node.descendants_are_focusable(),
+                        node.descendants_are_traversable(),
+                    )
+                })
+            }
+            _ => (true, true),
+        };
+        if !descendants_are_traversable {
+            return;
+        }
+        let excluded_focus = excluded_focus || !descendants_are_focusable;
         let focus_children: Vec<_> = match element.widget.kind {
             WidgetKind::IndexedStack { index, .. } => {
                 element.children.get(index).copied().into_iter().collect()
@@ -10050,8 +10628,26 @@ impl WidgetTree {
             _ => element.children.clone(),
         };
         for child in focus_children {
-            self.collect_focusable(child, out);
+            let child_has_policy = self
+                .elements
+                .get(child.0)
+                .is_some_and(|child| child.widget.semantics.focus_traversal_policy.is_some());
+            if child_has_policy {
+                self.collect_focus_group(child, policy, excluded_focus, out, sequence);
+            } else {
+                self.append_focus_members(child, policy, excluded_focus, out, sequence);
+            }
         }
+    }
+    fn is_descendant_or_self(&self, candidate: ElementId, ancestor: ElementId) -> bool {
+        let mut current = Some(candidate);
+        while let Some(id) = current {
+            if id == ancestor {
+                return true;
+            }
+            current = self.parent(id);
+        }
+        false
     }
     fn text_field_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
         loop {
@@ -11870,8 +12466,11 @@ impl WidgetTree {
                     let mut active_scroll_x = scroll_x;
                     let mut active_scroll_y = scroll_y;
                     if let Some(layout) = layout {
-                        let (caret, caret_y, caret_height) =
-                            caret_geometry(&layout, value.selection.extent);
+                        let (caret, caret_y, caret_height) = caret_geometry(
+                            &layout,
+                            value.selection.extent,
+                            controller.caret_affinity(),
+                        );
                         let available = (size.width - 16.).max(0.);
                         if !multiline && caret - active_scroll_x > available {
                             active_scroll_x = caret - available;
@@ -12246,7 +12845,14 @@ impl WidgetTree {
     }
 }
 
-fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) -> bool {
+fn semantic_action_is_executable(
+    kind: &WidgetKind,
+    action: SemanticActionKind,
+    callbacks: &SemanticCallbacks,
+) -> bool {
+    if callbacks.supports(action) {
+        return true;
+    }
     match action {
         SemanticActionKind::Focus => true,
         SemanticActionKind::Activate => {
@@ -12270,9 +12876,12 @@ fn semantic_action_is_executable(kind: &WidgetKind, action: SemanticActionKind) 
                     | WidgetKind::SliverViewport { .. }
             )
         }
-        // Incular currently has no retained slider/spin controller action
-        // route, so these must stay out of the native action set.
-        SemanticActionKind::Increment | SemanticActionKind::Decrement => false,
+        SemanticActionKind::Increment | SemanticActionKind::Decrement => {
+            matches!(
+                kind,
+                WidgetKind::Gesture { callbacks, .. } if callbacks.has_keyboard_listener()
+            )
+        }
     }
 }
 
@@ -13251,6 +13860,32 @@ fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
     }
     x
 }
+fn line_caret_x_for_affinity(
+    layout: &TextLayout,
+    line: usize,
+    byte: usize,
+    affinity: incular_text::TextAffinity,
+) -> f32 {
+    layout
+        .line_caret_positions(line)
+        .iter()
+        .find(|position| position.offset == byte && position.affinity == affinity)
+        .or_else(|| {
+            layout
+                .line_caret_positions(line)
+                .iter()
+                .find(|position| position.offset == byte)
+        })
+        .map_or_else(
+            || {
+                layout
+                    .lines
+                    .get(line)
+                    .map_or(0.0, |line| line_caret_x(line, byte))
+            },
+            |position| position.x,
+        )
+}
 fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
     if x >= line.width {
         return line.caret_end;
@@ -13265,6 +13900,33 @@ fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
     }
     best.max(line.start)
 }
+fn caret_for_line_position(
+    layout: &TextLayout,
+    line: usize,
+    x: f32,
+) -> (usize, incular_text::TextAffinity) {
+    let Some(line_data) = layout.lines.get(line) else {
+        return (0, incular_text::TextAffinity::Downstream);
+    };
+    let positions = layout.line_caret_positions(line);
+    positions
+        .iter()
+        .min_by(|left, right| {
+            (left.x - x)
+                .abs()
+                .total_cmp(&(right.x - x).abs())
+                .then_with(|| left.x.total_cmp(&right.x))
+        })
+        .map_or_else(
+            || {
+                (
+                    caret_for_line_x(line_data, x),
+                    incular_text::TextAffinity::Downstream,
+                )
+            },
+            |position| (position.offset, position.affinity),
+        )
+}
 fn line_for_byte(layout: &TextLayout, byte: usize) -> usize {
     layout
         .lines
@@ -13272,11 +13934,17 @@ fn line_for_byte(layout: &TextLayout, byte: usize) -> usize {
         .position(|line| byte <= line.end)
         .unwrap_or_else(|| layout.lines.len().saturating_sub(1))
 }
-fn caret_geometry(layout: &TextLayout, byte: usize) -> (f32, f32, f32) {
+fn caret_geometry(
+    layout: &TextLayout,
+    byte: usize,
+    affinity: incular_text::TextAffinity,
+) -> (f32, f32, f32) {
     let index = line_for_byte(layout, byte);
     let line = layout.lines.get(index);
     (
-        line.map_or(0., |line| line_caret_x(line, byte)),
+        line.map_or(0., |_| {
+            line_caret_x_for_affinity(layout, index, byte, affinity)
+        }),
         index as f32 * layout.metrics.line_height,
         layout.metrics.line_height,
     )

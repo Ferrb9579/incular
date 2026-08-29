@@ -1,6 +1,7 @@
 //! Accessible semantic annotation widgets.
 
 use incular_semantics::{SemanticAction, SemanticRole, SemanticState};
+use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
 use crate::Widget;
@@ -19,6 +20,16 @@ pub struct Semantics {
     #[builder(default)]
     actions: Vec<SemanticAction>,
     #[builder(default)]
+    on_tap: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
+    on_increase: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
+    on_decrease: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
+    on_scroll_forward: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
+    on_scroll_backward: Option<Rc<dyn Fn() + 'static>>,
+    #[builder(default)]
     state: SemanticState,
     #[builder(default, setter(strip_option, into))]
     child: Option<Widget>,
@@ -34,6 +45,11 @@ impl Semantics {
             value: None,
             description: None,
             actions: Vec::new(),
+            on_tap: None,
+            on_increase: None,
+            on_decrease: None,
+            on_scroll_forward: None,
+            on_scroll_backward: None,
             state: SemanticState::default(),
             child: Some(child.into()),
         }
@@ -70,7 +86,13 @@ impl Semantics {
     /// Adds a supported semantic action.
     #[must_use]
     pub fn action(mut self, action: SemanticAction) -> Self {
-        self.actions.push(action);
+        if !self
+            .actions
+            .iter()
+            .any(|existing| existing.kind() == action.kind())
+        {
+            self.actions.push(action);
+        }
         self
     }
 
@@ -152,13 +174,58 @@ impl Semantics {
     }
 
     #[must_use]
-    pub const fn obscured(self, _obscured: bool) -> Self {
+    pub fn obscured(mut self, obscured: bool) -> Self {
+        self.state.obscured = obscured;
         self
     }
 
     #[must_use]
     pub fn multiline(mut self, multiline: bool) -> Self {
         self.state.multiline = multiline;
+        self
+    }
+
+    #[must_use]
+    pub fn invalid(mut self, invalid: bool) -> Self {
+        self.state.invalid = invalid;
+        self
+    }
+
+    #[must_use]
+    pub fn required(mut self, required: bool) -> Self {
+        self.state.required = required;
+        self
+    }
+
+    #[must_use]
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.state.busy = busy;
+        self
+    }
+
+    #[must_use]
+    pub fn numeric_value(mut self, value: f64) -> Self {
+        self.state.numeric_value = value.is_finite().then_some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn numeric_range(mut self, minimum: f64, maximum: f64) -> Self {
+        self.state.numeric_min = minimum.is_finite().then_some(minimum);
+        self.state.numeric_max = maximum.is_finite().then_some(maximum);
+        self
+    }
+
+    #[must_use]
+    pub fn numeric_step(mut self, step: f64) -> Self {
+        self.state.numeric_step = step.is_finite().then_some(step.max(0.0));
+        self
+    }
+
+    #[must_use]
+    pub fn heading_level(mut self, level: u8) -> Self {
+        self.state.heading_level = (1..=6).contains(&level).then_some(level);
+        self.role = Some(SemanticRole::Heading);
         self
     }
 
@@ -203,8 +270,26 @@ impl Semantics {
     }
 
     #[must_use]
-    pub fn on_tap(self, _callback: impl Fn() + 'static) -> Self {
+    pub fn progress_bar(mut self, is_progress_bar: bool) -> Self {
+        if is_progress_bar {
+            self.role = Some(SemanticRole::ProgressBar);
+        }
         self
+    }
+
+    #[must_use]
+    pub fn group(mut self, is_group: bool) -> Self {
+        if is_group {
+            self.role = Some(SemanticRole::Group);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn on_tap(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::Button);
+        self.on_tap = Some(Rc::new(callback));
+        self.action(SemanticAction::Activate)
     }
 
     #[must_use]
@@ -213,33 +298,45 @@ impl Semantics {
     }
 
     #[must_use]
-    pub fn on_increase(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_increase(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::Slider);
+        self.on_increase = Some(Rc::new(callback));
+        self.action(SemanticAction::Increment)
     }
 
     #[must_use]
-    pub fn on_decrease(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_decrease(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::Slider);
+        self.on_decrease = Some(Rc::new(callback));
+        self.action(SemanticAction::Decrement)
     }
 
     #[must_use]
-    pub fn on_scroll_left(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_scroll_left(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::ScrollView);
+        self.on_scroll_backward = Some(Rc::new(callback));
+        self.action(SemanticAction::ScrollBackward)
     }
 
     #[must_use]
-    pub fn on_scroll_right(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_scroll_right(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::ScrollView);
+        self.on_scroll_forward = Some(Rc::new(callback));
+        self.action(SemanticAction::ScrollForward)
     }
 
     #[must_use]
-    pub fn on_scroll_up(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_scroll_up(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::ScrollView);
+        self.on_scroll_backward = Some(Rc::new(callback));
+        self.action(SemanticAction::ScrollBackward)
     }
 
     #[must_use]
-    pub fn on_scroll_down(self, _callback: impl Fn() + 'static) -> Self {
-        self
+    pub fn on_scroll_down(mut self, callback: impl Fn() + 'static) -> Self {
+        self.role.get_or_insert(SemanticRole::ScrollView);
+        self.on_scroll_forward = Some(Rc::new(callback));
+        self.action(SemanticAction::ScrollForward)
     }
 
     #[must_use]
@@ -278,6 +375,11 @@ impl Semantics {
 impl From<Semantics> for Widget {
     fn from(value: Semantics) -> Self {
         let explicit = value.explicit();
+        let on_tap = value.on_tap.clone();
+        let on_increase = value.on_increase.clone();
+        let on_decrease = value.on_decrease.clone();
+        let on_scroll_forward = value.on_scroll_forward.clone();
+        let on_scroll_backward = value.on_scroll_backward.clone();
         let mut widget: Widget = value
             .child
             .unwrap_or_else(|| crate::SizedBox::shrink().into());
@@ -290,6 +392,30 @@ impl From<Semantics> for Widget {
             if let Some(d) = value.description {
                 widget = widget.accessibility_description(d);
             }
+        }
+        if let Some(callback) = on_tap {
+            widget = widget
+                .with_semantic_callback(incular_semantics::SemanticActionKind::Activate, callback);
+        }
+        if let Some(callback) = on_increase {
+            widget = widget
+                .with_semantic_callback(incular_semantics::SemanticActionKind::Increment, callback);
+        }
+        if let Some(callback) = on_decrease {
+            widget = widget
+                .with_semantic_callback(incular_semantics::SemanticActionKind::Decrement, callback);
+        }
+        if let Some(callback) = on_scroll_forward {
+            widget = widget.with_semantic_callback(
+                incular_semantics::SemanticActionKind::ScrollForward,
+                callback,
+            );
+        }
+        if let Some(callback) = on_scroll_backward {
+            widget = widget.with_semantic_callback(
+                incular_semantics::SemanticActionKind::ScrollBackward,
+                callback,
+            );
         }
         widget
     }

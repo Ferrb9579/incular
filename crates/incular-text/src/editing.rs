@@ -1,6 +1,6 @@
 //! Renderer-independent editing and selection state.
 
-use crate::TextStyle;
+use crate::{TextLayout, TextStyle};
 use icu_segmenter::GraphemeClusterSegmenter;
 use incular_core::{RestorationKey, RestorationScope};
 use std::{cell::RefCell, fmt, ops::Range, rc::Rc, time::Instant};
@@ -256,6 +256,7 @@ struct ControllerState {
     visual_revision: u64,
     caret_reset: Option<Instant>,
     preferred_caret_x: Option<f32>,
+    caret_affinity: TextAffinity,
     preedit: Option<String>,
     preedit_selection: Option<TextRange>,
     restoration: Option<TextRestoration>,
@@ -322,6 +323,7 @@ impl TextEditingController {
             state.preedit_selection = None;
             state.caret_reset = None;
             state.preferred_caret_x = None;
+            state.caret_affinity = TextAffinity::Downstream;
         }
     }
 
@@ -362,10 +364,12 @@ impl TextEditingController {
 
     pub fn set_value(&self, value: TextEditingValue) {
         self.update(value, true);
+        self.inner.borrow_mut().caret_affinity = TextAffinity::Downstream;
     }
 
     pub fn set_text(&self, text: impl Into<String>) {
         self.update(TextEditingValue::new(text), true);
+        self.inner.borrow_mut().caret_affinity = TextAffinity::Downstream;
     }
 
     pub fn clear(&self) {
@@ -376,6 +380,16 @@ impl TextEditingController {
         let mut value = self.value();
         value.selection = selection.clamp_to(&value.text);
         self.update(value, false);
+        self.inner.borrow_mut().caret_affinity = TextAffinity::Downstream;
+    }
+
+    /// Sets a selection while preserving which visual edge of a bidi run owns
+    /// a collapsed caret. Native hit testing should use this overload.
+    pub fn set_selection_with_affinity(&self, selection: TextSelection, affinity: TextAffinity) {
+        let mut value = self.value();
+        value.selection = selection.clamp_to(&value.text);
+        self.update(value, false);
+        self.inner.borrow_mut().caret_affinity = affinity;
     }
 
     pub fn set_composing(&self, composing: Option<ComposingRange>) {
@@ -473,6 +487,19 @@ impl TextEditingController {
         );
     }
 
+    /// Moves one grapheme in screen/visual order using the bidi caret stops
+    /// emitted by [`TextLayout`]. The logical byte offset may move backwards
+    /// while the caret moves right, which is required for right-to-left text.
+    pub fn move_left_visual(&self, layout: &TextLayout, extend: bool) {
+        self.move_visual(layout, false, extend);
+    }
+
+    /// Moves one grapheme in screen/visual order using the bidi caret stops
+    /// emitted by [`TextLayout`].
+    pub fn move_right_visual(&self, layout: &TextLayout, extend: bool) {
+        self.move_visual(layout, true, extend);
+    }
+
     pub fn move_home(&self, extend: bool) {
         self.move_cursor(0, extend);
     }
@@ -563,17 +590,41 @@ impl TextEditingController {
         self.inner.borrow().preferred_caret_x
     }
 
+    /// Retains the horizontal column used by vertical movement without
+    /// changing the editing value.
+    #[doc(hidden)]
+    pub fn set_preferred_caret_x(&self, x: f32) {
+        self.inner.borrow_mut().preferred_caret_x = x.is_finite().then_some(x);
+    }
+
+    /// Returns the visual affinity of the collapsed caret.
+    #[must_use]
+    pub fn caret_affinity(&self) -> TextAffinity {
+        self.inner.borrow().caret_affinity
+    }
+
     #[doc(hidden)]
     pub fn move_cursor_with_x(&self, target: usize, extend: bool, x: f32) {
-        self.move_cursor_impl(target, extend, Some(x));
+        self.move_cursor_impl(target, extend, Some(x), TextAffinity::Downstream);
     }
 
     #[doc(hidden)]
     pub fn move_cursor(&self, target: usize, extend: bool) {
-        self.move_cursor_impl(target, extend, None);
+        self.move_cursor_impl(target, extend, None, TextAffinity::Downstream);
     }
 
-    fn move_cursor_impl(&self, target: usize, extend: bool, preferred_x: Option<f32>) {
+    #[doc(hidden)]
+    pub fn move_cursor_with_affinity(&self, target: usize, affinity: TextAffinity, extend: bool) {
+        self.move_cursor_impl(target, extend, None, affinity);
+    }
+
+    fn move_cursor_impl(
+        &self,
+        target: usize,
+        extend: bool,
+        preferred_x: Option<f32>,
+        affinity: TextAffinity,
+    ) {
         let mut value = self.value();
         let target = nearest_char_boundary(&value.text, target.min(value.text.len()));
         value.selection = if extend {
@@ -584,6 +635,63 @@ impl TextEditingController {
         self.update(value, false);
         let mut state = self.inner.borrow_mut();
         state.preferred_caret_x = preferred_x;
+        state.caret_affinity = affinity;
+    }
+
+    fn move_visual(&self, layout: &TextLayout, right: bool, extend: bool) {
+        let value = self.value();
+        let extent = value.selection.extent;
+        // An unextended arrow first collapses an active selection, matching
+        // native editors and avoiding a surprising extra visual step.
+        if !extend && !value.selection.is_collapsed() {
+            let target = if right {
+                value.selection.end()
+            } else {
+                value.selection.start()
+            };
+            self.move_cursor_with_affinity(target, TextAffinity::Downstream, false);
+            return;
+        }
+        let line = layout
+            .lines
+            .iter()
+            .position(|line| extent >= line.start && extent <= line.end)
+            .unwrap_or_else(|| layout.lines.len().saturating_sub(1));
+        let stops = layout.line_caret_positions(line);
+        if stops.is_empty() {
+            return;
+        }
+        let affinity = self.caret_affinity();
+        let current = stops
+            .iter()
+            .position(|stop| stop.offset == extent && stop.affinity == affinity)
+            .or_else(|| stops.iter().position(|stop| stop.offset == extent))
+            .unwrap_or_else(|| {
+                if right {
+                    0
+                } else {
+                    stops.len().saturating_sub(1)
+                }
+            });
+        let target = if right {
+            stops.get(current + 1).copied().or_else(|| {
+                (line + 1..layout.lines.len())
+                    .find_map(|next_line| layout.line_caret_positions(next_line).first().copied())
+            })
+        } else {
+            current
+                .checked_sub(1)
+                .and_then(|index| stops.get(index).copied())
+                .or_else(|| {
+                    (0..line).rev().find_map(|previous_line| {
+                        layout.line_caret_positions(previous_line).last().copied()
+                    })
+                })
+        };
+        let Some(target) = target else {
+            return;
+        };
+        self.move_cursor_with_affinity(target.offset, target.affinity, extend);
     }
 
     fn update(&self, value: TextEditingValue, content_changed: bool) {

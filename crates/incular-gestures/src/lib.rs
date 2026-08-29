@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use incular_core::{Code, KeyboardEvent, KeyboardKey, Modifiers, Offset, PointerPhase};
+use incular_core::{Code, KeyboardEvent, KeyboardKey, Modifiers, Offset, PointerPhase, Rect};
 
 /// Identifies one pointer stream within a native window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -542,6 +542,8 @@ struct FocusState {
     skip_traversal: Cell<bool>,
     descendants_are_focusable: Cell<bool>,
     descendants_are_traversable: Cell<bool>,
+    rect: Cell<Rect>,
+    traversal_order: Cell<Option<f64>>,
 }
 
 impl Default for FocusNode {
@@ -553,6 +555,8 @@ impl Default for FocusNode {
                 skip_traversal: Cell::new(false),
                 descendants_are_focusable: Cell::new(true),
                 descendants_are_traversable: Cell::new(true),
+                rect: Cell::new(Rect::default()),
+                traversal_order: Cell::new(None),
             }),
         }
     }
@@ -610,6 +614,31 @@ impl FocusNode {
     pub fn descendants_are_traversable(&self) -> bool {
         self.state.descendants_are_traversable.get()
     }
+
+    /// Supplies the node's current layout bounds to geometry-aware traversal.
+    /// Bounds are logical pixels in the same coordinate space as the widget
+    /// tree. A node that never receives bounds remains in registration order.
+    pub fn set_rect(&self, rect: Rect) {
+        self.state.rect.set(rect);
+    }
+
+    #[must_use]
+    pub fn rect(&self) -> Rect {
+        self.state.rect.get()
+    }
+
+    /// Sets the explicit numeric order used by [`OrderedTraversalPolicy`].
+    /// Equal or absent orders preserve widget registration order.
+    pub fn set_traversal_order(&self, order: Option<f64>) {
+        self.state
+            .traversal_order
+            .set(order.filter(|value| value.is_finite()));
+    }
+
+    #[must_use]
+    pub fn traversal_order(&self) -> Option<f64> {
+        self.state.traversal_order.get()
+    }
 }
 
 /// Strategy for navigating keyboard focus through a collection of focus nodes.
@@ -620,51 +649,110 @@ pub trait FocusTraversalPolicy {
     fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode>;
 }
 
+/// Built-in traversal policies understood by retained widget groups.
+///
+/// The policy is intentionally a small value rather than a trait object so it
+/// can cross rebuild boundaries and be stored in a widget descriptor. Custom
+/// consumers can still implement [`FocusTraversalPolicy`] directly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FocusTraversalPolicyKind {
+    /// Follow the retained widget/registration order.
+    #[default]
+    WidgetOrder,
+    /// Sort by the top edge and then the leading edge of each node.
+    ReadingOrder,
+    /// Sort by [`FocusNode::traversal_order`], with registration order as the
+    /// stable tie breaker.
+    Ordered,
+}
+
+fn traversable(nodes: &[FocusNode]) -> Vec<FocusNode> {
+    nodes
+        .iter()
+        .filter(|node| node.can_request_focus() && !node.skip_traversal())
+        .cloned()
+        .collect()
+}
+
+fn reading_order(mut nodes: Vec<FocusNode>) -> Vec<FocusNode> {
+    // Keep rows together even when controls have slightly different heights.
+    // The tolerance is deliberately relative to the row height, which makes
+    // this work for both compact desktop controls and large touch targets.
+    nodes.sort_by(|left, right| {
+        let left_rect = left.rect();
+        let right_rect = right.rect();
+        let row_tolerance = left_rect
+            .size
+            .height
+            .max(right_rect.size.height)
+            .mul_add(0.5, 1.0);
+        let vertical = left_rect.origin.y - right_rect.origin.y;
+        if vertical.abs() > row_tolerance {
+            vertical
+                .partial_cmp(&0.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        } else {
+            left_rect
+                .origin
+                .x
+                .partial_cmp(&right_rect.origin.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }
+    });
+    nodes
+}
+
+fn explicit_order(mut nodes: Vec<FocusNode>) -> Vec<FocusNode> {
+    nodes.sort_by(|left, right| {
+        left.traversal_order()
+            .unwrap_or(f64::INFINITY)
+            .partial_cmp(&right.traversal_order().unwrap_or(f64::INFINITY))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    nodes
+}
+
+fn policy_nodes(policy: FocusTraversalPolicyKind, nodes: &[FocusNode]) -> Vec<FocusNode> {
+    let nodes = traversable(nodes);
+    match policy {
+        FocusTraversalPolicyKind::WidgetOrder => nodes,
+        FocusTraversalPolicyKind::ReadingOrder => reading_order(nodes),
+        FocusTraversalPolicyKind::Ordered => explicit_order(nodes),
+    }
+}
+
 /// Traversal policy following logical widget structure order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WidgetOrderTraversalPolicy;
 
 impl FocusTraversalPolicy for WidgetOrderTraversalPolicy {
     fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        nodes
-            .iter()
-            .find(|n| n.can_request_focus() && !n.skip_traversal())
-            .cloned()
+        traversable(nodes).into_iter().next()
     }
 
     fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        nodes
-            .iter()
-            .rev()
-            .find(|n| n.can_request_focus() && !n.skip_traversal())
-            .cloned()
+        traversable(nodes).into_iter().next_back()
     }
 
     fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        let traversable: Vec<_> = nodes
-            .iter()
-            .filter(|n| n.can_request_focus() && !n.skip_traversal())
-            .collect();
-        if let Some(pos) = traversable.iter().position(|n| *n == current) {
-            traversable.get(pos + 1).copied().cloned()
+        let traversable = traversable(nodes);
+        if let Some(pos) = traversable.iter().position(|n| n == current) {
+            traversable.get(pos + 1).cloned()
         } else {
-            traversable.first().copied().cloned()
+            traversable.into_iter().next()
         }
     }
 
     fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        let traversable: Vec<_> = nodes
-            .iter()
-            .filter(|n| n.can_request_focus() && !n.skip_traversal())
-            .collect();
-        if let Some(pos) = traversable.iter().position(|n| *n == current) {
+        let traversable = traversable(nodes);
+        if let Some(pos) = traversable.iter().position(|n| n == current) {
             if pos > 0 {
-                traversable.get(pos - 1).copied().cloned()
+                traversable.get(pos - 1).cloned()
             } else {
                 None
             }
         } else {
-            traversable.last().copied().cloned()
+            traversable.into_iter().next_back()
         }
     }
 }
@@ -675,19 +763,19 @@ pub struct ReadingOrderTraversalPolicy;
 
 impl FocusTraversalPolicy for ReadingOrderTraversalPolicy {
     fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.find_first_focus(nodes)
+        reading_order(traversable(nodes)).into_iter().next()
     }
 
     fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.find_last_focus(nodes)
+        reading_order(traversable(nodes)).into_iter().next_back()
     }
 
     fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.next(current, nodes)
+        WidgetOrderTraversalPolicy.next(current, &reading_order(traversable(nodes)))
     }
 
     fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.previous(current, nodes)
+        WidgetOrderTraversalPolicy.previous(current, &reading_order(traversable(nodes)))
     }
 }
 
@@ -697,19 +785,19 @@ pub struct OrderedTraversalPolicy;
 
 impl FocusTraversalPolicy for OrderedTraversalPolicy {
     fn find_first_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.find_first_focus(nodes)
+        explicit_order(traversable(nodes)).into_iter().next()
     }
 
     fn find_last_focus(&self, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.find_last_focus(nodes)
+        explicit_order(traversable(nodes)).into_iter().next_back()
     }
 
     fn next(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.next(current, nodes)
+        WidgetOrderTraversalPolicy.next(current, &explicit_order(traversable(nodes)))
     }
 
     fn previous(&self, current: &FocusNode, nodes: &[FocusNode]) -> Option<FocusNode> {
-        WidgetOrderTraversalPolicy.previous(current, nodes)
+        WidgetOrderTraversalPolicy.previous(current, &explicit_order(traversable(nodes)))
     }
 }
 
@@ -719,11 +807,29 @@ impl FocusTraversalPolicy for OrderedTraversalPolicy {
 #[derive(Default)]
 pub struct FocusManager {
     nodes: Vec<Weak<FocusState>>,
+    policy: FocusTraversalPolicyKind,
 }
 impl FocusManager {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with_policy(policy: FocusTraversalPolicyKind) -> Self {
+        Self {
+            nodes: Vec::new(),
+            policy,
+        }
+    }
+
+    pub fn set_policy(&mut self, policy: FocusTraversalPolicyKind) {
+        self.policy = policy;
+    }
+
+    #[must_use]
+    pub const fn policy(&self) -> FocusTraversalPolicyKind {
+        self.policy
     }
     pub fn register(&mut self, node: &FocusNode) {
         self.prune();
@@ -779,21 +885,22 @@ impl FocusManager {
             .nodes
             .iter()
             .filter_map(Weak::upgrade)
-            .filter(|node| node.can_request_focus.get())
+            .map(|state| FocusNode { state })
             .collect();
+        let nodes = policy_nodes(self.policy, &nodes);
         let first = nodes.first()?.clone();
-        let current = nodes.iter().position(|node| node.focused.get());
+        let current = nodes.iter().position(FocusNode::has_focus);
         let next = match current {
             Some(index) if reverse => nodes[(index + nodes.len() - 1) % nodes.len()].clone(),
             Some(index) => nodes[(index + 1) % nodes.len()].clone(),
             None if reverse => nodes.last()?.clone(),
             None => first,
         };
-        for node in &nodes {
+        for node in self.nodes.iter().filter_map(Weak::upgrade) {
             node.focused.set(false);
         }
-        next.focused.set(true);
-        Some(FocusNode { state: next })
+        next.request_focus();
+        Some(next)
     }
     #[must_use]
     pub fn registered_count(&mut self) -> usize {
@@ -931,6 +1038,17 @@ impl FocusScopeNode {
     pub fn register(&self, node: &FocusNode) {
         self.state.manager.borrow_mut().register(node);
         self.state.bump_revision();
+    }
+
+    /// Sets the traversal policy used by this retained scope.
+    pub fn set_policy(&self, policy: FocusTraversalPolicyKind) {
+        self.state.manager.borrow_mut().set_policy(policy);
+        self.state.bump_revision();
+    }
+
+    #[must_use]
+    pub fn policy(&self) -> FocusTraversalPolicyKind {
+        self.state.manager.borrow().policy()
     }
 
     /// Removes a focus node from this scope and clears its focus.
@@ -2052,6 +2170,42 @@ mod tests {
         assert_eq!(scope.focus_next(true), Some(first.clone()));
         drop(last);
         assert_eq!(scope.registered_count(), 2);
+    }
+
+    #[test]
+    fn focus_manager_applies_reading_and_explicit_order_policies() {
+        let top_right = FocusNode::new();
+        let bottom_left = FocusNode::new();
+        let top_left = FocusNode::new();
+        top_right.set_rect(Rect::from_origin_size(
+            Offset::new(100., 0.),
+            incular_core::Size::new(20., 20.),
+        ));
+        bottom_left.set_rect(Rect::from_origin_size(
+            Offset::new(0., 50.),
+            incular_core::Size::new(20., 20.),
+        ));
+        top_left.set_rect(Rect::from_origin_size(
+            Offset::new(0., 0.),
+            incular_core::Size::new(20., 20.),
+        ));
+        let mut reading = FocusManager::with_policy(FocusTraversalPolicyKind::ReadingOrder);
+        for node in [&top_right, &bottom_left, &top_left] {
+            reading.register(node);
+        }
+        assert_eq!(reading.focus_next(false), Some(top_left.clone()));
+        assert_eq!(reading.focus_next(false), Some(top_right.clone()));
+        assert_eq!(reading.focus_next(false), Some(bottom_left.clone()));
+
+        let first = FocusNode::new();
+        let second = FocusNode::new();
+        first.set_traversal_order(Some(20.));
+        second.set_traversal_order(Some(10.));
+        let mut ordered = FocusManager::with_policy(FocusTraversalPolicyKind::Ordered);
+        ordered.register(&first);
+        ordered.register(&second);
+        assert_eq!(ordered.focus_next(false), Some(second));
+        assert_eq!(ordered.focus_next(false), Some(first));
     }
     #[test]
     fn shortcuts_can_dispatch_typed_commands() {

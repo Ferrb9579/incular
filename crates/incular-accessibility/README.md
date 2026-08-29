@@ -31,28 +31,37 @@ The mapping is deliberately narrow and documented rather than inventing roles:
 | Incular role | AccessKit role |
 | --- | --- |
 | Material buttons, Text, EditableText / Material TextField | Button, Label, TextInput, MultilineTextInput |
-| Checkbox, Radio, Slider | CheckBox, RadioButton, Slider |
+| Checkbox, Radio, Slider, ProgressBar, Meter | CheckBox, RadioButton, Slider, ProgressIndicator, Meter |
 | Image, Link, Heading | Image, Link, Heading |
 | List, ListItem, ScrollView | List, ListItem, ScrollView |
 | Menu, Dialog, GenericContainer | Menu, Dialog, GenericContainer |
 
 Labels/descriptions/values, enabled/disabled, selected, checked, expanded,
-read-only, text selection, list position/set size, scroll range, bounds and
-the actually supported Incular actions map directly. Text selections convert
-between Incular's UTF-8 byte offsets and AccessKit character positions safely.
+read-only, required, invalid, busy, heading level, numeric ranges, text
+selection, list position/set size, scroll range, bounds and the actually
+supported Incular actions map directly. Text selections convert between
+Incular's UTF-8 byte offsets and AccessKit character positions safely. Obscured
+text fields use password semantics and never publish their clear-text value.
 Meaningful images require a supplied Incular label; unlabelled images are
-decorative and are omitted by widget semantics. Current Incular semantics do
-not expose required/password or rich-text/hypertext metadata, so this crate
-does not claim those capabilities.
+decorative and are omitted by widget semantics.
 
-`Click`, focus, value/text, text selection, and supported directional scroll
-requests translate to an owned `SemanticActionRequest` only when the current
-node advertises the corresponding executable Incular action. Incular currently
-has no retained slider/spin-controller action route, so increment/decrement
-are deliberately not exposed yet. Unsupported payloads/actions and stale node
-IDs are counted and discarded safely. The
+`Click`, focus, value/text, text selection, directional scroll, and
+increment/decrement requests translate to an owned `SemanticActionRequest` only
+when the current node advertises the corresponding executable Incular action.
+Widget-level semantic callbacks can handle custom controls without coupling
+them to a concrete renderer. Unsupported payloads/actions and stale node IDs
+are counted and discarded safely. The
 desktop runner sends that request to the UI-thread `Application` dispatcher;
 AccessKit callback threads never mutate a controller or widget directly.
+
+## Mobile projections
+
+`MobileAccessibilityProjection` maintains stable, generation-safe native IDs and
+emits a complete update on activation followed by changed nodes, removals, and
+focus/bounds/value/state events. `incular-android` and `incular-ios` expose thin
+host adapters around that contract; JNI/UIKit code can translate the update on
+its own UI thread while actions return through the validated semantic request
+boundary.
 
 ## Diagnostics and tests
 

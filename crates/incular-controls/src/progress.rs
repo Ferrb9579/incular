@@ -158,11 +158,15 @@ impl Root {
             .normalized_value()
             .map(|value| format!("{:.0}%", value * 100.))
             .unwrap_or_else(|| "In progress".to_owned());
-        let semantics = ExplicitSemantics::new(SemanticRole::GenericContainer)
+        let semantics = ExplicitSemantics::new(SemanticRole::ProgressBar)
             .label(self.label.clone().unwrap_or_else(|| "Progress".to_owned()))
             .value(value_text)
             .state(SemanticState {
                 enabled: true,
+                busy: self.is_indeterminate(),
+                numeric_value: self.value.filter(|value| value.is_finite()).map(f64::from),
+                numeric_min: Some(f64::from(self.min)),
+                numeric_max: Some(f64::from(self.max)),
                 ..SemanticState::default()
             });
         visual.semantics(semantics)
