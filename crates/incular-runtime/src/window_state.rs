@@ -8,7 +8,7 @@ use crate::restoration;
 use crate::tasks::{self, TaskScope};
 use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
 use incular_accessibility::AccessibilityDiagnostics;
-use incular_config::RuntimeEnvironment;
+use incular_config::{ContentSensitivity, RuntimeEnvironment};
 use incular_core::{RestorationKey, RestorationScope};
 use incular_platform::{WindowId, WindowLifecycle, WindowMetrics, WindowOptions};
 use incular_widgets::Widget;
@@ -36,6 +36,8 @@ pub struct WindowDiagnostics {
     pub skipped_frames: u64,
     pub input_events: u64,
     pub surface_generation: u64,
+    /// Effective retained-tree capture policy at the last diagnostics read.
+    pub content_sensitivity: ContentSensitivity,
     pub elements: usize,
     pub render_objects: usize,
     pub semantics: usize,
@@ -69,6 +71,7 @@ pub(crate) struct WindowRecord {
     pub(crate) input_events: u64,
     pub(crate) surface_generation: u64,
     pub(crate) accessibility: AccessibilityDiagnostics,
+    pub(crate) last_content_sensitivity: Option<ContentSensitivity>,
     pub(crate) restoration: Option<RestorableWindowMetadata>,
     pub(crate) _restoration_scope_lease: Option<restoration::ScopeLease>,
 }
@@ -242,6 +245,7 @@ impl WindowManager {
                 input_events: 0,
                 surface_generation: 1,
                 accessibility: AccessibilityDiagnostics::default(),
+                last_content_sensitivity: None,
                 restoration,
                 _restoration_scope_lease: restoration_lease,
             },
@@ -386,6 +390,7 @@ impl WindowManager {
                 input_events: 0,
                 surface_generation: 1,
                 accessibility: AccessibilityDiagnostics::default(),
+                last_content_sensitivity: None,
                 restoration,
                 _restoration_scope_lease: restoration_lease,
             },

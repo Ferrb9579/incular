@@ -21,11 +21,39 @@ pub use incular_text::{TextEditingController, TextEditingValue, TextRange, TextS
 // `incular_widgets::*` namespace.  Keeping the bridge explicit also makes the
 // boundary auditable: anything below this module is framework plumbing, not a
 // public Widgets API.
+pub use crate::advanced_scrolling::{
+    CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, DiagonalDragBehavior,
+    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
+    DraggableScrollableNotification, DraggableScrollableSheet, DraggableScrollableState,
+    DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation, DraggableSnap,
+    DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView, ListWheelViewport,
+    RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation, RawScrollbarStyle,
+    TwoDimensionalChildDelegate, TwoDimensionalChildLayout, TwoDimensionalConstraints,
+    TwoDimensionalScrollDelta, TwoDimensionalScrollView, TwoDimensionalScrollable,
+    TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelChildDelegate, WheelChildLayout,
+    WheelLayout, WheelMatrix, WheelProjection,
+};
+pub use crate::advanced_slivers::{
+    AnimatedGrid, AnimatedGridController, AnimatedItem, AnimatedItemBuilder, AnimatedItemPhase,
+    AnimatedList, AnimatedListController, AnimatedRemovedItemBuilder, AutomaticKeepAlive,
+    KeepAlive, KeepAliveHandle, KeepAliveNotification, KeepAliveRegistry, SliverAnimatedGrid,
+    SliverAnimatedGridController, TreeRowAnimation, TreeSliver, TreeSliverController,
+    TreeSliverIndentation, TreeSliverNode, TreeSliverNodeId,
+};
 pub use crate::forms::*;
 pub use crate::gestures::PointerEvent;
 pub use crate::gestures::*;
 pub use crate::layout::*;
+pub use crate::navigation::BackButtonDispatcher as NavigationBackButtonDispatcher;
+pub use crate::navigation::{
+    AnimatedModalBarrier, BackButtonListener, BackDispatchReport, BackHandlerResult,
+    BackRegistration, NavigatorPopHandler, NavigatorPopHandlerController, PageStorage,
+    PageStorageBucket, PageStorageIdentifier, PageStorageKey, PopAttempt, PopScope,
+    PopScopeController, RootRestorationScope, UnmanagedRestorationScope,
+    current_page_storage_bucket, current_restoration_scope,
+};
 pub use crate::painting_effects::*;
+pub use crate::raw_input::*;
 pub use crate::scrolling::*;
 pub use crate::selection::*;
 pub use crate::tree::icons;

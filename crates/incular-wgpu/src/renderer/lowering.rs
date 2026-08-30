@@ -387,6 +387,16 @@ impl WgpuRenderer {
                     }
                     continue;
                 }
+                PaintCommand::PushShaderMask { .. } | PaintCommand::PushBackdropFilter { .. } => {
+                    let end = find_effect_end(commands, command_index)?;
+                    let start = command_index + 1;
+                    let parent_clip = *clips.last().expect("clip stack");
+                    command_index = end.saturating_add(1);
+                    let child =
+                        self.lower_commands(&commands[start..end], scale, transform, parent_clip)?;
+                    batches.extend(child);
+                    continue;
+                }
                 PaintCommand::PopEffect => {
                     return Err(RendererError::UnbalancedClipStack);
                 }

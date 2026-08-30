@@ -127,6 +127,12 @@ impl GradientStops {
         self.id
     }
 }
+impl GradientId {
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearGradient {
     pub start: Offset,

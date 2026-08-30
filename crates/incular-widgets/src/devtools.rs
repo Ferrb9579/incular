@@ -233,7 +233,10 @@ impl WidgetTree {
                         | WidgetKind::TextField { .. }
                         | WidgetKind::SelectableText { .. }
                         | WidgetKind::SelectionArea { .. }
+                        | WidgetKind::SelectionContainer { .. }
+                        | WidgetKind::SelectionListener { .. }
                         | WidgetKind::Gesture { .. }
+                        | WidgetKind::RawInput { .. }
                         | WidgetKind::Draggable { .. }
                         | WidgetKind::DragTarget { .. }
                         | WidgetKind::AbsorbPointer {
@@ -906,6 +909,13 @@ fn leaf_label(kind: &WidgetKind) -> Option<String> {
         WidgetKind::Button { child, .. } => child
             .as_ref()
             .and_then(|child| child.text_if_any().map(|text| truncate(&text, 32))),
+        WidgetKind::SelectionArea { child, .. }
+        | WidgetKind::SelectionContainer { child, .. }
+        | WidgetKind::SelectionListener { child, .. }
+        | WidgetKind::IndexedSemantics { child, .. }
+        | WidgetKind::SemanticsDebugger { child, .. } => {
+            child.text_if_any().map(|text| truncate(&text, 48))
+        }
         WidgetKind::TextField {
             placeholder,
             multiline,

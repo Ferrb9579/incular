@@ -17,6 +17,19 @@ pub enum PointerPhase {
     Cancel,
 }
 
+/// Physical device category for pointer input shared by platform adapters and
+/// raw widget routing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PointerDeviceKind {
+    #[default]
+    Mouse,
+    Touch,
+    Stylus,
+    InvertedStylus,
+    Trackpad,
+    Unknown,
+}
+
 /// IME composition is separate from committed text. Byte ranges always refer
 /// to valid UTF-8 boundaries in the preedit string when supplied.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +54,20 @@ pub enum InputEvent {
     PointerWithId {
         /// Stable for the duration of one pointer sequence.
         pointer: u64,
+        phase: PointerPhase,
+        position: Offset,
+    },
+    /// Fully identified pointer input. The two legacy pointer forms remain
+    /// available for adapters that do not expose device/button metadata.
+    PointerWithMetadata {
+        /// Stable for the duration of one pointer sequence.
+        pointer: u64,
+        /// Stable identifier for the physical device, when available.
+        device: u64,
+        /// Physical category of the source device.
+        kind: PointerDeviceKind,
+        /// Pressed-button bit mask; zero is used for hover.
+        buttons: u32,
         phase: PointerPhase,
         position: Offset,
     },

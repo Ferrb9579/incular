@@ -8,10 +8,10 @@ use incular_config::Constraints;
 use incular_core::Offset;
 use incular_core::PointerPhase;
 use incular_platform::{
-    Clipboard, PhysicalSize, PlatformEvent, WindowCommand, WindowEvent as IncularWindowEvent,
-    WindowId as IncularWindowId, WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions,
-    apply_text_input_command, ime_event, key_event, pointer_event, raw_window_handles, text_event,
-    touch_event, wheel_event,
+    Clipboard, ContentSensitivityBackend, NoopContentSensitivityBackend, PhysicalSize,
+    PlatformEvent, WindowCommand, WindowEvent as IncularWindowEvent, WindowId as IncularWindowId,
+    WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions, apply_text_input_command,
+    ime_event, key_event, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
@@ -643,6 +643,7 @@ struct NativeWindowState {
     cursor: PhysicalPosition<f64>,
     modifiers: winit::keyboard::ModifiersState,
     accessibility: NativeAccessibilityState,
+    content_sensitivity: NoopContentSensitivityBackend,
 }
 
 /// Winit 0.30 adapter for an [`Application`] with many retained roots. Native
@@ -765,6 +766,7 @@ impl MultiApp {
                 cursor: PhysicalPosition::new(0., 0.),
                 modifiers: winit::keyboard::ModifiersState::default(),
                 accessibility,
+                content_sensitivity: NoopContentSensitivityBackend,
             },
         );
         self.request_frame_if_needed(id);
@@ -791,6 +793,9 @@ impl MultiApp {
                 let _ = state
                     .window
                     .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
+            }
+            WindowOperation::SetContentSensitivity(sensitivity) => {
+                let _ = state.content_sensitivity.apply(sensitivity);
             }
             WindowOperation::RequestFocus => state.window.focus_window(),
             WindowOperation::RequestRedraw => state.window.request_redraw(),

@@ -2,7 +2,7 @@ use super::environment::MaterialScrollBehavior;
 use crate::foundation::Theme;
 use crate::{ThemeData, ThemeMode};
 use incular_config::{Brightness, Locale, RuntimeEnvironment};
-use incular_widgets::{DefaultTextStyle, SizedBox, Widget};
+use incular_widgets::{CheckedModeBanner, DefaultTextStyle, SizedBox, Widget};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -274,9 +274,16 @@ impl MaterialApp {
             themed
         };
         let configured = self.scroll_behavior.wrap(localized);
-        self.builder
-            .as_ref()
-            .map_or(configured.clone(), |builder| builder(configured))
+        let configured = if let Some(builder) = self.builder.as_ref() {
+            builder(configured)
+        } else {
+            configured
+        };
+        if self.debug_show_checked_mode_banner {
+            CheckedModeBanner::new(configured).into()
+        } else {
+            configured
+        }
     }
 }
 

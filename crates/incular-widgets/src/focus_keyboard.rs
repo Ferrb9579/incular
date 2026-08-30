@@ -5,10 +5,11 @@ use std::rc::Rc;
 use incular_core::KeyboardEvent;
 #[allow(unused_imports)]
 pub use incular_gestures::{
-    Action, ActionResult, Actions, Command, CommandId, FocusManager, FocusNode, FocusScopeNode,
-    FocusScopeSubscription, FocusTraversalPolicy, FocusTraversalPolicyKind, Intent,
-    LogicalShortcutKey, OrderedTraversalPolicy, ReadingOrderTraversalPolicy, ShortcutKey,
-    ShortcutTrigger, Shortcuts, WidgetOrderTraversalPolicy,
+    Action, ActionInvocationPhase, ActionResult, Actions, Command, CommandId, FocusBehavior,
+    FocusManager, FocusNode, FocusScopeNode, FocusScopeSubscription, FocusTraversalPolicy,
+    FocusTraversalPolicyKind, Intent, LogicalShortcutKey, OrderedTraversalPolicy,
+    ReadingOrderTraversalPolicy, ShortcutActivator, ShortcutKey, ShortcutTrigger, Shortcuts,
+    SingleActivator, WidgetOrderTraversalPolicy,
 };
 
 use crate::{GestureDetector, Widget, WidgetKind};
@@ -279,6 +280,316 @@ impl KeyboardListener {
     #[must_use]
     pub fn handle(&self, event: KeyboardEvent) -> bool {
         self.to_callbacks().handle_keyboard(event)
+    }
+}
+
+/// Observes invocations of one action while retaining the child in the
+/// focused widget tree.
+///
+/// The action itself remains the source of truth. The listener registration is
+/// stored in the gesture callback record so it survives widget rebuilds and is
+/// removed automatically when the retained element is unmounted.
+#[derive(Clone)]
+pub struct ActionListener {
+    action: Action,
+    on_action: Option<Rc<dyn Fn()>>,
+    on_action_start: Option<Rc<dyn Fn()>>,
+    on_action_end: Option<Rc<dyn Fn()>>,
+    child: Widget,
+}
+
+impl ActionListener {
+    #[must_use]
+    pub fn new(action: Action, child: impl Into<Widget>) -> Self {
+        Self {
+            action,
+            on_action: None,
+            on_action_start: None,
+            on_action_end: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn on_action(mut self, callback: impl Fn() + 'static) -> Self {
+        self.on_action = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_action_start(mut self, callback: impl Fn() + 'static) -> Self {
+        self.on_action_start = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_action_end(mut self, callback: impl Fn() + 'static) -> Self {
+        self.on_action_end = Some(Rc::new(callback));
+        self
+    }
+}
+
+impl From<ActionListener> for Widget {
+    fn from(value: ActionListener) -> Self {
+        let on_action = value.on_action.clone();
+        let on_action_start = value.on_action_start.clone();
+        let on_action_end = value.on_action_end.clone();
+        let subscription = value
+            .action
+            .add_invocation_listener(move |phase| match phase {
+                ActionInvocationPhase::Start => {
+                    if let Some(callback) = &on_action_start {
+                        callback();
+                    }
+                }
+                ActionInvocationPhase::End => {
+                    if let Some(callback) = &on_action {
+                        callback();
+                    }
+                    if let Some(callback) = &on_action_end {
+                        callback();
+                    }
+                }
+            });
+        let callbacks = incular_gestures::GestureCallbacks {
+            action_invocation_listener: Some(Rc::new(subscription)),
+            include_semantics: false,
+            ..incular_gestures::GestureCallbacks::default()
+        };
+        Widget::from_kind(WidgetKind::Gesture {
+            behavior: crate::gestures::HitTestBehavior::DeferToChild,
+            callbacks: Box::new(callbacks),
+            child: Box::new(value.child),
+        })
+    }
+}
+
+/// A local keyboard shortcut map whose values are callbacks rather than
+/// application actions.
+#[derive(Clone)]
+pub struct CallbackShortcuts {
+    bindings: Vec<(ShortcutActivator, Rc<dyn Fn()>)>,
+    child: Widget,
+}
+
+impl CallbackShortcuts {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            bindings: Vec::new(),
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn shortcut(
+        mut self,
+        activator: impl Into<ShortcutActivator>,
+        callback: impl Fn() + 'static,
+    ) -> Self {
+        self.bindings.push((activator.into(), Rc::new(callback)));
+        self
+    }
+
+    #[must_use]
+    pub fn shortcuts<I, A, F>(mut self, bindings: I) -> Self
+    where
+        I: IntoIterator<Item = (A, F)>,
+        A: Into<ShortcutActivator>,
+        F: Fn() + 'static,
+    {
+        self.bindings.extend(
+            bindings
+                .into_iter()
+                .map(|(activator, callback)| (activator.into(), Rc::new(callback) as Rc<dyn Fn()>)),
+        );
+        self
+    }
+}
+
+fn register_callback_shortcut(
+    shortcuts: &mut Shortcuts,
+    activator: &ShortcutActivator,
+    callback: Rc<dyn Fn()>,
+) {
+    match activator {
+        ShortcutActivator::Physical { key, trigger } => {
+            shortcuts.register_on(*key, *trigger, move || callback());
+        }
+        ShortcutActivator::Logical { key, trigger } => {
+            shortcuts.register_logical_on(key.clone(), *trigger, move || callback());
+        }
+        ShortcutActivator::Single(activator) => {
+            let trigger = if activator.include_repeats {
+                ShortcutTrigger::Down
+            } else {
+                ShortcutTrigger::Press
+            };
+            shortcuts.register_logical_on(
+                LogicalShortcutKey::new(activator.trigger.clone(), activator.modifiers),
+                trigger,
+                move || callback(),
+            );
+        }
+    }
+}
+
+impl From<CallbackShortcuts> for Widget {
+    fn from(value: CallbackShortcuts) -> Self {
+        let mut shortcuts = Shortcuts::new();
+        for (activator, callback) in &value.bindings {
+            register_callback_shortcut(&mut shortcuts, activator, callback.clone());
+        }
+        let shortcuts = Rc::new(shortcuts);
+        let scope = shortcuts.erased_scope();
+        let dispatch_scope = scope.clone();
+        let callbacks = incular_gestures::GestureCallbacks {
+            on_shortcut: Some(Rc::new(move |event| {
+                dispatch_scope.find(event).is_some_and(|matched| {
+                    if let incular_gestures::ShortcutMatch::Callback(callback) = matched {
+                        callback();
+                        true
+                    } else {
+                        false
+                    }
+                })
+            })),
+            shortcut_scope: Some(scope),
+            include_semantics: false,
+            ..incular_gestures::GestureCallbacks::default()
+        };
+        Widget::from_kind(WidgetKind::Gesture {
+            behavior: crate::gestures::HitTestBehavior::DeferToChild,
+            callbacks: Box::new(callbacks),
+            child: Box::new(value.child),
+        })
+    }
+}
+
+/// Combines focus, focus-highlight visibility, shortcuts, and actions around a
+/// child. It is the retained equivalent of Flutter's
+/// `FocusableActionDetector`.
+#[derive(Clone)]
+pub struct FocusableActionDetector {
+    focus_node: FocusNode,
+    enabled: bool,
+    autofocus: bool,
+    shortcuts: Option<Rc<incular_gestures::ErasedShortcutScope>>,
+    actions: Option<Rc<incular_gestures::ErasedActionScope>>,
+    on_focus_change: Option<Rc<dyn Fn(bool)>>,
+    on_show_focus_highlight: Option<Rc<dyn Fn(bool)>>,
+    on_show_hover_highlight: Option<Rc<dyn Fn(bool)>>,
+    child: Widget,
+}
+
+impl FocusableActionDetector {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            focus_node: FocusNode::new(),
+            enabled: true,
+            autofocus: false,
+            shortcuts: None,
+            actions: None,
+            on_focus_change: None,
+            on_show_focus_highlight: None,
+            on_show_hover_highlight: None,
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn focus_node(mut self, node: FocusNode) -> Self {
+        self.focus_node = node;
+        self
+    }
+
+    #[must_use]
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn autofocus(mut self, autofocus: bool) -> Self {
+        self.autofocus = autofocus;
+        self
+    }
+
+    #[must_use]
+    pub fn shortcuts<C: CommandId>(mut self, shortcuts: Rc<Shortcuts<C>>) -> Self {
+        self.shortcuts = Some(shortcuts.erased_scope());
+        self
+    }
+
+    #[must_use]
+    pub fn actions<C: CommandId>(mut self, actions: Rc<Actions<C>>) -> Self {
+        self.actions = Some(incular_gestures::ErasedActionScope::from_actions(actions));
+        self
+    }
+
+    #[must_use]
+    pub fn on_focus_change(mut self, callback: impl Fn(bool) + 'static) -> Self {
+        self.on_focus_change = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_show_focus_highlight(mut self, callback: impl Fn(bool) + 'static) -> Self {
+        self.on_show_focus_highlight = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub fn on_show_hover_highlight(mut self, callback: impl Fn(bool) + 'static) -> Self {
+        self.on_show_hover_highlight = Some(Rc::new(callback));
+        self
+    }
+}
+
+impl From<FocusableActionDetector> for Widget {
+    fn from(value: FocusableActionDetector) -> Self {
+        let behavior = FocusBehavior::new(
+            value.focus_node.clone(),
+            value.enabled,
+            value.on_focus_change.clone(),
+            value.on_show_focus_highlight.clone(),
+            value.on_show_hover_highlight.clone(),
+        );
+        let shortcut_scope = value.shortcuts.clone();
+        let action_scope = value.actions.clone();
+        let action_scope_for_shortcut = action_scope.clone();
+        let callbacks = incular_gestures::GestureCallbacks {
+            on_shortcut: shortcut_scope.clone().map(|scope| {
+                let action_scope = action_scope_for_shortcut;
+                Rc::new(move |event| {
+                    scope.find(event).is_some_and(|matched| match matched {
+                        incular_gestures::ShortcutMatch::Callback(callback) => {
+                            callback();
+                            true
+                        }
+                        incular_gestures::ShortcutMatch::Intent(intent) => action_scope
+                            .as_ref()
+                            .and_then(|scope| scope.invoke(&intent))
+                            .is_some_and(|result| {
+                                result == incular_gestures::ActionResult::Handled
+                            }),
+                    })
+                }) as Rc<dyn Fn(incular_core::KeyboardEvent) -> bool>
+            }),
+            shortcut_scope,
+            action_scope,
+            focus_node: Some(value.focus_node),
+            focus_behavior: Some(behavior),
+            autofocus: value.autofocus,
+            include_semantics: true,
+            ..incular_gestures::GestureCallbacks::default()
+        };
+        Widget::from_kind(WidgetKind::Gesture {
+            behavior: crate::gestures::HitTestBehavior::DeferToChild,
+            callbacks: Box::new(callbacks),
+            child: Box::new(value.child),
+        })
     }
 }
 

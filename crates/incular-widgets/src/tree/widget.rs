@@ -216,6 +216,26 @@ impl std::fmt::Debug for WidgetKind {
                 .field("border", border)
                 .field("radius", radius)
                 .finish(),
+            Self::Banner {
+                message,
+                text_direction,
+                location,
+                layout_direction,
+                color,
+                text_style,
+                shadow,
+                child,
+            } => f
+                .debug_struct("Banner")
+                .field("message", message)
+                .field("text_direction", text_direction)
+                .field("location", location)
+                .field("layout_direction", layout_direction)
+                .field("color", color)
+                .field("text_style", text_style)
+                .field("shadow", shadow)
+                .field("child", child)
+                .finish(),
             Self::Button {
                 size,
                 color,
@@ -327,6 +347,11 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Gesture { child, .. } => f
                 .debug_struct("GestureDetector")
+                .field("child", child)
+                .finish(),
+            Self::RawInput { kind, child } => f
+                .debug_struct("RawInput")
+                .field("type", &kind.type_())
                 .field("child", child)
                 .finish(),
             Self::Draggable { child, .. } => {
@@ -525,6 +550,41 @@ impl std::fmt::Debug for WidgetKind {
                 .field("child", child)
                 .finish(),
             Self::Scroll { .. } => f.debug_struct("ScrollView").finish(),
+            Self::RawScrollbar {
+                controller,
+                style,
+                child,
+            } => f
+                .debug_struct("RawScrollbar")
+                .field("controller", controller)
+                .field("style", style)
+                .field("child", child)
+                .finish(),
+            Self::ListWheelScrollView { view } => f
+                .debug_struct("ListWheelScrollView")
+                .field("view", view)
+                .finish(),
+            Self::ListWheelViewport { viewport } => f
+                .debug_struct("ListWheelViewport")
+                .field("viewport", viewport)
+                .finish(),
+            Self::DraggableScrollableSheet { sheet } => f
+                .debug_struct("DraggableScrollableSheet")
+                .field("sheet", sheet)
+                .finish(),
+            Self::DraggableScrollableActuator { actuator, child } => f
+                .debug_struct("DraggableScrollableActuator")
+                .field("actuator", actuator)
+                .field("child", child)
+                .finish(),
+            Self::TwoDimensionalScrollView { view } => f
+                .debug_struct("TwoDimensionalScrollView")
+                .field("view", view)
+                .finish(),
+            Self::TwoDimensionalViewport { viewport } => f
+                .debug_struct("TwoDimensionalViewport")
+                .field("viewport", viewport)
+                .finish(),
             Self::PersistentHeader { .. } => f.debug_struct("PersistentHeader").finish(),
             Self::NotificationListener { child, .. } => f
                 .debug_struct("NotificationListener")
@@ -602,6 +662,44 @@ impl std::fmt::Debug for WidgetKind {
                 .field("controller", controller)
                 .finish(),
             Self::Blend { mode, .. } => f.debug_struct("Blend").field("mode", mode).finish(),
+            Self::ShaderMask { blend_mode, .. } => f
+                .debug_struct("ShaderMask")
+                .field("blend_mode", blend_mode)
+                .finish(),
+            Self::BackdropFilter {
+                blur,
+                blend_mode,
+                enabled,
+                ..
+            } => f
+                .debug_struct("BackdropFilter")
+                .field("blur", blur)
+                .field("blend_mode", blend_mode)
+                .field("enabled", enabled)
+                .finish(),
+            Self::AnnotatedRegion { sized, .. } => f
+                .debug_struct("AnnotatedRegion")
+                .field("sized", sized)
+                .finish(),
+            Self::CompositedTransformTarget { link, .. } => f
+                .debug_struct("CompositedTransformTarget")
+                .field("link", link)
+                .finish(),
+            Self::CompositedTransformFollower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                ..
+            } => f
+                .debug_struct("CompositedTransformFollower")
+                .field("link", link)
+                .field("show_when_unlinked", show_when_unlinked)
+                .field("offset", offset)
+                .field("target_anchor", target_anchor)
+                .field("follower_anchor", follower_anchor)
+                .finish(),
             Self::SelectableText { text, style, align } => f
                 .debug_struct("SelectableText")
                 .field("text", text)
@@ -611,6 +709,30 @@ impl std::fmt::Debug for WidgetKind {
             Self::SelectionArea { controller, .. } => f
                 .debug_struct("SelectionArea")
                 .field("controller", controller)
+                .finish(),
+            Self::SelectionContainer { delegate, .. } => f
+                .debug_struct("SelectionContainer")
+                .field("delegate", delegate)
+                .finish(),
+            Self::SelectionListener {
+                notifier, delegate, ..
+            } => f
+                .debug_struct("SelectionListener")
+                .field("notifier", notifier)
+                .field("delegate", delegate)
+                .finish(),
+            Self::IndexedSemantics { index, .. } => f
+                .debug_struct("IndexedSemantics")
+                .field("index", index)
+                .finish(),
+            Self::SemanticsDebugger {
+                label_style,
+                max_nodes,
+                ..
+            } => f
+                .debug_struct("SemanticsDebugger")
+                .field("label_style", label_style)
+                .field("max_nodes", max_nodes)
                 .finish(),
         }
     }
@@ -678,6 +800,44 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == c && b == d,
             (
+                Self::SelectionContainer {
+                    delegate: a,
+                    child: b,
+                },
+                Self::SelectionContainer {
+                    delegate: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::SelectionListener {
+                    notifier: a,
+                    delegate: b,
+                    child: c,
+                },
+                Self::SelectionListener {
+                    notifier: d,
+                    delegate: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::IndexedSemantics { index: a, child: b },
+                Self::IndexedSemantics { index: c, child: d },
+            ) => a == c && b == d,
+            (
+                Self::SemanticsDebugger {
+                    label_style: a,
+                    max_nodes: b,
+                    child: c,
+                },
+                Self::SemanticsDebugger {
+                    label_style: d,
+                    max_nodes: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
                 Self::Overflow {
                     min_width: a,
                     max_width: b,
@@ -706,6 +866,16 @@ impl PartialEq for WidgetKind {
                     child: d,
                 },
             ) => a_behavior == b_behavior && gesture_callbacks_eq(a, c) && b == d,
+            (
+                Self::RawInput {
+                    kind: left_kind,
+                    child: left_child,
+                },
+                Self::RawInput {
+                    kind: right_kind,
+                    child: right_child,
+                },
+            ) => left_kind == right_kind && left_child == right_child,
             (
                 Self::Draggable {
                     source: a,
@@ -776,6 +946,28 @@ impl PartialEq for WidgetKind {
                     child: j,
                 },
             ) => a == f && b == g && c == h && d == i && e == j,
+            (
+                Self::Banner {
+                    message: a,
+                    text_direction: b,
+                    location: c,
+                    layout_direction: d,
+                    color: e,
+                    text_style: f,
+                    shadow: g,
+                    child: h,
+                },
+                Self::Banner {
+                    message: i,
+                    text_direction: j,
+                    location: k,
+                    layout_direction: l,
+                    color: m,
+                    text_style: n,
+                    shadow: o,
+                    child: p,
+                },
+            ) => a == i && b == j && c == k && d == l && e == m && f == n && g == o && h == p,
             (
                 Self::Button {
                     size: a,
@@ -1052,6 +1244,46 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == c && e == h && f == i && g == j && b == d,
             (
+                Self::RawScrollbar {
+                    controller: a,
+                    style: b,
+                    child: c,
+                },
+                Self::RawScrollbar {
+                    controller: d,
+                    style: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (Self::ListWheelScrollView { view: a }, Self::ListWheelScrollView { view: b }) => {
+                a == b
+            }
+            (Self::ListWheelViewport { viewport: a }, Self::ListWheelViewport { viewport: b }) => {
+                a == b
+            }
+            (
+                Self::DraggableScrollableSheet { sheet: a },
+                Self::DraggableScrollableSheet { sheet: b },
+            ) => a == b,
+            (
+                Self::DraggableScrollableActuator {
+                    actuator: a,
+                    child: b,
+                },
+                Self::DraggableScrollableActuator {
+                    actuator: c,
+                    child: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::TwoDimensionalScrollView { view: a },
+                Self::TwoDimensionalScrollView { view: b },
+            ) => a == b,
+            (
+                Self::TwoDimensionalViewport { viewport: a },
+                Self::TwoDimensionalViewport { viewport: b },
+            ) => a == b,
+            (
                 Self::PersistentHeader {
                     controller: a,
                     axis: e,
@@ -1189,6 +1421,66 @@ impl PartialEq for WidgetKind {
             (Self::Blend { mode: a, child: b }, Self::Blend { mode: c, child: d }) => {
                 a == c && b == d
             }
+            (
+                Self::ShaderMask {
+                    shader: a,
+                    blend_mode: b,
+                    child: c,
+                },
+                Self::ShaderMask {
+                    shader: d,
+                    blend_mode: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::BackdropFilter {
+                    blur: a,
+                    blend_mode: b,
+                    enabled: c,
+                    child: d,
+                },
+                Self::BackdropFilter {
+                    blur: e,
+                    blend_mode: f,
+                    enabled: g,
+                    child: h,
+                },
+            ) => a == e && b == f && c == g && d == h,
+            (
+                Self::AnnotatedRegion {
+                    annotation: a,
+                    sized: b,
+                    child: c,
+                },
+                Self::AnnotatedRegion {
+                    annotation: d,
+                    sized: e,
+                    child: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::CompositedTransformTarget { link: a, child: b },
+                Self::CompositedTransformTarget { link: c, child: d },
+            ) => a == c && b == d,
+            (
+                Self::CompositedTransformFollower {
+                    link: a,
+                    show_when_unlinked: b,
+                    offset: c,
+                    target_anchor: d,
+                    follower_anchor: e,
+                    child: f,
+                },
+                Self::CompositedTransformFollower {
+                    link: g,
+                    show_when_unlinked: h,
+                    offset: i,
+                    target_anchor: j,
+                    follower_anchor: k,
+                    child: l,
+                },
+            ) => a == g && b == h && c == i && d == j && e == k && f == l,
             (
                 Self::Align {
                     alignment: a,
@@ -1354,11 +1646,13 @@ impl PartialEq for WidgetKind {
                 Self::LayoutBuilder {
                     builder: a,
                     environment: c,
+                    environment_boundary: g,
                     revision: e,
                 },
                 Self::LayoutBuilder {
                     builder: b,
                     environment: d,
+                    environment_boundary: h,
                     revision: f,
                 },
             ) => {
@@ -1373,6 +1667,7 @@ impl PartialEq for WidgetKind {
                         (None, None) => true,
                         _ => false,
                     }
+                    && g == h
             }
             (
                 Self::Visibility {
@@ -1476,9 +1771,18 @@ fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bo
         && same_callback(&left.on_key_repeat, &right.on_key_repeat)
         && same_callback(&left.on_key_up, &right.on_key_up)
         && same_callback(&left.on_shortcut, &right.on_shortcut)
+        && same_callback(&left.shortcut_scope, &right.shortcut_scope)
+        && same_callback(&left.action_scope, &right.action_scope)
+        && same_callback(&left.action_listener, &right.action_listener)
+        && same_callback(
+            &left.action_invocation_listener,
+            &right.action_invocation_listener,
+        )
         && left.focus_node == right.focus_node
+        && same_callback(&left.focus_behavior, &right.focus_behavior)
         && left.autofocus == right.autofocus
         && left.include_semantics == right.include_semantics
+        && left.mouse_cursor == right.mouse_cursor
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1487,11 +1791,16 @@ pub(crate) enum WidgetType {
     Shape,
     CustomPaint,
     Decorated,
+    Banner,
     Image,
     Button,
     Text,
     SelectableText,
     SelectionArea,
+    SelectionContainer,
+    SelectionListener,
+    IndexedSemantics,
+    SemanticsDebugger,
     TextField,
     Padding,
     Constrained,
@@ -1502,6 +1811,12 @@ pub(crate) enum WidgetType {
     Baseline,
     RepaintBoundary,
     Gesture,
+    Listener,
+    RawGestureDetector,
+    MouseRegion,
+    TapRegion,
+    TapRegionSurface,
+    TextFieldTapRegion,
     Draggable,
     DragTarget,
     IgnorePointer,
@@ -1523,6 +1838,13 @@ pub(crate) enum WidgetType {
     Visibility,
     AspectRatio,
     Scroll,
+    RawScrollbar,
+    ListWheelScrollView,
+    ListWheelViewport,
+    DraggableScrollableSheet,
+    DraggableScrollableActuator,
+    TwoDimensionalScrollView,
+    TwoDimensionalViewport,
     PersistentHeader,
     NotificationListener,
     SliverViewport,
@@ -1536,19 +1858,29 @@ pub(crate) enum WidgetType {
     DropShadow,
     ColorFiltered,
     Blend,
+    ShaderMask,
+    BackdropFilter,
+    AnnotatedRegion,
+    CompositedTransformTarget,
+    CompositedTransformFollower,
 }
 impl WidgetType {
-    pub(super) const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Box => "Box",
             Self::Shape => "Shape",
             Self::CustomPaint => "CustomPaint",
             Self::Decorated => "DecoratedBox",
+            Self::Banner => "Banner",
             Self::Image => "Image",
             Self::Button => "Button",
             Self::Text => "Text",
             Self::SelectableText => "SelectableText",
             Self::SelectionArea => "SelectionArea",
+            Self::SelectionContainer => "SelectionContainer",
+            Self::SelectionListener => "SelectionListener",
+            Self::IndexedSemantics => "IndexedSemantics",
+            Self::SemanticsDebugger => "SemanticsDebugger",
             Self::TextField => "TextField",
             Self::Padding => "Padding",
             Self::Constrained => "ConstrainedBox",
@@ -1559,6 +1891,12 @@ impl WidgetType {
             Self::Baseline => "Baseline",
             Self::RepaintBoundary => "RepaintBoundary",
             Self::Gesture => "GestureDetector",
+            Self::Listener => "Listener",
+            Self::RawGestureDetector => "RawGestureDetector",
+            Self::MouseRegion => "MouseRegion",
+            Self::TapRegion => "TapRegion",
+            Self::TapRegionSurface => "TapRegionSurface",
+            Self::TextFieldTapRegion => "TextFieldTapRegion",
             Self::Draggable => "Draggable",
             Self::DragTarget => "DragTarget",
             Self::IgnorePointer => "IgnorePointer",
@@ -1580,6 +1918,13 @@ impl WidgetType {
             Self::Visibility => "Visibility",
             Self::AspectRatio => "AspectRatio",
             Self::Scroll => "ScrollView",
+            Self::RawScrollbar => "RawScrollbar",
+            Self::ListWheelScrollView => "ListWheelScrollView",
+            Self::ListWheelViewport => "ListWheelViewport",
+            Self::DraggableScrollableSheet => "DraggableScrollableSheet",
+            Self::DraggableScrollableActuator => "DraggableScrollableActuator",
+            Self::TwoDimensionalScrollView => "TwoDimensionalScrollView",
+            Self::TwoDimensionalViewport => "TwoDimensionalViewport",
             Self::PersistentHeader => "PersistentHeader",
             Self::NotificationListener => "NotificationListener",
             Self::SliverViewport => "SliverViewport",
@@ -1593,6 +1938,11 @@ impl WidgetType {
             Self::DropShadow => "DropShadow",
             Self::ColorFiltered => "ColorFiltered",
             Self::Blend => "Blend",
+            Self::ShaderMask => "ShaderMask",
+            Self::BackdropFilter => "BackdropFilter",
+            Self::AnnotatedRegion => "AnnotatedRegion",
+            Self::CompositedTransformTarget => "CompositedTransformTarget",
+            Self::CompositedTransformFollower => "CompositedTransformFollower",
         }
     }
 }
@@ -1877,6 +2227,11 @@ impl Widget {
                     child.bind_callbacks(allocate);
                 }
             }
+            WidgetKind::Banner { child, .. } => {
+                if let Some(child) = child {
+                    child.bind_callbacks(allocate);
+                }
+            }
             WidgetKind::Padding { child, .. }
             | WidgetKind::Decorated { child, .. }
             | WidgetKind::Constrained { child, .. }
@@ -1902,6 +2257,8 @@ impl Widget {
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
+            | WidgetKind::RawScrollbar { child, .. }
+            | WidgetKind::DraggableScrollableActuator { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
             | WidgetKind::NotificationListener { child, .. }
             | WidgetKind::Translate { child, .. }
@@ -1913,8 +2270,24 @@ impl Widget {
             | WidgetKind::Blur { child, .. }
             | WidgetKind::DropShadow { child, .. }
             | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. } => child.bind_callbacks(allocate),
-            WidgetKind::SelectionArea { child, .. } => child.bind_callbacks(allocate),
+            | WidgetKind::Blend { child, .. }
+            | WidgetKind::ShaderMask { child, .. }
+            | WidgetKind::BackdropFilter { child, .. }
+            | WidgetKind::AnnotatedRegion { child, .. }
+            | WidgetKind::CompositedTransformTarget { child, .. }
+            | WidgetKind::CompositedTransformFollower { child, .. } => {
+                child.bind_callbacks(allocate)
+            }
+            WidgetKind::RawInput { child, .. } => {
+                if let Some(child) = child {
+                    child.bind_callbacks(allocate);
+                }
+            }
+            WidgetKind::SelectionArea { child, .. }
+            | WidgetKind::SelectionContainer { child, .. }
+            | WidgetKind::SelectionListener { child, .. }
+            | WidgetKind::IndexedSemantics { child, .. }
+            | WidgetKind::SemanticsDebugger { child, .. } => child.bind_callbacks(allocate),
             WidgetKind::SliverViewport { .. } | WidgetKind::LayoutBuilder { .. } => {}
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
@@ -1931,7 +2304,12 @@ impl Widget {
             | WidgetKind::Text { .. }
             | WidgetKind::SelectableText { .. }
             | WidgetKind::TextField { .. }
-            | WidgetKind::Image { .. } => {}
+            | WidgetKind::Image { .. }
+            | WidgetKind::ListWheelScrollView { .. }
+            | WidgetKind::ListWheelViewport { .. }
+            | WidgetKind::DraggableScrollableSheet { .. }
+            | WidgetKind::TwoDimensionalScrollView { .. }
+            | WidgetKind::TwoDimensionalViewport { .. } => {}
         }
     }
     #[must_use]
@@ -2011,6 +2389,62 @@ impl Widget {
                 child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub fn selection_container(delegate: SelectionContainerDelegate, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SelectionContainer {
+                delegate,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub(crate) fn selection_listener(notifier: SelectionListenerNotifier, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SelectionListener {
+                delegate: SelectionContainerDelegate::with_controller(notifier.controller()),
+                notifier,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub(crate) fn indexed_semantics(index: usize, child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::IndexedSemantics {
+                index,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    #[must_use]
+    pub(crate) fn semantics_debugger(
+        label_style: TextStyle,
+        max_nodes: usize,
+        child: Self,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::SemanticsDebugger {
+                label_style,
+                max_nodes,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+    pub(crate) fn semantic_index(&self) -> Option<usize> {
+        match &self.kind {
+            WidgetKind::IndexedSemantics { index, .. } => Some(*index),
+            _ => None,
         }
     }
     #[must_use]
@@ -2465,6 +2899,7 @@ impl Widget {
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(builder),
                 environment: None,
+                environment_boundary: false,
                 revision: None,
             },
             semantics: SemanticProperties::default(),
@@ -2482,6 +2917,23 @@ impl Widget {
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(move |_| child.clone()),
                 environment: Some(value),
+                environment_boundary: false,
+                revision: None,
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a transparent retained node that prevents descendants from
+    /// reading typed environments installed above it.
+    #[must_use]
+    pub fn environment_boundary(child: Self) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::LayoutBuilder {
+                builder: Rc::new(move |_| child.clone()),
+                environment: None,
+                environment_boundary: true,
                 revision: None,
             },
             semantics: SemanticProperties::default(),
@@ -2503,6 +2955,7 @@ impl Widget {
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(builder),
                 environment: None,
+                environment_boundary: false,
                 revision: Some(revision),
             },
             semantics: SemanticProperties::default(),
@@ -2565,6 +3018,109 @@ impl Widget {
                 reverse,
                 physics,
                 child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates an interactive raw scrollbar overlay around an existing
+    /// scrollable child. The controller remains the single source of truth
+    /// for metrics and offset.
+    #[must_use]
+    pub fn raw_scrollbar(controller: ScrollController, child: impl Into<Self>) -> Self {
+        Self::raw_scrollbar_with_style(controller, RawScrollbarStyle::default(), child)
+    }
+
+    /// Creates a raw scrollbar with explicit renderer-independent styling.
+    #[must_use]
+    pub fn raw_scrollbar_with_style(
+        controller: ScrollController,
+        style: RawScrollbarStyle,
+        child: impl Into<Self>,
+    ) -> Self {
+        let child = child.into();
+        Self {
+            key: None,
+            kind: WidgetKind::RawScrollbar {
+                controller,
+                style,
+                child: Box::new(child),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained list-wheel viewport from its focused model.
+    #[must_use]
+    pub fn list_wheel_viewport(viewport: ListWheelViewport<Self>) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::ListWheelViewport {
+                viewport: RetainedWheelViewport(Rc::new(RefCell::new(viewport))),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained list-wheel scroll view from its focused model.
+    #[must_use]
+    pub fn list_wheel_scroll_view(view: ListWheelScrollView<Self>) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::ListWheelScrollView {
+                view: RetainedWheelScrollView(Rc::new(RefCell::new(view))),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained draggable sheet from its focused model.
+    #[must_use]
+    pub fn draggable_scrollable_sheet(sheet: DraggableScrollableSheet<Self>) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::DraggableScrollableSheet {
+                sheet: RetainedDraggableSheet(Rc::new(RefCell::new(sheet))),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates an actuator wrapper which resets the nearest descendant sheets.
+    #[must_use]
+    pub fn draggable_scrollable_actuator(
+        actuator: DraggableScrollableActuator,
+        child: impl Into<Self>,
+    ) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::DraggableScrollableActuator {
+                actuator: RetainedActuator(Rc::new(actuator)),
+                child: Box::new(child.into()),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained two-dimensional viewport from its focused model.
+    #[must_use]
+    pub fn two_dimensional_viewport(viewport: TwoDimensionalViewport<Self>) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::TwoDimensionalViewport {
+                viewport: RetainedTwoDimensionalViewport(Rc::new(RefCell::new(viewport))),
+            },
+            semantics: SemanticProperties::default(),
+        }
+    }
+
+    /// Creates a retained two-dimensional scroll view from its focused model.
+    #[must_use]
+    pub fn two_dimensional_scroll_view(view: TwoDimensionalScrollView<Self>) -> Self {
+        Self {
+            key: None,
+            kind: WidgetKind::TwoDimensionalScrollView {
+                view: RetainedTwoDimensionalScrollView(Rc::new(RefCell::new(view))),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2923,16 +3479,21 @@ impl Widget {
         self.key.as_ref()
     }
     pub(super) fn type_(&self) -> WidgetType {
-        match self.kind {
+        match &self.kind {
             WidgetKind::Box { .. } => WidgetType::Box,
             WidgetKind::Shape { .. } => WidgetType::Shape,
             WidgetKind::CustomPaint { .. } => WidgetType::CustomPaint,
             WidgetKind::Decorated { .. } => WidgetType::Decorated,
+            WidgetKind::Banner { .. } => WidgetType::Banner,
             WidgetKind::Image { .. } => WidgetType::Image,
             WidgetKind::Button { .. } => WidgetType::Button,
             WidgetKind::Text { .. } => WidgetType::Text,
             WidgetKind::SelectableText { .. } => WidgetType::SelectableText,
             WidgetKind::SelectionArea { .. } => WidgetType::SelectionArea,
+            WidgetKind::SelectionContainer { .. } => WidgetType::SelectionContainer,
+            WidgetKind::SelectionListener { .. } => WidgetType::SelectionListener,
+            WidgetKind::IndexedSemantics { .. } => WidgetType::IndexedSemantics,
+            WidgetKind::SemanticsDebugger { .. } => WidgetType::SemanticsDebugger,
             WidgetKind::TextField { .. } => WidgetType::TextField,
             WidgetKind::Padding { .. } => WidgetType::Padding,
             WidgetKind::Constrained { .. } => WidgetType::Constrained,
@@ -2943,6 +3504,7 @@ impl Widget {
             WidgetKind::Baseline { .. } => WidgetType::Baseline,
             WidgetKind::RepaintBoundary { .. } => WidgetType::RepaintBoundary,
             WidgetKind::Gesture { .. } => WidgetType::Gesture,
+            WidgetKind::RawInput { kind, .. } => kind.type_(),
             WidgetKind::Draggable { .. } => WidgetType::Draggable,
             WidgetKind::DragTarget { .. } => WidgetType::DragTarget,
             WidgetKind::IgnorePointer { .. } => WidgetType::IgnorePointer,
@@ -2964,6 +3526,15 @@ impl Widget {
             WidgetKind::Visibility { .. } => WidgetType::Visibility,
             WidgetKind::AspectRatio { .. } => WidgetType::AspectRatio,
             WidgetKind::Scroll { .. } => WidgetType::Scroll,
+            WidgetKind::RawScrollbar { .. } => WidgetType::RawScrollbar,
+            WidgetKind::ListWheelScrollView { .. } => WidgetType::ListWheelScrollView,
+            WidgetKind::ListWheelViewport { .. } => WidgetType::ListWheelViewport,
+            WidgetKind::DraggableScrollableSheet { .. } => WidgetType::DraggableScrollableSheet,
+            WidgetKind::DraggableScrollableActuator { .. } => {
+                WidgetType::DraggableScrollableActuator
+            }
+            WidgetKind::TwoDimensionalScrollView { .. } => WidgetType::TwoDimensionalScrollView,
+            WidgetKind::TwoDimensionalViewport { .. } => WidgetType::TwoDimensionalViewport,
             WidgetKind::PersistentHeader { .. } => WidgetType::PersistentHeader,
             WidgetKind::NotificationListener { .. } => WidgetType::NotificationListener,
             WidgetKind::SliverViewport { .. } => WidgetType::SliverViewport,
@@ -2977,6 +3548,13 @@ impl Widget {
             WidgetKind::DropShadow { .. } => WidgetType::DropShadow,
             WidgetKind::ColorFiltered { .. } => WidgetType::ColorFiltered,
             WidgetKind::Blend { .. } => WidgetType::Blend,
+            WidgetKind::ShaderMask { .. } => WidgetType::ShaderMask,
+            WidgetKind::BackdropFilter { .. } => WidgetType::BackdropFilter,
+            WidgetKind::AnnotatedRegion { .. } => WidgetType::AnnotatedRegion,
+            WidgetKind::CompositedTransformTarget { .. } => WidgetType::CompositedTransformTarget,
+            WidgetKind::CompositedTransformFollower { .. } => {
+                WidgetType::CompositedTransformFollower
+            }
         }
     }
     /// Shallow child view for reconciliation. Deep per-child clones were the
@@ -2992,6 +3570,7 @@ impl Widget {
             | WidgetKind::TextField { .. }
             | WidgetKind::Image { .. } => Vec::new(),
             WidgetKind::Button { child, .. } => child.iter().map(|c| c.as_ref()).collect(),
+            WidgetKind::Banner { child, .. } => child.iter().map(|c| c.as_ref()).collect(),
             WidgetKind::Padding { child, .. }
             | WidgetKind::Constrained { child, .. }
             | WidgetKind::Limited { child, .. }
@@ -3016,6 +3595,8 @@ impl Widget {
             | WidgetKind::Visibility { child, .. }
             | WidgetKind::AspectRatio { child, .. }
             | WidgetKind::Scroll { child, .. }
+            | WidgetKind::RawScrollbar { child, .. }
+            | WidgetKind::DraggableScrollableActuator { child, .. }
             | WidgetKind::PersistentHeader { child, .. }
             | WidgetKind::NotificationListener { child, .. }
             | WidgetKind::Translate { child, .. }
@@ -3028,14 +3609,96 @@ impl Widget {
             | WidgetKind::Blur { child, .. }
             | WidgetKind::DropShadow { child, .. }
             | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. } => vec![child.as_ref()],
-            WidgetKind::SelectionArea { child, .. } => vec![child.as_ref()],
+            | WidgetKind::Blend { child, .. }
+            | WidgetKind::ShaderMask { child, .. }
+            | WidgetKind::BackdropFilter { child, .. }
+            | WidgetKind::AnnotatedRegion { child, .. }
+            | WidgetKind::CompositedTransformTarget { child, .. }
+            | WidgetKind::CompositedTransformFollower { child, .. } => vec![child.as_ref()],
+            WidgetKind::RawInput { child, .. } => {
+                child.iter().map(|child| child.as_ref()).collect()
+            }
+            WidgetKind::SelectionArea { child, .. }
+            | WidgetKind::SelectionContainer { child, .. }
+            | WidgetKind::SelectionListener { child, .. }
+            | WidgetKind::IndexedSemantics { child, .. }
+            | WidgetKind::SemanticsDebugger { child, .. } => vec![child.as_ref()],
             WidgetKind::Flex { children, .. }
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
             | WidgetKind::Stack { children, .. }
             | WidgetKind::IndexedStack { children, .. } => children.iter().collect(),
-            WidgetKind::SliverViewport { .. } | WidgetKind::LayoutBuilder { .. } => Vec::new(),
+            WidgetKind::ListWheelScrollView { .. }
+            | WidgetKind::ListWheelViewport { .. }
+            | WidgetKind::DraggableScrollableSheet { .. }
+            | WidgetKind::TwoDimensionalScrollView { .. }
+            | WidgetKind::TwoDimensionalViewport { .. }
+            | WidgetKind::SliverViewport { .. }
+            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
         }
+    }
+}
+
+impl RawScrollbar {
+    /// Lowers this stateful scrollbar model into a retained widget overlay.
+    #[must_use]
+    pub fn into_widget(self, child: impl Into<Widget>) -> Widget {
+        Widget::raw_scrollbar_with_style(self.controller(), self.style(), child)
+    }
+
+    /// Alias for [`Self::into_widget`] with Flutter-style wrapper wording.
+    #[must_use]
+    pub fn with_child(self, child: impl Into<Widget>) -> Widget {
+        self.into_widget(child)
+    }
+}
+
+impl From<RawScrollbar> for Widget {
+    fn from(value: RawScrollbar) -> Self {
+        value.into_widget(Widget::box_(Size::ZERO, Color::TRANSPARENT))
+    }
+}
+
+impl From<ListWheelViewport<Widget>> for Widget {
+    fn from(value: ListWheelViewport<Widget>) -> Self {
+        Widget::list_wheel_viewport(value)
+    }
+}
+
+impl From<ListWheelScrollView<Widget>> for Widget {
+    fn from(value: ListWheelScrollView<Widget>) -> Self {
+        Widget::list_wheel_scroll_view(value)
+    }
+}
+
+impl From<DraggableScrollableSheet<Widget>> for Widget {
+    fn from(value: DraggableScrollableSheet<Widget>) -> Self {
+        Widget::draggable_scrollable_sheet(value)
+    }
+}
+
+impl DraggableScrollableActuator {
+    /// Lowers this reset channel into a transparent retained wrapper.
+    #[must_use]
+    pub fn with_child(self, child: impl Into<Widget>) -> Widget {
+        Widget::draggable_scrollable_actuator(self, child)
+    }
+}
+
+impl From<DraggableScrollableActuator> for Widget {
+    fn from(value: DraggableScrollableActuator) -> Self {
+        value.with_child(Widget::box_(Size::ZERO, Color::TRANSPARENT))
+    }
+}
+
+impl From<TwoDimensionalViewport<Widget>> for Widget {
+    fn from(value: TwoDimensionalViewport<Widget>) -> Self {
+        Widget::two_dimensional_viewport(value)
+    }
+}
+
+impl From<TwoDimensionalScrollView<Widget>> for Widget {
+    fn from(value: TwoDimensionalScrollView<Widget>) -> Self {
+        Widget::two_dimensional_scroll_view(value)
     }
 }

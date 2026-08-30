@@ -4,7 +4,7 @@
 
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ElementId(pub(crate) ArenaId);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RenderObjectId(pub(crate) ArenaId);

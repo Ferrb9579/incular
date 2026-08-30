@@ -44,6 +44,10 @@ impl SliverChildId {
 pub struct SliverChildLayout {
     pub id: SliverChildId,
     pub widget: Widget,
+    /// Logical accessibility position. This is independent from `id` because
+    /// rows, reorderable keys, and animated entries may use a different
+    /// retained identity than their collection position.
+    pub semantic_index: Option<usize>,
     /// Main-axis content offset before the viewport scroll transform.
     pub offset: f32,
     /// Cross-axis content offset.

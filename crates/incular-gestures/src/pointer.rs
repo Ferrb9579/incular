@@ -8,6 +8,7 @@ use crate::details::{
     LongPressMoveUpdateDetails, LongPressStartDetails, PointerDeviceKind, PointerEvent,
     TapDownDetails, TapUpDetails, Velocity,
 };
+use crate::raw::GestureRecognizer;
 
 impl GestureCallbacks {
     /// Whether this callback set contributes an exclusive single-pointer
@@ -48,6 +49,7 @@ impl GestureCallbacks {
 /// A reusable recognizer for tap, double-tap, long-press, and pan.
 pub struct PointerGestureRecognizer {
     callbacks: GestureCallbacks,
+    kind: PointerDeviceKind,
     down: Option<PointerEvent>,
     last_event: Option<PointerEvent>,
     last_tap: Option<Instant>,
@@ -56,10 +58,15 @@ pub struct PointerGestureRecognizer {
     long_press_started: bool,
 }
 
-/// Type alias for [`PointerGestureRecognizer`].
-pub type GestureRecognizer = PointerGestureRecognizer;
-/// Legacy compatibility alias for [`PointerGestureRecognizer`].
-pub type GestureDetector = PointerGestureRecognizer;
+/// Legacy direct-use gesture detector.
+///
+/// The retained widget path uses [`PointerGestureRecognizer`] directly. This
+/// small owning wrapper keeps the old convenience API concrete while
+/// `GestureRecognizer` itself is now a real object-safe trait for raw factory
+/// erasure.
+pub struct GestureDetector {
+    recognizer: PointerGestureRecognizer,
+}
 
 #[derive(Clone, Copy)]
 enum PanAction {
@@ -75,6 +82,7 @@ impl PointerGestureRecognizer {
     pub fn new(callbacks: GestureCallbacks) -> Self {
         Self {
             callbacks,
+            kind: PointerDeviceKind::Mouse,
             down: None,
             last_event: None,
             last_tap: None,
@@ -104,7 +112,7 @@ impl PointerGestureRecognizer {
                     callback(TapDownDetails {
                         global_position: event.position,
                         local_position: event.position,
-                        kind: PointerDeviceKind::Mouse,
+                        kind: self.kind,
                     });
                 }
                 if is_double_tap {
@@ -112,7 +120,7 @@ impl PointerGestureRecognizer {
                         callback(TapDownDetails {
                             global_position: event.position,
                             local_position: event.position,
-                            kind: PointerDeviceKind::Mouse,
+                            kind: self.kind,
                         });
                     }
                 }
@@ -309,7 +317,7 @@ impl PointerGestureRecognizer {
                         callback(TapUpDetails {
                             global_position: event.position,
                             local_position: event.position,
-                            kind: PointerDeviceKind::Mouse,
+                            kind: self.kind,
                         });
                     }
                     self.last_tap = None;
@@ -322,7 +330,7 @@ impl PointerGestureRecognizer {
                         callback(TapUpDetails {
                             global_position: event.position,
                             local_position: event.position,
-                            kind: PointerDeviceKind::Mouse,
+                            kind: self.kind,
                         });
                     }
                     self.last_tap = Some(event.time);
@@ -424,6 +432,54 @@ impl PointerGestureRecognizer {
                 true
             }
         }
+    }
+}
+
+impl GestureRecognizer for PointerGestureRecognizer {
+    fn observe(&mut self, event: PointerEvent) -> GestureDecision {
+        Self::observe(self, event)
+    }
+
+    fn dispatch(&mut self, action: GestureAction) {
+        Self::dispatch(self, action);
+    }
+
+    fn observe_raw(&mut self, event: crate::details::RawPointerEvent) -> GestureDecision {
+        self.kind = event.kind;
+        Self::observe(self, event.legacy())
+    }
+
+    fn cancel(&mut self) {
+        Self::cancel(self);
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+impl GestureDetector {
+    #[must_use]
+    pub fn new(callbacks: GestureCallbacks) -> Self {
+        Self {
+            recognizer: PointerGestureRecognizer::new(callbacks),
+        }
+    }
+
+    pub fn observe(&mut self, event: PointerEvent) -> GestureDecision {
+        self.recognizer.observe(event)
+    }
+
+    pub fn dispatch(&mut self, action: GestureAction) {
+        self.recognizer.dispatch(action);
+    }
+
+    pub fn cancel(&mut self) {
+        self.recognizer.cancel();
+    }
+
+    pub fn handle(&mut self, event: PointerEvent) -> bool {
+        self.recognizer.handle(event)
     }
 }
 

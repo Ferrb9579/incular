@@ -21,10 +21,15 @@ impl RenderKind {
             RenderKind::Shape { .. } => "Shape",
             RenderKind::CustomPaint { .. } => "CustomPaint",
             RenderKind::Decorated { .. } => "DecoratedBox",
+            RenderKind::Banner { .. } => "Banner",
             RenderKind::Button { .. } => "Button",
             RenderKind::Text { .. } => "Text",
             RenderKind::SelectableText { .. } => "SelectableText",
             RenderKind::SelectionArea => "SelectionArea",
+            RenderKind::SelectionContainer => "SelectionContainer",
+            RenderKind::SelectionListener => "SelectionListener",
+            RenderKind::IndexedSemantics => "IndexedSemantics",
+            RenderKind::SemanticsDebugger { .. } => "SemanticsDebugger",
             RenderKind::TextField { .. } => "TextField",
             RenderKind::Image { .. } => "Image",
             RenderKind::Padding { .. } => "Padding",
@@ -56,6 +61,13 @@ impl RenderKind {
             RenderKind::Visibility { .. } => "Visibility",
             RenderKind::AspectRatio { .. } => "AspectRatio",
             RenderKind::Scroll { .. } => "ScrollView",
+            RenderKind::RawScrollbar { .. } => "RawScrollbar",
+            RenderKind::ListWheelScrollView { .. } => "ListWheelScrollView",
+            RenderKind::ListWheelViewport { .. } => "ListWheelViewport",
+            RenderKind::DraggableScrollableSheet { .. } => "DraggableScrollableSheet",
+            RenderKind::DraggableScrollableActuator { .. } => "DraggableScrollableActuator",
+            RenderKind::TwoDimensionalScrollView { .. } => "TwoDimensionalScrollView",
+            RenderKind::TwoDimensionalViewport { .. } => "TwoDimensionalViewport",
             RenderKind::PersistentHeader { .. } => "PersistentHeader",
             RenderKind::SliverViewport { .. } => "SliverViewport",
             RenderKind::LayoutBuilder => "LayoutBuilder",
@@ -69,6 +81,11 @@ impl RenderKind {
             RenderKind::DropShadow { .. } => "DropShadow",
             RenderKind::ColorFiltered { .. } => "ColorFiltered",
             RenderKind::Blend { .. } => "Blend",
+            RenderKind::ShaderMask { .. } => "ShaderMask",
+            RenderKind::BackdropFilter { .. } => "BackdropFilter",
+            RenderKind::AnnotatedRegion { .. } => "AnnotatedRegion",
+            RenderKind::Leader { .. } => "CompositedTransformTarget",
+            RenderKind::Follower { .. } => "CompositedTransformFollower",
             RenderKind::Flexible { .. } => "Flexible",
         };
         name.to_owned()
@@ -118,6 +135,29 @@ pub fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> Render
             border: *border,
             radius: *radius,
         },
+        WidgetKind::Banner {
+            message,
+            text_direction,
+            location,
+            layout_direction,
+            color,
+            text_style,
+            shadow,
+            ..
+        } => {
+            let ambient_direction = environment
+                .and_then(environment_value::<TextDirection>)
+                .unwrap_or(TextDirection::Ltr);
+            RenderKind::Banner {
+                message: message.clone(),
+                text_direction: text_direction.unwrap_or(ambient_direction),
+                location: *location,
+                layout_direction: layout_direction.unwrap_or(ambient_direction),
+                color: *color,
+                text_style: text_style.clone(),
+                shadow: *shadow,
+            }
+        }
         WidgetKind::Button {
             size,
             color,
@@ -159,6 +199,17 @@ pub fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> Render
             align: *align,
         },
         WidgetKind::SelectionArea { .. } => RenderKind::SelectionArea,
+        WidgetKind::SelectionContainer { .. } => RenderKind::SelectionContainer,
+        WidgetKind::SelectionListener { .. } => RenderKind::SelectionListener,
+        WidgetKind::IndexedSemantics { .. } => RenderKind::IndexedSemantics,
+        WidgetKind::SemanticsDebugger {
+            label_style,
+            max_nodes,
+            ..
+        } => RenderKind::SemanticsDebugger {
+            label_style: label_style.clone(),
+            max_nodes: *max_nodes,
+        },
         WidgetKind::Image {
             image,
             width,
@@ -258,6 +309,7 @@ pub fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> Render
         },
         WidgetKind::RepaintBoundary { .. } => RenderKind::RepaintBoundary,
         WidgetKind::Gesture { .. } => RenderKind::Gesture,
+        WidgetKind::RawInput { .. } => RenderKind::Gesture,
         WidgetKind::Draggable { .. } | WidgetKind::DragTarget { .. } => RenderKind::Gesture,
         WidgetKind::IgnorePointer { .. } | WidgetKind::AbsorbPointer { .. } => RenderKind::Gesture,
         WidgetKind::Align {
@@ -415,6 +467,32 @@ pub fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> Render
             reverse: *reverse,
             physics: *physics,
         },
+        WidgetKind::RawScrollbar {
+            controller, style, ..
+        } => RenderKind::RawScrollbar {
+            controller: controller.clone(),
+            style: *style,
+        },
+        WidgetKind::ListWheelScrollView { view } => {
+            RenderKind::ListWheelScrollView { view: view.clone() }
+        }
+        WidgetKind::ListWheelViewport { viewport } => RenderKind::ListWheelViewport {
+            viewport: viewport.clone(),
+        },
+        WidgetKind::DraggableScrollableSheet { sheet } => RenderKind::DraggableScrollableSheet {
+            sheet: sheet.clone(),
+        },
+        WidgetKind::DraggableScrollableActuator { actuator, .. } => {
+            RenderKind::DraggableScrollableActuator {
+                actuator: actuator.clone(),
+            }
+        }
+        WidgetKind::TwoDimensionalScrollView { view } => {
+            RenderKind::TwoDimensionalScrollView { view: view.clone() }
+        }
+        WidgetKind::TwoDimensionalViewport { viewport } => RenderKind::TwoDimensionalViewport {
+            viewport: viewport.clone(),
+        },
         WidgetKind::PersistentHeader {
             controller,
             axis,
@@ -497,6 +575,45 @@ pub fn render_kind(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> Render
             controller: controller.clone(),
         },
         WidgetKind::Blend { mode, .. } => RenderKind::Blend { mode: *mode },
+        WidgetKind::ShaderMask {
+            shader, blend_mode, ..
+        } => RenderKind::ShaderMask {
+            shader: shader.clone(),
+            blend_mode: *blend_mode,
+        },
+        WidgetKind::BackdropFilter {
+            blur,
+            blend_mode,
+            enabled,
+            ..
+        } => RenderKind::BackdropFilter {
+            blur: *blur,
+            blend_mode: *blend_mode,
+            enabled: *enabled,
+        },
+        WidgetKind::AnnotatedRegion {
+            annotation, sized, ..
+        } => RenderKind::AnnotatedRegion {
+            annotation: annotation.clone(),
+            sized: *sized,
+        },
+        WidgetKind::CompositedTransformTarget { link, .. } => {
+            RenderKind::Leader { link: link.clone() }
+        }
+        WidgetKind::CompositedTransformFollower {
+            link,
+            show_when_unlinked,
+            offset,
+            target_anchor,
+            follower_anchor,
+            ..
+        } => RenderKind::Follower {
+            link: link.clone(),
+            show_when_unlinked: *show_when_unlinked,
+            offset: *offset,
+            target_anchor: *target_anchor,
+            follower_anchor: *follower_anchor,
+        },
     }
 }
 
@@ -817,6 +934,17 @@ pub(super) fn effect_composite_only_change(old: &RenderKind, new: &RenderKind) -
                 RenderKind::ColorFiltered { .. }
             )
             | (RenderKind::Blend { .. }, RenderKind::Blend { .. })
+            | (RenderKind::ShaderMask { .. }, RenderKind::ShaderMask { .. })
+            | (
+                RenderKind::BackdropFilter { .. },
+                RenderKind::BackdropFilter { .. }
+            )
+            | (
+                RenderKind::AnnotatedRegion { .. },
+                RenderKind::AnnotatedRegion { .. }
+            )
+            | (RenderKind::Leader { .. }, RenderKind::Leader { .. })
+            | (RenderKind::Follower { .. }, RenderKind::Follower { .. })
     )
 }
 

@@ -20,7 +20,7 @@ pub use geometry::{
 };
 pub use input::{
     Code, ImeEvent, InputEvent, Key as KeyboardKey, KeyState, KeyboardEvent, Location, Modifiers,
-    NamedKey, PointerPhase,
+    NamedKey, PointerDeviceKind, PointerPhase,
 };
 pub use key::{Key, KeyHandle, KeyId, KeyObject, LocalKey, StringKey, UniqueKey, ValueKey};
 pub use restoration::{RestorationBackend, RestorationKey, RestorationKeyError, RestorationScope};

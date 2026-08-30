@@ -1003,6 +1003,7 @@ impl Application {
         constraints: Constraints,
         now: Instant,
     ) -> Result<Option<(DisplayList, FrameStats)>, TreeError> {
+        let mut sensitivity_update = None;
         let outcome = self
             .with_window_mut(window_id, |record| {
                 if record.metrics.physical_size.is_zero() {
@@ -1014,6 +1015,11 @@ impl Application {
                         .runtime
                         .run_frame_at(constraints, now)
                         .map(|(list, stats)| {
+                            let sensitivity = record.runtime.content_sensitivity();
+                            if record.last_content_sensitivity != Some(sensitivity) {
+                                record.last_content_sensitivity = Some(sensitivity);
+                                sensitivity_update = Some(sensitivity);
+                            }
                             record.last_frame = FrameRecord {
                                 frame: 0,
                                 timings: stats.timings,
@@ -1034,6 +1040,14 @@ impl Application {
                 }
             })
             .unwrap_or(Ok(None));
+        if let Some(sensitivity) = sensitivity_update {
+            self.native_commands
+                .borrow_mut()
+                .push_back(NativeWindowCommand::Operate(WindowCommand::new(
+                    window_id,
+                    WindowOperation::SetContentSensitivity(sensitivity),
+                )));
+        }
         if matches!(outcome, Ok(None)) && self.contains_window(window_id) {
             self.scheduler_counters.frames_skipped =
                 self.scheduler_counters.frames_skipped.wrapping_add(1);
@@ -1396,6 +1410,9 @@ impl Application {
                                     return false;
                                 }
                             }
+                            WindowOperation::SetContentSensitivity(sensitivity) => {
+                                record.last_content_sensitivity = Some(*sensitivity);
+                            }
                             WindowOperation::RequestFocus => {}
                             WindowOperation::RequestRedraw => record.runtime.request_frame(),
                             WindowOperation::Close => unreachable!(),
@@ -1457,6 +1474,7 @@ impl Application {
             skipped_frames: record.skipped_frames,
             input_events: record.input_events,
             surface_generation: record.surface_generation,
+            content_sensitivity: record.runtime.content_sensitivity(),
             elements: record.runtime.tree().element_count(),
             render_objects: record.runtime.tree().render_object_count(),
             semantics: record.runtime.tree().semantics().len(),

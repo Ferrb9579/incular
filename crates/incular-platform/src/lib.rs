@@ -12,6 +12,13 @@ use incular_core::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{fmt, path::PathBuf};
 
+mod content_sensitivity;
+
+pub use content_sensitivity::{
+    ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
+    ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
+};
+
 /// Resolves the persistent, local application-data directory through the
 /// operating system's standard project-directory conventions.
 ///
@@ -240,6 +247,8 @@ pub enum WindowOperation {
     SetTitle(String),
     SetVisible(bool),
     SetLogicalSize(Size),
+    /// Applies the retained tree's effective capture-protection policy.
+    SetContentSensitivity(incular_config::ContentSensitivity),
     RequestFocus,
     RequestRedraw,
     Close,

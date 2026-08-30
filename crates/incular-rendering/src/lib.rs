@@ -10,7 +10,8 @@ mod paint;
 mod paths;
 
 pub use compositor::{
-    CompositorDiagnostics, FlattenedPicture, LayerId, LayerKind, LayerTree, normalize_opacity,
+    Annotation, CompositorDiagnostics, FlattenedAnnotation, FlattenedPicture, LayerAnchor, LayerId,
+    LayerKind, LayerLink, LayerTree, normalize_opacity,
 };
 pub use display_list::{Canvas, DisplayList, ImageSampling, PaintCommand};
 pub use effects::{

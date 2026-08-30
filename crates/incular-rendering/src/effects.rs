@@ -352,6 +352,9 @@ pub enum BlendMode {
     SoftLight,
     Difference,
     Exclusion,
+    /// Component-wise source/destination modulation. Flutter uses this as
+    /// the default blend mode for [`ShaderMask`](https://api.flutter.dev/flutter/widgets/ShaderMask-class.html).
+    Modulate,
 }
 impl BlendMode {
     #[must_use]
@@ -396,6 +399,7 @@ impl BlendMode {
             Self::SoftLight => 19,
             Self::Difference => 20,
             Self::Exclusion => 21,
+            Self::Modulate => 22,
         }
     }
 }
@@ -461,6 +465,7 @@ pub fn blend_premultiplied(mode: BlendMode, source: [f32; 4], destination: [f32;
             (src[2] + dst[2]).min(1.),
             (as_ + ad).min(1.),
         ],
+        BlendMode::Modulate => [src[0] * dst[0], src[1] * dst[1], src[2] * dst[2], as_ * ad],
         artistic => {
             let cs = straight_rgb(src);
             let cd = straight_rgb(dst);
@@ -568,6 +573,7 @@ fn artistic_blend_rgb(mode: BlendMode, source: [f32; 3], destination: [f32; 3]) 
             }
             BlendMode::Difference => (d - s).abs(),
             BlendMode::Exclusion => s + d - 2. * s * d,
+            BlendMode::Modulate => s * d,
             _ => s,
         };
     }

@@ -468,6 +468,8 @@ fn picture_origins(list: &DisplayList) -> (Offset, Offset) {
             | PaintCommand::PushDropShadow { .. }
             | PaintCommand::PushColorFilter { .. }
             | PaintCommand::PushBlend { .. }
+            | PaintCommand::PushShaderMask { .. }
+            | PaintCommand::PushBackdropFilter { .. }
             | PaintCommand::PopEffect => {}
         }
     }

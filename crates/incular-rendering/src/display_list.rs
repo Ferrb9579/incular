@@ -5,7 +5,7 @@ use crate::glyphs::GlyphRun;
 use crate::gradients::Brush;
 use crate::paint::{Border, FillRule, Paint, PaintStyle, Stroke};
 use crate::paths::Path;
-use incular_core::{Color, Rect, Transform};
+use incular_core::{Color, Rect, Size, Transform};
 use incular_image::ImageHandle;
 use std::sync::Arc;
 
@@ -100,6 +100,28 @@ pub enum PaintCommand {
     PushBlend {
         layer: LayerId,
         mode: BlendMode,
+        generation: u64,
+        bounds: Rect,
+    },
+    /// Begins an isolated shader-mask stage. The shader is evaluated in the
+    /// mask's logical coordinate space and blended over the child source.
+    PushShaderMask {
+        layer: LayerId,
+        shader: Brush,
+        blend_mode: BlendMode,
+        mask_size: Size,
+        mask_transform: Transform,
+        generation: u64,
+        bounds: Rect,
+    },
+    /// Begins a backdrop stage. The backend samples the already painted
+    /// destination in `bounds`, filters it, and then composites the filtered
+    /// pixels before the child source is painted.
+    PushBackdropFilter {
+        layer: LayerId,
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
         generation: u64,
         bounds: Rect,
     },

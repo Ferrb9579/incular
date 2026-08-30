@@ -3,6 +3,8 @@ use std::rc::{Rc, Weak};
 
 use incular_core::Rect;
 
+use crate::details::PointerDeviceKind;
+
 /// Shared focus handle usable by controls that are rebuilt often.
 ///
 /// For exclusive traversal use a [`FocusManager`]; calling
@@ -28,12 +30,60 @@ impl std::fmt::Debug for FocusNode {
 }
 struct FocusState {
     focused: Cell<bool>,
+    enabled: Cell<bool>,
     can_request_focus: Cell<bool>,
     skip_traversal: Cell<bool>,
     descendants_are_focusable: Cell<bool>,
     descendants_are_traversable: Cell<bool>,
     rect: Cell<Rect>,
     traversal_order: Cell<Option<f64>>,
+    observers: RefCell<Vec<Weak<FocusNodeObserverEntry>>>,
+    revision: Cell<u64>,
+}
+
+/// Owns one live subscription to a [`FocusNode`] change stream.
+///
+/// The retained focus tree keeps subscriptions weakly in the node, so a
+/// widget can be replaced or unmounted without leaving a callback attached to
+/// an application-owned node.
+pub struct FocusNodeSubscription {
+    entry: Rc<FocusNodeObserverEntry>,
+}
+
+struct FocusNodeObserverEntry {
+    active: Cell<bool>,
+    callback: Rc<dyn Fn()>,
+}
+
+impl Drop for FocusNodeSubscription {
+    fn drop(&mut self) {
+        self.entry.active.set(false);
+    }
+}
+
+impl FocusState {
+    fn notify(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+        let observers = {
+            let mut observers = self.observers.borrow_mut();
+            observers.retain(|observer| observer.strong_count() != 0);
+            observers
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        for observer in observers {
+            if observer.active.get() {
+                (observer.callback)();
+            }
+        }
+    }
+
+    fn set_focused(&self, focused: bool) {
+        if self.focused.replace(focused) != focused {
+            self.notify();
+        }
+    }
 }
 
 impl Default for FocusNode {
@@ -41,12 +91,15 @@ impl Default for FocusNode {
         Self {
             state: Rc::new(FocusState {
                 focused: Cell::new(false),
+                enabled: Cell::new(true),
                 can_request_focus: Cell::new(true),
                 skip_traversal: Cell::new(false),
                 descendants_are_focusable: Cell::new(true),
                 descendants_are_traversable: Cell::new(true),
                 rect: Cell::new(Rect::default()),
                 traversal_order: Cell::new(None),
+                observers: RefCell::new(Vec::new()),
+                revision: Cell::new(0),
             }),
         }
     }
@@ -56,13 +109,34 @@ impl FocusNode {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Subscribes to focus and focus-property changes.
+    #[must_use]
+    pub fn observe(&self, callback: impl Fn() + 'static) -> FocusNodeSubscription {
+        let entry = Rc::new(FocusNodeObserverEntry {
+            active: Cell::new(true),
+            callback: Rc::new(callback),
+        });
+        self.state
+            .observers
+            .borrow_mut()
+            .push(Rc::downgrade(&entry));
+        FocusNodeSubscription { entry }
+    }
+
+    /// Monotonic state revision for retained consumers that poll focus state.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.revision.get()
+    }
+
     pub fn request_focus(&self) {
         if self.can_request_focus() {
-            self.state.focused.set(true);
+            self.state.set_focused(true);
         }
     }
     pub fn unfocus(&self) {
-        self.state.focused.set(false);
+        self.state.set_focused(false);
     }
     #[must_use]
     pub fn has_focus(&self) -> bool {
@@ -74,31 +148,57 @@ impl FocusNode {
     }
     /// Excludes or includes this node in manager-driven traversal.
     pub fn set_can_request_focus(&self, can_request_focus: bool) {
-        self.state.can_request_focus.set(can_request_focus);
-        if !can_request_focus {
+        if self.state.can_request_focus.replace(can_request_focus) != can_request_focus {
+            if !self.can_request_focus() {
+                self.unfocus();
+            }
+            self.state.notify();
+        } else if !can_request_focus {
             self.unfocus();
         }
     }
     #[must_use]
     pub fn can_request_focus(&self) -> bool {
-        self.state.can_request_focus.get()
+        self.state.enabled.get() && self.state.can_request_focus.get()
+    }
+
+    /// Enables or disables this hosted focus node without overwriting its
+    /// application-controlled `can_request_focus` value.
+    pub fn set_enabled(&self, enabled: bool) {
+        if self.state.enabled.replace(enabled) != enabled {
+            if !enabled {
+                self.unfocus();
+            }
+            self.state.notify();
+        }
+    }
+
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.state.enabled.get()
     }
     pub fn set_skip_traversal(&self, skip: bool) {
-        self.state.skip_traversal.set(skip);
+        if self.state.skip_traversal.replace(skip) != skip {
+            self.state.notify();
+        }
     }
     #[must_use]
     pub fn skip_traversal(&self) -> bool {
         self.state.skip_traversal.get()
     }
     pub fn set_descendants_are_focusable(&self, focusable: bool) {
-        self.state.descendants_are_focusable.set(focusable);
+        if self.state.descendants_are_focusable.replace(focusable) != focusable {
+            self.state.notify();
+        }
     }
     #[must_use]
     pub fn descendants_are_focusable(&self) -> bool {
         self.state.descendants_are_focusable.get()
     }
     pub fn set_descendants_are_traversable(&self, traversable: bool) {
-        self.state.descendants_are_traversable.set(traversable);
+        if self.state.descendants_are_traversable.replace(traversable) != traversable {
+            self.state.notify();
+        }
     }
     #[must_use]
     pub fn descendants_are_traversable(&self) -> bool {
@@ -128,6 +228,316 @@ impl FocusNode {
     #[must_use]
     pub fn traversal_order(&self) -> Option<f64> {
         self.state.traversal_order.get()
+    }
+}
+
+/// The modality used to decide whether focus and hover highlights are
+/// visible. Keyboard navigation is traditional; touch interaction is touch
+/// mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FocusHighlightMode {
+    Touch,
+    #[default]
+    Traditional,
+}
+
+/// Controls how the retained focus system selects its highlight mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FocusHighlightStrategy {
+    #[default]
+    Automatic,
+    AlwaysTouch,
+    AlwaysTraditional,
+}
+
+struct HighlightModeState {
+    strategy: FocusHighlightStrategy,
+    last_interaction_requires_traditional: Option<bool>,
+    mode: FocusHighlightMode,
+    observers: Vec<Weak<HighlightModeObserverEntry>>,
+}
+
+struct HighlightModeObserverEntry {
+    active: Cell<bool>,
+    callback: Rc<dyn Fn(FocusHighlightMode)>,
+}
+
+/// Owns the process-local focus-highlight modality used by retained widgets.
+///
+/// The object is a cheap handle to the current UI thread's modality state.
+/// This mirrors Flutter's process-local `FocusManager` behavior while keeping
+/// the native platform event loop outside the gestures crate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FocusHighlightManager;
+
+pub struct FocusHighlightSubscription {
+    entry: Rc<HighlightModeObserverEntry>,
+}
+
+impl Drop for FocusHighlightSubscription {
+    fn drop(&mut self) {
+        self.entry.active.set(false);
+    }
+}
+
+thread_local! {
+    static HIGHLIGHT_MODE: RefCell<HighlightModeState> = const { RefCell::new(HighlightModeState {
+            strategy: FocusHighlightStrategy::Automatic,
+            last_interaction_requires_traditional: None,
+            mode: FocusHighlightMode::Traditional,
+            observers: Vec::new(),
+        }) };
+}
+
+impl FocusHighlightManager {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+
+    #[must_use]
+    pub fn mode(self) -> FocusHighlightMode {
+        HIGHLIGHT_MODE.with(|state| state.borrow().mode)
+    }
+
+    #[must_use]
+    pub fn strategy(self) -> FocusHighlightStrategy {
+        HIGHLIGHT_MODE.with(|state| state.borrow().strategy)
+    }
+
+    pub fn set_strategy(self, strategy: FocusHighlightStrategy) {
+        HIGHLIGHT_MODE.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.strategy == strategy {
+                return;
+            }
+            state.strategy = strategy;
+            let mode = match strategy {
+                FocusHighlightStrategy::Automatic => state
+                    .last_interaction_requires_traditional
+                    .map_or(state.mode, |traditional| {
+                        if traditional {
+                            FocusHighlightMode::Touch
+                        } else {
+                            FocusHighlightMode::Traditional
+                        }
+                    }),
+                FocusHighlightStrategy::AlwaysTouch => FocusHighlightMode::Touch,
+                FocusHighlightStrategy::AlwaysTraditional => FocusHighlightMode::Traditional,
+            };
+            Self::set_mode_locked(&mut state, mode);
+        });
+    }
+
+    /// Forces a mode, primarily for deterministic embedders and tests. Future
+    /// automatic input updates may change it again.
+    pub fn set_mode(self, mode: FocusHighlightMode) {
+        HIGHLIGHT_MODE.with(|state| Self::set_mode_locked(&mut state.borrow_mut(), mode));
+    }
+
+    /// Records keyboard input, which selects traditional highlights in
+    /// automatic mode.
+    pub fn note_keyboard_input(self) {
+        HIGHLIGHT_MODE.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.last_interaction_requires_traditional != Some(false) {
+                state.last_interaction_requires_traditional = Some(false);
+                if state.strategy == FocusHighlightStrategy::Automatic {
+                    Self::set_mode_locked(&mut state, FocusHighlightMode::Traditional);
+                }
+            }
+        });
+    }
+
+    /// Records pointer input using Flutter's touch/stylus versus traditional
+    /// modality split.
+    pub fn note_pointer_input(self, kind: PointerDeviceKind) {
+        let requires_touch_highlights = matches!(
+            kind,
+            PointerDeviceKind::Touch
+                | PointerDeviceKind::Stylus
+                | PointerDeviceKind::InvertedStylus
+        );
+        if !requires_touch_highlights {
+            return;
+        }
+        HIGHLIGHT_MODE.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.last_interaction_requires_traditional != Some(true) {
+                state.last_interaction_requires_traditional = Some(true);
+                if state.strategy == FocusHighlightStrategy::Automatic {
+                    Self::set_mode_locked(&mut state, FocusHighlightMode::Touch);
+                }
+            }
+        });
+    }
+
+    #[must_use]
+    pub fn observe(
+        self,
+        callback: impl Fn(FocusHighlightMode) + 'static,
+    ) -> FocusHighlightSubscription {
+        let entry = Rc::new(HighlightModeObserverEntry {
+            active: Cell::new(true),
+            callback: Rc::new(callback),
+        });
+        HIGHLIGHT_MODE.with(|state| {
+            state.borrow_mut().observers.push(Rc::downgrade(&entry));
+        });
+        FocusHighlightSubscription { entry }
+    }
+
+    fn set_mode_locked(state: &mut HighlightModeState, mode: FocusHighlightMode) {
+        if state.mode == mode {
+            return;
+        }
+        state.mode = mode;
+        state
+            .observers
+            .retain(|observer| observer.strong_count() != 0);
+        let observers = state
+            .observers
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        for observer in observers {
+            if observer.active.get() {
+                (observer.callback)(mode);
+            }
+        }
+    }
+}
+
+/// Retained focus/hover state used by `FocusableActionDetector`.
+pub struct FocusBehavior {
+    node: FocusNode,
+    enabled: Cell<bool>,
+    hovering: Cell<bool>,
+    focused: Cell<bool>,
+    can_show_highlight: Cell<bool>,
+    focus_highlight_visible: Cell<bool>,
+    hover_highlight_visible: Cell<bool>,
+    on_focus_change: Option<Rc<dyn Fn(bool)>>,
+    on_show_focus_highlight: Option<Rc<dyn Fn(bool)>>,
+    on_show_hover_highlight: Option<Rc<dyn Fn(bool)>>,
+    focus_subscription: RefCell<Option<FocusNodeSubscription>>,
+    highlight_subscription: RefCell<Option<FocusHighlightSubscription>>,
+}
+
+impl FocusBehavior {
+    #[must_use]
+    pub fn new(
+        node: FocusNode,
+        enabled: bool,
+        on_focus_change: Option<Rc<dyn Fn(bool)>>,
+        on_show_focus_highlight: Option<Rc<dyn Fn(bool)>>,
+        on_show_hover_highlight: Option<Rc<dyn Fn(bool)>>,
+    ) -> Rc<Self> {
+        node.set_enabled(enabled);
+        let can_show_highlight =
+            FocusHighlightManager::new().mode() == FocusHighlightMode::Traditional;
+        let focused = node.has_focus();
+        let behavior = Rc::new(Self {
+            focused: Cell::new(focused),
+            node,
+            enabled: Cell::new(enabled),
+            hovering: Cell::new(false),
+            can_show_highlight: Cell::new(can_show_highlight),
+            focus_highlight_visible: Cell::new(focused && enabled && can_show_highlight),
+            hover_highlight_visible: Cell::new(false),
+            on_focus_change,
+            on_show_focus_highlight,
+            on_show_hover_highlight,
+            focus_subscription: RefCell::new(None),
+            highlight_subscription: RefCell::new(None),
+        });
+        let weak = Rc::downgrade(&behavior);
+        let focus_subscription = behavior.node.observe(move || {
+            if let Some(behavior) = weak.upgrade() {
+                behavior.handle_focus_change();
+            }
+        });
+        *behavior.focus_subscription.borrow_mut() = Some(focus_subscription);
+        let weak = Rc::downgrade(&behavior);
+        let highlight_subscription = FocusHighlightManager::new().observe(move |mode| {
+            if let Some(behavior) = weak.upgrade() {
+                behavior.update_highlight_mode(mode);
+            }
+        });
+        *behavior.highlight_subscription.borrow_mut() = Some(highlight_subscription);
+        behavior
+    }
+
+    #[must_use]
+    pub fn node(&self) -> FocusNode {
+        self.node.clone()
+    }
+
+    #[must_use]
+    pub fn is_hovering(&self) -> bool {
+        self.hovering.get()
+    }
+
+    #[must_use]
+    pub fn is_focused(&self) -> bool {
+        self.focused.get()
+    }
+
+    pub fn mouse_enter(&self) {
+        if !self.hovering.replace(true) {
+            self.trigger_highlight_callbacks();
+        }
+    }
+
+    pub fn mouse_exit(&self) {
+        if self.hovering.replace(false) {
+            self.trigger_highlight_callbacks();
+        }
+    }
+
+    /// Carries MouseRegion state over a retained widget update without
+    /// replaying an enter callback for an already-hovered region.
+    pub fn restore_hovering(&self, hovering: bool) {
+        self.hovering.set(hovering);
+    }
+
+    fn handle_focus_change(&self) {
+        let focused = self.node.has_focus();
+        if self.focused.replace(focused) != focused {
+            self.trigger_highlight_callbacks();
+            if let Some(callback) = &self.on_focus_change {
+                callback(focused);
+            }
+        }
+    }
+
+    fn update_highlight_mode(&self, mode: FocusHighlightMode) {
+        self.can_show_highlight
+            .set(mode == FocusHighlightMode::Traditional);
+        self.trigger_highlight_callbacks();
+    }
+
+    fn focus_highlight_visible(&self) -> bool {
+        self.focused.get() && self.enabled.get() && self.can_show_highlight.get()
+    }
+
+    fn hover_highlight_visible(&self) -> bool {
+        self.hovering.get() && self.enabled.get() && self.can_show_highlight.get()
+    }
+
+    fn trigger_highlight_callbacks(&self) {
+        let focus_after = self.focus_highlight_visible();
+        let hover_after = self.hover_highlight_visible();
+        if self.focus_highlight_visible.replace(focus_after) != focus_after {
+            if let Some(callback) = &self.on_show_focus_highlight {
+                callback(focus_after);
+            }
+        }
+        if self.hover_highlight_visible.replace(hover_after) != hover_after {
+            if let Some(callback) = &self.on_show_hover_highlight {
+                callback(hover_after);
+            }
+        }
     }
 }
 
@@ -347,14 +757,14 @@ impl FocusManager {
             return false;
         }
         for known in self.nodes.iter().filter_map(Weak::upgrade) {
-            known.focused.set(false);
+            known.set_focused(false);
         }
-        node.state.focused.set(true);
+        node.state.set_focused(true);
         true
     }
     pub fn clear_focus(&mut self) {
         for node in self.nodes.iter().filter_map(Weak::upgrade) {
-            node.focused.set(false);
+            node.set_focused(false);
         }
         self.prune();
     }
@@ -387,7 +797,7 @@ impl FocusManager {
             None => first,
         };
         for node in self.nodes.iter().filter_map(Weak::upgrade) {
-            node.focused.set(false);
+            node.set_focused(false);
         }
         next.request_focus();
         Some(next)

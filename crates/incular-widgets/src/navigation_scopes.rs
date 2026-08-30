@@ -2,6 +2,15 @@
 
 use crate::Widget;
 
+#[allow(unused_imports)]
+pub use crate::navigation::{
+    AnimatedModalBarrier, BackButtonDispatcher, BackButtonListener, BackDispatchReport,
+    BackHandlerResult, BackRegistration, NavigatorPopHandler, NavigatorPopHandlerController,
+    PageStorage, PageStorageBucket, PageStorageIdentifier, PageStorageKey, PopAttempt, PopScope,
+    PopScopeController, RootRestorationScope, UnmanagedRestorationScope,
+    current_page_storage_bucket, current_restoration_scope,
+};
+
 /// An overlay portal that renders its overlay child in an ancestor `Overlay`.
 #[derive(Clone)]
 pub struct OverlayPortal {

@@ -50,12 +50,19 @@ impl WidgetTree {
         element: ElementId,
     ) -> Option<PointerCapture> {
         let key = GestureArenaKey { window, pointer };
-        let active = self.active_gestures.get(&key)?;
-        if !active
-            .members
-            .iter()
-            .any(|candidate| candidate.element == element)
-        {
+        let legacy_member = self.active_gestures.get(&key).is_some_and(|active| {
+            active
+                .members
+                .iter()
+                .any(|candidate| candidate.element == element)
+        });
+        let raw_member = self.raw_gesture_streams.get(&key).is_some_and(|active| {
+            active
+                .members
+                .iter()
+                .any(|candidate| candidate.element == element)
+        });
+        if !legacy_member && !raw_member {
             return None;
         }
         self.pointer_captures.insert(key, element);
@@ -601,6 +608,11 @@ impl WidgetTree {
                     node.shadow_layer,
                     node.color_filter_layer,
                     node.blend_layer,
+                    node.shader_mask_layer,
+                    node.backdrop_filter_layer,
+                    node.annotation_layer,
+                    node.leader_layer,
+                    node.follower_layer,
                 )
             })
             .collect::<Vec<_>>();
@@ -615,6 +627,11 @@ impl WidgetTree {
             shadow_layer,
             color_filter_layer,
             blend_layer,
+            shader_mask_layer,
+            backdrop_filter_layer,
+            _annotation_layer,
+            _leader_layer,
+            _follower_layer,
         ) in nodes
         {
             let constraints = self
@@ -912,6 +929,28 @@ impl WidgetTree {
                 RenderKind::Blend { mode } => {
                     if let Some(layer) = blend_layer
                         && self.compositor.update_blend(layer, mode)
+                    {
+                        changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
+                    }
+                }
+                RenderKind::ShaderMask { blend_mode, .. } => {
+                    if let Some(layer) = shader_mask_layer
+                        && self.compositor.update_shader_mask_blend(layer, blend_mode)
+                    {
+                        changed = true;
+                        self.diagnostics.compositor_only_updates += 1;
+                    }
+                }
+                RenderKind::BackdropFilter {
+                    blur,
+                    blend_mode,
+                    enabled,
+                } => {
+                    if let Some(layer) = backdrop_filter_layer
+                        && self
+                            .compositor
+                            .update_backdrop_filter(layer, blur, blend_mode, enabled)
                     {
                         changed = true;
                         self.diagnostics.compositor_only_updates += 1;

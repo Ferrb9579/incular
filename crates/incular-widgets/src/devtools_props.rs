@@ -73,6 +73,51 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
                 }
             }
         }
+        WidgetKind::SelectionArea { controller, child } => {
+            out.push(prop(
+                "selectionRevision",
+                DebugValue::Uint(controller.revision()),
+            ));
+            out.push(prop(
+                "registeredChildCount",
+                DebugValue::Uint(controller.registered_child_count() as u64),
+            ));
+            summarize_child(&mut out, child);
+        }
+        WidgetKind::SelectionContainer { delegate, child } => {
+            out.push(prop("enabled", DebugValue::Bool(delegate.is_enabled())));
+            out.push(prop(
+                "selectionRevision",
+                DebugValue::Uint(delegate.controller().revision()),
+            ));
+            summarize_child(&mut out, child);
+        }
+        WidgetKind::SelectionListener {
+            notifier, child, ..
+        } => {
+            out.push(prop("registered", DebugValue::Bool(notifier.registered())));
+            out.push(prop(
+                "selectionRevision",
+                DebugValue::Uint(notifier.revision()),
+            ));
+            summarize_child(&mut out, child);
+        }
+        WidgetKind::IndexedSemantics { index, child } => {
+            out.push(prop("index", DebugValue::Uint(*index as u64)));
+            summarize_child(&mut out, child);
+        }
+        WidgetKind::SemanticsDebugger {
+            label_style,
+            max_nodes,
+            child,
+        } => {
+            out.push(prop("maxNodes", DebugValue::Uint(*max_nodes as u64)));
+            out.push(prop(
+                "fontSize",
+                DebugValue::Float(f64::from(label_style.size)),
+            ));
+            summarize_child(&mut out, child);
+        }
         WidgetKind::Flex { axis, children, .. } => {
             out.push(prop("direction", DebugValue::Enum(format!("{axis:?}"))));
             out.push(prop("childCount", DebugValue::Uint(children.len() as u64)));
@@ -252,6 +297,15 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             ));
             summarize_child(&mut out, child);
         }
+        WidgetKind::RawInput { kind, child } => {
+            out.push(prop(
+                "inputType",
+                DebugValue::Str(kind.type_().name().to_owned()),
+            ));
+            if let Some(child) = child {
+                summarize_child(&mut out, child);
+            }
+        }
         WidgetKind::Box { size, .. } => {
             out.push(prop("size", size_value(*size)));
         }
@@ -340,11 +394,16 @@ pub fn kind_display_name(kind: &WidgetKind) -> String {
         WidgetKind::Shape { .. } => "Shape",
         WidgetKind::CustomPaint { .. } => "CustomPaint",
         WidgetKind::Decorated { .. } => "DecoratedBox",
+        WidgetKind::Banner { .. } => "Banner",
         WidgetKind::Image { .. } => "Image",
         WidgetKind::Button { .. } => "Button",
         WidgetKind::Text { .. } => "Text",
         WidgetKind::SelectableText { .. } => "SelectableText",
         WidgetKind::SelectionArea { .. } => "SelectionArea",
+        WidgetKind::SelectionContainer { .. } => "SelectionContainer",
+        WidgetKind::SelectionListener { .. } => "SelectionListener",
+        WidgetKind::IndexedSemantics { .. } => "IndexedSemantics",
+        WidgetKind::SemanticsDebugger { .. } => "SemanticsDebugger",
         WidgetKind::TextField { .. } => "TextField",
         WidgetKind::Padding { .. } => "Padding",
         WidgetKind::Constrained { .. } => "ConstrainedBox",
@@ -355,6 +414,7 @@ pub fn kind_display_name(kind: &WidgetKind) -> String {
         WidgetKind::Baseline { .. } => "Baseline",
         WidgetKind::RepaintBoundary { .. } => "RepaintBoundary",
         WidgetKind::Gesture { .. } => "GestureDetector",
+        WidgetKind::RawInput { kind, .. } => kind.type_().name(),
         WidgetKind::Draggable { .. } => "Draggable",
         WidgetKind::DragTarget { .. } => "DragTarget",
         WidgetKind::IgnorePointer { .. } => "IgnorePointer",
@@ -394,6 +454,18 @@ pub fn kind_display_name(kind: &WidgetKind) -> String {
         WidgetKind::ClipRRect { .. } => "ClipRRect",
         WidgetKind::ClipOval { .. } => "ClipOval",
         WidgetKind::ClipPath { .. } => "ClipPath",
+        WidgetKind::ShaderMask { .. } => "ShaderMask",
+        WidgetKind::BackdropFilter { .. } => "BackdropFilter",
+        WidgetKind::AnnotatedRegion { .. } => "AnnotatedRegion",
+        WidgetKind::CompositedTransformTarget { .. } => "CompositedTransformTarget",
+        WidgetKind::CompositedTransformFollower { .. } => "CompositedTransformFollower",
+        WidgetKind::RawScrollbar { .. } => "RawScrollbar",
+        WidgetKind::ListWheelScrollView { .. } => "ListWheelScrollView",
+        WidgetKind::ListWheelViewport { .. } => "ListWheelViewport",
+        WidgetKind::DraggableScrollableSheet { .. } => "DraggableScrollableSheet",
+        WidgetKind::DraggableScrollableActuator { .. } => "DraggableScrollableActuator",
+        WidgetKind::TwoDimensionalScrollView { .. } => "TwoDimensionalScrollView",
+        WidgetKind::TwoDimensionalViewport { .. } => "TwoDimensionalViewport",
     };
     name.to_owned()
 }
@@ -406,10 +478,15 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
         RenderKind::Shape { .. } => "Shape",
         RenderKind::CustomPaint { .. } => "CustomPaint",
         RenderKind::Decorated { .. } => "DecoratedBox",
+        RenderKind::Banner { .. } => "Banner",
         RenderKind::Button { .. } => "Button",
         RenderKind::Text { .. } => "Text",
         RenderKind::SelectableText { .. } => "SelectableText",
         RenderKind::SelectionArea => "SelectionArea",
+        RenderKind::SelectionContainer => "SelectionContainer",
+        RenderKind::SelectionListener => "SelectionListener",
+        RenderKind::IndexedSemantics => "IndexedSemantics",
+        RenderKind::SemanticsDebugger { .. } => "SemanticsDebugger",
         RenderKind::TextField { .. } => "TextField",
         RenderKind::Image { .. } => "Image",
         RenderKind::Padding { .. } => "Padding",
@@ -455,6 +532,18 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
         RenderKind::ClipRRect { .. } => "ClipRRect",
         RenderKind::ClipOval { .. } => "ClipOval",
         RenderKind::ClipPath { .. } => "ClipPath",
+        RenderKind::ShaderMask { .. } => "ShaderMask",
+        RenderKind::BackdropFilter { .. } => "BackdropFilter",
+        RenderKind::AnnotatedRegion { .. } => "AnnotatedRegion",
+        RenderKind::Leader { .. } => "CompositedTransformTarget",
+        RenderKind::Follower { .. } => "CompositedTransformFollower",
+        RenderKind::RawScrollbar { .. } => "RawScrollbar",
+        RenderKind::ListWheelScrollView { .. } => "ListWheelScrollView",
+        RenderKind::ListWheelViewport { .. } => "ListWheelViewport",
+        RenderKind::DraggableScrollableSheet { .. } => "DraggableScrollableSheet",
+        RenderKind::DraggableScrollableActuator { .. } => "DraggableScrollableActuator",
+        RenderKind::TwoDimensionalScrollView { .. } => "TwoDimensionalScrollView",
+        RenderKind::TwoDimensionalViewport { .. } => "TwoDimensionalViewport",
     };
     name.to_owned()
 }

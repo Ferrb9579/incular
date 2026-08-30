@@ -1,5 +1,13 @@
 use super::*;
 
+use crate::GestureDetector;
+
+#[path = "../reorderable.rs"]
+mod reorderable;
+pub use reorderable::{
+    ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
+};
+
 /// Retained state for a reorderable sliver. The order stores logical item
 /// identities rather than visible slots, so moving an item preserves its
 /// element state and measured extent.
@@ -13,6 +21,8 @@ struct SliverReorderState {
     next_item: usize,
     revision: u64,
 }
+
+type DropIndices = Rc<RefCell<HashMap<usize, Rc<Cell<Option<usize>>>>>>;
 
 impl SliverReorderController {
     #[must_use]
@@ -111,26 +121,78 @@ struct ReorderableRenderSliver {
     controller: SliverReorderController,
     drag_context: DragDropContext<usize>,
     on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_item: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_start: Option<Rc<dyn Fn(usize)>>,
+    on_reorder_end: Option<Rc<dyn Fn(usize)>>,
+    require_drag_listener: bool,
+    delayed_states: Rc<RefCell<HashMap<usize, Rc<Cell<bool>>>>>,
+    drop_indices: DropIndices,
     widgets: HashMap<usize, Widget>,
     order: Vec<usize>,
     controller_revision: u64,
 }
 
+struct ReorderableRenderSliverParams {
+    controller: SliverReorderController,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    drag_context: DragDropContext<usize>,
+    on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_item: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_start: Option<Rc<dyn Fn(usize)>>,
+    on_reorder_end: Option<Rc<dyn Fn(usize)>>,
+    item_extent: Option<f32>,
+    item_extent_builder: Option<Rc<dyn Fn(usize) -> f32>>,
+    prototype_item: Option<Widget>,
+    axis: Axis,
+    require_drag_listener: bool,
+}
+
 impl ReorderableRenderSliver {
-    fn new(
-        controller: SliverReorderController,
-        builder: Rc<dyn Fn(usize) -> Widget>,
-        drag_context: DragDropContext<usize>,
-        on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
-    ) -> Self {
+    fn new(params: ReorderableRenderSliverParams) -> Self {
+        let ReorderableRenderSliverParams {
+            controller,
+            builder,
+            drag_context,
+            on_reorder,
+            on_reorder_item,
+            on_reorder_start,
+            on_reorder_end,
+            item_extent,
+            item_extent_builder,
+            prototype_item,
+            axis,
+            require_drag_listener,
+        } = params;
         let order = controller.order();
+        let index = if let Some(extent) = item_extent {
+            MeasuredExtentIndex::with_estimates(order.len(), extent, |_| extent)
+        } else if let Some(extent_builder) = item_extent_builder {
+            MeasuredExtentIndex::with_estimates(
+                order.len(),
+                DEFAULT_LAZY_ITEM_EXTENT,
+                move |position| extent_builder(position),
+            )
+        } else if let Some(prototype) = prototype_item {
+            let extent = widget_main_extent_hint(&prototype, axis)
+                .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
+                .max(1.);
+            MeasuredExtentIndex::with_estimates(order.len(), extent, |_| extent)
+        } else {
+            MeasuredExtentIndex::new(order.len(), DEFAULT_LAZY_ITEM_EXTENT)
+        };
         Self {
-            index: MeasuredExtentIndex::new(order.len(), DEFAULT_LAZY_ITEM_EXTENT),
+            index,
             builder,
             controller_revision: controller.revision(),
             controller,
             drag_context,
             on_reorder,
+            on_reorder_item,
+            on_reorder_start,
+            on_reorder_end,
+            require_drag_listener,
+            delayed_states: Rc::new(RefCell::new(HashMap::new())),
+            drop_indices: Rc::new(RefCell::new(HashMap::new())),
             widgets: HashMap::new(),
             order,
         }
@@ -165,6 +227,9 @@ impl ReorderableRenderSliver {
         }
         self.widgets
             .retain(|item, _| next_order.iter().any(|candidate| candidate == item));
+        self.drop_indices
+            .borrow_mut()
+            .retain(|item, _| next_order.iter().any(|candidate| candidate == item));
         self.order = next_order;
         self.controller_revision = revision;
     }
@@ -173,21 +238,152 @@ impl ReorderableRenderSliver {
         if let Some(widget) = self.widgets.get(&item) {
             return widget.clone();
         }
-        let child = (self.builder)(item);
+        let mut child = (self.builder)(item);
         let context = self.drag_context.clone();
         let controller = self.controller.clone();
         let on_reorder = self.on_reorder.clone();
-        let draggable: Widget = Draggable::new(context.clone(), item, child).into();
-        let target = DragTarget::new(context, draggable).on_drop(move |source_item| {
-            let Some(source_position) = controller.position_of(source_item) else {
-                return;
+        let on_reorder_item = self.on_reorder_item.clone();
+        let on_reorder_start = self.on_reorder_start.clone();
+        let on_reorder_end = self.on_reorder_end.clone();
+        let delayed_states = self.delayed_states.clone();
+        let drop_index = Rc::new(Cell::new(None));
+        self.drop_indices
+            .borrow_mut()
+            .insert(item, drop_index.clone());
+        let mut install_source = |child: Widget, spec: reorderable::ReorderableListenerSpec| {
+            let delayed = if spec.delayed {
+                let delayed = delayed_states
+                    .borrow_mut()
+                    .entry(item)
+                    .or_insert_with(|| Rc::new(Cell::new(false)))
+                    .clone();
+                Some(delayed)
+            } else {
+                delayed_states.borrow_mut().remove(&item);
+                None
             };
-            if controller.move_item(source_position, position)
-                && let Some(callback) = &on_reorder
-            {
-                callback(source_position, position);
+            let can_start = delayed.clone();
+            let start_index = spec.index;
+            let on_reorder_start = on_reorder_start.clone();
+            let start_drop_index = drop_index.clone();
+            let draggable = Draggable::new(context.clone(), item, child)
+                .on_start(move |_| {
+                    start_drop_index.set(None);
+                    if can_start.as_ref().is_none_or(|started| started.get())
+                        && let Some(callback) = &on_reorder_start
+                    {
+                        callback(start_index);
+                    }
+                })
+                .on_end({
+                    let controller = controller.clone();
+                    let on_reorder_end = on_reorder_end.clone();
+                    let delayed = delayed.clone();
+                    let drop_index = drop_index.clone();
+                    move |_| {
+                        if delayed.as_ref().is_some_and(|started| !started.get()) {
+                            return;
+                        }
+                        let index = drop_index.take().or_else(|| controller.position_of(item));
+                        if let (Some(callback), Some(index)) = (&on_reorder_end, index) {
+                            callback(index);
+                        }
+                        if let Some(delayed) = &delayed {
+                            delayed.set(false);
+                        }
+                    }
+                })
+                .on_cancel({
+                    let delayed = delayed.clone();
+                    let drop_index = drop_index.clone();
+                    move |_| {
+                        drop_index.set(None);
+                        if let Some(delayed) = &delayed {
+                            delayed.set(false);
+                        }
+                    }
+                });
+            if spec.delayed {
+                let delayed = delayed.expect("delayed listener state");
+                let reset = delayed.clone();
+                let started = delayed.clone();
+                GestureDetector::new(draggable)
+                    .on_tap_down(move |_| reset.set(false))
+                    .on_long_press_start(move |_| started.set(true))
+                    .into()
+            } else {
+                draggable.into()
             }
-        });
+        };
+        let found_listener = reorderable::install_listener(&mut child, &mut install_source);
+        let source_enabled = found_listener.is_some_and(|spec| spec.enabled);
+        if found_listener.is_none() {
+            delayed_states.borrow_mut().remove(&item);
+        }
+        if !source_enabled && !self.require_drag_listener && found_listener.is_none() {
+            let delayed_states = delayed_states.clone();
+            let drop_index = drop_index.clone();
+            let draggable: Widget = Draggable::new(context.clone(), item, child)
+                .on_start({
+                    let on_reorder_start = self.on_reorder_start.clone();
+                    let drop_index = drop_index.clone();
+                    move |_| {
+                        drop_index.set(None);
+                        if let Some(callback) = &on_reorder_start {
+                            callback(position);
+                        }
+                    }
+                })
+                .on_end({
+                    let controller = self.controller.clone();
+                    let on_reorder_end = self.on_reorder_end.clone();
+                    let drop_index = drop_index.clone();
+                    move |_| {
+                        let index = drop_index.take().or_else(|| controller.position_of(item));
+                        if let (Some(callback), Some(index)) = (&on_reorder_end, index) {
+                            callback(index);
+                        }
+                    }
+                })
+                .on_cancel(move |_| {
+                    drop_index.set(None);
+                    delayed_states.borrow_mut().remove(&item);
+                })
+                .into();
+            child = draggable;
+        } else if found_listener.is_some() && !source_enabled {
+            delayed_states.borrow_mut().remove(&item);
+        }
+        let target_context = context.clone();
+        let target_delayed_states = delayed_states.clone();
+        let target_drop_indices = self.drop_indices.clone();
+        let target = DragTarget::new(target_context, child)
+            .on_will_accept(move |source_item| {
+                target_delayed_states
+                    .borrow()
+                    .get(&source_item)
+                    .is_none_or(|started| started.get())
+            })
+            .on_drop(move |source_item| {
+                let Some(source_position) = controller.position_of(source_item) else {
+                    return;
+                };
+                let insertion_index = if source_position < position {
+                    position.saturating_add(1)
+                } else {
+                    position
+                };
+                if let Some(drop_index) = target_drop_indices.borrow().get(&source_item) {
+                    drop_index.set(Some(insertion_index));
+                }
+                if controller.move_item(source_position, position) && source_position != position {
+                    if let Some(callback) = &on_reorder {
+                        callback(source_position, insertion_index);
+                    } else if let Some(callback) = &on_reorder_item {
+                        callback(source_position, position);
+                    }
+                }
+            });
         let widget: Widget = target.into();
         self.widgets.insert(item, widget.clone());
         widget
@@ -213,6 +409,7 @@ impl RenderSliver for ReorderableRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(item),
                     widget: self.child_widget(position, item),
+                    semantic_index: Some(position),
                     offset,
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(
@@ -261,6 +458,13 @@ pub struct SliverReorderableList {
     builder: Rc<dyn Fn(usize) -> Widget>,
     drag_context: DragDropContext<usize>,
     on_reorder: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_item: Option<Rc<dyn Fn(usize, usize)>>,
+    on_reorder_start: Option<Rc<dyn Fn(usize)>>,
+    on_reorder_end: Option<Rc<dyn Fn(usize)>>,
+    item_extent: Option<f32>,
+    item_extent_builder: Option<Rc<dyn Fn(usize) -> f32>>,
+    prototype_item: Option<Widget>,
+    require_drag_listener: bool,
 }
 
 impl SliverReorderableList {
@@ -274,6 +478,13 @@ impl SliverReorderableList {
             builder: Rc::new(move |i| builder(i).into()),
             drag_context: DragDropContext::new(),
             on_reorder: None,
+            on_reorder_item: None,
+            on_reorder_start: None,
+            on_reorder_end: None,
+            item_extent: None,
+            item_extent_builder: None,
+            prototype_item: None,
+            require_drag_listener: false,
         }
     }
 
@@ -293,6 +504,61 @@ impl SliverReorderableList {
     #[must_use]
     pub fn on_reorder(mut self, callback: impl Fn(usize, usize) + 'static) -> Self {
         self.on_reorder = Some(Rc::new(callback));
+        self.on_reorder_item = None;
+        self
+    }
+
+    /// Receives `(old_position, final_position)` after the old item is
+    /// removed. This is the adjusted Flutter `onReorderItem` convention.
+    #[must_use]
+    pub fn on_reorder_item(mut self, callback: impl Fn(usize, usize) + 'static) -> Self {
+        self.on_reorder_item = Some(Rc::new(callback));
+        self.on_reorder = None;
+        self
+    }
+
+    /// Receives the visual index once the drag source has actually started.
+    #[must_use]
+    pub fn on_reorder_start(mut self, callback: impl Fn(usize) + 'static) -> Self {
+        self.on_reorder_start = Some(Rc::new(callback));
+        self
+    }
+
+    /// Receives the final visual index when a started drag ends, including a
+    /// drop at its original location.
+    #[must_use]
+    pub fn on_reorder_end(mut self, callback: impl Fn(usize) + 'static) -> Self {
+        self.on_reorder_end = Some(Rc::new(callback));
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn require_drag_listener(mut self, required: bool) -> Self {
+        self.require_drag_listener = required;
+        self
+    }
+
+    #[must_use]
+    pub fn item_extent(mut self, extent: f32) -> Self {
+        self.item_extent = extent.is_finite().then_some(extent.max(1.));
+        self.item_extent_builder = None;
+        self.prototype_item = None;
+        self
+    }
+
+    #[must_use]
+    pub fn item_extent_builder(mut self, builder: impl Fn(usize) -> f32 + 'static) -> Self {
+        self.item_extent_builder = Some(Rc::new(builder));
+        self.item_extent = None;
+        self.prototype_item = None;
+        self
+    }
+
+    #[must_use]
+    pub fn prototype_item(mut self, prototype: impl Into<Widget>) -> Self {
+        self.prototype_item = Some(prototype.into());
+        self.item_extent = None;
+        self.item_extent_builder = None;
         self
     }
 }
@@ -317,10 +583,20 @@ impl Sliver for SliverReorderableList {
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
         Box::new(ReorderableRenderSliver::new(
-            self.controller.clone(),
-            self.builder.clone(),
-            self.drag_context.clone(),
-            self.on_reorder.clone(),
+            ReorderableRenderSliverParams {
+                controller: self.controller.clone(),
+                builder: self.builder.clone(),
+                drag_context: self.drag_context.clone(),
+                on_reorder: self.on_reorder.clone(),
+                on_reorder_item: self.on_reorder_item.clone(),
+                on_reorder_start: self.on_reorder_start.clone(),
+                on_reorder_end: self.on_reorder_end.clone(),
+                item_extent: self.item_extent,
+                item_extent_builder: self.item_extent_builder.clone(),
+                prototype_item: self.prototype_item.clone(),
+                axis: _axis,
+                require_drag_listener: self.require_drag_listener,
+            },
         ))
     }
 }
@@ -608,6 +884,7 @@ impl RenderSliver for AnimatedExtentRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(entry.id as usize),
                     widget: self.child_widget(position, entry.id),
+                    semantic_index: Some(position),
                     offset,
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(

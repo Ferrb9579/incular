@@ -368,6 +368,7 @@ impl From<LayoutBuilder> for Widget {
         Widget::from_kind(WidgetKind::LayoutBuilder {
             builder: value.builder,
             environment: None,
+            environment_boundary: false,
             revision: None,
         })
     }

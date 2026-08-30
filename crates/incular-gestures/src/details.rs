@@ -4,7 +4,11 @@ use std::time::Instant;
 
 use incular_core::{KeyboardEvent, Offset, PointerPhase};
 
-use crate::focus::FocusNode;
+use crate::focus::{FocusBehavior, FocusNode};
+use crate::keyboard::{
+    ActionInvocationSubscription, ActionListenerSubscription, ErasedActionScope,
+    ErasedShortcutScope,
+};
 
 use crate::scale::{ScaleEndDetails, ScaleStartDetails, ScaleUpdateDetails};
 
@@ -17,17 +21,101 @@ pub struct PointerEvent {
     pub time: Instant,
 }
 
-/// The physical device category generating pointer events.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum PointerDeviceKind {
-    #[default]
-    Mouse,
-    Touch,
-    Stylus,
-    InvertedStylus,
-    Trackpad,
-    Unknown,
+/// A pointer event carrying the metadata needed by raw input widgets.
+///
+/// [`PointerEvent`] predates device-aware routing and remains intentionally
+/// small for source compatibility. Raw widgets use this value so a retained
+/// route can preserve the pointer stream, physical device, pressed buttons,
+/// phase, and event timestamp without coupling the widget crate to a native
+/// event type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RawPointerEvent {
+    /// Stable for the duration of one pointer sequence.
+    pub pointer: u64,
+    /// Platform device identifier. Zero means that the source did not supply
+    /// a distinct device identifier.
+    pub device: u64,
+    /// Physical category of the device producing the event.
+    pub kind: PointerDeviceKind,
+    /// Flutter-compatible button bit mask. Zero is used for hover and for
+    /// adapters that do not expose button state.
+    pub buttons: u32,
+    pub position: Offset,
+    pub phase: PointerPhase,
+    pub time: Instant,
 }
+
+impl RawPointerEvent {
+    #[must_use]
+    pub const fn new(
+        pointer: u64,
+        device: u64,
+        kind: PointerDeviceKind,
+        buttons: u32,
+        position: Offset,
+        phase: PointerPhase,
+        time: Instant,
+    ) -> Self {
+        Self {
+            pointer,
+            device,
+            kind,
+            buttons,
+            position,
+            phase,
+            time,
+        }
+    }
+
+    /// Converts to the legacy gesture event while retaining the raw event as
+    /// the source of truth for listeners and tap regions.
+    #[must_use]
+    pub const fn legacy(self) -> PointerEvent {
+        PointerEvent {
+            pointer: self.pointer,
+            position: self.position,
+            phase: self.phase,
+            time: self.time,
+        }
+    }
+}
+
+impl From<PointerEvent> for RawPointerEvent {
+    fn from(event: PointerEvent) -> Self {
+        Self {
+            pointer: event.pointer,
+            device: 0,
+            kind: PointerDeviceKind::Mouse,
+            buttons: 0,
+            position: event.position,
+            phase: event.phase,
+            time: event.time,
+        }
+    }
+}
+
+/// A renderer-independent cursor preference for a [`MouseRegion`].
+///
+/// `Defer` asks the retained hit-test route to continue behind the current
+/// region. Concrete platform adapters map the remaining values to native
+/// cursors; keeping the vocabulary here avoids putting platform handles in
+/// the widget or painting crates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MouseCursor {
+    #[default]
+    Defer,
+    Basic,
+    Click,
+    Text,
+    Crosshair,
+    Grab,
+    Grabbing,
+    NotAllowed,
+    ResizeHorizontal,
+    ResizeVertical,
+}
+
+pub use incular_core::PointerDeviceKind;
 
 /// Physical pointer velocity in logical pixels per second.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -159,12 +247,26 @@ pub struct GestureCallbacks {
     /// An optional typed shortcut dispatcher. Widgets owns the closure so
     /// this crate remains independent from the retained runtime.
     pub on_shortcut: Option<Rc<dyn Fn(KeyboardEvent) -> bool>>,
+    /// A typed shortcut scope retained separately from the callback above so
+    /// the widget tree can resolve an intent against action ancestors.
+    pub shortcut_scope: Option<Rc<ErasedShortcutScope>>,
+    /// A typed action scope used by descendant shortcut scopes.
+    pub action_scope: Option<Rc<ErasedActionScope>>,
+    /// Lifetime token for an [`ActionListener`] registration.
+    pub action_listener: Option<Rc<ActionListenerSubscription>>,
+    /// Lifetime token for an action invocation listener installed by a
+    /// retained `ActionListener` widget.
+    pub action_invocation_listener: Option<Rc<ActionInvocationSubscription>>,
     /// Focus metadata associated with a keyboard listener. Keeping this on the
     /// platform-neutral callback value lets the retained tree route keyboard
     /// input without introducing a runtime dependency into gestures.
     pub focus_node: Option<FocusNode>,
+    /// Combined retained focus, hover, and focus-highlight behavior.
+    pub focus_behavior: Option<Rc<FocusBehavior>>,
     pub autofocus: bool,
     pub include_semantics: bool,
+    /// Renderer-independent cursor preference for hover-capable widgets.
+    pub mouse_cursor: MouseCursor,
 }
 
 /// The callback action selected after a recognizer has claimed its arena.

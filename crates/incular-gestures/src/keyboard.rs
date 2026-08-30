@@ -1,8 +1,9 @@
-use std::cell::Cell;
+use std::any::Any;
+use std::cell::{Cell, RefCell};
 
 use std::collections::HashMap;
 
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use incular_core::{Code, KeyboardEvent, KeyboardKey, Modifiers};
 
@@ -145,6 +146,28 @@ impl From<&str> for Intent {
     }
 }
 
+/// A type-erased command intent used only while a retained keyboard event
+/// walks its element ancestors. The command remains strongly typed inside
+/// each [`Actions`] registry.
+#[derive(Clone)]
+pub struct ErasedIntent {
+    command: Rc<dyn Any>,
+}
+
+impl ErasedIntent {
+    #[must_use]
+    pub fn from_intent<C: CommandId>(intent: &Intent<C>) -> Self {
+        Self {
+            command: Rc::new(intent.command().clone()),
+        }
+    }
+
+    #[must_use]
+    pub fn downcast_command<C: CommandId>(&self) -> Option<&C> {
+        self.command.as_ref().downcast_ref::<C>()
+    }
+}
+
 /// Result of invoking an action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionResult {
@@ -164,6 +187,84 @@ impl From<bool> for ActionResult {
     }
 }
 
+struct ActionListenerState {
+    listeners: RefCell<Vec<Weak<ActionListenerEntry>>>,
+}
+
+struct ActionListenerEntry {
+    active: Cell<bool>,
+    callback: Rc<dyn Fn()>,
+}
+
+/// Owns one registration made with [`Action::add_action_listener`]. Dropping
+/// it removes the listener from future notifications.
+pub struct ActionListenerSubscription {
+    state: Weak<ActionListenerState>,
+    entry: Rc<ActionListenerEntry>,
+}
+
+/// Phase emitted around an action invocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionInvocationPhase {
+    Start,
+    End,
+}
+
+struct ActionInvocationListenerState {
+    listeners: RefCell<Vec<Weak<ActionInvocationListenerEntry>>>,
+}
+
+struct ActionInvocationListenerEntry {
+    active: Cell<bool>,
+    callback: Rc<dyn Fn(ActionInvocationPhase)>,
+}
+
+/// Owns one registration made with [`Action::add_invocation_listener`].
+pub struct ActionInvocationSubscription {
+    state: Weak<ActionInvocationListenerState>,
+    entry: Rc<ActionInvocationListenerEntry>,
+}
+
+impl ActionInvocationSubscription {
+    fn remove(&self) -> bool {
+        let was_active = self.entry.active.replace(false);
+        if let Some(state) = self.state.upgrade() {
+            state.listeners.borrow_mut().retain(|listener| {
+                listener
+                    .upgrade()
+                    .is_some_and(|listener| !Rc::ptr_eq(&listener, &self.entry))
+            });
+        }
+        was_active
+    }
+}
+
+impl Drop for ActionInvocationSubscription {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+impl ActionListenerSubscription {
+    fn remove(&self) -> bool {
+        let was_active = self.entry.active.replace(false);
+        if let Some(state) = self.state.upgrade() {
+            state.listeners.borrow_mut().retain(|listener| {
+                listener
+                    .upgrade()
+                    .is_some_and(|listener| !Rc::ptr_eq(&listener, &self.entry))
+            });
+        }
+        was_active
+    }
+}
+
+impl Drop for ActionListenerSubscription {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
 /// A Rust-native command action.
 ///
 /// Actions are values with an enabled state and a callback. They do not form
@@ -176,6 +277,8 @@ pub struct Action<C: CommandId = Command> {
     intent: Intent<C>,
     enabled: Rc<Cell<bool>>,
     callback: ActionCallback<C>,
+    listeners: Rc<ActionListenerState>,
+    invocation_listeners: Rc<ActionInvocationListenerState>,
 }
 
 impl<C: CommandId + std::fmt::Debug> std::fmt::Debug for Action<C> {
@@ -211,6 +314,12 @@ impl<C: CommandId> Action<C> {
             intent: command.into(),
             enabled: Rc::new(Cell::new(true)),
             callback: Rc::new(move |intent| callback(intent).into()),
+            listeners: Rc::new(ActionListenerState {
+                listeners: RefCell::new(Vec::new()),
+            }),
+            invocation_listeners: Rc::new(ActionInvocationListenerState {
+                listeners: RefCell::new(Vec::new()),
+            }),
         }
     }
 
@@ -228,7 +337,9 @@ impl<C: CommandId> Action<C> {
 
     /// Enables or disables this action without removing it from its scope.
     pub fn set_enabled(&self, enabled: bool) {
-        self.enabled.set(enabled);
+        if self.enabled.replace(enabled) != enabled {
+            self.notify_action_listeners();
+        }
     }
 
     /// Returns whether the action can currently run.
@@ -237,13 +348,171 @@ impl<C: CommandId> Action<C> {
         self.enabled.get()
     }
 
+    /// Returns whether this action is enabled for the supplied intent.
+    #[must_use]
+    pub fn is_action_enabled(&self, intent: &Intent<C>) -> bool {
+        self.is_enabled() && self.intent.command() == intent.command()
+    }
+
+    /// Registers a callback that observes state changes published by this
+    /// action. The returned subscription is safe to hold in a retained widget.
+    #[must_use]
+    pub fn add_action_listener(&self, listener: impl Fn() + 'static) -> ActionListenerSubscription {
+        let entry = Rc::new(ActionListenerEntry {
+            active: Cell::new(true),
+            callback: Rc::new(listener),
+        });
+        self.listeners
+            .listeners
+            .borrow_mut()
+            .push(Rc::downgrade(&entry));
+        ActionListenerSubscription {
+            state: Rc::downgrade(&self.listeners),
+            entry,
+        }
+    }
+
+    /// Short alias for [`Self::add_action_listener`].
+    #[must_use]
+    pub fn add_listener(&self, listener: impl Fn() + 'static) -> ActionListenerSubscription {
+        self.add_action_listener(listener)
+    }
+
+    /// Removes a registration returned by [`Self::add_action_listener`].
+    pub fn remove_action_listener(&self, subscription: &ActionListenerSubscription) -> bool {
+        subscription.remove()
+    }
+
+    /// Notifies listeners that action state or another action-owned property
+    /// changed. Listeners added during delivery wait for the next notification;
+    /// removed listeners are skipped immediately.
+    pub fn notify_action_listeners(&self) {
+        let listeners = {
+            let mut listeners = self.listeners.listeners.borrow_mut();
+            listeners.retain(|listener| listener.strong_count() != 0);
+            listeners
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        for listener in listeners {
+            if listener.active.get() {
+                (listener.callback)();
+            }
+        }
+    }
+
+    /// Registers a listener that observes the start and end of every
+    /// successful invocation of this action.
+    #[must_use]
+    pub fn add_invocation_listener(
+        &self,
+        listener: impl Fn(ActionInvocationPhase) + 'static,
+    ) -> ActionInvocationSubscription {
+        let entry = Rc::new(ActionInvocationListenerEntry {
+            active: Cell::new(true),
+            callback: Rc::new(listener),
+        });
+        self.invocation_listeners
+            .listeners
+            .borrow_mut()
+            .push(Rc::downgrade(&entry));
+        ActionInvocationSubscription {
+            state: Rc::downgrade(&self.invocation_listeners),
+            entry,
+        }
+    }
+
+    fn notify_invocation(&self, phase: ActionInvocationPhase) {
+        let listeners = {
+            let mut listeners = self.invocation_listeners.listeners.borrow_mut();
+            listeners.retain(|listener| listener.strong_count() != 0);
+            listeners
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>()
+        };
+        for listener in listeners {
+            if listener.active.get() {
+                (listener.callback)(phase);
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn listener_count(&self) -> usize {
+        let mut listeners = self.listeners.listeners.borrow_mut();
+        listeners.retain(|listener| listener.strong_count() != 0);
+        listeners
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|listener| listener.active.get())
+            .count()
+    }
+
     /// Invokes this action for an intent.
     #[must_use]
     pub fn invoke(&self, intent: &Intent<C>) -> ActionResult {
-        if !self.is_enabled() || self.intent.command() != intent.command() {
+        if !self.is_action_enabled(intent) {
             return ActionResult::Ignored;
         }
-        (self.callback)(intent)
+        self.notify_invocation(ActionInvocationPhase::Start);
+        let result = (self.callback)(intent);
+        self.notify_invocation(ActionInvocationPhase::End);
+        result
+    }
+}
+
+/// Result of looking up one local shortcut binding during ancestor dispatch.
+#[derive(Clone)]
+pub enum ShortcutMatch {
+    Callback(Rc<dyn Fn()>),
+    Intent(ErasedIntent),
+}
+
+/// Type-erased retained shortcut scope used by the widget tree to resolve
+/// local shortcut precedence before walking to an ancestor scope.
+pub struct ErasedShortcutScope {
+    finder: Rc<dyn Fn(KeyboardEvent) -> Option<ShortcutMatch>>,
+}
+
+impl ErasedShortcutScope {
+    #[must_use]
+    pub fn from_shortcuts<C: CommandId>(shortcuts: Rc<Shortcuts<C>>) -> Rc<Self> {
+        Rc::new(Self {
+            finder: Rc::new(move |event| shortcuts.find_match(&event)),
+        })
+    }
+
+    #[must_use]
+    pub fn find(&self, event: KeyboardEvent) -> Option<ShortcutMatch> {
+        (self.finder)(event)
+    }
+}
+
+/// Type-erased retained action scope used by the widget tree to resolve an
+/// intent against the closest ancestor action map.
+type ErasedActionInvoker = dyn Fn(&ErasedIntent) -> Option<ActionResult>;
+
+pub struct ErasedActionScope {
+    invoker: Rc<ErasedActionInvoker>,
+}
+
+impl ErasedActionScope {
+    #[must_use]
+    pub fn from_actions<C: CommandId>(actions: Rc<Actions<C>>) -> Rc<Self> {
+        Rc::new(Self {
+            invoker: Rc::new(move |intent| {
+                let command = intent.downcast_command::<C>()?;
+                let intent = Intent::new(command.clone());
+                actions.invoke_intent_first(&intent)
+            }),
+        })
+    }
+
+    #[must_use]
+    pub fn invoke(&self, intent: &ErasedIntent) -> Option<ActionResult> {
+        (self.invoker)(intent)
     }
 }
 
@@ -334,6 +603,12 @@ impl<C: CommandId> Actions<C> {
         self.scopes.len()
     }
 
+    /// Returns whether no action is registered in any retained scope.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scopes.iter().all(|scope| scope.actions.is_empty())
+    }
+
     /// Removes a command from the nearest scope.
     pub fn unregister(&mut self, command: &C) -> bool {
         self.current_scope_mut().actions.remove(command).is_some()
@@ -352,6 +627,20 @@ impl<C: CommandId> Actions<C> {
                 .actions
                 .get(intent.command())
                 .is_some_and(|action| action.invoke(intent) == ActionResult::Handled)
+        })
+    }
+
+    /// Returns the result from the nearest scope that contains a mapping,
+    /// including `Ignored` for a disabled or declining action. This preserves
+    /// Flutter's ancestor action lookup rule: a found local mapping shadows
+    /// an outer mapping even when it cannot currently handle the intent.
+    #[must_use]
+    pub fn invoke_intent_first(&self, intent: &Intent<C>) -> Option<ActionResult> {
+        self.scopes.iter().rev().find_map(|scope| {
+            scope
+                .actions
+                .get(intent.command())
+                .map(|action| action.invoke(intent))
         })
     }
 
@@ -396,6 +685,144 @@ impl ShortcutKey {
     pub fn logical(key: KeyboardKey, modifiers: Modifiers) -> LogicalShortcutKey {
         LogicalShortcutKey { key, modifiers }
     }
+}
+
+/// A logical single-key shortcut with the modifier state required by the
+/// shortcut. This is the retained equivalent of Flutter's
+/// `SingleActivator`: the four shortcut modifiers are matched independently,
+/// while lock-state and unrelated non-modifier keys do not affect a match.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SingleActivator {
+    pub trigger: KeyboardKey,
+    pub modifiers: Modifiers,
+    pub include_repeats: bool,
+}
+
+impl SingleActivator {
+    #[must_use]
+    pub fn new(trigger: KeyboardKey, modifiers: Modifiers) -> Self {
+        Self {
+            trigger,
+            modifiers: shortcut_modifiers(modifiers),
+            include_repeats: true,
+        }
+    }
+
+    #[must_use]
+    pub fn with_repeats(mut self, include_repeats: bool) -> Self {
+        self.include_repeats = include_repeats;
+        self
+    }
+
+    #[must_use]
+    pub const fn trigger(&self) -> &KeyboardKey {
+        &self.trigger
+    }
+
+    #[must_use]
+    pub const fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    #[must_use]
+    pub const fn includes_repeats(&self) -> bool {
+        self.include_repeats
+    }
+
+    #[must_use]
+    pub fn accepts(&self, event: &KeyboardEvent) -> bool {
+        event.state.is_down()
+            && (self.include_repeats || !event.repeat)
+            && event.key == self.trigger
+            && shortcut_modifiers(event.modifiers) == self.modifiers
+    }
+}
+
+/// A key activator accepted by callback shortcut maps.
+///
+/// Physical and logical activators are kept distinct, and a `Single` uses the
+/// logical key with Flutter-style modifier matching. The enum is intentionally
+/// value-based so equivalent registrations replace one another while distinct
+/// activators may both fire for one event.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ShortcutActivator {
+    Physical {
+        key: ShortcutKey,
+        trigger: ShortcutTrigger,
+    },
+    Logical {
+        key: LogicalShortcutKey,
+        trigger: ShortcutTrigger,
+    },
+    Single(SingleActivator),
+}
+
+impl ShortcutActivator {
+    #[must_use]
+    pub const fn physical(key: ShortcutKey) -> Self {
+        Self::Physical {
+            key,
+            trigger: ShortcutTrigger::Down,
+        }
+    }
+
+    #[must_use]
+    pub const fn physical_on(key: ShortcutKey, trigger: ShortcutTrigger) -> Self {
+        Self::Physical { key, trigger }
+    }
+
+    #[must_use]
+    pub fn logical(key: LogicalShortcutKey) -> Self {
+        Self::Logical {
+            key,
+            trigger: ShortcutTrigger::Down,
+        }
+    }
+
+    #[must_use]
+    pub fn logical_on(key: LogicalShortcutKey, trigger: ShortcutTrigger) -> Self {
+        Self::Logical { key, trigger }
+    }
+
+    #[must_use]
+    pub fn single(trigger: KeyboardKey, modifiers: Modifiers) -> Self {
+        Self::Single(SingleActivator::new(trigger, modifiers))
+    }
+
+    #[must_use]
+    pub fn accepts(&self, event: &KeyboardEvent) -> bool {
+        match self {
+            Self::Physical { key, trigger } => {
+                key.code == event.code && key.modifiers == event.modifiers && trigger.matches(event)
+            }
+            Self::Logical { key, trigger } => {
+                key.key == event.key && key.modifiers == event.modifiers && trigger.matches(event)
+            }
+            Self::Single(activator) => activator.accepts(event),
+        }
+    }
+}
+
+impl From<ShortcutKey> for ShortcutActivator {
+    fn from(value: ShortcutKey) -> Self {
+        Self::physical(value)
+    }
+}
+
+impl From<LogicalShortcutKey> for ShortcutActivator {
+    fn from(value: LogicalShortcutKey) -> Self {
+        Self::logical(value)
+    }
+}
+
+impl From<SingleActivator> for ShortcutActivator {
+    fn from(value: SingleActivator) -> Self {
+        Self::Single(value)
+    }
+}
+
+fn shortcut_modifiers(modifiers: Modifiers) -> Modifiers {
+    modifiers & (Modifiers::ALT | Modifiers::CONTROL | Modifiers::META | Modifiers::SHIFT)
 }
 
 /// A keyboard shortcut matched against the event's logical key value.
@@ -600,6 +1027,14 @@ impl<C: CommandId> Shortcuts<C> {
         self.scopes.len()
     }
 
+    /// Returns whether no shortcut is registered in any retained scope.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scopes.iter().all(|scope| {
+            scope.physical.values().all(Vec::is_empty) && scope.logical.values().all(Vec::is_empty)
+        })
+    }
+
     pub fn handle(&self, event: KeyboardEvent) -> bool {
         self.dispatch(event, None)
     }
@@ -615,6 +1050,12 @@ impl<C: CommandId> Shortcuts<C> {
     #[must_use]
     pub fn handle_event(&self, event: KeyboardEvent, actions: &Actions<C>) -> bool {
         self.handle_actions(event, actions)
+    }
+
+    /// Creates a type-erased scope for the retained focus-chain dispatcher.
+    #[must_use]
+    pub fn erased_scope(self: &Rc<Self>) -> Rc<ErasedShortcutScope> {
+        ErasedShortcutScope::from_shortcuts(self.clone())
     }
 
     fn replace_binding<K>(
@@ -643,6 +1084,37 @@ impl<C: CommandId> Shortcuts<C> {
             }
         }
         false
+    }
+
+    fn find_match(&self, event: &KeyboardEvent) -> Option<ShortcutMatch> {
+        let physical = ShortcutKey::new(event.code, event.modifiers);
+        let logical = LogicalShortcutKey::new(event.key.clone(), event.modifiers);
+        for scope in self.scopes.iter().rev() {
+            if let Some(registration) = scope.physical.get(&physical).and_then(|registrations| {
+                registrations
+                    .iter()
+                    .find(|registration| registration.trigger.matches(event))
+            }) {
+                return Some(Self::erase_binding(&registration.binding));
+            }
+            if let Some(registration) = scope.logical.get(&logical).and_then(|registrations| {
+                registrations
+                    .iter()
+                    .find(|registration| registration.trigger.matches(event))
+            }) {
+                return Some(Self::erase_binding(&registration.binding));
+            }
+        }
+        None
+    }
+
+    fn erase_binding(binding: &ShortcutBinding<C>) -> ShortcutMatch {
+        match binding {
+            ShortcutBinding::Callback(callback) => ShortcutMatch::Callback(callback.clone()),
+            ShortcutBinding::Intent(intent) => {
+                ShortcutMatch::Intent(ErasedIntent::from_intent(intent))
+            }
+        }
     }
 
     fn dispatch_registrations(

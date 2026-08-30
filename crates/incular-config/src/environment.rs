@@ -16,6 +16,32 @@ pub enum Brightness {
     Dark,
 }
 
+/// The normalized sensitivity requested for a window's captured content.
+///
+/// The values intentionally mirror Flutter's `ContentSensitivity` policy:
+/// `Sensitive` has the highest priority, followed by `AutoSensitive`, then
+/// `NotSensitive`.  Platform crates consume this value without needing to
+/// know anything about widget identity or the retained tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ContentSensitivity {
+    #[default]
+    NotSensitive,
+    AutoSensitive,
+    Sensitive,
+}
+
+impl ContentSensitivity {
+    /// Returns the more protective of two requested sensitivities.
+    #[must_use]
+    pub const fn max(self, other: Self) -> Self {
+        if self as u8 >= other as u8 {
+            self
+        } else {
+            other
+        }
+    }
+}
+
 /// Stable pointer/input capabilities reported by a platform adapter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InputCapabilities {

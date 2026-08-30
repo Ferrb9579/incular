@@ -4,13 +4,15 @@ use std::rc::Rc;
 
 pub use incular_core::{Offset, PointerPhase};
 pub use incular_gestures::{
-    Actions, Command, DragCallbacks, DragDownDetails, DragEndDetails, DragGestureDetector,
-    DragStartDetails, DragUpdateDetails, GestureAction, GestureArena, GestureArenaEntry,
-    GestureArenaKey, GestureArenaMember, GestureCallbacks, GestureDecision, GestureDisposition,
-    GestureRecognizer, LongPressEndDetails, LongPressMoveUpdateDetails, LongPressStartDetails,
-    PointerDeviceKind, PointerEvent, PointerGestureRecognizer, ScaleEndDetails,
-    ScaleGestureDetector, ScaleStartDetails, ScaleUpdateDetails, ShortcutKey, Shortcuts,
-    TapDownDetails, TapUpDetails, Velocity,
+    ActionResult, Actions, Command, DragCallbacks, DragDownDetails, DragEndDetails,
+    DragGestureDetector, DragStartDetails, DragUpdateDetails, ErasedActionScope, ErasedIntent,
+    ErasedShortcutScope, FocusBehavior, FocusHighlightManager, FocusHighlightMode,
+    FocusHighlightStrategy, GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey,
+    GestureArenaMember, GestureCallbacks, GestureDecision, GestureDisposition, GestureRecognizer,
+    LongPressEndDetails, LongPressMoveUpdateDetails, LongPressStartDetails, PointerDeviceKind,
+    PointerEvent, PointerGestureRecognizer, ScaleEndDetails, ScaleGestureDetector,
+    ScaleStartDetails, ScaleUpdateDetails, ShortcutKey, ShortcutMatch, Shortcuts, TapDownDetails,
+    TapUpDetails, Velocity,
 };
 
 use crate::{Widget, WidgetKind};

@@ -7,10 +7,12 @@ use incular_config::{
 use incular_core::{BuildContext, Color};
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_text::TextStyle;
-use std::rc::Rc;
+use std::{any::Any, rc::Rc};
 use typed_builder::TypedBuilder;
 
 use crate::{LayoutBuilder, Widget};
+
+pub use incular_config::ContentSensitivity;
 
 /// A typed, window-local environment snapshot for descendants that need
 /// viewport, scale, safe-area, brightness, or accessibility information.
@@ -436,11 +438,159 @@ impl From<TickerMode> for Widget {
     }
 }
 
+/// Tracks the sensitivity requests contributed by a retained widget subtree.
+///
+/// Flutter resolves multiple [`SensitiveContent`] widgets by priority rather
+/// than by nearest-ancestor shadowing: any `Sensitive` request wins, then any
+/// `AutoSensitive` request, then `NotSensitive`.  The runtime takes a snapshot
+/// of this value at its window boundary and emits one normalized platform
+/// command when that snapshot changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SensitiveContentHost {
+    sensitive_count: usize,
+    auto_sensitive_count: usize,
+    not_sensitive_count: usize,
+    fallback: ContentSensitivity,
+}
+
+impl Default for SensitiveContentHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SensitiveContentHost {
+    /// Creates an empty host whose neutral fallback is `NotSensitive`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            sensitive_count: 0,
+            auto_sensitive_count: 0,
+            not_sensitive_count: 0,
+            fallback: ContentSensitivity::NotSensitive,
+        }
+    }
+
+    /// Creates an empty host with an explicit policy to restore after its last
+    /// sensitive-content registration is removed.
+    #[must_use]
+    pub const fn with_fallback(fallback: ContentSensitivity) -> Self {
+        Self {
+            fallback,
+            ..Self::new()
+        }
+    }
+
+    /// Registers one retained [`SensitiveContent`] request.
+    pub fn register(&mut self, sensitivity: ContentSensitivity) {
+        match sensitivity {
+            ContentSensitivity::Sensitive => self.sensitive_count += 1,
+            ContentSensitivity::AutoSensitive => self.auto_sensitive_count += 1,
+            ContentSensitivity::NotSensitive => self.not_sensitive_count += 1,
+        }
+    }
+
+    /// Removes one request. Returns `false` when the corresponding count was
+    /// already empty, keeping stale lifecycle notifications harmless.
+    pub fn unregister(&mut self, sensitivity: ContentSensitivity) -> bool {
+        let count = match sensitivity {
+            ContentSensitivity::Sensitive => &mut self.sensitive_count,
+            ContentSensitivity::AutoSensitive => &mut self.auto_sensitive_count,
+            ContentSensitivity::NotSensitive => &mut self.not_sensitive_count,
+        };
+        if *count == 0 {
+            return false;
+        }
+        *count -= 1;
+        true
+    }
+
+    /// Returns the highest-priority request currently registered, or `None`
+    /// when no [`SensitiveContent`] widget is mounted.
+    #[must_use]
+    pub const fn calculated_content_sensitivity(&self) -> Option<ContentSensitivity> {
+        if self.sensitive_count > 0 {
+            Some(ContentSensitivity::Sensitive)
+        } else if self.auto_sensitive_count > 0 {
+            Some(ContentSensitivity::AutoSensitive)
+        } else if self.not_sensitive_count > 0 {
+            Some(ContentSensitivity::NotSensitive)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the policy that should be active at a window boundary,
+    /// including the configured fallback when no widget is registered.
+    #[must_use]
+    pub const fn effective_content_sensitivity(&self) -> ContentSensitivity {
+        match self.calculated_content_sensitivity() {
+            Some(sensitivity) => sensitivity,
+            None => self.fallback,
+        }
+    }
+
+    /// Returns whether this host currently tracks at least one widget.
+    #[must_use]
+    pub const fn has_widgets(&self) -> bool {
+        self.sensitive_count > 0 || self.auto_sensitive_count > 0 || self.not_sensitive_count > 0
+    }
+
+    /// Returns the number of registrations for one sensitivity value.
+    #[must_use]
+    pub const fn count(&self, sensitivity: ContentSensitivity) -> usize {
+        match sensitivity {
+            ContentSensitivity::Sensitive => self.sensitive_count,
+            ContentSensitivity::AutoSensitive => self.auto_sensitive_count,
+            ContentSensitivity::NotSensitive => self.not_sensitive_count,
+        }
+    }
+}
+
+/// Stops retained typed-environment lookup at this subtree boundary.
+///
+/// The retained equivalent of Flutter's static `LookupBoundary` methods is
+/// [`LookupBoundary::lookup`]. Ordinary environment scopes nested inside the
+/// boundary remain visible to descendants; only scopes outside the nearest
+/// boundary are hidden.
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
+pub struct LookupBoundary {
+    #[builder(setter(into))]
+    child: Widget,
+}
+
+impl LookupBoundary {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn child(&self) -> &Widget {
+        &self.child
+    }
+
+    /// Reads a typed environment value visible from the currently materialized
+    /// retained builder. A lookup never crosses the nearest boundary.
+    #[must_use]
+    pub fn lookup<T: Any + Clone>() -> Option<T> {
+        crate::tree::current_build_environment::<T>()
+    }
+}
+
+impl From<LookupBoundary> for Widget {
+    fn from(value: LookupBoundary) -> Self {
+        Widget::environment_boundary(value.child)
+    }
+}
+
 /// Marks content as sensitive to obscure it from window sharing, screen recording, and diagnostics.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SensitiveContent {
-    #[builder(default = true)]
-    sensitive: bool,
+    #[builder(default = ContentSensitivity::Sensitive)]
+    sensitivity: ContentSensitivity,
     #[builder(setter(into))]
     child: Widget,
 }
@@ -449,20 +599,40 @@ impl SensitiveContent {
     #[must_use]
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
-            sensitive: true,
+            sensitivity: ContentSensitivity::Sensitive,
+            child: child.into(),
+        }
+    }
+
+    /// Creates a scope with Flutter's explicit sensitivity policy.
+    #[must_use]
+    pub fn with_sensitivity(sensitivity: ContentSensitivity, child: impl Into<Widget>) -> Self {
+        Self {
+            sensitivity,
             child: child.into(),
         }
     }
 
     #[must_use]
+    pub fn sensitivity(&self) -> ContentSensitivity {
+        self.sensitivity
+    }
+
+    /// Compatibility setter for the original Incular boolean surface.
+    /// `true` maps to `Sensitive`; `false` maps to `NotSensitive`.
+    #[must_use]
     pub fn sensitive(mut self, sensitive: bool) -> Self {
-        self.sensitive = sensitive;
+        self.sensitivity = if sensitive {
+            ContentSensitivity::Sensitive
+        } else {
+            ContentSensitivity::NotSensitive
+        };
         self
     }
 }
 
 impl From<SensitiveContent> for Widget {
     fn from(value: SensitiveContent) -> Self {
-        Widget::environment_scope(value.sensitive, value.child)
+        Widget::environment_scope(value.sensitivity, value.child)
     }
 }

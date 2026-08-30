@@ -263,21 +263,69 @@ impl SemanticsTree {
 
     #[must_use]
     pub fn debug_dump(&self) -> String {
-        fn dump(tree: &SemanticsTree, id: SemanticNodeId, depth: usize, output: &mut String) {
-            let Some(node) = tree.node(id) else { return };
+        self.debug_dump_limited(usize::MAX, usize::MAX, usize::MAX)
+    }
+
+    /// Produces a deterministic diagnostic dump with hard node, depth, and
+    /// text limits. Accessibility trees can be application-sized, so debug
+    /// tooling must not recurse or allocate in proportion to an unbounded
+    /// subtree. A truncation marker is included in the returned text when a
+    /// limit is reached.
+    #[must_use]
+    pub fn debug_dump_bounded(&self, max_nodes: usize) -> String {
+        self.debug_dump_limited(max_nodes, 256, 256)
+    }
+
+    /// Lower-level bounded dump used by retained diagnostics and visual
+    /// debuggers that need a tighter label/depth budget.
+    #[must_use]
+    pub fn debug_dump_limited(
+        &self,
+        max_nodes: usize,
+        max_depth: usize,
+        max_text_chars: usize,
+    ) -> String {
+        fn truncate(value: Option<&String>, max_chars: usize) -> Option<String> {
+            let value = value?;
+            if value.chars().count() <= max_chars {
+                return Some(value.clone());
+            }
+            let mut result = value.chars().take(max_chars).collect::<String>();
+            result.push('…');
+            Some(result)
+        }
+
+        let mut output = String::new();
+        let Some(root) = self.root else {
+            return output;
+        };
+        let mut stack = vec![(root, 0usize)];
+        let mut visited = 0usize;
+        while let Some((id, depth)) = stack.pop() {
+            if visited >= max_nodes {
+                output.push_str("… semantic dump truncated (node limit)\n");
+                break;
+            }
+            if depth > max_depth {
+                output.push_str(&format!(
+                    "{}… semantic dump truncated (depth limit)\n",
+                    "  ".repeat(max_depth.min(256))
+                ));
+                continue;
+            }
+            let Some(node) = self.node(id) else { continue };
+            visited = visited.saturating_add(1);
             output.push_str(&format!(
                 "{}{:?}#{:?} label={:?} value={:?} bounds=({:.1},{:.1},{:.1},{:.1}) focused={} actions={:?}\n",
-                "  ".repeat(depth), node.role, node.id, node.label, node.value,
+                "  ".repeat(depth), node.role, node.id,
+                truncate(node.label.as_ref(), max_text_chars),
+                truncate(node.value.as_ref(), max_text_chars),
                 node.bounds.origin.x, node.bounds.origin.y, node.bounds.size.width,
                 node.bounds.size.height, node.state.focused, node.actions,
             ));
-            for child in &node.children {
-                dump(tree, *child, depth + 1, output);
+            for child in node.children.iter().rev() {
+                stack.push((*child, depth.saturating_add(1)));
             }
-        }
-        let mut output = String::new();
-        if let Some(root) = self.root {
-            dump(self, root, 0, &mut output);
         }
         output
     }

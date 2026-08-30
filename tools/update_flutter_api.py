@@ -75,6 +75,21 @@ def check_parity():
             print(f"  - {m['flutter_type']}.{m['flutter_member']}", file=sys.stderr)
         return 1
 
+    deferred_types = [
+        t for t in types if t.get("audit_classification", "").startswith("DEFERRED")
+    ]
+    if deferred_types:
+        resolved_types = len(types) - len(deferred_types)
+        resolution_rate = (resolved_types / len(types) * 100.0) if types else 100.0
+        print(
+            f"\n[FAIL] {len(deferred_types)} canonical types remain deferred "
+            f"({resolved_types}/{len(types)}, {resolution_rate:.1f}% resolved):",
+            file=sys.stderr,
+        )
+        for deferred in deferred_types:
+            print(f"  - {deferred['flutter']}", file=sys.stderr)
+        return 1
+
     # Audit classifications breakdown
     classifications = {}
     for t in types:
@@ -87,7 +102,7 @@ def check_parity():
     print(f"    * Standard Widgets:       {classifications.get('NO_APPLICATION_MEMBERS', 0)}")
     print(f"    * Merged/Rustified:       {classifications.get('MERGED_INTO', 0)}")
     print(f"    * Skipped (Platform):     {classifications.get('SKIPPED', 0)}")
-    print(f"    * Deferred (Renderer):    {classifications.get('DEFERRED', 0)}")
+    print(f"    * Deferred:               {classifications.get('DEFERRED', 0)}")
     print(f"  - MEMBER COVERAGE:    {len(members)}/{len(members)} (100% resolved)")
     print(f"  - DEFAULT COVERAGE:   100% verified against Flutter 3.47 baseline")
     print(f"  - BEHAVIOR COVERAGE:  100% verified with compile & contract suites")

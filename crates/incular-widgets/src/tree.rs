@@ -5,7 +5,7 @@
 //! the element being updated.
 
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
@@ -26,9 +26,9 @@ use incular_core::{
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
 use incular_rendering::{
-    BlendMode, Border, Brush, ColorFilter, CornerRadii, DisplayList, DropShadowEffect, FillRule,
-    FilterQuality, GaussianBlur, ImageSampling, LayerId, LayerTree, PaintCommand, Path, RRect,
-    Stroke, normalize_opacity, normalize_sigma,
+    Annotation, BlendMode, Border, Brush, ColorFilter, CornerRadii, DisplayList, DropShadowEffect,
+    FillRule, FilterQuality, GaussianBlur, ImageSampling, LayerAnchor, LayerId, LayerLink,
+    LayerTree, PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma,
 };
 use incular_scroll::{
     ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,
@@ -47,6 +47,12 @@ use std::sync::Arc;
 #[cfg(feature = "devtools")]
 use incular_devtools_protocol::{DebugValue, DevWidgetId, TraceEvent, TracePhase};
 
+use crate::advanced_scrolling::{
+    ChildVicinity, DraggableScrollableActuator, DraggableScrollableSheet, DraggableScrollableState,
+    ListWheelScrollView, ListWheelViewport, RawScrollbar, RawScrollbarStyle,
+    TwoDimensionalScrollView, TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelLayout,
+};
+use crate::compositing::ShaderCallback;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
 use crate::focus_keyboard::FocusTraversalPolicyKind;
 use crate::gestures::{
@@ -54,17 +60,23 @@ use crate::gestures::{
     GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
     ScaleGestureDetector,
 };
+use crate::painting_effects::BoxShadow;
+use crate::raw_input::{GestureRecognizer, RawInputKind};
 use crate::recursion::{DiagnosticNode, DiagnosticNodeId, RecursionDiagnostics};
 pub use crate::recursion::{FramePhase, RecursionReport};
 use crate::scrolling::{
     SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };
-use crate::selection::SelectionAreaController;
+use crate::selection::{
+    SelectableChildPolicy, SelectionAreaController, SelectionContainerDelegate,
+    SelectionListenerNotifier,
+};
 
 mod focus;
 mod interaction;
 mod layout;
 mod painting;
+mod raw_input;
 mod reconciliation;
 mod rendering;
 mod retained;
@@ -75,6 +87,7 @@ mod widget;
 
 use semantics::widget_text;
 use values::{finite_non_negative, finite_offset};
+pub(crate) use widget::WidgetType;
 use widget::{
     enforced_constraints, fractional_constraints, physical_scroll_offset, scroll_constraints,
     scroll_delta_for_axis, scroll_size, scroll_translation, scroll_viewport_extent, sliver_anchor,
@@ -86,11 +99,62 @@ pub use retained::{PERFORMANCE_OVERLAY_KEY, performance_overlay_placeholder};
 pub use values::*;
 pub use widget::Widget;
 
+/// Shared handles keep algorithm state owned by the retained descriptor while
+/// allowing a cheap declarative widget clone. The focused scrolling models
+/// themselves remain renderer-neutral and are only driven by the tree adapter.
+#[derive(Clone)]
+pub struct RetainedWheelScrollView(pub(crate) Rc<RefCell<ListWheelScrollView<Widget>>>);
+
+#[derive(Clone)]
+pub struct RetainedWheelViewport(pub(crate) Rc<RefCell<ListWheelViewport<Widget>>>);
+
+#[derive(Clone)]
+pub struct RetainedDraggableSheet(pub(crate) Rc<RefCell<DraggableScrollableSheet<Widget>>>);
+
+#[derive(Clone)]
+pub struct RetainedActuator(pub(crate) Rc<DraggableScrollableActuator>);
+
+#[derive(Clone)]
+pub struct RetainedTwoDimensionalScrollView(
+    pub(crate) Rc<RefCell<TwoDimensionalScrollView<Widget>>>,
+);
+
+#[derive(Clone)]
+pub struct RetainedTwoDimensionalViewport(pub(crate) Rc<RefCell<TwoDimensionalViewport<Widget>>>);
+
+macro_rules! retained_rc_handle_traits {
+    ($name:ident, $label:literal) => {
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_tuple($label).field(&"retained").finish()
+            }
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                Rc::ptr_eq(&self.0, &other.0)
+            }
+        }
+    };
+}
+
+retained_rc_handle_traits!(RetainedWheelScrollView, "ListWheelScrollView");
+retained_rc_handle_traits!(RetainedWheelViewport, "ListWheelViewport");
+retained_rc_handle_traits!(RetainedDraggableSheet, "DraggableScrollableSheet");
+retained_rc_handle_traits!(RetainedActuator, "DraggableScrollableActuator");
+retained_rc_handle_traits!(RetainedTwoDimensionalScrollView, "TwoDimensionalScrollView");
+retained_rc_handle_traits!(RetainedTwoDimensionalViewport, "TwoDimensionalViewport");
+
 thread_local! {
     /// Type-erased values made available while a retained layout builder is
     /// materialized. Control libraries use this hook for ambient, typed
     /// scopes without coupling the raw widget crate to a design-system crate.
-    static BUILD_ENVIRONMENT: RefCell<Vec<Option<Rc<dyn Any>>>> = const { RefCell::new(Vec::new()) };
+    static BUILD_ENVIRONMENT: RefCell<Vec<BuildEnvironmentFrame>> = const { RefCell::new(Vec::new()) };
+}
+
+enum BuildEnvironmentFrame {
+    Values(Option<Rc<dyn Any>>),
+    Boundary,
 }
 
 fn text_call_label(method: &str, text: &str) -> String {
@@ -161,7 +225,30 @@ pub fn with_build_environment<R>(
     environment: Option<Rc<dyn Any>>,
     callback: impl FnOnce() -> R,
 ) -> R {
-    BUILD_ENVIRONMENT.with(|stack| stack.borrow_mut().push(environment));
+    BUILD_ENVIRONMENT.with(|stack| {
+        stack
+            .borrow_mut()
+            .push(BuildEnvironmentFrame::Values(environment));
+    });
+    struct EnvironmentGuard;
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            BUILD_ENVIRONMENT.with(|stack| {
+                let _ = stack.borrow_mut().pop();
+            });
+        }
+    }
+    let _guard = EnvironmentGuard;
+    callback()
+}
+
+/// Runs a retained builder behind an explicit lookup boundary. The boundary
+/// hides all outer typed environments while allowing scopes installed by the
+/// builder itself to remain visible to its descendants.
+pub fn with_build_environment_boundary<R>(callback: impl FnOnce() -> R) -> R {
+    BUILD_ENVIRONMENT.with(|stack| {
+        stack.borrow_mut().push(BuildEnvironmentFrame::Boundary);
+    });
     struct EnvironmentGuard;
     impl Drop for EnvironmentGuard {
         fn drop(&mut self) {
@@ -179,12 +266,17 @@ pub fn with_build_environment<R>(
 pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
     BUILD_ENVIRONMENT.with(|stack| {
         let stack = stack.borrow();
-        for value in stack.iter().rev() {
-            let Some(environment) = value.as_ref() else {
-                continue;
-            };
-            if let Some(value) = environment_value::<T>(environment) {
-                return Some(value);
+        for frame in stack.iter().rev() {
+            match frame {
+                BuildEnvironmentFrame::Boundary => break,
+                BuildEnvironmentFrame::Values(value) => {
+                    let Some(environment) = value.as_ref() else {
+                        continue;
+                    };
+                    if let Some(value) = environment_value::<T>(environment) {
+                        return Some(value);
+                    }
+                }
             }
         }
         None
@@ -198,12 +290,17 @@ pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
 pub fn current_build_environment_boxed<T: Any + Clone>() -> Option<Box<T>> {
     BUILD_ENVIRONMENT.with(|stack| {
         let stack = stack.borrow();
-        for value in stack.iter().rev() {
-            let Some(environment) = value.as_ref() else {
-                continue;
-            };
-            if let Some(value) = environment_value::<T>(environment) {
-                return Some(Box::new(value));
+        for frame in stack.iter().rev() {
+            match frame {
+                BuildEnvironmentFrame::Boundary => break,
+                BuildEnvironmentFrame::Values(value) => {
+                    let Some(environment) = value.as_ref() else {
+                        continue;
+                    };
+                    if let Some(value) = environment_value::<T>(environment) {
+                        return Some(Box::new(value));
+                    }
+                }
             }
         }
         None
@@ -367,6 +464,16 @@ pub enum WidgetKind {
         radius: CornerRadii,
         child: Box<Widget>,
     },
+    Banner {
+        message: String,
+        text_direction: Option<TextDirection>,
+        location: crate::utilities::BannerLocation,
+        layout_direction: Option<TextDirection>,
+        color: Color,
+        text_style: TextStyle,
+        shadow: BoxShadow,
+        child: Option<Box<Widget>>,
+    },
     Button {
         size: Size,
         color: Color,
@@ -400,6 +507,24 @@ pub enum WidgetKind {
     },
     SelectionArea {
         controller: SelectionAreaController,
+        child: Box<Widget>,
+    },
+    SelectionContainer {
+        delegate: SelectionContainerDelegate,
+        child: Box<Widget>,
+    },
+    SelectionListener {
+        notifier: SelectionListenerNotifier,
+        delegate: SelectionContainerDelegate,
+        child: Box<Widget>,
+    },
+    IndexedSemantics {
+        index: usize,
+        child: Box<Widget>,
+    },
+    SemanticsDebugger {
+        label_style: TextStyle,
+        max_nodes: usize,
         child: Box<Widget>,
     },
     Image {
@@ -472,6 +597,10 @@ pub enum WidgetKind {
         behavior: crate::gestures::HitTestBehavior,
         callbacks: Box<GestureCallbacks>,
         child: Box<Widget>,
+    },
+    RawInput {
+        kind: RawInputKind,
+        child: Option<Box<Widget>>,
     },
     Draggable {
         source: Rc<dyn RetainedDragSource>,
@@ -578,6 +707,7 @@ pub enum WidgetKind {
     LayoutBuilder {
         builder: Rc<dyn Fn(Constraints) -> Widget>,
         environment: Option<Rc<dyn Any>>,
+        environment_boundary: bool,
         /// Optional mutable revision for builders whose callback updates
         /// retained local state without replacing the parent widget.  The
         /// runtime samples this value during layout and rematerializes the
@@ -598,6 +728,30 @@ pub enum WidgetKind {
         reverse: bool,
         physics: ScrollPhysics,
         child: Box<Widget>,
+    },
+    RawScrollbar {
+        controller: ScrollController,
+        style: RawScrollbarStyle,
+        child: Box<Widget>,
+    },
+    ListWheelScrollView {
+        view: RetainedWheelScrollView,
+    },
+    ListWheelViewport {
+        viewport: RetainedWheelViewport,
+    },
+    DraggableScrollableSheet {
+        sheet: RetainedDraggableSheet,
+    },
+    DraggableScrollableActuator {
+        actuator: RetainedActuator,
+        child: Box<Widget>,
+    },
+    TwoDimensionalScrollView {
+        view: RetainedTwoDimensionalScrollView,
+    },
+    TwoDimensionalViewport {
+        viewport: RetainedTwoDimensionalViewport,
     },
     /// A flow child which remains in the scrolling layout while an inner
     /// compositor transform pins it at the viewport's leading edge.
@@ -666,6 +820,34 @@ pub enum WidgetKind {
     },
     Blend {
         mode: BlendMode,
+        child: Box<Widget>,
+    },
+    ShaderMask {
+        shader: ShaderCallback,
+        blend_mode: BlendMode,
+        child: Box<Widget>,
+    },
+    BackdropFilter {
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
+        child: Box<Widget>,
+    },
+    AnnotatedRegion {
+        annotation: Annotation,
+        sized: bool,
+        child: Box<Widget>,
+    },
+    CompositedTransformTarget {
+        link: LayerLink,
+        child: Box<Widget>,
+    },
+    CompositedTransformFollower {
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
         child: Box<Widget>,
     },
 }
@@ -2027,6 +2209,15 @@ pub enum TreeError {
     WindowUnknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum AdvancedChildKey {
+    RawScrollbar,
+    Wheel(usize),
+    TwoDimensional(ChildVicinity),
+    Sheet,
+    Actuator,
+}
+
 pub struct Element {
     pub parent: Option<ElementId>,
     pub children: Vec<ElementId>,
@@ -2036,9 +2227,15 @@ pub struct Element {
     /// Parallel to `children` for a sliver viewport. IDs are viewport-scoped
     /// and remain stable while the cache window moves.
     sliver_child_ids: Vec<SliverChildId>,
+    /// Parallel to `children` for a sliver viewport. This is separate from
+    /// the retained identity because reorderable and grid slivers may use a
+    /// stable row/item ID while their accessibility position is different.
+    sliver_child_semantic_indices: Vec<Option<usize>>,
     /// Pinned children are painted above normal flow children while logical
     /// accessibility order remains unchanged.
     sliver_pinned_ids: HashSet<SliverChildId>,
+    /// Stable identities for lazily materialized advanced-scrolling children.
+    advanced_child_keys: Vec<AdvancedChildKey>,
     /// RAII subscriptions for a NotificationListener. They are rebuilt after
     /// layout so lazily materialized sliver viewports are included without
     /// keeping dead controller listeners alive.
@@ -2052,6 +2249,8 @@ pub struct Element {
     /// Environment supplied directly by this element, if any. This lets a
     /// nested scope shadow its parent while descendants continue inheriting.
     environment_override: Option<Rc<dyn Any>>,
+    /// Whether this element cuts off all environments installed above it.
+    environment_boundary: bool,
     /// DevTools-only instrumentation. Zero cost in production builds.
     #[cfg(feature = "devtools")]
     pub dev: ElementDevData,
@@ -2161,6 +2360,15 @@ pub enum RenderKind {
         background: Option<Brush>,
         border: Option<Border>,
         radius: CornerRadii,
+    },
+    Banner {
+        message: String,
+        text_direction: TextDirection,
+        location: crate::utilities::BannerLocation,
+        layout_direction: TextDirection,
+        color: Color,
+        text_style: TextStyle,
+        shadow: BoxShadow,
     },
     Button {
         desired: Size,
@@ -2278,6 +2486,13 @@ pub enum RenderKind {
         align: TextAlign,
     },
     SelectionArea,
+    SelectionContainer,
+    SelectionListener,
+    IndexedSemantics,
+    SemanticsDebugger {
+        label_style: TextStyle,
+        max_nodes: usize,
+    },
     Image {
         image: ImageHandle,
         width: Option<f32>,
@@ -2312,6 +2527,28 @@ pub enum RenderKind {
         axis: Axis,
         reverse: bool,
         physics: ScrollPhysics,
+    },
+    RawScrollbar {
+        controller: ScrollController,
+        style: RawScrollbarStyle,
+    },
+    ListWheelScrollView {
+        view: RetainedWheelScrollView,
+    },
+    ListWheelViewport {
+        viewport: RetainedWheelViewport,
+    },
+    DraggableScrollableSheet {
+        sheet: RetainedDraggableSheet,
+    },
+    DraggableScrollableActuator {
+        actuator: RetainedActuator,
+    },
+    TwoDimensionalScrollView {
+        view: RetainedTwoDimensionalScrollView,
+    },
+    TwoDimensionalViewport {
+        viewport: RetainedTwoDimensionalViewport,
     },
     PersistentHeader {
         controller: ScrollController,
@@ -2365,6 +2602,29 @@ pub enum RenderKind {
     Blend {
         mode: BlendMode,
     },
+    ShaderMask {
+        shader: ShaderCallback,
+        blend_mode: BlendMode,
+    },
+    BackdropFilter {
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
+    },
+    AnnotatedRegion {
+        annotation: Annotation,
+        sized: bool,
+    },
+    Leader {
+        link: LayerLink,
+    },
+    Follower {
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
+    },
 }
 
 /// Snapshot of one sliver viewport. Semantic integration can expose
@@ -2396,6 +2656,10 @@ pub struct RenderObject {
     text_visual_revision: u64,
     text_scroll_x: f32,
     text_scroll_y: f32,
+    advanced_scrollbar: Option<RawScrollbar>,
+    wheel_layout: Option<WheelLayout<Widget>>,
+    two_dimensional_layout: Option<TwoDimensionalViewportLayout<Widget>>,
+    draggable_state: Option<DraggableScrollableState>,
     scrollbar_hovered: bool,
     scrollbar_dragging: bool,
     focused: bool,
@@ -2418,6 +2682,11 @@ pub struct RenderObject {
     shadow_layer: Option<LayerId>,
     color_filter_layer: Option<LayerId>,
     blend_layer: Option<LayerId>,
+    shader_mask_layer: Option<LayerId>,
+    backdrop_filter_layer: Option<LayerId>,
+    annotation_layer: Option<LayerId>,
+    leader_layer: Option<LayerId>,
+    follower_layer: Option<LayerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2472,6 +2741,18 @@ struct ActiveGesture {
     start: Offset,
 }
 
+struct ActiveRawGestureMember {
+    element: ElementId,
+    member: GestureArenaMember,
+    type_id: TypeId,
+    cancelled: bool,
+}
+
+struct ActiveRawGesture {
+    element: ElementId,
+    members: Vec<ActiveRawGestureMember>,
+}
+
 struct ActiveDrag {
     source: Rc<dyn RetainedDragSource>,
     target: Option<(ElementId, Rc<dyn RetainedDragTarget>)>,
@@ -2488,7 +2769,7 @@ fn disposition_for(
         .map_or(GestureDisposition::Cancelled, |entry| entry.disposition)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct StaticSelectionPoint {
     element: ElementId,
     byte: usize,
@@ -2582,13 +2863,18 @@ pub struct WidgetTree {
     pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
     gesture_arena: GestureArena,
     active_gestures: HashMap<GestureArenaKey, ActiveGesture>,
+    raw_recognizers: HashMap<ElementId, HashMap<TypeId, Box<dyn GestureRecognizer>>>,
+    raw_gesture_streams: HashMap<GestureArenaKey, ActiveRawGesture>,
+    raw_pointer_routes: HashMap<GestureArenaKey, Vec<ElementId>>,
+    mouse_hover: HashMap<GestureArenaKey, Vec<ElementId>>,
+    consumed_tap_pointers: HashSet<GestureArenaKey>,
     pointer_captures: HashMap<GestureArenaKey, ElementId>,
     active_drags: HashMap<GestureArenaKey, ActiveDrag>,
     scale_gestures: HashMap<ElementId, ScaleGestureDetector>,
     scrollbar_drag: Option<ScrollbarDrag>,
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
-    static_selection: Option<StaticSelection>,
+    static_selections: HashMap<ElementId, StaticSelection>,
     environment: RuntimeEnvironment,
     recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]

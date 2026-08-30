@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::environment::{ContentSensitivity, SensitiveContentHost};
+
 impl Default for WidgetTree {
     fn default() -> Self {
         Self::new()
@@ -26,13 +28,18 @@ impl WidgetTree {
             pending_handlers: Vec::new(),
             gesture_arena: GestureArena::new(),
             active_gestures: HashMap::new(),
+            raw_recognizers: HashMap::new(),
+            raw_gesture_streams: HashMap::new(),
+            raw_pointer_routes: HashMap::new(),
+            mouse_hover: HashMap::new(),
+            consumed_tap_pointers: HashSet::new(),
             pointer_captures: HashMap::new(),
             active_drags: HashMap::new(),
             scale_gestures: HashMap::new(),
             scrollbar_drag: None,
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
-            static_selection: None,
+            static_selections: HashMap::new(),
             environment: RuntimeEnvironment::default(),
             recursion_diagnostics: RecursionDiagnostics::new(),
             #[cfg(feature = "devtools")]
@@ -57,6 +64,33 @@ impl WidgetTree {
     #[must_use]
     pub fn environment(&self) -> &RuntimeEnvironment {
         &self.environment
+    }
+
+    /// Returns the highest-priority capture policy contributed by all mounted
+    /// [`SensitiveContent`](crate::SensitiveContent) scopes. The calculation
+    /// intentionally counts registrations rather than using nearest-ancestor
+    /// lookup, matching the window-wide Flutter host policy.
+    #[must_use]
+    pub fn calculated_content_sensitivity(&self) -> Option<ContentSensitivity> {
+        let mut host = SensitiveContentHost::new();
+        for (_, element) in self.elements.iter() {
+            if let Some(sensitivity) = element
+                .environment_override
+                .as_ref()
+                .and_then(|value| value.downcast_ref::<ContentSensitivity>())
+            {
+                host.register(*sensitivity);
+            }
+        }
+        host.calculated_content_sensitivity()
+    }
+
+    /// Returns the normalized policy emitted at the platform window boundary.
+    /// An empty tree restores the neutral `NotSensitive` fallback.
+    #[must_use]
+    pub fn content_sensitivity(&self) -> ContentSensitivity {
+        self.calculated_content_sensitivity()
+            .unwrap_or(ContentSensitivity::NotSensitive)
     }
 
     /// Records the input or command responsible for subsequent frame work.
@@ -251,6 +285,12 @@ impl WidgetTree {
     #[must_use]
     pub fn semantics_debug_dump(&self) -> String {
         self.semantics.debug_dump()
+    }
+    /// Bounded semantic diagnostics for in-app debuggers. The limit is
+    /// applied before formatting labels or traversing descendants.
+    #[must_use]
+    pub fn semantics_debug_dump_bounded(&self, max_nodes: usize) -> String {
+        self.semantics.debug_dump_bounded(max_nodes)
     }
     pub fn note_semantic_action(&mut self) {
         self.semantics.note_action();

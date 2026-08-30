@@ -93,6 +93,8 @@ pub(super) fn rect_origins(list: &DisplayList) -> Vec<Offset> {
             | PaintCommand::PushDropShadow { .. }
             | PaintCommand::PushColorFilter { .. }
             | PaintCommand::PushBlend { .. }
+            | PaintCommand::PushShaderMask { .. }
+            | PaintCommand::PushBackdropFilter { .. }
             | PaintCommand::PopEffect => {}
         }
     }
@@ -129,6 +131,8 @@ pub(super) fn glyph_origins(list: &DisplayList) -> Vec<Offset> {
             | PaintCommand::PushDropShadow { .. }
             | PaintCommand::PushColorFilter { .. }
             | PaintCommand::PushBlend { .. }
+            | PaintCommand::PushShaderMask { .. }
+            | PaintCommand::PushBackdropFilter { .. }
             | PaintCommand::PopEffect => {}
         }
     }

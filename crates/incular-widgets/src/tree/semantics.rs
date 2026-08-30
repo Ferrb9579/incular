@@ -2,6 +2,12 @@
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct SemanticCollectionContext {
+    item_index: Option<usize>,
+    set_size: Option<usize>,
+}
+
 impl WidgetTree {
     pub fn update_semantics(&mut self) {
         let _phase_guard = self.guard_phase_root(FramePhase::Semantics);
@@ -11,7 +17,7 @@ impl WidgetTree {
             .and_then(|root| self.devtools_trace_begin_element(root, TracePhase::Semantics));
         let mut built = Vec::new();
         if let Some(root) = self.root {
-            self.collect_semantics(root, None, &mut built);
+            self.collect_semantics(root, None, None, &mut built);
         }
         let live: HashSet<_> = built.iter().map(|node| node.element).collect();
         let stale: Vec<_> = self
@@ -78,10 +84,11 @@ impl WidgetTree {
         &self,
         element: ElementId,
         semantic_parent: Option<ElementId>,
+        collection: Option<SemanticCollectionContext>,
         out: &mut Vec<SemanticBuild>,
     ) {
         stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
-            self.collect_semantics_inner(element, semantic_parent, out);
+            self.collect_semantics_inner(element, semantic_parent, collection, out);
         });
     }
 
@@ -89,6 +96,7 @@ impl WidgetTree {
         &self,
         element: ElementId,
         semantic_parent: Option<ElementId>,
+        collection: Option<SemanticCollectionContext>,
         out: &mut Vec<SemanticBuild>,
     ) {
         let _node_guard = self.guard_element(FramePhase::Semantics, element);
@@ -107,6 +115,35 @@ impl WidgetTree {
             Some(render) => render,
             None => return,
         };
+        // IndexedSemantics is a transparent render object. Its explicit index
+        // wins over an automatically supplied sliver index and is carried
+        // through transparent wrappers until the first semantic node emits.
+        let mut collection = collection;
+        if let WidgetKind::IndexedSemantics { index, .. } = entry.widget.kind {
+            collection = Some(SemanticCollectionContext {
+                item_index: Some(index),
+                set_size: collection.and_then(|context| context.set_size),
+            });
+        } else if collection.is_none()
+            && let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0))
+            && let WidgetKind::SliverViewport { config } = &parent.widget.kind
+            && let Some(slot) = parent.children.iter().position(|child| *child == element)
+        {
+            collection = Some(SemanticCollectionContext {
+                item_index: parent
+                    .sliver_child_semantic_indices
+                    .get(slot)
+                    .copied()
+                    .flatten()
+                    .or_else(|| {
+                        parent
+                            .sliver_child_ids
+                            .get(slot)
+                            .and_then(|id| id.item_index())
+                    }),
+                set_size: config.delegate.child_count(),
+            });
+        }
         let (mut role, mut default_label, mut value, mut state, mut actions) =
             match &entry.widget.kind {
                 WidgetKind::Button {
@@ -261,17 +298,12 @@ impl WidgetTree {
         });
         let this_parent = if let Some(role) = role {
             let mut state = state;
-            if let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0)) {
-                if let WidgetKind::SliverViewport { config } = &parent.widget.kind {
-                    if let Some(slot) = parent.children.iter().position(|child| *child == element) {
-                        state.item_index = parent
-                            .sliver_child_ids
-                            .get(slot)
-                            .map(|id| (id.0 & u64::from(u32::MAX)) as usize)
-                            .filter(|index| *index > 0)
-                            .map(|index| index - 1);
-                        state.set_size = config.delegate.child_count();
-                    }
+            if let Some(collection) = collection {
+                if collection.item_index.is_some() {
+                    state.item_index = collection.item_index;
+                }
+                if collection.set_size.is_some() {
+                    state.set_size = collection.set_size;
                 }
             }
             out.push(SemanticBuild {
@@ -322,7 +354,12 @@ impl WidgetTree {
                 _ => entry.children[first_visible_child..].to_vec(),
             };
             for child in semantic_children {
-                self.collect_semantics(child, this_parent, out);
+                self.collect_semantics(
+                    child,
+                    this_parent,
+                    role.is_none().then_some(collection).flatten(),
+                    out,
+                );
             }
         }
     }
@@ -372,6 +409,7 @@ pub(super) fn widget_text(widget: &Widget) -> Option<String> {
             Some(text.clone())
         }
         WidgetKind::Button { child, .. } => child.as_deref().and_then(widget_text),
+        WidgetKind::Banner { child, .. } => child.as_deref().and_then(widget_text),
         WidgetKind::Decorated { child, .. }
         | WidgetKind::Padding { child, .. }
         | WidgetKind::Constrained { child, .. }
@@ -409,7 +447,14 @@ pub(super) fn widget_text(widget: &Widget) -> Option<String> {
         | WidgetKind::DropShadow { child, .. }
         | WidgetKind::ColorFiltered { child, .. }
         | WidgetKind::Blend { child, .. } => widget_text(child),
-        WidgetKind::SelectionArea { child, .. } => widget_text(child),
+        WidgetKind::RawInput {
+            child: Some(child), ..
+        } => widget_text(child),
+        WidgetKind::SelectionArea { child, .. }
+        | WidgetKind::SelectionContainer { child, .. }
+        | WidgetKind::SelectionListener { child, .. }
+        | WidgetKind::IndexedSemantics { child, .. }
+        | WidgetKind::SemanticsDebugger { child, .. } => widget_text(child),
         WidgetKind::Flex { children, .. }
         | WidgetKind::Stack { children, .. }
         | WidgetKind::IndexedStack { children, .. } => {

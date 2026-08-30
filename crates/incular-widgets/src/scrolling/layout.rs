@@ -74,6 +74,7 @@ impl RenderSliver for BoxRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 offset: 0.,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
@@ -152,6 +153,7 @@ impl RenderSliver for FixedExtentRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(index),
                     widget,
+                    semantic_index: Some(index),
                     offset: index as f32 * self.item_extent,
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(
@@ -276,6 +278,7 @@ impl RenderSliver for GridRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(row),
                     widget,
+                    semantic_index: Some(row),
                     offset: row as f32 * row_step,
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(
@@ -340,6 +343,7 @@ impl RenderSliver for VariableExtentRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(index),
                     widget,
+                    semantic_index: Some(index),
                     offset: self.index.offset_for_index(index),
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(
@@ -444,6 +448,7 @@ impl RenderSliver for FloatingHeaderRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 offset: scroll_offset - self.effective_scroll_offset,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
@@ -483,6 +488,7 @@ impl RenderSliver for HeaderRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 offset: 0.,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
@@ -531,6 +537,7 @@ impl RenderSliver for FillRemainingRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 // The parent sequence contributes the preceding scroll
                 // extent; a sliver child is always positioned in this
                 // sliver's local coordinate space.
@@ -619,6 +626,7 @@ impl RenderSliver for ViewportExtentRenderSliver {
                 SliverChildLayout {
                     id: SliverChildId::list_item(index),
                     widget,
+                    semantic_index: Some(index),
                     offset: index as f32 * extent,
                     cross_offset: 0.,
                     constraints: sliver_child_constraints(
@@ -649,6 +657,7 @@ impl RenderSliver for ResizingHeaderRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 offset: 0.,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
@@ -805,6 +814,7 @@ impl RenderSliver for LayoutBuilderRenderSliver {
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
+                semantic_index: None,
                 offset: 0.,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
@@ -1227,6 +1237,9 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
         WidgetKind::Decorated { size, child, .. } => size
             .and_then(|size| dimension(size, axis))
             .or_else(|| widget_main_extent_hint(child, axis)),
+        WidgetKind::Banner { child, .. } => child
+            .as_deref()
+            .and_then(|child| widget_main_extent_hint(child, axis)),
         WidgetKind::Button { size, child, .. } => dimension(*size, axis)
             .filter(|extent| *extent > 0.)
             .or_else(|| {
@@ -1352,6 +1365,16 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
         | WidgetKind::Transform { child, .. }
         | WidgetKind::Scale { child, .. }
         | WidgetKind::Rotation { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::ShaderMask { child, .. }
+        | WidgetKind::BackdropFilter { child, .. }
+        | WidgetKind::AnnotatedRegion { child, .. }
+        | WidgetKind::CompositedTransformTarget { child, .. }
+        | WidgetKind::CompositedTransformFollower { child, .. } => {
+            widget_main_extent_hint(child, axis)
+        }
+        WidgetKind::RawInput { child, .. } => child
+            .as_deref()
+            .and_then(|child| widget_main_extent_hint(child, axis)),
         WidgetKind::Baseline { child, .. } => widget_main_extent_hint(child, axis),
         WidgetKind::Flexible { child, .. } => widget_main_extent_hint(child, axis),
         WidgetKind::Flex {
@@ -1375,13 +1398,26 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
             .iter()
             .filter_map(|child| widget_main_extent_hint(child, axis))
             .reduce(f32::max),
-        WidgetKind::SelectionArea { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::SelectionArea { child, .. }
+        | WidgetKind::SelectionContainer { child, .. }
+        | WidgetKind::SelectionListener { child, .. }
+        | WidgetKind::IndexedSemantics { child, .. }
+        | WidgetKind::SemanticsDebugger { child, .. } => widget_main_extent_hint(child, axis),
         WidgetKind::PersistentHeader { child, .. } => widget_main_extent_hint(child, axis),
         WidgetKind::NotificationListener { child, .. } => widget_main_extent_hint(child, axis),
+        WidgetKind::RawScrollbar { child, .. }
+        | WidgetKind::DraggableScrollableActuator { child, .. } => {
+            widget_main_extent_hint(child, axis)
+        }
         // A scrollable or a layout builder obtains its main-axis extent from
         // its parent; guessing it from the child would make a prototype list
         // report a different extent from the actual viewport.
         WidgetKind::Scroll { .. }
+        | WidgetKind::ListWheelScrollView { .. }
+        | WidgetKind::ListWheelViewport { .. }
+        | WidgetKind::DraggableScrollableSheet { .. }
+        | WidgetKind::TwoDimensionalScrollView { .. }
+        | WidgetKind::TwoDimensionalViewport { .. }
         | WidgetKind::SliverViewport { .. }
         | WidgetKind::LayoutBuilder { .. }
         | WidgetKind::AspectRatio { .. }

@@ -1,6 +1,9 @@
 //! Text-field editing, selectable text, caret geometry, and static selection.
 
 use super::*;
+use crate::selection::{
+    SelectedContentRange, SelectionGeometry, SelectionHandleType, SelectionPoint, SelectionStatus,
+};
 
 impl WidgetTree {
     #[must_use]
@@ -329,24 +332,29 @@ impl WidgetTree {
         let point = StaticSelectionPoint { element: id, byte };
         if extend
             && self
-                .static_selection
+                .static_selections
+                .get(&area)
                 .is_some_and(|selection| selection.area != area)
         {
             return false;
         }
         let anchor = if extend {
-            self.static_selection
-                .filter(|selection| selection.area == area)
+            self.static_selections
+                .get(&area)
+                .copied()
                 .map(|selection| selection.anchor)
                 .unwrap_or(point)
         } else {
             point
         };
-        self.static_selection = Some(StaticSelection {
+        self.static_selections.insert(
             area,
-            anchor,
-            extent: point,
-        });
+            StaticSelection {
+                area,
+                anchor,
+                extent: point,
+            },
+        );
         self.sync_static_selection(area);
         true
     }
@@ -360,8 +368,10 @@ impl WidgetTree {
             return false;
         };
         let current = self
-            .static_selection
-            .filter(|selection| selection.area == area && selection.extent.element == id)
+            .static_selections
+            .get(&area)
+            .copied()
+            .filter(|selection| selection.extent.element == id)
             .map(|selection| selection.extent.byte)
             .unwrap_or(0);
         let byte = if right {
@@ -371,18 +381,22 @@ impl WidgetTree {
         };
         let point = StaticSelectionPoint { element: id, byte };
         let anchor = if extend {
-            self.static_selection
-                .filter(|selection| selection.area == area)
+            self.static_selections
+                .get(&area)
+                .copied()
                 .map(|selection| selection.anchor)
                 .unwrap_or(point)
         } else {
             point
         };
-        self.static_selection = Some(StaticSelection {
+        self.static_selections.insert(
             area,
-            anchor,
-            extent: point,
-        });
+            StaticSelection {
+                area,
+                anchor,
+                extent: point,
+            },
+        );
         self.sync_static_selection(area);
         true
     }
@@ -398,18 +412,22 @@ impl WidgetTree {
             byte: if end { text.len() } else { 0 },
         };
         let anchor = if extend {
-            self.static_selection
-                .filter(|selection| selection.area == area)
+            self.static_selections
+                .get(&area)
+                .copied()
                 .map(|selection| selection.anchor)
                 .unwrap_or(point)
         } else {
             point
         };
-        self.static_selection = Some(StaticSelection {
+        self.static_selections.insert(
             area,
-            anchor,
-            extent: point,
-        });
+            StaticSelection {
+                area,
+                anchor,
+                extent: point,
+            },
+        );
         self.sync_static_selection(area);
         true
     }
@@ -427,17 +445,20 @@ impl WidgetTree {
         let last_len = self
             .selectable_text_value(last)
             .map_or(0, |text| text.len());
-        self.static_selection = Some(StaticSelection {
+        self.static_selections.insert(
             area,
-            anchor: StaticSelectionPoint {
-                element: first,
-                byte: 0,
+            StaticSelection {
+                area,
+                anchor: StaticSelectionPoint {
+                    element: first,
+                    byte: 0,
+                },
+                extent: StaticSelectionPoint {
+                    element: last,
+                    byte: last_len,
+                },
             },
-            extent: StaticSelectionPoint {
-                element: last,
-                byte: last_len,
-            },
-        });
+        );
         self.sync_static_selection(area);
         true
     }
@@ -447,9 +468,7 @@ impl WidgetTree {
         if let Some(controller) = self.selection_area_controller(area) {
             return Some(controller.selected_text());
         }
-        let selection = self
-            .static_selection
-            .filter(|selection| selection.area == area)?;
+        let selection = self.static_selections.get(&area).copied()?;
         let entries = self.selectable_texts_in_area(area);
         Some(static_selection_text(self, &entries, selection))
     }
@@ -465,34 +484,42 @@ impl WidgetTree {
     }
     pub(super) fn selection_area_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
         let selectable = id;
+        if !self
+            .elements
+            .get(id.0)
+            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
+        {
+            return None;
+        }
         loop {
-            if self.elements.get(id.0).is_some_and(|element| {
-                matches!(element.widget.kind, WidgetKind::SelectionArea { .. })
-            }) {
-                return Some(id);
+            if let Some(policy) = self.selection_boundary_policy(id) {
+                return policy.accepts_children().then_some(id);
             }
             let Some(parent) = self.parent(id) else {
                 // A standalone SelectableText is its own one-label region.
-                return self
-                    .elements
-                    .get(selectable.0)
-                    .is_some_and(|element| {
-                        matches!(element.widget.kind, WidgetKind::SelectableText { .. })
-                    })
-                    .then_some(selectable);
+                return Some(selectable);
             };
             id = parent;
+        }
+    }
+    fn selection_boundary_policy(&self, id: ElementId) -> Option<SelectableChildPolicy> {
+        match &self.elements.get(id.0)?.widget.kind {
+            WidgetKind::SelectionArea { .. } => Some(SelectableChildPolicy::All),
+            WidgetKind::SelectionContainer { delegate, .. }
+            | WidgetKind::SelectionListener { delegate, .. } => Some(delegate.policy()),
+            _ => None,
         }
     }
     pub(super) fn selection_area_controller(
         &self,
         id: ElementId,
     ) -> Option<SelectionAreaController> {
-        let WidgetKind::SelectionArea { controller, .. } = &self.elements.get(id.0)?.widget.kind
-        else {
-            return None;
-        };
-        Some(controller.clone())
+        match &self.elements.get(id.0)?.widget.kind {
+            WidgetKind::SelectionArea { controller, .. } => Some(controller.clone()),
+            WidgetKind::SelectionContainer { delegate, .. }
+            | WidgetKind::SelectionListener { delegate, .. } => Some(delegate.controller()),
+            _ => None,
+        }
     }
     pub(super) fn selectable_text_value(&self, id: ElementId) -> Option<String> {
         let WidgetKind::SelectableText { text, .. } = &self.elements.get(id.0)?.widget.kind else {
@@ -501,8 +528,26 @@ impl WidgetTree {
         Some(text.clone())
     }
     pub(super) fn selectable_texts_in_area(&self, area: ElementId) -> Vec<ElementId> {
+        let Some(policy) = self.selection_boundary_policy(area) else {
+            // A standalone SelectableText owns its implicit one-item
+            // selection region. It has no explicit boundary policy, but it
+            // must still participate in select-all and copy operations.
+            return self
+                .elements
+                .get(area.0)
+                .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
+                .then_some(vec![area])
+                .unwrap_or_default();
+        };
+        if !policy.accepts_children() {
+            return Vec::new();
+        }
         let mut entries = Vec::new();
-        self.collect_selectable_texts(area, &mut entries);
+        if let Some(element) = self.elements.get(area.0) {
+            for child in &element.children {
+                self.collect_selectable_texts(*child, &mut entries);
+            }
+        }
         entries
     }
     pub(super) fn collect_selectable_texts(&self, id: ElementId, entries: &mut Vec<ElementId>) {
@@ -511,6 +556,13 @@ impl WidgetTree {
         };
         if matches!(element.widget.kind, WidgetKind::SelectableText { .. }) {
             entries.push(id);
+            return;
+        }
+        // A nested selection boundary owns its registrar subtree. Its leaves
+        // must not be harvested by an ancestor container, even when the
+        // nested boundary is disabled.
+        if self.selection_boundary_policy(id).is_some() {
+            return;
         }
         for child in &element.children {
             self.collect_selectable_texts(*child, entries);
@@ -518,15 +570,16 @@ impl WidgetTree {
     }
     pub(super) fn sync_static_selection(&mut self, area: ElementId) {
         let entries = self.selectable_texts_in_area(area);
-        let Some(selection) = self
-            .static_selection
-            .filter(|selection| selection.area == area)
-        else {
-            return;
-        };
-        let selected = static_selection_text(self, &entries, selection);
         if let Some(controller) = self.selection_area_controller(area) {
-            controller.set_selected_text(selected);
+            controller.set_registered_child_count(entries.len());
+            if let Some(selection) = self.static_selections.get(&area).copied() {
+                let selected = static_selection_text(self, &entries, selection);
+                let geometry = self.selection_geometry(area, &entries, selection);
+                let range = selection_content_range(self, &entries, selection);
+                controller.set_selection_snapshot(selected, range, geometry);
+            } else {
+                controller.clear_selection();
+            }
         }
         for element in entries {
             if let Some(render) = self.render_id(element) {
@@ -539,9 +592,137 @@ impl WidgetTree {
         }
     }
     pub(super) fn static_selection_range(&self, element: ElementId) -> Option<TextRange> {
-        let selection = self.static_selection?;
+        let area = self.selection_area_ancestor(element)?;
+        let selection = self.static_selections.get(&area).copied()?;
         let entries = self.selectable_texts_in_area(selection.area);
         static_selection_range(self, &entries, selection, element)
+    }
+
+    fn selection_geometry(
+        &self,
+        area: ElementId,
+        entries: &[ElementId],
+        selection: StaticSelection,
+    ) -> SelectionGeometry {
+        let has_content = !entries.is_empty();
+        let status = if selection.anchor == selection.extent {
+            SelectionStatus::Collapsed
+        } else {
+            SelectionStatus::Uncollapsed
+        };
+        let area_transform = self
+            .render_id(area)
+            .and_then(|render| self.render_world_transform(render).inverse())
+            .unwrap_or(CoreTransform::IDENTITY);
+        let mut rects = Vec::new();
+        for element in entries {
+            let Some(range) = static_selection_range(self, entries, selection, *element) else {
+                continue;
+            };
+            let Some(render) = self.render_id(*element) else {
+                continue;
+            };
+            let Some(layout) = self
+                .renders
+                .get(render.0)
+                .and_then(|node| node.text_layout.clone())
+            else {
+                continue;
+            };
+            let transform = area_transform.then(self.render_world_transform(render));
+            rects.extend(
+                selection_rects(&layout, range, 0., 0., 0.)
+                    .into_iter()
+                    .map(|rect| transform.transform_rect_bbox(rect)),
+            );
+        }
+        let start_selection_point = self.selection_point(
+            area,
+            entries,
+            selection,
+            if selection.anchor <= selection.extent {
+                selection.anchor
+            } else {
+                selection.extent
+            },
+            SelectionHandleType::Left,
+        );
+        let end_selection_point = self.selection_point(
+            area,
+            entries,
+            selection,
+            if selection.anchor <= selection.extent {
+                selection.extent
+            } else {
+                selection.anchor
+            },
+            SelectionHandleType::Right,
+        );
+        let (start_selection_point, end_selection_point) = if status == SelectionStatus::Collapsed {
+            (
+                self.selection_point(
+                    area,
+                    entries,
+                    selection,
+                    selection.anchor,
+                    SelectionHandleType::Collapsed,
+                ),
+                None,
+            )
+        } else {
+            (start_selection_point, end_selection_point)
+        };
+        SelectionGeometry {
+            start_selection_point,
+            end_selection_point,
+            selection_rects: rects,
+            status,
+            has_content,
+        }
+    }
+
+    fn selection_point(
+        &self,
+        area: ElementId,
+        entries: &[ElementId],
+        _selection: StaticSelection,
+        point: StaticSelectionPoint,
+        handle_type: SelectionHandleType,
+    ) -> Option<SelectionPoint> {
+        if !entries.contains(&point.element) {
+            return None;
+        }
+        let render = self.render_id(point.element)?;
+        let layout = self.renders.get(render.0)?.text_layout.as_ref()?;
+        let (x, y, line_height) =
+            caret_geometry(layout, point.byte, incular_text::TextAffinity::Downstream);
+        let area_transform = self
+            .render_id(area)
+            .and_then(|render| self.render_world_transform(render).inverse())
+            .unwrap_or(CoreTransform::IDENTITY);
+        let position = area_transform
+            .then(self.render_world_transform(render))
+            .transform_point(Offset::new(x, y));
+        Some(SelectionPoint {
+            local_position: position,
+            line_height,
+            handle_type,
+        })
+    }
+
+    pub(super) fn refresh_selection_states(&mut self) {
+        let areas = self
+            .elements
+            .iter()
+            .filter_map(|(raw, _element)| {
+                self.selection_boundary_policy(ElementId(raw))
+                    .map(|_| ElementId(raw))
+                    .filter(|id| self.selection_area_controller(*id).is_some())
+            })
+            .collect::<Vec<_>>();
+        for area in areas {
+            self.sync_static_selection(area);
+        }
     }
     #[must_use]
     pub fn text_controller(&self, id: ElementId) -> Option<TextEditingController> {
@@ -888,6 +1069,38 @@ pub(super) fn static_selection_range(
         text.len()
     };
     (start < end).then_some(TextRange::new(start, end))
+}
+
+/// Converts a retained endpoint pair into the byte range of the flattened
+/// selected content. Newlines use the same one-byte separator as
+/// `static_selection_text`, so listeners can use the range to address the
+/// text they receive from the clipboard path.
+pub(super) fn selection_content_range(
+    tree: &WidgetTree,
+    entries: &[ElementId],
+    selection: StaticSelection,
+) -> Option<SelectedContentRange> {
+    fn content_offset(
+        tree: &WidgetTree,
+        entries: &[ElementId],
+        point: StaticSelectionPoint,
+    ) -> Option<usize> {
+        let index = entries.iter().position(|entry| *entry == point.element)?;
+        let mut offset: usize = 0;
+        for entry in &entries[..index] {
+            offset = offset.saturating_add(tree.selectable_text_value(*entry)?.len());
+            offset = offset.saturating_add(1);
+        }
+        let text = tree.selectable_text_value(point.element)?;
+        Some(offset.saturating_add(valid_boundary(&text, point.byte)))
+    }
+
+    let anchor = content_offset(tree, entries, selection.anchor)?;
+    let extent = content_offset(tree, entries, selection.extent)?;
+    Some(SelectedContentRange::new(
+        anchor.min(extent),
+        anchor.max(extent),
+    ))
 }
 
 pub(super) fn static_selection_text(

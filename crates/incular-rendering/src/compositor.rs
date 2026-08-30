@@ -1,8 +1,14 @@
 use crate::display_list::{DisplayList, PaintCommand};
 use crate::effects::{BlendMode, ColorFilter, DropShadowEffect, GaussianBlur};
 use crate::geometry::union_rect;
+use crate::gradients::Brush;
 use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
-use std::sync::Arc;
+use std::{
+    any::{Any, TypeId},
+    cell::RefCell,
+    rc::Rc,
+    sync::Arc,
+};
 
 /// Opaque retained compositor identity. It uses the core generational arena so
 /// an ID for a removed layer can never select a later, unrelated layer.
@@ -43,6 +49,158 @@ pub struct FlattenedPicture {
     pub active_clip: Option<Rect>,
 }
 
+/// A type-erased application annotation carried by an annotated compositing
+/// region. The value remains strongly typed at the API boundary: consumers
+/// query it with [`LayerTree::find_annotation`] and receive only values of the
+/// requested concrete type. Native platform adapters can therefore project
+/// their own typed metadata without making the renderer depend on a platform
+/// crate.
+#[derive(Clone)]
+pub struct Annotation {
+    value: Rc<dyn Any>,
+    type_id: TypeId,
+}
+impl Annotation {
+    #[must_use]
+    pub fn new<T: Any>(value: T) -> Self {
+        Self {
+            value: Rc::new(value),
+            type_id: TypeId::of::<T>(),
+        }
+    }
+    #[must_use]
+    pub const fn value_type_id(&self) -> TypeId {
+        self.type_id
+    }
+    #[must_use]
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.value.downcast_ref::<T>()
+    }
+    #[must_use]
+    pub fn cloned<T: Any + Clone>(&self) -> Option<T> {
+        self.downcast_ref::<T>().cloned()
+    }
+}
+impl std::fmt::Debug for Annotation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Annotation")
+            .field("type_id", &self.type_id)
+            .finish_non_exhaustive()
+    }
+}
+impl PartialEq for Annotation {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id == other.type_id && Rc::ptr_eq(&self.value, &other.value)
+    }
+}
+
+/// Normalized anchor used by leader/follower layers. `(-1, -1)` is the
+/// top-left corner, `(0, 0)` the center, and `(1, 1)` the bottom-right.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayerAnchor {
+    pub x: f32,
+    pub y: f32,
+}
+impl LayerAnchor {
+    pub const TOP_LEFT: Self = Self { x: -1., y: -1. };
+
+    #[must_use]
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            x: if x.is_finite() { x } else { 0. },
+            y: if y.is_finite() { y } else { 0. },
+        }
+    }
+    #[must_use]
+    pub const fn along_size(self, size: Size) -> Offset {
+        Offset::new(
+            size.width * (self.x + 1.) * 0.5,
+            size.height * (self.y + 1.) * 0.5,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LeaderData {
+    transform: Transform,
+    size: Size,
+    generation: u64,
+}
+
+/// Shared identity used to resolve a composited target and any number of
+/// followers across otherwise unrelated retained subtrees.
+#[derive(Clone)]
+pub struct LayerLink(Rc<RefCell<Option<LeaderData>>>);
+impl Default for LayerLink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl std::fmt::Debug for LayerLink {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LayerLink")
+            .field("linked", &self.is_linked())
+            .finish()
+    }
+}
+impl PartialEq for LayerLink {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl LayerLink {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(None)))
+    }
+    #[must_use]
+    pub fn is_linked(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+    #[must_use]
+    pub fn leader_size(&self) -> Option<Size> {
+        self.0.borrow().as_ref().map(|leader| leader.size)
+    }
+    #[must_use]
+    pub fn leader_transform(&self) -> Option<Transform> {
+        self.0.borrow().as_ref().map(|leader| leader.transform)
+    }
+    #[must_use]
+    pub fn leader_generation(&self) -> u64 {
+        self.0
+            .borrow()
+            .as_ref()
+            .map_or(0, |leader| leader.generation)
+    }
+    fn clear_leader(&self) {
+        *self.0.borrow_mut() = None;
+    }
+    fn set_leader(&self, transform: Transform, size: Size, generation: u64) {
+        // Flutter requires one target per link and the first target in paint
+        // order wins. Keeping that rule deterministic is preferable to
+        // allowing a later subtree to move an already painted follower.
+        let mut state = self.0.borrow_mut();
+        if state.is_none() {
+            *state = Some(LeaderData {
+                transform,
+                size,
+                generation,
+            });
+        }
+    }
+}
+
+/// Annotation placement captured by the most recent layer flatten. A `None`
+/// bounds value represents `sized: false`, which participates at every point
+/// in the scene subject to ancestor clipping.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlattenedAnnotation {
+    pub annotation: Annotation,
+    pub world_bounds: Option<Rect>,
+}
+
 #[derive(Clone, Debug)]
 pub enum LayerKind {
     Picture {
@@ -70,6 +228,34 @@ pub enum LayerKind {
     Blend {
         mode: BlendMode,
     },
+    ShaderMask {
+        shader: Brush,
+        blend_mode: BlendMode,
+        mask_size: Size,
+        mask_transform: Transform,
+    },
+    BackdropFilter {
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
+    },
+    AnnotatedRegion {
+        annotation: Annotation,
+        sized: bool,
+        size: Size,
+    },
+    Leader {
+        link: LayerLink,
+        size: Size,
+    },
+    Follower {
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
+        size: Size,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +274,7 @@ pub struct LayerTree {
     root: Option<LayerId>,
     diagnostics: CompositorDiagnostics,
     flattened_pictures: Vec<FlattenedPicture>,
+    flattened_annotations: Vec<FlattenedAnnotation>,
     next_generation: u64,
 }
 impl Default for LayerTree {
@@ -103,6 +290,7 @@ impl LayerTree {
             root: None,
             diagnostics: CompositorDiagnostics::default(),
             flattened_pictures: Vec::new(),
+            flattened_annotations: Vec::new(),
             next_generation: 1,
         }
     }
@@ -162,6 +350,71 @@ impl LayerTree {
     /// the discrete blend mode changes.
     pub fn create_blend(&mut self, mode: BlendMode) -> LayerId {
         self.insert(LayerKind::Blend { mode })
+    }
+    /// Creates an isolated shader-mask stage. The callback is evaluated by
+    /// the retained widget during paint; this layer only owns the resolved,
+    /// renderer-neutral shader description and its local coordinate space.
+    pub fn create_shader_mask(
+        &mut self,
+        shader: Brush,
+        blend_mode: BlendMode,
+        mask_size: Size,
+        mask_transform: Transform,
+    ) -> LayerId {
+        self.insert(LayerKind::ShaderMask {
+            shader,
+            blend_mode,
+            mask_size,
+            mask_transform,
+        })
+    }
+    /// Creates a backdrop-filter stage. Unlike [`Self::create_blur`], this
+    /// stage samples the already painted destination before its child is
+    /// composited.
+    pub fn create_backdrop_filter(
+        &mut self,
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
+    ) -> LayerId {
+        self.insert(LayerKind::BackdropFilter {
+            blur: GaussianBlur::new(blur.sigma_x, blur.sigma_y),
+            blend_mode,
+            enabled,
+        })
+    }
+    pub fn create_annotated_region(
+        &mut self,
+        annotation: Annotation,
+        sized: bool,
+        size: Size,
+    ) -> LayerId {
+        self.insert(LayerKind::AnnotatedRegion {
+            annotation,
+            sized,
+            size,
+        })
+    }
+    pub fn create_leader(&mut self, link: LayerLink, size: Size) -> LayerId {
+        self.insert(LayerKind::Leader { link, size })
+    }
+    pub fn create_follower(
+        &mut self,
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
+        size: Size,
+    ) -> LayerId {
+        self.insert(LayerKind::Follower {
+            link,
+            show_when_unlinked,
+            offset,
+            target_anchor,
+            follower_anchor,
+            size,
+        })
     }
     fn insert(&mut self, kind: LayerKind) -> LayerId {
         let generation = self.next_generation;
@@ -337,6 +590,206 @@ impl LayerTree {
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         true
     }
+    pub fn update_shader_mask(
+        &mut self,
+        id: LayerId,
+        shader: Brush,
+        blend_mode: BlendMode,
+        mask_size: Size,
+        mask_transform: Transform,
+    ) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::ShaderMask {
+            shader: current_shader,
+            blend_mode: current_mode,
+            mask_size: current_size,
+            mask_transform: current_transform,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if *current_shader == shader
+            && *current_mode == blend_mode
+            && *current_size == mask_size
+            && *current_transform == mask_transform
+        {
+            return false;
+        }
+        *current_shader = shader;
+        *current_mode = blend_mode;
+        *current_size = mask_size;
+        *current_transform = mask_transform;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    pub fn update_shader_mask_blend(&mut self, id: LayerId, blend_mode: BlendMode) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::ShaderMask {
+            blend_mode: current,
+            ..
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if *current == blend_mode {
+            return false;
+        }
+        *current = blend_mode;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    pub fn update_backdrop_filter(
+        &mut self,
+        id: LayerId,
+        blur: GaussianBlur,
+        blend_mode: BlendMode,
+        enabled: bool,
+    ) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::BackdropFilter {
+            blur: current_blur,
+            blend_mode: current_mode,
+            enabled: current_enabled,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        let blur = GaussianBlur::new(blur.sigma_x, blur.sigma_y);
+        if *current_blur == blur && *current_mode == blend_mode && *current_enabled == enabled {
+            return false;
+        }
+        *current_blur = blur;
+        *current_mode = blend_mode;
+        *current_enabled = enabled;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    pub fn update_annotated_region(
+        &mut self,
+        id: LayerId,
+        annotation: Annotation,
+        sized: bool,
+        size: Size,
+    ) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::AnnotatedRegion {
+            annotation: current_annotation,
+            sized: current_sized,
+            size: current_size,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if *current_annotation == annotation && *current_sized == sized && *current_size == size {
+            return false;
+        }
+        *current_annotation = annotation;
+        *current_sized = sized;
+        *current_size = size;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    pub fn update_leader(&mut self, id: LayerId, link: LayerLink, size: Size) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::Leader {
+            link: current_link,
+            size: current_size,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if *current_link == link && *current_size == size {
+            return false;
+        }
+        current_link.clear_leader();
+        *current_link = link;
+        *current_size = size;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    pub fn update_leader_size(&mut self, id: LayerId, size: Size) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::Leader { size: current, .. } = &mut layer.kind else {
+            return false;
+        };
+        if *current == size {
+            return false;
+        }
+        *current = size;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
+    // Keep the follower fields explicit to preserve the public update API and
+    // make each retained follower property visible at the call site.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_follower(
+        &mut self,
+        id: LayerId,
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
+        size: Size,
+    ) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::Follower {
+            link: current_link,
+            show_when_unlinked: current_show,
+            offset: current_offset,
+            target_anchor: current_target,
+            follower_anchor: current_follower,
+            size: current_size,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if *current_link == link
+            && *current_show == show_when_unlinked
+            && *current_offset == offset
+            && *current_target == target_anchor
+            && *current_follower == follower_anchor
+            && *current_size == size
+        {
+            return false;
+        }
+        *current_link = link;
+        *current_show = show_when_unlinked;
+        *current_offset = offset;
+        *current_target = target_anchor;
+        *current_follower = follower_anchor;
+        *current_size = size;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        true
+    }
     /// World-space logical bounds captured by the most recent [`Self::flatten`]
     /// call. This keeps coordinate diagnostics out of the renderer hot path.
     #[must_use]
@@ -344,11 +797,42 @@ impl LayerTree {
         &self.flattened_pictures
     }
     #[must_use]
+    pub fn flattened_annotations(&self) -> &[FlattenedAnnotation] {
+        &self.flattened_annotations
+    }
+    /// Returns the front-most annotation of type `T` at `point`. Annotation
+    /// lookup follows layer paint order, honours ancestor clips, and treats
+    /// `sized: false` regions as covering the entire clipped subtree.
+    #[must_use]
+    pub fn find_annotation<T: Any + Clone>(&self, point: Offset) -> Option<T> {
+        self.flattened_annotations.iter().find_map(|entry| {
+            let in_bounds = entry
+                .world_bounds
+                .is_none_or(|bounds| bounds.contains(point));
+            in_bounds.then(|| entry.annotation.cloned::<T>()).flatten()
+        })
+    }
+    #[must_use]
+    pub fn find_annotations<T: Any + Clone>(&self, point: Offset) -> Vec<T> {
+        self.flattened_annotations
+            .iter()
+            .filter_map(|entry| {
+                let in_bounds = entry
+                    .world_bounds
+                    .is_none_or(|bounds| bounds.contains(point));
+                in_bounds.then(|| entry.annotation.cloned::<T>()).flatten()
+            })
+            .collect()
+    }
+    #[must_use]
     pub fn flatten(&mut self) -> DisplayList {
         let mut out = DisplayList::new();
         self.flattened_pictures.clear();
+        self.flattened_annotations.clear();
         if let Some(root) = self.root {
+            self.clear_link_states(root);
             self.flatten_layer(root, Transform::IDENTITY, None, &mut out);
+            self.collect_annotations(root, Transform::IDENTITY, None);
         }
         for (_, layer) in self.layers.iter() {
             if matches!(layer.kind, LayerKind::Picture { .. })
@@ -497,6 +981,226 @@ impl LayerTree {
                 }
                 out.push(PaintCommand::PopEffect);
             }
+            LayerKind::ShaderMask {
+                shader,
+                blend_mode,
+                mask_size,
+                mask_transform,
+            } => {
+                let bounds = self
+                    .subtree_bounds(id, world_transform)
+                    .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                if !bounds.size.width.is_finite()
+                    || !bounds.size.height.is_finite()
+                    || bounds.size.width <= 0.
+                    || bounds.size.height <= 0.
+                {
+                    return;
+                }
+                out.push(PaintCommand::PushShaderMask {
+                    layer: id,
+                    shader,
+                    blend_mode,
+                    mask_size,
+                    mask_transform,
+                    generation: self.subtree_generation(id),
+                    bounds,
+                });
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, clip, out);
+                }
+                out.push(PaintCommand::PopEffect);
+            }
+            LayerKind::BackdropFilter {
+                blur,
+                blend_mode,
+                enabled,
+            } => {
+                if !enabled || (blur.sigma_x <= f32::EPSILON && blur.sigma_y <= f32::EPSILON) {
+                    for child in layer.children {
+                        self.flatten_layer(child, world_transform, clip, out);
+                    }
+                    return;
+                }
+                let bounds = self
+                    .subtree_bounds(id, world_transform)
+                    .unwrap_or_else(|| Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                out.push(PaintCommand::PushBackdropFilter {
+                    layer: id,
+                    blur,
+                    blend_mode,
+                    enabled,
+                    generation: self.subtree_generation(id),
+                    bounds,
+                });
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, clip, out);
+                }
+                out.push(PaintCommand::PopEffect);
+            }
+            LayerKind::AnnotatedRegion { .. } => {
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, clip, out);
+                }
+            }
+            LayerKind::Leader { link, size } => {
+                link.set_leader(world_transform, size, self.subtree_generation(id));
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, clip, out);
+                }
+            }
+            LayerKind::Follower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                size,
+            } => {
+                let Some(next_transform) = self.follower_transform(
+                    world_transform,
+                    link,
+                    show_when_unlinked,
+                    offset,
+                    target_anchor,
+                    follower_anchor,
+                    size,
+                ) else {
+                    return;
+                };
+                for child in layer.children {
+                    self.flatten_layer(child, next_transform, clip, out);
+                }
+            }
+        }
+    }
+    fn clear_link_states(&self, id: LayerId) {
+        let Some(layer) = self.layers.get(id.0) else {
+            return;
+        };
+        if let LayerKind::Leader { link, .. } = &layer.kind {
+            link.clear_leader();
+        }
+        let children = layer.children.clone();
+        for child in children {
+            self.clear_link_states(child);
+        }
+    }
+    // Keep the transform inputs explicit so this helper mirrors the retained
+    // follower state without changing the existing call-site contract.
+    #[allow(clippy::too_many_arguments)]
+    fn follower_transform(
+        &self,
+        world_transform: Transform,
+        link: LayerLink,
+        show_when_unlinked: bool,
+        offset: Offset,
+        target_anchor: LayerAnchor,
+        follower_anchor: LayerAnchor,
+        size: Size,
+    ) -> Option<Transform> {
+        let Some(leader_transform) = link.leader_transform() else {
+            return show_when_unlinked.then_some(world_transform);
+        };
+        let leader_size = link.leader_size().unwrap_or(Size::ZERO);
+        let target_point = leader_transform.transform_point(target_anchor.along_size(leader_size));
+        let leader_origin = leader_transform.transform_point(Offset::ZERO);
+        let offset_point = leader_transform.transform_point(offset) - leader_origin;
+        let desired_anchor = target_point + offset_point;
+        let desired_local = world_transform.inverse_transform_point(desired_anchor)?;
+        let local_delta = desired_local - follower_anchor.along_size(size);
+        Some(world_transform.then(Transform::translation(local_delta)))
+    }
+    fn collect_annotations(&mut self, id: LayerId, world_transform: Transform, clip: Option<Rect>) {
+        let Some(layer) = self.layers.get(id.0).cloned() else {
+            return;
+        };
+        match layer.kind {
+            LayerKind::Transform { transform } => {
+                let next = world_transform.then(transform);
+                for child in layer.children {
+                    self.collect_annotations(child, next, clip);
+                }
+            }
+            LayerKind::ClipRect { rect } => {
+                let world = world_transform.transform_rect_bbox(rect);
+                let next_clip = match clip {
+                    Some(current) => current.intersection(world),
+                    None => Some(world),
+                };
+                if next_clip.is_none() {
+                    return;
+                }
+                for child in layer.children {
+                    self.collect_annotations(child, world_transform, next_clip);
+                }
+            }
+            LayerKind::Follower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                size,
+            } => {
+                let Some(next) = self.follower_transform(
+                    world_transform,
+                    link,
+                    show_when_unlinked,
+                    offset,
+                    target_anchor,
+                    follower_anchor,
+                    size,
+                ) else {
+                    return;
+                };
+                for child in layer.children {
+                    self.collect_annotations(child, next, clip);
+                }
+            }
+            LayerKind::AnnotatedRegion {
+                annotation,
+                sized,
+                size,
+            } => {
+                // Container layers are painted in child order, but annotation
+                // lookup walks visually front-to-back. Visit children in
+                // reverse order, then append this layer's own annotation.
+                for child in layer.children.iter().rev() {
+                    self.collect_annotations(*child, world_transform, clip);
+                }
+                let region =
+                    world_transform.transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, size));
+                let world_bounds = if sized {
+                    match clip {
+                        Some(active) => active.intersection(region),
+                        None => Some(region),
+                    }
+                } else {
+                    clip
+                };
+                if world_bounds
+                    .is_none_or(|bounds| bounds.size.width > 0. && bounds.size.height > 0.)
+                {
+                    self.flattened_annotations.push(FlattenedAnnotation {
+                        annotation,
+                        world_bounds,
+                    });
+                }
+            }
+            LayerKind::Picture { .. }
+            | LayerKind::Opacity { .. }
+            | LayerKind::Blur { .. }
+            | LayerKind::DropShadow { .. }
+            | LayerKind::ColorFilter { .. }
+            | LayerKind::Blend { .. }
+            | LayerKind::ShaderMask { .. }
+            | LayerKind::BackdropFilter { .. }
+            | LayerKind::Leader { .. } => {
+                for child in layer.children {
+                    self.collect_annotations(child, world_transform, clip);
+                }
+            }
         }
     }
     fn subtree_generation(&self, id: LayerId) -> u64 {
@@ -544,6 +1248,66 @@ impl LayerTree {
                     LayerKind::Blend { mode } => {
                         value = value.rotate_left(13) ^ u64::from(mode.code());
                     }
+                    LayerKind::ShaderMask {
+                        shader,
+                        blend_mode,
+                        mask_size,
+                        mask_transform,
+                    } => {
+                        value = value.rotate_left(13)
+                            ^ brush_generation(shader)
+                            ^ u64::from(blend_mode.code())
+                            ^ u64::from(mask_size.width.to_bits()).rotate_left(9)
+                            ^ u64::from(mask_size.height.to_bits()).rotate_left(15)
+                            ^ transform_generation(*mask_transform);
+                    }
+                    LayerKind::BackdropFilter {
+                        blur,
+                        blend_mode,
+                        enabled,
+                    } => {
+                        value = value.rotate_left(13)
+                            ^ u64::from(blur.sigma_x.to_bits())
+                            ^ u64::from(blur.sigma_y.to_bits()).rotate_left(7)
+                            ^ u64::from(blend_mode.code())
+                            ^ u64::from(*enabled as u8);
+                    }
+                    LayerKind::AnnotatedRegion {
+                        annotation: _,
+                        sized,
+                        size,
+                    } => {
+                        value = value.rotate_left(13)
+                            ^ u64::from(*sized as u8)
+                            ^ u64::from(size.width.to_bits()).rotate_left(9)
+                            ^ u64::from(size.height.to_bits()).rotate_left(15);
+                    }
+                    LayerKind::Leader { link, size } => {
+                        value = value.rotate_left(13)
+                            ^ link.leader_generation()
+                            ^ u64::from(size.width.to_bits()).rotate_left(9)
+                            ^ u64::from(size.height.to_bits()).rotate_left(15);
+                    }
+                    LayerKind::Follower {
+                        link,
+                        show_when_unlinked,
+                        offset,
+                        target_anchor,
+                        follower_anchor,
+                        size,
+                    } => {
+                        value = value.rotate_left(13)
+                            ^ link.leader_generation()
+                            ^ u64::from(*show_when_unlinked as u8)
+                            ^ u64::from(offset.x.to_bits())
+                            ^ u64::from(offset.y.to_bits()).rotate_left(7)
+                            ^ u64::from(target_anchor.x.to_bits()).rotate_left(13)
+                            ^ u64::from(target_anchor.y.to_bits()).rotate_left(17)
+                            ^ u64::from(follower_anchor.x.to_bits()).rotate_left(21)
+                            ^ u64::from(follower_anchor.y.to_bits()).rotate_left(25)
+                            ^ u64::from(size.width.to_bits()).rotate_left(29)
+                            ^ u64::from(size.height.to_bits()).rotate_left(31);
+                    }
                     _ => {}
                 }
             }
@@ -584,6 +1348,37 @@ impl LayerTree {
                 .iter()
                 .filter_map(|child| self.subtree_bounds(*child, world_transform))
                 .reduce(union_rect),
+            LayerKind::ShaderMask { .. }
+            | LayerKind::BackdropFilter { .. }
+            | LayerKind::AnnotatedRegion { .. }
+            | LayerKind::Leader { .. } => layer
+                .children
+                .iter()
+                .filter_map(|child| self.subtree_bounds(*child, world_transform))
+                .reduce(union_rect),
+            LayerKind::Follower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                size,
+            } => {
+                let next = self.follower_transform(
+                    world_transform,
+                    link.clone(),
+                    *show_when_unlinked,
+                    *offset,
+                    *target_anchor,
+                    *follower_anchor,
+                    *size,
+                )?;
+                layer
+                    .children
+                    .iter()
+                    .filter_map(|child| self.subtree_bounds(*child, next))
+                    .reduce(union_rect)
+            }
         }
     }
     #[must_use]
@@ -657,16 +1452,56 @@ impl LayerTree {
                 self.subtree_bounds(id, world_transform),
                 self.subtree_generation(id)
             ),
+            LayerKind::ShaderMask {
+                blend_mode,
+                mask_size,
+                ..
+            } => format!(
+                "ShaderMask(blend_mode={blend_mode:?}, mask_size={mask_size:?}, bounds={:?}, generation={})",
+                self.subtree_bounds(id, world_transform),
+                self.subtree_generation(id)
+            ),
+            LayerKind::BackdropFilter {
+                blur,
+                blend_mode,
+                enabled,
+            } => format!(
+                "BackdropFilter(sigma=({:.3},{:.3}), blend_mode={blend_mode:?}, enabled={enabled}, bounds={:?}, generation={})",
+                blur.sigma_x,
+                blur.sigma_y,
+                self.subtree_bounds(id, world_transform),
+                self.subtree_generation(id)
+            ),
+            LayerKind::AnnotatedRegion { sized, size, .. } => format!(
+                "AnnotatedRegion(sized={sized}, size={size:?}, generation={})",
+                self.subtree_generation(id)
+            ),
+            LayerKind::Leader { link, size } => format!(
+                "CompositedTransformTarget(size={size:?}, linked={}, generation={})",
+                link.is_linked(),
+                self.subtree_generation(id)
+            ),
+            LayerKind::Follower {
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                ..
+            } => format!(
+                "CompositedTransformFollower(show_when_unlinked={show_when_unlinked}, offset={offset:?}, target_anchor={target_anchor:?}, follower_anchor={follower_anchor:?}, bounds={:?}, generation={})",
+                self.subtree_bounds(id, world_transform),
+                self.subtree_generation(id)
+            ),
         };
         out.push_str(&format!(
             "{indent}{id:?} parent={parent:?} {kind}, dirty={:?}\n",
             layer.dirty
         ));
-        let (next_translation, next_clip) = match layer.kind {
+        let (next_translation, next_clip) = match &layer.kind {
             LayerKind::Picture { .. } => (world_transform, clip),
-            LayerKind::Transform { transform: local } => (world_transform.then(local), clip),
+            LayerKind::Transform { transform: local } => (world_transform.then(*local), clip),
             LayerKind::ClipRect { rect } => {
-                let world = world_transform.transform_rect_bbox(rect);
+                let world = world_transform.transform_rect_bbox(*rect);
                 (
                     world_transform,
                     Some(clip.map_or(world, |old| old.intersection(world).unwrap_or(world))),
@@ -675,6 +1510,30 @@ impl LayerTree {
             LayerKind::Opacity { .. } => (world_transform, clip),
             LayerKind::Blur { .. } | LayerKind::DropShadow { .. } => (world_transform, clip),
             LayerKind::ColorFilter { .. } | LayerKind::Blend { .. } => (world_transform, clip),
+            LayerKind::ShaderMask { .. }
+            | LayerKind::BackdropFilter { .. }
+            | LayerKind::AnnotatedRegion { .. }
+            | LayerKind::Leader { .. } => (world_transform, clip),
+            LayerKind::Follower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                size,
+            } => (
+                self.follower_transform(
+                    world_transform,
+                    link.clone(),
+                    *show_when_unlinked,
+                    *offset,
+                    *target_anchor,
+                    *follower_anchor,
+                    *size,
+                )
+                .unwrap_or(world_transform),
+                clip,
+            ),
         };
         for child in &layer.children {
             self.write_debug_at(
@@ -687,4 +1546,45 @@ impl LayerTree {
             );
         }
     }
+}
+
+fn brush_generation(brush: &Brush) -> u64 {
+    match brush {
+        Brush::Solid(color) => {
+            u64::from(color.red)
+                | (u64::from(color.green) << 8)
+                | (u64::from(color.blue) << 16)
+                | (u64::from(color.alpha) << 24)
+        }
+        Brush::LinearGradient(gradient) => {
+            gradient.stops.id().get()
+                ^ u64::from(gradient.start.x.to_bits()).rotate_left(7)
+                ^ u64::from(gradient.start.y.to_bits()).rotate_left(13)
+                ^ u64::from(gradient.end.x.to_bits()).rotate_left(19)
+                ^ u64::from(gradient.end.y.to_bits()).rotate_left(23)
+        }
+        Brush::RadialGradient(gradient) => {
+            gradient.stops.id().get()
+                ^ u64::from(gradient.center.x.to_bits()).rotate_left(7)
+                ^ u64::from(gradient.center.y.to_bits()).rotate_left(13)
+                ^ u64::from(gradient.radius.to_bits()).rotate_left(19)
+        }
+        Brush::SweepGradient(gradient) => {
+            gradient.stops.id().get()
+                ^ u64::from(gradient.center.x.to_bits()).rotate_left(7)
+                ^ u64::from(gradient.center.y.to_bits()).rotate_left(13)
+                ^ u64::from(gradient.start_angle.to_bits()).rotate_left(19)
+        }
+    }
+}
+
+fn transform_generation(transform: Transform) -> u64 {
+    transform
+        .to_kurbo()
+        .as_coeffs()
+        .iter()
+        .enumerate()
+        .fold(0, |value, (index, coefficient)| {
+            value ^ coefficient.to_bits().rotate_left((index as u32 * 9) % 63)
+        })
 }

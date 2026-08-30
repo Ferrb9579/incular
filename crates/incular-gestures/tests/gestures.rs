@@ -137,6 +137,25 @@ fn actions_dispatch_nearest_scope_first() {
 }
 
 #[test]
+fn action_invocation_listeners_observe_start_and_end() {
+    let phases = Rc::new(RefCell::new(Vec::new()));
+    let action = Action::<Command>::new("save", || {});
+    let observed = phases.clone();
+    let _subscription = action.add_invocation_listener(move |phase| {
+        observed.borrow_mut().push(phase);
+    });
+
+    assert_eq!(
+        action.invoke(&Intent::<Command>::from("save")),
+        ActionResult::Handled
+    );
+    assert_eq!(
+        &*phases.borrow(),
+        &[ActionInvocationPhase::Start, ActionInvocationPhase::End]
+    );
+}
+
+#[test]
 fn disabled_or_ignored_actions_fall_through_to_outer_scope() {
     let observed = Rc::new(RefCell::new(Vec::new()));
     let outer_observed = observed.clone();

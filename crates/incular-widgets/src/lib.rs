@@ -3,7 +3,11 @@
 //! The public crate root provides canonical first-class Flutter-style widget descriptors
 //! while internal retained tree execution remains Rust-native.
 
+mod advanced_scrolling;
+mod advanced_slivers;
 mod animation_transitions;
+mod app_shell;
+mod compositing;
 #[cfg(feature = "devtools")]
 #[doc(hidden)]
 pub mod devtools;
@@ -14,17 +18,24 @@ mod environment;
 mod focus_keyboard;
 mod forms;
 mod gestures;
+mod indexed_semantics;
 #[doc(hidden)]
 pub mod internal;
 mod layout;
+mod navigation;
 mod navigation_scopes;
 mod painting_effects;
 mod radio_selection;
+mod raw_input;
+mod raw_tooltip;
 mod recursion;
 mod safe_area;
 mod scrolling;
 mod selection;
+mod selection_container;
+mod selection_listener;
 mod semantics;
+mod semantics_debugger;
 mod tree;
 mod utilities;
 
@@ -32,24 +43,64 @@ mod utilities;
 // renderer diagnostics, and Incular-only helpers stay private to this crate;
 // the facade's `internal` module is the sole explicitly documented bridge for
 // sibling implementation crates.
+pub use advanced_scrolling::{
+    CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, DiagonalDragBehavior,
+    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
+    DraggableScrollableNotification, DraggableScrollableSheet, DraggableScrollableState,
+    DraggableSheetDelta, DraggableSheetExtent, DraggableSizeAnimation, DraggableSnap,
+    DraggableSnapTarget, FixedExtentScrollController, ListWheelScrollView, ListWheelViewport,
+    RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation, RawScrollbarStyle,
+    TwoDimensionalChildDelegate, TwoDimensionalChildLayout, TwoDimensionalConstraints,
+    TwoDimensionalScrollDelta, TwoDimensionalScrollView, TwoDimensionalScrollable,
+    TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelChildDelegate, WheelChildLayout,
+    WheelLayout, WheelMatrix, WheelProjection,
+};
+pub use advanced_slivers::{
+    AnimatedGrid, AnimatedGridController, AnimatedItem, AnimatedItemBuilder, AnimatedItemPhase,
+    AnimatedList, AnimatedListController, AnimatedRemovedItemBuilder, AutomaticKeepAlive,
+    KeepAlive, KeepAliveHandle, KeepAliveNotification, KeepAliveRegistry, SliverAnimatedGrid,
+    SliverAnimatedGridController, TreeRowAnimation, TreeSliver, TreeSliverController,
+    TreeSliverIndentation, TreeSliverNode, TreeSliverNodeId,
+};
 pub use animation_transitions::{
     AlignTransition, DecoratedBoxTransition, DefaultTextStyleTransition, DualTransitionBuilder,
     MatrixTransition, PositionedTransition, RelativePositionedTransition, SizeTransition,
+};
+pub use app_shell::{
+    ApplicationBootstrapHost, ApplicationBootstrapOptions, ApplicationBootstrapSpec,
+    AuxiliaryViewError, AuxiliaryViewHandle, AuxiliaryViewHost, AuxiliaryViewOutcome,
+    AuxiliaryViewRequest, BackButtonDispatcher, BackCallbackSubscription, BasicRouterDelegate,
+    ClosureRouteInformationParser, MemoryRouteInformationProvider, NavigationNotification,
+    NavigationNotificationKind, NavigationNotificationListener, NavigationNotificationSubscription,
+    NoopAuxiliaryViewHost, NoopWindowChromeSink, RootBackButtonDispatcher, RouteInformation,
+    RouteInformationListener, RouteInformationParser, RouteInformationProvider,
+    RouteInformationReportingType, RouteInformationSubscription, Router, RouterConfig, RouterData,
+    RouterDelegate, RouterDelegateListener, RouterDelegateSubscription, RouterError,
+    StringRouteInformationParser, Title, TitleController, TitleData, TitleError, View, ViewAnchor,
+    ViewAnchorController, ViewAnchorData, ViewAnchorSubscription, ViewController, ViewData,
+    ViewEvent, ViewId, ViewLifecycle, ViewMetrics, ViewSubscription, WidgetsApp,
+    WidgetsAppController, WidgetsAppData, WindowChromeSink, normalize_route_location,
+};
+pub use compositing::{
+    AnnotatedRegion, BackdropFilter, CompositedTransformFollower, CompositedTransformTarget,
+    ShaderCallback, ShaderMask,
 };
 pub use drag_drop::{
     DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable, LongPressDraggable,
 };
 pub use environment::{
-    DefaultSelectionStyle, DefaultTextStyle, Directionality, IconTheme, Localizations, MediaQuery,
-    MediaQueryData, Orientation, OrientationBuilder, PrimaryScrollController, ScrollConfiguration,
-    SensitiveContent, TickerMode,
+    ContentSensitivity, DefaultSelectionStyle, DefaultTextStyle, Directionality, IconTheme,
+    Localizations, LookupBoundary, MediaQuery, MediaQueryData, Orientation, OrientationBuilder,
+    PrimaryScrollController, ScrollConfiguration, SensitiveContent, SensitiveContentHost,
+    TickerMode,
 };
 pub use focus_keyboard::{
-    Action, ActionResult, Actions, Command, CommandId, ExcludeFocus, ExcludeFocusTraversal, Focus,
-    FocusManager, FocusNode, FocusScope, FocusScopeNode, FocusScopeSubscription,
-    FocusTraversalGroup, FocusTraversalOrder, FocusTraversalPolicy, FocusTraversalPolicyKind,
-    Intent, KeyboardListener, LogicalShortcutKey, OrderedTraversalPolicy,
-    ReadingOrderTraversalPolicy, ShortcutKey, ShortcutTrigger, Shortcuts,
+    Action, ActionInvocationPhase, ActionListener, ActionResult, Actions, CallbackShortcuts,
+    Command, CommandId, ExcludeFocus, ExcludeFocusTraversal, Focus, FocusManager, FocusNode,
+    FocusScope, FocusScopeNode, FocusScopeSubscription, FocusTraversalGroup, FocusTraversalOrder,
+    FocusTraversalPolicy, FocusTraversalPolicyKind, FocusableActionDetector, Intent,
+    KeyboardListener, LogicalShortcutKey, OrderedTraversalPolicy, ReadingOrderTraversalPolicy,
+    ShortcutActivator, ShortcutKey, ShortcutTrigger, Shortcuts, SingleActivator,
     WidgetOrderTraversalPolicy,
 };
 pub use forms::{
@@ -69,8 +120,8 @@ pub use incular_config::{
 pub use incular_core::{Color, Key, LocalKey, Offset, Rect, Size, UniqueKey, ValueKey};
 pub use incular_image::{AssetImage, FileImage, ImageConfiguration, ImageProvider, MemoryImage};
 pub use incular_rendering::{
-    BlendMode, Canvas, ColorFilter, FilterQuality, LinearGradient, Paint, PaintStyle, Path, RRect,
-    RadialGradient, Shader, Shadow, SweepGradient,
+    Annotation, BlendMode, Canvas, ColorFilter, FilterQuality, LayerAnchor, LayerLink,
+    LinearGradient, Paint, PaintStyle, Path, RRect, RadialGradient, Shader, Shadow, SweepGradient,
 };
 pub use incular_scroll::{
     ClampingScrollPhysics, ScrollController, ScrollMetrics, ScrollNotification,
@@ -82,6 +133,7 @@ pub use incular_text::{
     TextBaseline, TextEditingController, TextEditingValue, TextHeightBehavior, TextOverflow,
     TextRange, TextScaler, TextSelection, TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
 };
+pub use indexed_semantics::IndexedSemantics;
 pub use layout::{
     Align, AspectRatio, Baseline, Center, ClipOval, ClipPath, ClipRRect, ClipRect, ColoredBox,
     Column, ConstrainedBox, ConstraintsTransformBox, Container, CustomPaint, Expanded, FittedBox,
@@ -89,6 +141,17 @@ pub use layout::{
     IntrinsicWidth, KeyedSubtree, LayoutBuilder, LimitedBox, NavigationToolbar, Offstage,
     OverflowBar, OverflowBox, Padding, Positioned, RepaintBoundary, RotatedBox, Row, SizedBox,
     SizedOverflowBox, Spacer, Stack, Table, TableCell, UnconstrainedBox, Visibility, Wrap,
+};
+/// The navigation-scope dispatcher is kept under an explicit name so a future
+/// app-shell `BackButtonDispatcher` can coexist in this facade without a
+/// duplicate public binding.
+pub use navigation::BackButtonDispatcher as NavigationBackButtonDispatcher;
+pub use navigation::{
+    AnimatedModalBarrier, BackButtonListener, BackDispatchReport, BackHandlerResult,
+    BackRegistration, NavigatorPopHandler, NavigatorPopHandlerController, PageStorage,
+    PageStorageBucket, PageStorageIdentifier, PageStorageKey, PopAttempt, PopScope,
+    PopScopeController, RootRestorationScope, UnmanagedRestorationScope,
+    current_page_storage_bucket, current_restoration_scope,
 };
 pub use navigation_scopes::OverlayPortal;
 pub use painting_effects::{
@@ -98,26 +161,50 @@ pub use painting_effects::{
     TileMode,
 };
 pub use radio_selection::{RadioGroup, RawRadio, SelectableRegion};
+pub use raw_input::{
+    ErasedGestureRecognizerFactory, GestureRecognizer, GestureRecognizerFactory,
+    GestureRecognizerFactoryError, GestureRecognizerFactoryWithHandlers, Listener,
+    ListenerCallbacks, MouseCursor, MouseRegion, MouseRegionCallbacks, PointerDeviceKind,
+    RawGestureDetector, RawPointerEvent, TapRegion, TapRegionCallbacks, TapRegionGroupId,
+    TapRegionSurface, TextFieldTapRegion,
+};
+pub use raw_tooltip::{
+    RawTooltip, RawTooltipBuilder, RawTooltipController, RawTooltipDurations,
+    RawTooltipTriggerMode, RawTooltipVisibility, TooltipComponentBuilder, TooltipDurations,
+    TooltipTriggerMode, TooltipVisibility,
+};
 pub use safe_area::SafeArea;
 pub use scrolling::{
     CustomScrollView, DecoratedSliver, GridView, ListBody, ListView, NestedScrollView,
-    NotificationListener, PageController, PageView, PinnedHeaderSliver, ScrollNotificationObserver,
-    Scrollable, SingleChildScrollView, Sliver, SliverAnimatedList, SliverAnimatedListController,
-    SliverConstrainedCrossAxis, SliverCrossAxisExpanded, SliverCrossAxisGroup, SliverFillRemaining,
-    SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader, SliverGrid,
-    SliverGridDelegate, SliverIgnorePointer, SliverLayout, SliverLayoutBuilder, SliverList,
-    SliverMainAxisGroup, SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
-    SliverOverlapInjector, SliverPadding, SliverPersistentHeader, SliverPrototypeExtentList,
-    SliverReorderController, SliverReorderableList, SliverResizingHeader, SliverSafeArea,
-    SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, Viewport,
+    NotificationListener, PageController, PageView, PinnedHeaderSliver,
+    ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
+    ScrollNotificationObserver, Scrollable, SingleChildScrollView, Sliver, SliverAnimatedList,
+    SliverAnimatedListController, SliverConstrainedCrossAxis, SliverCrossAxisExpanded,
+    SliverCrossAxisGroup, SliverFillRemaining, SliverFillViewport, SliverFixedExtentList,
+    SliverFloatingHeader, SliverGrid, SliverGridDelegate, SliverIgnorePointer, SliverLayout,
+    SliverLayoutBuilder, SliverList, SliverMainAxisGroup, SliverOffstage, SliverOpacity,
+    SliverOverlapAbsorber, SliverOverlapHandle, SliverOverlapInjector, SliverPadding,
+    SliverPersistentHeader, SliverPrototypeExtentList, SliverReorderController,
+    SliverReorderableList, SliverResizingHeader, SliverSafeArea, SliverToBoxAdapter,
+    SliverVariedExtentList, SliverVisibility, Viewport,
 };
+pub use selection::{
+    SelectableChildPolicy, SelectedContent, SelectedContentRange, SelectionAreaController,
+    SelectionContainerDelegate, SelectionDetails, SelectionGeometry, SelectionHandleType,
+    SelectionListenerNotifier, SelectionPoint, SelectionStatus,
+};
+pub use selection_container::SelectionContainer;
+pub use selection_listener::SelectionListener;
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
+pub use semantics_debugger::{DEFAULT_SEMANTICS_DEBUGGER_NODE_LIMIT, SemanticsDebugger};
 pub use tree::{
     BoxFit, ColorFiltered, DecoratedBox, EditableText, FadeTransition, Icon, Image, ImageRepeat,
     Opacity, RotationTransition, ScaleTransition, SlideTransition, Text, TextFieldInputSnapshot,
     TextInputActionHint, TextInputTypeHint, Transform, Widget,
 };
-pub use utilities::{ErrorWidget, Expansible, PerformanceOverlay};
+pub use utilities::{
+    Banner, BannerLocation, CheckedModeBanner, ErrorWidget, Expansible, PerformanceOverlay,
+};
 
 // Internal implementation aliases.  These names are deliberately
 // `pub(crate)`: sibling crates use the documented `internal` bridge instead

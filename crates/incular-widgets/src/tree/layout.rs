@@ -19,6 +19,7 @@ impl WidgetTree {
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints);
         }
+        self.refresh_selection_states();
         self.refresh_notification_listeners();
     }
 
@@ -65,6 +66,201 @@ impl WidgetTree {
             // Text width can change the size seen by an unconstrained parent.
             self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
         }
+    }
+
+    /// Materializes the child window owned by an advanced scrolling model
+    /// before the normal retained layout pass snapshots its children.
+    fn prepare_advanced_children(&mut self, id: RenderObjectId, constraints: Constraints) {
+        let Some(element_id) = self.element_for_render(id) else {
+            return;
+        };
+        let kind = self
+            .renders
+            .get(id.0)
+            .expect("advanced scrolling render")
+            .kind
+            .clone();
+        let viewport_size = advanced_viewport_size(constraints);
+        match kind {
+            RenderKind::RawScrollbar { .. } => {
+                let child = self.elements.get(element_id.0).and_then(|element| {
+                    let WidgetKind::RawScrollbar { child, .. } = &element.widget.kind else {
+                        return None;
+                    };
+                    Some(child.as_ref().clone())
+                });
+                if let Some(child) = child {
+                    self.materialize_advanced_children(
+                        element_id,
+                        vec![(AdvancedChildKey::RawScrollbar, child)],
+                    );
+                }
+            }
+            RenderKind::ListWheelScrollView { view } => {
+                let layout = view
+                    .0
+                    .borrow_mut()
+                    .viewport_mut()
+                    .layout_with_measure(viewport_size, |_, child_constraints| {
+                        child_constraints.biggest()
+                    });
+                let desired = layout
+                    .children
+                    .iter()
+                    .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
+                    .collect();
+                self.materialize_advanced_children(element_id, desired);
+                self.renders
+                    .get_mut(id.0)
+                    .expect("wheel render")
+                    .wheel_layout = Some(layout);
+            }
+            RenderKind::ListWheelViewport { viewport } => {
+                let layout = viewport
+                    .0
+                    .borrow_mut()
+                    .layout_with_measure(viewport_size, |_, child_constraints| {
+                        child_constraints.biggest()
+                    });
+                let desired = layout
+                    .children
+                    .iter()
+                    .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
+                    .collect();
+                self.materialize_advanced_children(element_id, desired);
+                self.renders
+                    .get_mut(id.0)
+                    .expect("wheel render")
+                    .wheel_layout = Some(layout);
+            }
+            RenderKind::DraggableScrollableSheet { sheet } => {
+                let state = if let Some(state) = self
+                    .renders
+                    .get(id.0)
+                    .and_then(|render| render.draggable_state.clone())
+                {
+                    state
+                } else {
+                    let (state, child) = sheet.0.borrow().mount();
+                    self.renders
+                        .get_mut(id.0)
+                        .expect("draggable sheet render")
+                        .draggable_state = Some(state.clone());
+                    self.materialize_advanced_children(
+                        element_id,
+                        vec![(AdvancedChildKey::Sheet, child)],
+                    );
+                    state
+                };
+                state.set_parent_height(viewport_size.height);
+                state.set_parent_controllers(self.ancestor_scroll_controllers(element_id));
+                if let Some(actuator) = self.nearest_draggable_actuator(element_id) {
+                    state.attach_actuator(&actuator);
+                }
+            }
+            RenderKind::DraggableScrollableActuator { .. } => {
+                let child = self.elements.get(element_id.0).and_then(|element| {
+                    let WidgetKind::DraggableScrollableActuator { child, .. } =
+                        &element.widget.kind
+                    else {
+                        return None;
+                    };
+                    Some(child.as_ref().clone())
+                });
+                if let Some(child) = child {
+                    self.materialize_advanced_children(
+                        element_id,
+                        vec![(AdvancedChildKey::Actuator, child)],
+                    );
+                }
+            }
+            RenderKind::TwoDimensionalScrollView { view } => {
+                let layout = view
+                    .0
+                    .borrow_mut()
+                    .viewport_mut()
+                    .layout_with_measure(viewport_size, |_, child_constraints| {
+                        child_constraints.biggest()
+                    });
+                let desired = layout
+                    .children
+                    .iter()
+                    .map(|child| {
+                        (
+                            AdvancedChildKey::TwoDimensional(child.vicinity),
+                            child.child.clone(),
+                        )
+                    })
+                    .collect();
+                self.materialize_advanced_children(element_id, desired);
+                self.renders
+                    .get_mut(id.0)
+                    .expect("two-dimensional render")
+                    .two_dimensional_layout = Some(layout);
+            }
+            RenderKind::TwoDimensionalViewport { viewport } => {
+                let layout = viewport
+                    .0
+                    .borrow_mut()
+                    .layout_with_measure(viewport_size, |_, child_constraints| {
+                        child_constraints.biggest()
+                    });
+                let desired = layout
+                    .children
+                    .iter()
+                    .map(|child| {
+                        (
+                            AdvancedChildKey::TwoDimensional(child.vicinity),
+                            child.child.clone(),
+                        )
+                    })
+                    .collect();
+                self.materialize_advanced_children(element_id, desired);
+                self.renders
+                    .get_mut(id.0)
+                    .expect("two-dimensional render")
+                    .two_dimensional_layout = Some(layout);
+            }
+            _ => {}
+        }
+    }
+
+    fn ancestor_scroll_controllers(&self, element_id: ElementId) -> Vec<ScrollController> {
+        let mut controllers = Vec::new();
+        let mut parent = self
+            .elements
+            .get(element_id.0)
+            .and_then(|element| element.parent);
+        while let Some(candidate) = parent {
+            if let Some(controller) = self.scroll_controller_for_element(candidate)
+                && !controllers.iter().any(|existing| *existing == controller)
+            {
+                controllers.push(controller);
+            }
+            parent = self
+                .elements
+                .get(candidate.0)
+                .and_then(|element| element.parent);
+        }
+        controllers
+    }
+
+    fn nearest_draggable_actuator(
+        &self,
+        element_id: ElementId,
+    ) -> Option<DraggableScrollableActuator> {
+        let mut parent = self
+            .elements
+            .get(element_id.0)
+            .and_then(|element| element.parent);
+        while let Some(candidate) = parent {
+            let element = self.elements.get(candidate.0)?;
+            if let WidgetKind::DraggableScrollableActuator { actuator, .. } = &element.widget.kind {
+                return Some(actuator.0.as_ref().clone());
+            }
+            parent = element.parent;
+        }
+        None
     }
 
     #[doc(hidden)]
@@ -118,10 +314,40 @@ impl WidgetTree {
                 self.persistent_header_translation(id, controller, *axis, *reverse, *pinned),
             ),
             RenderKind::Translate { controller } => CoreTransform::translation(controller.offset()),
+            RenderKind::Follower { .. } => self.follower_content_transform(id),
             _ => self
                 .content_transform(id)
                 .unwrap_or(CoreTransform::IDENTITY),
         }
+    }
+    pub(super) fn follower_content_transform(&self, id: RenderObjectId) -> CoreTransform {
+        let node = self.renders.get(id.0).expect("live follower");
+        let RenderKind::Follower {
+            link,
+            show_when_unlinked,
+            offset,
+            target_anchor,
+            follower_anchor,
+        } = &node.kind
+        else {
+            return CoreTransform::IDENTITY;
+        };
+        let base = self.render_world_transform(id);
+        let Some(leader_transform) = link.leader_transform() else {
+            // An unlinked follower remains at its normal layout placement when
+            // requested. A hidden follower is culled by the compositor; the
+            // identity here keeps hit testing and diagnostics deterministic.
+            let _ = show_when_unlinked;
+            return CoreTransform::IDENTITY;
+        };
+        let leader_size = link.leader_size().unwrap_or(Size::ZERO);
+        let target = leader_transform.transform_point(target_anchor.along_size(leader_size));
+        let leader_origin = leader_transform.transform_point(Offset::ZERO);
+        let offset_world = leader_transform.transform_point(*offset) - leader_origin;
+        let Some(target_in_parent) = base.inverse_transform_point(target + offset_world) else {
+            return CoreTransform::IDENTITY;
+        };
+        CoreTransform::translation(target_in_parent - follower_anchor.along_size(node.size))
     }
     pub(super) fn render_world_transform(&self, id: RenderObjectId) -> CoreTransform {
         let mut path = Vec::new();
@@ -143,7 +369,12 @@ impl WidgetTree {
     }
     pub(super) fn semantic_bounds(&self, id: RenderObjectId, size: Size) -> Rect {
         let mut world = self.render_world_transform(id);
-        if self.content_transform(id).is_some() {
+        if self.content_transform(id).is_some()
+            || matches!(
+                self.renders.get(id.0).map(|node| &node.kind),
+                Some(RenderKind::Follower { .. })
+            )
+        {
             world = world.then(self.child_content_transform(id));
         }
         world.transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, size))
@@ -385,6 +616,20 @@ impl WidgetTree {
         ) {
             self.materialize_layout_builder(id, constraints);
         }
+        if self.renders.get(id.0).is_some_and(|render| {
+            matches!(
+                render.kind,
+                RenderKind::RawScrollbar { .. }
+                    | RenderKind::ListWheelScrollView { .. }
+                    | RenderKind::ListWheelViewport { .. }
+                    | RenderKind::DraggableScrollableSheet { .. }
+                    | RenderKind::DraggableScrollableActuator { .. }
+                    | RenderKind::TwoDimensionalScrollView { .. }
+                    | RenderKind::TwoDimensionalViewport { .. }
+            )
+        }) {
+            self.prepare_advanced_children(id, constraints);
+        }
         let (kind, children) = {
             let n = self.renders.get(id.0).expect("live");
             (n.kind.clone(), n.children.clone())
@@ -411,6 +656,31 @@ impl WidgetTree {
                         Vec::new(),
                     )
                 }
+            }
+            RenderKind::Banner {
+                message,
+                text_style,
+                ..
+            } => {
+                let (size, offsets) = if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let child_size = self.renders.get(child.0).expect("live").size;
+                    (constraints.constrain(child_size), vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                };
+                let _external_call = self
+                    .recursion_diagnostics
+                    .external_call(text_call_label("TextEngine::layout_with_options", &message));
+                let text_layout = self.text_engine.layout_with_options(
+                    &message,
+                    &text_style,
+                    TextLayoutOptions::new(Some(80.0), TextAlign::Center),
+                );
+                let node = self.renders.get_mut(id.0).expect("live");
+                node.text_layout = Some(text_layout.clone());
+                node.baseline = Some(text_layout.metrics.baseline);
+                (size, offsets)
             }
             RenderKind::Button { desired, .. } => {
                 if let Some(&child) = children.first() {
@@ -552,13 +822,42 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::RepaintBoundary | RenderKind::Gesture => {
+            RenderKind::RepaintBoundary
+            | RenderKind::Gesture
+            | RenderKind::SelectionArea
+            | RenderKind::SelectionContainer
+            | RenderKind::SelectionListener
+            | RenderKind::IndexedSemantics
+            | RenderKind::SemanticsDebugger { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
                     let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
                     (size, vec![Offset::ZERO])
                 } else {
-                    (constraints.constrain(Size::ZERO), Vec::new())
+                    let expands = self
+                        .element_for_render(id)
+                        .and_then(|element| self.elements.get(element.0))
+                        .is_some_and(|element| {
+                            matches!(
+                                element.widget.kind,
+                                WidgetKind::RawInput { child: None, .. }
+                            )
+                        });
+                    if expands {
+                        let width = if constraints.max_width.is_finite() {
+                            constraints.max_width
+                        } else {
+                            constraints.min_width
+                        };
+                        let height = if constraints.max_height.is_finite() {
+                            constraints.max_height
+                        } else {
+                            constraints.min_height
+                        };
+                        (constraints.constrain(Size::new(width, height)), Vec::new())
+                    } else {
+                        (constraints.constrain(Size::ZERO), Vec::new())
+                    }
                 }
             }
             RenderKind::PersistentHeader { .. } => {
@@ -1148,15 +1447,6 @@ impl WidgetTree {
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
-            RenderKind::SelectionArea => {
-                if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints);
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
-                    (size, vec![Offset::ZERO])
-                } else {
-                    (constraints.constrain(Size::ZERO), Vec::new())
-                }
-            }
             RenderKind::Image {
                 image,
                 width,
@@ -1247,6 +1537,132 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
+            RenderKind::RawScrollbar { controller, style } => {
+                let (size, offsets) = if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                };
+                let node = self.renders.get_mut(id.0).expect("live raw scrollbar");
+                let replace = match node.advanced_scrollbar.as_ref() {
+                    Some(scrollbar) => scrollbar.controller() != controller,
+                    None => true,
+                };
+                if replace {
+                    let mut scrollbar = RawScrollbar::new(controller.clone());
+                    scrollbar.set_style(style);
+                    node.advanced_scrollbar = Some(scrollbar);
+                } else if let Some(scrollbar) = node.advanced_scrollbar.as_mut()
+                    && scrollbar.style() != style
+                {
+                    scrollbar.set_style(style);
+                }
+                let _ = node
+                    .advanced_scrollbar
+                    .as_ref()
+                    .expect("raw scrollbar state")
+                    .geometry(size);
+                (size, offsets)
+            }
+            RenderKind::ListWheelScrollView { .. } | RenderKind::ListWheelViewport { .. } => {
+                let (layout_size, placements) = self
+                    .renders
+                    .get(id.0)
+                    .and_then(|render| render.wheel_layout.as_ref())
+                    .map(|layout| {
+                        (
+                            layout.size,
+                            layout
+                                .children
+                                .iter()
+                                .map(|child| {
+                                    (
+                                        Constraints::new(
+                                            0.0,
+                                            layout.size.width,
+                                            child.untransformed_rect.size.height,
+                                            child.untransformed_rect.size.height,
+                                        ),
+                                        child.untransformed_rect.origin,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .unwrap_or_else(|| (advanced_viewport_size(constraints), Vec::new()));
+                let mut offsets = Vec::with_capacity(children.len());
+                for (child, (child_constraints, offset)) in children.iter().zip(placements) {
+                    self.layout_render(*child, child_constraints);
+                    offsets.push(offset);
+                }
+                (constraints.constrain(layout_size), offsets)
+            }
+            RenderKind::DraggableScrollableSheet { sheet } => {
+                if let Some(state) = self
+                    .renders
+                    .get(id.0)
+                    .and_then(|render| render.draggable_state.clone())
+                {
+                    let viewport_size = advanced_viewport_size(constraints);
+                    state.set_parent_height(viewport_size.height);
+                    let extent = state.extent();
+                    let child_height = extent.current_pixels().clamp(0.0, viewport_size.height);
+                    let sheet_height = if sheet.0.borrow().expands() {
+                        viewport_size.height
+                    } else {
+                        child_height
+                    };
+                    let size = constraints.constrain(Size::new(viewport_size.width, sheet_height));
+                    let child_constraints =
+                        Constraints::new(0.0, size.width, child_height, child_height);
+                    let offsets = if let Some(&child) = children.first() {
+                        self.layout_render(child, child_constraints);
+                        vec![Offset::new(0.0, (size.height - child_height).max(0.0))]
+                    } else {
+                        Vec::new()
+                    };
+                    (size, offsets)
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::DraggableScrollableActuator { .. } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen());
+                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    (size, vec![Offset::ZERO])
+                } else {
+                    (constraints.constrain(Size::ZERO), Vec::new())
+                }
+            }
+            RenderKind::TwoDimensionalScrollView { .. }
+            | RenderKind::TwoDimensionalViewport { .. } => {
+                let (layout_size, placements) = self
+                    .renders
+                    .get(id.0)
+                    .and_then(|render| render.two_dimensional_layout.as_ref())
+                    .map(|layout| {
+                        (
+                            layout.size,
+                            layout
+                                .children
+                                .iter()
+                                .map(|child| {
+                                    (child.constraints.as_box_constraints(), child.paint_offset)
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .unwrap_or_else(|| (advanced_viewport_size(constraints), Vec::new()));
+                let mut offsets = Vec::with_capacity(children.len());
+                for (child, (child_constraints, offset)) in children.iter().zip(placements) {
+                    self.layout_render(*child, child_constraints);
+                    offsets.push(offset);
+                }
+                (constraints.constrain(layout_size), offsets)
+            }
             RenderKind::Translate { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
@@ -1291,7 +1707,12 @@ impl WidgetTree {
             RenderKind::Blur { .. }
             | RenderKind::DropShadow { .. }
             | RenderKind::ColorFiltered { .. }
-            | RenderKind::Blend { .. } => {
+            | RenderKind::Blend { .. }
+            | RenderKind::ShaderMask { .. }
+            | RenderKind::BackdropFilter { .. }
+            | RenderKind::AnnotatedRegion { .. }
+            | RenderKind::Leader { .. }
+            | RenderKind::Follower { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
                     let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
@@ -1330,6 +1751,47 @@ impl WidgetTree {
         };
         if let (Some(content), Some(transform)) = (content_layer, transform) {
             self.compositor.update_transform(content, transform);
+        }
+        let (kind, layer_ids) = {
+            let node = self.renders.get(id.0).expect("live");
+            (
+                node.kind.clone(),
+                (
+                    node.annotation_layer,
+                    node.leader_layer,
+                    node.follower_layer,
+                ),
+            )
+        };
+        match (kind, layer_ids) {
+            (RenderKind::AnnotatedRegion { annotation, sized }, (Some(layer), _, _)) => {
+                self.compositor
+                    .update_annotated_region(layer, annotation, sized, size);
+            }
+            (RenderKind::Leader { .. }, (_, Some(layer), _)) => {
+                self.compositor.update_leader_size(layer, size);
+            }
+            (
+                RenderKind::Follower {
+                    link,
+                    show_when_unlinked,
+                    offset,
+                    target_anchor,
+                    follower_anchor,
+                },
+                (_, _, Some(layer)),
+            ) => {
+                self.compositor.update_follower(
+                    layer,
+                    link,
+                    show_when_unlinked,
+                    offset,
+                    target_anchor,
+                    follower_anchor,
+                    size,
+                );
+            }
+            _ => {}
         }
         self.diagnostics.layouts += 1;
         #[cfg(feature = "devtools")]
@@ -1371,4 +1833,18 @@ impl WidgetTree {
         #[cfg(feature = "devtools")]
         self.devtools_trace_end(trace);
     }
+}
+
+fn advanced_viewport_size(constraints: Constraints) -> Size {
+    let width = if constraints.max_width.is_finite() {
+        constraints.max_width
+    } else {
+        constraints.min_width
+    };
+    let height = if constraints.max_height.is_finite() {
+        constraints.max_height
+    } else {
+        constraints.min_height
+    };
+    constraints.constrain(Size::new(width, height))
 }

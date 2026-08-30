@@ -32,7 +32,8 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 #[cfg(feature = "devtools")]
 use incular_widgets::internal::InvalidationCause;
 use incular_widgets::internal::{
-    ActionId, Diagnostics, ElementId, PointerEvent, TextRange, TextSelection, TreeError, WidgetTree,
+    ActionId, Diagnostics, ElementId, PointerDeviceKind, PointerEvent, RawPointerEvent, TextRange,
+    TextSelection, TreeError, WidgetTree,
 };
 use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
@@ -128,6 +129,17 @@ pub(crate) fn diagnostic_input_trigger(event: &InputEvent) -> String {
             position,
         } => format!(
             "pointer({pointer}, {phase:?}, {:.1}, {:.1})",
+            position.x, position.y
+        ),
+        InputEvent::PointerWithMetadata {
+            pointer,
+            device,
+            kind,
+            buttons,
+            phase,
+            position,
+        } => format!(
+            "pointer({pointer}, device={device}, {kind:?}, buttons={buttons:#x}, {phase:?}, {:.1}, {:.1})",
             position.x, position.y
         ),
         InputEvent::Scroll { delta } => format!("scroll({:.1}, {:.1})", delta.x, delta.y),
@@ -562,6 +574,14 @@ impl Runtime {
     pub fn tree_mut(&mut self) -> &mut WidgetTree {
         &mut self.tree
     }
+
+    /// Returns the effective capture-protection policy contributed by the
+    /// mounted retained tree. The window/application boundary is responsible
+    /// for forwarding changes to its native adapter.
+    #[must_use]
+    pub fn content_sensitivity(&self) -> incular_config::ContentSensitivity {
+        self.tree.content_sensitivity()
+    }
     #[cfg(feature = "devtools")]
     pub(crate) fn devtools_edit_property(
         &mut self,
@@ -825,13 +845,23 @@ impl Runtime {
         self.tree.set_diagnostic_trigger(trigger);
     }
     fn handle_input_inner(&mut self, event: InputEvent) -> Option<EventTarget> {
-        let (pointer, phase, position) = match event {
-            InputEvent::Pointer { phase, position } => (0, phase, position),
+        let (pointer, device, kind, buttons, phase, position) = match event {
+            InputEvent::Pointer { phase, position } => {
+                (0, 0, PointerDeviceKind::Mouse, 0, phase, position)
+            }
             InputEvent::PointerWithId {
                 pointer,
                 phase,
                 position,
-            } => (pointer, phase, position),
+            } => (pointer, 0, PointerDeviceKind::Mouse, 0, phase, position),
+            InputEvent::PointerWithMetadata {
+                pointer,
+                device,
+                kind,
+                buttons,
+                phase,
+                position,
+            } => (pointer, device, kind, buttons, phase, position),
             event => {
                 match event {
                     InputEvent::Scroll { delta } => {
@@ -853,6 +883,7 @@ impl Runtime {
                     InputEvent::WindowResized { .. } => {}
                     InputEvent::Pointer { .. } => unreachable!(),
                     InputEvent::PointerWithId { .. } => unreachable!(),
+                    InputEvent::PointerWithMetadata { .. } => unreachable!(),
                 }
                 return None;
             }
@@ -871,6 +902,25 @@ impl Runtime {
         let gesture_window = self.window_id.map_or(0, |window| {
             (u64::from(window.index()) << 32) | u64::from(window.generation())
         });
+        if let Some(element) = self.tree.dispatch_raw_pointer_in_window(
+            gesture_window,
+            RawPointerEvent {
+                pointer,
+                device,
+                kind,
+                buttons,
+                position,
+                phase,
+                time: Instant::now(),
+            },
+        ) {
+            self.frame_requested = true;
+            self.release_legacy_pointer(pointer, phase);
+            return Some(EventTarget {
+                element,
+                action: None,
+            });
+        }
         if let Some(element) = self.tree.dispatch_gesture_in_window(
             gesture_window,
             PointerEvent {
@@ -943,7 +993,15 @@ impl Runtime {
                         });
                     }
                 }
-                self.set_focus(text_target);
+                let keep_text_field_focus = self
+                    .focused
+                    .is_some_and(|focused| self.tree.is_text_field(focused))
+                    && self.tree.preserves_text_field_focus(position);
+                self.set_focus(if keep_text_field_focus {
+                    self.focused
+                } else {
+                    text_target
+                });
                 self.captured_text_field = text_target;
                 if let Some(field) = text_target {
                     self.tree

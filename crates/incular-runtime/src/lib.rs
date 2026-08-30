@@ -19,7 +19,7 @@ use incular_accessibility::{
     AccessKitProjection, NativeAccessibilityUpdate, SemanticActionRequest,
 };
 #[allow(unused_imports)]
-use incular_config::{Constraints, RuntimeEnvironment};
+use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment};
 #[allow(unused_imports)]
 use incular_core::{
     Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PointerPhase, Rect,

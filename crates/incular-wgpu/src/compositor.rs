@@ -31,7 +31,9 @@ pub(crate) fn find_effect_end(
             PaintCommand::PushBlur { .. }
             | PaintCommand::PushDropShadow { .. }
             | PaintCommand::PushColorFilter { .. }
-            | PaintCommand::PushBlend { .. } => depth += 1,
+            | PaintCommand::PushBlend { .. }
+            | PaintCommand::PushShaderMask { .. }
+            | PaintCommand::PushBackdropFilter { .. } => depth += 1,
             PaintCommand::PopEffect => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
@@ -52,6 +54,8 @@ pub(crate) fn commands_have_effects(commands: &[PaintCommand]) -> bool {
                 | PaintCommand::PushDropShadow { .. }
                 | PaintCommand::PushColorFilter { .. }
                 | PaintCommand::PushBlend { .. }
+                | PaintCommand::PushShaderMask { .. }
+                | PaintCommand::PushBackdropFilter { .. }
         )
     })
 }
@@ -176,6 +180,22 @@ pub(crate) fn display_list_composition_bounds(commands: &[PaintCommand]) -> Opti
                 &mut bounds,
                 drop_shadow_bounds(*rect, shadow.offset, shadow.sigma_x, shadow.sigma_y),
             ),
+            PaintCommand::PushShaderMask { bounds: rect, .. } => {
+                add_composition_bounds(&mut bounds, *rect);
+            }
+            PaintCommand::PushBackdropFilter {
+                bounds: rect,
+                blur,
+                enabled,
+                ..
+            } => {
+                let candidate = if *enabled {
+                    blur_bounds(*rect, blur.sigma_x, blur.sigma_y)
+                } else {
+                    *rect
+                };
+                add_composition_bounds(&mut bounds, candidate);
+            }
             PaintCommand::PushTransform { transform } => {
                 transforms.push(translation + transform.translation_offset());
             }

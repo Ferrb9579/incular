@@ -53,6 +53,13 @@ impl WindowHandle {
         self.send(WindowOperation::SetLogicalSize(size))
     }
 
+    /// Requests the window's normalized content-capture policy. The command
+    /// is applied by the native adapter on its event-loop thread; unsupported
+    /// adapters report an explicit no-op at that boundary.
+    pub fn set_content_sensitivity(&self, sensitivity: incular_config::ContentSensitivity) -> bool {
+        self.send(WindowOperation::SetContentSensitivity(sensitivity))
+    }
+
     pub fn request_focus(&self) -> bool {
         self.send(WindowOperation::RequestFocus)
     }
