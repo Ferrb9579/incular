@@ -5,7 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Platform-neutral default styled controls and design tokens for the Incular framework"
 readme = "README.md"
-license = "MIT OR Apache-2.0"
+publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+[lints]
+workspace = true
 
 [dependencies]
 typed-builder = { workspace = true }

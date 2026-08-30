@@ -38,7 +38,7 @@ pub mod scroll {
 }
 
 /// Reactive values and owner-mounted asynchronous primitives. This namespace
-/// keeps [`Effect`] and [`Action`] distinct from Incular's rendering and
+/// keeps [`reactive::Effect`] and [`reactive::Action`] distinct from Incular's rendering and
 /// widget types with the same conventional names.
 pub mod reactive {
     pub use incular_runtime::{

@@ -1,59 +1,65 @@
 # Incular
 
-Incular is an experimental Rust GUI library inspired by Flutter and built
-around `wgpu`.
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ferrb9579/incular#license)
 
-The repository is organized as a layered Cargo workspace:
+Incular is an experimental Rust GUI framework inspired by Flutter and built
+around `wgpu`. It is currently a research-quality project: APIs and behavior
+may change before the first stable release.
 
-- `incular-core` contains platform-independent foundation types.
-- `incular-gestures` contains platform-neutral pointer recognizers and input interaction state.
-- `incular-layout` contains renderer-independent layout primitives and algorithms.
-- `incular-navigation` contains stack navigation, routes, transitions, and overlays.
-- `incular-scroll` contains widget-independent scroll state and physics.
-- `incular-text` contains text layout and typography foundations.
-- `incular-assets` contains font handles and non-raster resource foundations.
-- `incular-image` contains renderer-neutral raster decode, identity, and caching.
-- `incular-animation` contains renderer-independent animation primitives.
-- `incular-accessibility` contains accessibility semantics and tree foundations.
-- `incular-macros` will contain procedural macros for Incular APIs.
-- `incular-runtime` contains application lifecycle and scheduling foundations.
-- `incular-rendering` owns renderer-neutral paths, paint, ordered display
-  lists, canvas recording, and retained compositor layers.
-- `incular-painting` is a source-compatible compatibility import for
-  `incular-rendering`.
-- `incular-widgets` provides renderer-neutral widget, layout, and retained
-  primitive behavior (`EditableText`, gesture/focus composition, selection,
-  forms, and viewports).
-- `incular-controls` provides a platform-neutral themed control engine.
-- `incular-material` provides the Flutter Material-shaped application layer
-  (`ElevatedButton`, `TextField`, `TextFormField`, selection, dialogs, menus,
-  and the other Material components).
-- `incular-platform` provides shared platform abstractions.
-- `incular-android` provides Android integration.
-- `incular-ios` provides iOS integration.
-- `incular-linux` provides Linux integration.
-- `incular-macos` provides macOS integration.
-- `incular-windows` provides Windows integration.
-- `incular-wgpu` provides the `wgpu` rendering backend.
-- `incular` is the public facade crate.
+## Quick start
 
-The second vertical slice adds a real Linux native application path: `winit`
-owns the event loop/window, `wgpu` owns an instanced rectangle surface renderer,
-and a locally reactive counter button updates only its subscribed subtree. Run
-the proof program with `cargo run -p incular --example counter`.
+```toml
+[dependencies]
+incular = "0.1"
+```
 
-The crate READMEs describe the implemented ownership boundaries and the
-intentionally deferred native-surface work.
-# Incular
+The default feature set includes the desktop runner, Controls, and Material
+components. A minimal example is available at
+`examples/counter/main.rs`:
 
-## Platform support
+```text
+cargo run -p incular --example counter
+```
 
-| Feature | Linux | Windows | macOS | Android | iOS |
+## Workspace architecture
+
+The repository is a layered Cargo workspace. The public `incular` facade sits
+above focused crates for core types, layout, rendering, widgets, controls,
+Material components, runtime scheduling, text, scrolling, accessibility,
+platform integration, and the `wgpu` backend. Each crate README documents its
+ownership boundary and supported surface.
+
+Run the full validation suite before submitting a change:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+```
+
+Windows PowerShell uses `$env:RUSTDOCFLAGS='-D warnings'` for the final command.
+
+## Project status
+
+The Linux desktop path is the primary native verification target. Windows and
+macOS share the platform runner contract, while Android and iOS integration
+are still being developed. See the crate documentation, `docs/`, and
+`examples/REPORT.md` for current implementation coverage and known limits.
+
+| Capability | Linux | Windows | macOS | Android | iOS |
 | --- | --- | --- | --- | --- | --- |
 | Shared winit/wgpu runner source | Implemented | Source parity | Source parity | Planned | Planned |
-| Native runtime verification | Linux | Not run here | Not run here | Planned | Planned |
+| Native runtime verification | Not run here | Verified | Not run here | Planned | Planned |
 | Accessibility OS adapter | Planned | Planned | Planned | Planned | Planned |
 
-Applications use `incular::run(app)`; target-selected desktop crates own the
-native window integration while Runtime, widgets, and the wgpu renderer remain
-portable.
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Bug
+reports and focused implementation contributions are welcome, especially when
+they include a regression test or an example simulation.
+
+## License
+
+Incular is licensed under the [Apache License 2.0](LICENSE-APACHE).

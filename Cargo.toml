@@ -7,8 +7,15 @@ name = "incular-workspace-tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Integration-test harness for the Incular workspace"
 publish = false
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 autoexamples = false
+
+[lints]
+workspace = true
 
 [lib]
 path = "src/lib.rs"
@@ -33,6 +40,15 @@ serde_json = { workspace = true }
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
+license = "Apache-2.0"
+repository = "https://github.com/Ferrb9579/incular"
+homepage = "https://github.com/Ferrb9579/incular"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
 
 [workspace.dependencies]
 incular = { path = "crates/incular", version = "0.1.0" }
@@ -76,11 +92,11 @@ bytemuck = { version = "1.23", features = ["derive"] }
 pollster = "0.4"
 # CPU benchmarking (dev-only, per-crate benches).
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
-# Optional structured logging/spans; zero-cost without a subscriber.
 tracing = "0.1"
 typed-builder = "0.23.2"
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+getrandom = "0.3"
 sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 # Property testing for correctness-sensitive reconciliation (dev-only).
 proptest = "1"

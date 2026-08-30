@@ -6,6 +6,11 @@ rust-version.workspace = true
 description = "Renderer-neutral scene, canvas, display-list, and compositor APIs for Incular"
 readme = "README.md"
 publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+[lints]
+workspace = true
 
 [lib]
 path = "src/lib.rs"

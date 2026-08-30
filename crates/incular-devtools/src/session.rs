@@ -10,46 +10,65 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+/// Configuration used when starting a target-side DevTools session.
 pub struct SessionConfig {
+    /// Human-readable application name shown in target discovery.
     pub app_name: String,
 }
 
+/// Transport state passed from the platform runner to the DevTools accept loop.
 pub struct ServeArgs {
+    /// Ephemeral localhost port selected for this session.
     pub port: u16,
+    /// OS-generated session token required during the WebSocket handshake.
     pub token: String,
+    /// Human-readable application name associated with the session.
     pub app_name: String,
+    /// Bound localhost listener transferred to the async accept loop.
     pub listener: std::net::TcpListener,
+    /// Bounded UI command queue populated by connected DevTools clients.
     pub command_sender: std::sync::mpsc::SyncSender<commands::UiCommand>,
+    /// Replies produced by the UI thread for connected DevTools clients.
     pub reply_receiver: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<commands::UiReply>>>,
+    /// Bounded telemetry queue produced by the application runtime.
     pub telemetry_receiver: tokio::sync::mpsc::Receiver<TargetEvent>,
+    /// Number of telemetry messages dropped because the queue was full.
     pub dropped: Arc<AtomicU64>,
+    /// Set by the platform runner to stop the accept loop.
     pub shutdown: Arc<AtomicBool>,
 }
 
-/// Validates a DevTools hello against this target's session token.
-/// 32 hex characters from the OS entropy pool (with a time/pid fallback so
-/// non-Unix targets still get an unpredictable-enough development token).
-pub fn generate_token() -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut bytes = [0u8; 16];
-    match std::fs::File::open("/dev/urandom") {
-        Ok(mut file) => {
-            if std::io::Read::read_exact(&mut file, &mut bytes).is_err() {
-                fill_fallback(&mut bytes);
-            }
-        }
-        Err(_) => fill_fallback(&mut bytes),
-    }
-    bytes
-        .iter()
-        .flat_map(|byte| {
-            let byte = *byte;
-            [HEX[(byte >> 4) as usize], HEX[(byte & 0xF) as usize]]
-        })
-        .map(|nibble| nibble as char)
-        .collect()
+struct SessionState {
+    token: String,
+    command_sender: std::sync::mpsc::SyncSender<commands::UiCommand>,
+    reply_receiver: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<commands::UiReply>>>,
+    telemetry_receiver: tokio::sync::mpsc::Receiver<TargetEvent>,
+    dropped: Arc<AtomicU64>,
+    shutdown: Arc<AtomicBool>,
 }
 
+/// Generates a 128-bit hexadecimal session token from the platform OS random
+/// source. DevTools is local-only, but the token still protects the session
+/// from other local processes that can reach the discovery endpoint.
+/// Returns `None` when the platform cannot provide OS-backed entropy.
+#[must_use]
+pub fn generate_token() -> Option<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(
+        bytes
+            .iter()
+            .flat_map(|byte| {
+                let byte = *byte;
+                [HEX[(byte >> 4) as usize], HEX[(byte & 0xF) as usize]]
+            })
+            .map(|nibble| nibble as char)
+            .collect(),
+    )
+}
+
+/// Validates a DevTools hello against the target's session token.
 pub fn validate(
     hello: &Hello,
     expected_token: &str,
@@ -57,37 +76,33 @@ pub fn validate(
     check_hello(hello, PeerKind::Devtools, Some(expected_token))
 }
 
-fn fill_fallback(bytes: &mut [u8; 16]) {
-    let mut state = now_unix_ms()
-        ^ (u64::from(std::process::id()) << 31)
-        ^ (std::time::Instant::now().elapsed().as_nanos() as u64);
-    for byte in bytes.iter_mut() {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        *byte = (state >> 33) as u8;
-    }
-}
-
-fn dummy_listener() -> std::net::TcpListener {
-    std::net::TcpListener::bind(("127.0.0.1", 0)).expect("dummy listener")
-}
-
-fn now_unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
-}
-
 /// Single-client accept loop; the target serves one DevTools at a time.
-pub async fn serve(mut args: ServeArgs) {
-    let shutdown = args.shutdown.clone();
+pub async fn serve(args: ServeArgs) {
+    let ServeArgs {
+        listener,
+        token,
+        command_sender,
+        reply_receiver,
+        telemetry_receiver,
+        dropped,
+        shutdown,
+        ..
+    } = args;
     // Convert the blocking socket now that a Tokio reactor exists.
-    args.listener.set_nonblocking(true).ok();
-    let listener =
-        tokio::net::TcpListener::from_std(std::mem::replace(&mut args.listener, dummy_listener()))
-            .expect("listener converts to tokio");
+    if listener.set_nonblocking(true).is_err() {
+        return;
+    }
+    let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
+        return;
+    };
+    let mut state = SessionState {
+        token,
+        command_sender,
+        reply_receiver,
+        telemetry_receiver,
+        dropped,
+        shutdown: shutdown.clone(),
+    };
 
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -108,13 +123,13 @@ pub async fn serve(mut args: ServeArgs) {
         let Ok(websocket) = tokio_tungstenite::accept_async(stream).await else {
             continue;
         };
-        let _ = run_session(websocket, &mut args).await;
+        let _ = run_session(websocket, &mut state).await;
     }
 }
 
 async fn run_session<S>(
     websocket: tokio_tungstenite::WebSocketStream<S>,
-    args: &mut ServeArgs,
+    state: &mut SessionState,
 ) -> Result<(), ()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -144,7 +159,7 @@ where
         .await?;
         return Err(());
     };
-    if let Err(code) = validate(&hello, &args.token) {
+    if let Err(code) = validate(&hello, &state.token) {
         let message = if code == ErrorCode::ProtocolVersionMismatch {
             format!(
                 "unsupported protocol version {}; target supports {}..={PROTOCOL_VERSION}",
@@ -185,7 +200,7 @@ where
     // ---- Main loop ----
     let mut last_dropped = 0_u64;
     loop {
-        if args.shutdown.load(Ordering::Relaxed) {
+        if state.shutdown.load(Ordering::Relaxed) {
             break;
         }
         tokio::select! {
@@ -194,7 +209,7 @@ where
                     Some(Ok(WsMessage::Text(text))) => {
                         match serde_json::from_str::<Message>(&text) {
                             Ok(Message::Request { request_id, body }) => {
-                                if args.command_sender.try_send(commands::UiCommand { request_id, body }).is_err() {
+                                if state.command_sender.try_send(commands::UiCommand { request_id, body }).is_err() {
                                     send_message(&mut sink, &Message::Response {
                                         request_id,
                                         payload: Err(ErrorCode::InternalError),
@@ -215,7 +230,7 @@ where
                 }
             }
             reply = async {
-                let receiver = args.reply_receiver.clone();
+                let receiver = state.reply_receiver.clone();
                 tokio::task::spawn_blocking(move || {
                     receiver.lock().ok().and_then(|guarded| {
                         guarded.recv_timeout(std::time::Duration::from_millis(50)).ok()
@@ -232,9 +247,9 @@ where
                     send_message(&mut sink, &message).await.ok();
                 }
             }
-            event = args.telemetry_receiver.recv() => {
+            event = state.telemetry_receiver.recv() => {
                 let Some(event) = event else { break };
-                let dropped_total = args.dropped.load(Ordering::Relaxed);
+                let dropped_total = state.dropped.load(Ordering::Relaxed);
                 if dropped_total > last_dropped {
                     send_message(&mut sink, &Message::Event(TargetEvent::DroppedTelemetry {
                         count: dropped_total - last_dropped,
@@ -246,4 +261,19 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_tokens_are_hex_encoded_and_unique() {
+        let first = generate_token().expect("the test platform provides OS entropy");
+        let second = generate_token().expect("the test platform provides OS entropy");
+
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
 }

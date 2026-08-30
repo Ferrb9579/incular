@@ -83,8 +83,8 @@ pub fn spawn(
     let std_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
     let port = std_listener.local_addr().ok()?.port();
     // Non-blocking so the agent thread's Tokio reactor can adopt it cleanly.
-    std_listener.set_nonblocking(true).ok();
-    let token = session::generate_token();
+    std_listener.set_nonblocking(true).ok()?;
+    let token = session::generate_token()?;
     let app_name = config.app_name.clone();
     let _ = config;
 

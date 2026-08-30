@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Standalone Incular DevTools application (built with Incular)"
 publish = false
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+[lints]
+workspace = true
 
 [[bin]]
 name = "incular-devtools"

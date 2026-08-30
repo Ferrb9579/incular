@@ -6,12 +6,18 @@ rust-version.workspace = true
 description = "Target-side DevTools agent for Incular applications"
 readme = "README.md"
 publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+[lints]
+workspace = true
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
 incular-devtools-protocol = { workspace = true }
+getrandom = { workspace = true }
 incular-runtime = { workspace = true, features = ["devtools"] }
 incular-widgets = { workspace = true }
 incular-core = { workspace = true }
