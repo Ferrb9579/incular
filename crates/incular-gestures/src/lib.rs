@@ -12,9 +12,6 @@ mod mouse;
 mod pointer;
 mod scale;
 
-#[cfg(test)]
-mod tests;
-
 pub use arena::{
     GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember, GestureDisposition,
 };

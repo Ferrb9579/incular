@@ -65,13 +65,6 @@ pub use resources::{
 pub(crate) use compositor::*;
 pub(crate) use constants::*;
 pub(crate) use diagnostics::{create_gpu_profiler, query_duration_us};
-#[cfg(test)]
-pub(crate) use glyphs::size_class;
 pub(crate) use pipelines::*;
 pub(crate) use render_passes::*;
 pub(crate) use render_plan::*;
-
-#[cfg(test)]
-mod pipeline_contract_tests;
-#[cfg(test)]
-mod tests;

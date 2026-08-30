@@ -1,6 +1,6 @@
 //! Dockable bottom panel for Incular Studio containing Search, Problems, Output, and Canvas.
 
-use crate::{
+use super::super::{
     localization::StudioLocale,
     state::{BottomTab, ProblemSeverity, SearchResult, StudioState},
     theme::StudioTheme,

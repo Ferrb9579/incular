@@ -458,21 +458,3 @@ pub fn kind_display_name_render(kind: &crate::tree::RenderKind) -> String {
     };
     name.to_owned()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tree::Widget;
-
-    #[test]
-    fn diffs_only_curated_changed_properties() {
-        let old = Widget::text("Count: 7");
-        let new = Widget::text("Count: 8");
-        let changes = diff_properties(&old.kind, &new.kind);
-
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].name, "text");
-        assert_eq!(changes[0].old, Some(DebugValue::Str("Count: 7".into())));
-        assert_eq!(changes[0].new, Some(DebugValue::Str("Count: 8".into())));
-    }
-}

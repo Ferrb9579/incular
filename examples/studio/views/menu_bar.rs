@@ -1,6 +1,6 @@
 //! Top menu and title bar for Incular Studio.
 
-use crate::{
+use super::super::{
     localization::StudioLocale,
     state::StudioState,
     theme::{StudioTheme, ThemeMode},

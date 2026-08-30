@@ -848,10 +848,3 @@ pub(super) fn menu_panel(
     };
     (style.constrained(material), panel_height)
 }
-
-#[cfg(test)]
-impl<T> PopupMenuItem<T> {
-    pub(super) fn test_height(&self) -> f32 {
-        self.height
-    }
-}

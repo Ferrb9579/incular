@@ -16,10 +16,6 @@ mod style;
 #[path = "buttons/variants.rs"]
 mod variants;
 
-#[cfg(test)]
-#[path = "buttons/tests.rs"]
-mod tests;
-
 pub use icon_floating::{FloatingActionButton, IconButton};
 pub use style::{ButtonStyleConfig, StyleFrom, style_from};
 pub use variants::{ElevatedButton, FilledButton, OutlinedButton, TextButton};

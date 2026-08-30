@@ -84,30 +84,3 @@ impl From<Root> for Widget {
         Widget::layout_builder(move |_| value.build(&crate::theme::current_control_theme()))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builder_preserves_autocomplete_defaults_and_accepts_widgets() {
-        let default = Root::default();
-        let built = Root::builder().build();
-
-        assert!(default.query.is_empty());
-        assert!(built.query.is_empty());
-        assert!(built.child.is_none());
-        assert!(built.on_query_change.is_none());
-
-        let root = Root::builder()
-            .query("ap")
-            .child(Text::new("Search"))
-            .on_query_change(|_| {})
-            .build();
-        assert_eq!(root.query, "ap");
-        assert!(root.child.is_some());
-        assert!(root.on_query_change.is_some());
-        let _: Widget = root.into();
-    }
-}

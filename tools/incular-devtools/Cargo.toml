@@ -11,6 +11,9 @@ homepage.workspace = true
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "incular-devtools"
 path = "src/main.rs"

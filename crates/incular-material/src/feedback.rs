@@ -12,9 +12,6 @@ mod helpers;
 mod progress;
 mod transient;
 
-#[cfg(test)]
-mod tests;
-
 pub use dialog::{AlertDialog, Dialog, SimpleDialog, SimpleDialogOption};
 pub use dialog_handles::{
     DialogHandle, DialogResultHandle, DialogRoute, show_dialog, show_dialog_result,

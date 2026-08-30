@@ -5,7 +5,7 @@ use incular::prelude::*;
 use incular::widgets::internal::ScrollView;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum ToolView {
+pub enum ToolView {
     #[default]
     Widgets,
     Console,

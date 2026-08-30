@@ -22,10 +22,10 @@ whole-screen captures after a five-second paint interval.
 | semantics_gallery, simulation, slivers, studio, text | Pass | Pass | Pass |
 | text_field, text_quality, text_selection, widget_basics, workbench | Pass | Pass | Pass |
 
-The shared example harness lives in `examples/support/mod.rs`. Thirty-nine
-examples use a dedicated `tests.rs`; `performance_gallery` retains its focused
-unit tests in `main.rs` and `example_tests.rs`. Every example has a dedicated
-`simulations.rs` contract.
+The shared example harness lives in `examples/tests/support/mod.rs`. Every
+example uses a dedicated `tests/example_tests.rs` integration target and
+`tests/simulations.rs` contract. The focused `performance_gallery` workload
+tests are also in its `tests/example_tests.rs` target.
 
 The `performance_gallery` audit is stricter than the shared smoke sequence. It
 visits all fifteen workloads, scrolls the fixed and variable lists, taps the

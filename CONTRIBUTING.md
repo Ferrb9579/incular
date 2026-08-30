@@ -30,6 +30,14 @@ code in its platform crate, and avoid dependency cycles. Prefer explicit error
 handling at public boundaries and document safety invariants around `unsafe`
 code.
 
+## Test placement
+
+All test code belongs in a `tests/` directory. Put crate tests in
+`crates/<crate>/tests/`, workspace integration tests in the repository-root
+`tests/`, and example tests in `examples/<example>/tests/`. Production `src/`
+files and example entry-point directories must not contain inline test modules,
+test helpers, or test-only implementations.
+
 ## Commit and review guidance
 
 Use a descriptive commit subject, keep unrelated formatting or refactors out

@@ -308,6 +308,20 @@ impl WidgetTree {
     pub fn render_id(&self, id: ElementId) -> Option<RenderObjectId> {
         self.elements.get(id.0).map(|e| e.render)
     }
+    /// Returns the retained render kind for diagnostics and framework tooling.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn render_object_kind(&self, id: RenderObjectId) -> Option<&RenderKind> {
+        self.renders.get(id.0).map(|render| &render.kind)
+    }
+    /// Returns the cached text layout for a retained text render object.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn text_layout(&self, id: RenderObjectId) -> Option<&TextLayout> {
+        self.renders
+            .get(id.0)
+            .and_then(|render| render.text_layout.as_deref())
+    }
     /// Current world-space bounds for a mounted element. This is useful for
     /// platform-neutral tooling and tests; it never exposes a render ID.
     #[must_use]

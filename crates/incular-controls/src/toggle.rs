@@ -219,30 +219,3 @@ impl From<Group> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn group_builder_uses_explicit_defaults() {
-        let group = Group::builder().build();
-
-        assert!(!group.multiple);
-        assert!(group.child.is_none());
-        assert!(!Group::new().multiple);
-    }
-
-    #[test]
-    fn group_builder_accepts_generic_widget_children() {
-        let group = Group::builder()
-            .multiple(true)
-            .child(Text::new("toggles"))
-            .build();
-
-        assert!(group.multiple);
-        assert!(group.child.is_some());
-        let _: Widget = Group::with_child(Text::new("child")).into();
-    }
-}

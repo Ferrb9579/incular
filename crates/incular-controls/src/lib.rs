@@ -33,6 +33,7 @@ pub mod popup;
 pub mod prelude;
 pub mod preview_card;
 pub mod progress;
+pub mod radio;
 pub mod scroll_area;
 pub mod scrollbar;
 pub mod select;

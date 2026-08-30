@@ -14,12 +14,10 @@ fn label(value: impl Into<String>) -> Widget {
         .into()
 }
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     let taps = Signal::new(0_u32);

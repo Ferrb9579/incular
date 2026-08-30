@@ -10,7 +10,7 @@ mod state;
 mod theme;
 mod views;
 
-use crate::{
+use self::{
     restoration::RestorationData,
     state::StudioState,
     theme::StudioTheme,
@@ -24,12 +24,10 @@ use crate::{
 use incular::prelude::*;
 use incular::widgets::internal::SplitView;
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     let stress_tree_count = std::env::var("INCULAR_STUDIO_STRESS_TREE")

@@ -46,7 +46,7 @@ pub(crate) fn process_alive(_pid: u32) -> bool {
     true
 }
 
-pub(crate) fn requested_target_pid(
+pub fn requested_target_pid(
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
 ) -> Option<u32> {
     let mut arguments = args.into_iter();
@@ -62,7 +62,7 @@ pub(crate) fn requested_target_pid(
     None
 }
 
-pub(crate) fn select_session(
+pub fn select_session(
     sessions: &[DiscoveryRecord],
     target_pid: Option<u32>,
 ) -> Option<DiscoveryRecord> {

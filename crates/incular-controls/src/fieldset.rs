@@ -55,25 +55,3 @@ impl From<Legend> for Widget {
         value.child
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builders_preserve_fieldset_defaults_and_accept_generic_children() {
-        let default = Root::default();
-        let built = Root::builder().child(Text::new("Fields")).build();
-
-        assert!(default.child.is_none());
-        assert!(!default.disabled);
-        assert!(built.child.is_some());
-        assert!(!built.disabled);
-
-        let legend = Legend::builder().child(Text::new("Name")).build();
-        assert_eq!(legend.child.text_if_any().as_deref(), Some("Name"));
-        let _: Widget = Root::new().disabled(true).into();
-        let _: Widget = Legend::new("Name").into();
-    }
-}

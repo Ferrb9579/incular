@@ -2,32 +2,32 @@ use incular_devtools_protocol::{DeepFrameTrace, DevWidgetId, TracePhase};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct FlameBox {
-    pub(crate) event: usize,
-    pub(crate) node: DevWidgetId,
-    pub(crate) phase: TracePhase,
-    pub(crate) x: f32,
-    pub(crate) width: f32,
-    pub(crate) depth: u16,
+pub struct FlameBox {
+    pub event: usize,
+    pub node: DevWidgetId,
+    pub phase: TracePhase,
+    pub x: f32,
+    pub width: f32,
+    pub depth: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RankedTrace {
-    pub(crate) node: DevWidgetId,
-    pub(crate) phase: TracePhase,
-    pub(crate) total_us: u64,
-    pub(crate) count: u32,
+pub struct RankedTrace {
+    pub node: DevWidgetId,
+    pub phase: TracePhase,
+    pub total_us: u64,
+    pub count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum TraceRange {
+pub enum TraceRange {
     CurrentFrame,
     SelectedRange,
     #[default]
     EntireRecording,
 }
 
-pub(crate) fn flamegraph_boxes(
+pub fn flamegraph_boxes(
     trace: &DeepFrameTrace,
     phase: Option<TracePhase>,
     width: f32,
@@ -73,7 +73,7 @@ pub(crate) fn flamegraph_boxes(
         .collect()
 }
 
-pub(crate) fn rank_traces<'a>(
+pub fn rank_traces<'a>(
     traces: impl IntoIterator<Item = &'a DeepFrameTrace>,
     phase: Option<TracePhase>,
 ) -> Vec<RankedTrace> {

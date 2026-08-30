@@ -222,33 +222,3 @@ impl From<Thumb> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn anatomy_builders_keep_switch_defaults_and_generic_children() {
-        let root = Root::builder().child(Text::new("Toggle")).build();
-        assert!(!root.checked);
-        assert!(!root.default_checked);
-        assert!(root.enabled);
-        assert!(!root.read_only);
-        assert!(root.child.is_some());
-        assert!(root.on_change.is_none());
-
-        let default_checked = Root::builder().default_checked(true).build();
-        assert!(default_checked.checked);
-        assert!(default_checked.default_checked);
-
-        let thumb = Thumb::builder().child(Text::new("thumb")).build();
-        assert!(thumb.child.is_some());
-    }
-
-    #[test]
-    fn anatomy_compatibility_constructors_use_builder_defaults() {
-        assert!(Root::new().is_checked() == Root::default().is_checked());
-        assert!(Thumb::new().child.is_none());
-    }
-}

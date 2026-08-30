@@ -1,8 +1,9 @@
 # Examples
 
 Every runnable example has its own directory, matching the Studio layout. The
-directory contains `main.rs`, a local `simulations.rs` scenario, and a local
-test module. Examples remain registered with the `incular` package and keep
+directory contains `main.rs`, a `tests/simulations.rs` scenario, and a
+`tests/example_tests.rs` integration test target. Examples remain registered
+with the `incular` package and keep
 their stable Cargo target names:
 
 ```text
@@ -80,8 +81,8 @@ Additional visual feature demos:
 
 ## Example QA
 
-Each example owns a deterministic QA contract in `simulations.rs` and a
-contract test in `tests.rs`. The shared harness exercises the normalized
+Each example owns a deterministic QA contract in `tests/simulations.rs` and a
+contract test in `tests/example_tests.rs`. The shared harness exercises the normalized
 pointer, keyboard, scroll, semantic-click, and application-frame capture paths
 without using the host mouse, keyboard, or desktop capture APIs.
 

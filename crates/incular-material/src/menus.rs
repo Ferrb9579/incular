@@ -37,6 +37,3 @@ pub use style::{
     DropdownMenuThemeData, DropdownMenuThemeDataBuilder, MenuStyle, MenuStyleBuilder,
     MenuThemeData, MenuThemeDataBuilder, PopupMenuThemeData, PopupMenuThemeDataBuilder,
 };
-
-#[cfg(test)]
-mod tests;

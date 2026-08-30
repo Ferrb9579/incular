@@ -1,19 +1,19 @@
 use incular::material::RawMaterialButton;
 use incular::prelude::*;
 
-pub(crate) const APP_BACKGROUND: Color = Color::rgba(9, 13, 21, 255);
-pub(crate) const SURFACE: Color = Color::rgba(17, 24, 36, 255);
-pub(crate) const SURFACE_RAISED: Color = Color::rgba(23, 32, 47, 255);
-pub(crate) const BORDER: Color = Color::rgba(48, 63, 86, 255);
-pub(crate) const CONTROL: Color = Color::rgba(42, 54, 74, 255);
-pub(crate) const CONTROL_ACTIVE: Color = Color::rgba(58, 99, 187, 255);
-pub(crate) const PRIMARY: Color = Color::rgba(74, 119, 224, 255);
-pub(crate) const DANGER: Color = Color::rgba(178, 69, 78, 255);
-pub(crate) const TEXT_PRIMARY: Color = Color::rgba(238, 243, 252, 255);
-pub(crate) const TEXT_MUTED: Color = Color::rgba(153, 169, 194, 255);
-pub(crate) const SUCCESS: Color = Color::rgba(74, 205, 151, 255);
+pub const APP_BACKGROUND: Color = Color::rgba(9, 13, 21, 255);
+pub const SURFACE: Color = Color::rgba(17, 24, 36, 255);
+pub const SURFACE_RAISED: Color = Color::rgba(23, 32, 47, 255);
+pub const BORDER: Color = Color::rgba(48, 63, 86, 255);
+pub const CONTROL: Color = Color::rgba(42, 54, 74, 255);
+pub const CONTROL_ACTIVE: Color = Color::rgba(58, 99, 187, 255);
+pub const PRIMARY: Color = Color::rgba(74, 119, 224, 255);
+pub const DANGER: Color = Color::rgba(178, 69, 78, 255);
+pub const TEXT_PRIMARY: Color = Color::rgba(238, 243, 252, 255);
+pub const TEXT_MUTED: Color = Color::rgba(153, 169, 194, 255);
+pub const SUCCESS: Color = Color::rgba(74, 205, 151, 255);
 
-pub(crate) fn ui_text(value: impl Into<String>, size: f32, color: Color) -> Widget {
+pub fn ui_text(value: impl Into<String>, size: f32, color: Color) -> Widget {
     Text::new(value)
         .style(TextStyle {
             size,
@@ -23,11 +23,11 @@ pub(crate) fn ui_text(value: impl Into<String>, size: f32, color: Color) -> Widg
         .into()
 }
 
-pub(crate) fn gap(width: f32, height: f32) -> Widget {
+pub fn gap(width: f32, height: f32) -> Widget {
     Widget::fixed_box(Size::new(width, height), Color::TRANSPARENT)
 }
 
-pub(crate) fn compact_button(
+pub fn compact_button(
     label: impl Into<String>,
     selected: bool,
     callback: impl Fn() + 'static,
@@ -45,11 +45,7 @@ pub(crate) fn compact_button(
         .into()
 }
 
-pub(crate) fn section(
-    title: impl Into<String>,
-    description: impl Into<String>,
-    child: Widget,
-) -> Widget {
+pub fn section(title: impl Into<String>, description: impl Into<String>, child: Widget) -> Widget {
     DecoratedBox::new(Padding::all(
         16.,
         Column::new([

@@ -401,22 +401,3 @@ fn bezier_derivative(t: f32, first: f32, second: f32) -> f32 {
         + 6.0 * inverse * t * (second - first)
         + 3.0 * t * t * (1.0 - second)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn curves_are_clamped_and_reversible() {
-        assert_eq!(Curve::Linear.apply(-1.0), 0.0);
-        assert_eq!(Curve::Linear.apply(2.0), 1.0);
-        assert!((Curve::EaseIn.reverse().apply(0.25) - Curve::EaseOut.apply(0.25)).abs() < 1e-6);
-    }
-
-    #[test]
-    fn chained_curves_preserve_endpoints() {
-        let curve = Curve::EaseIn.then(Curve::EaseOut);
-        assert_eq!(curve.apply(0.0), 0.0);
-        assert_eq!(curve.apply(1.0), 1.0);
-    }
-}

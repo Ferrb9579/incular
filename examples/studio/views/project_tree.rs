@@ -1,7 +1,7 @@
 //! Virtualized file/project tree explorer for Incular Studio.
 //! Supports tens of thousands of logical nodes with bounded O(visible) materialization.
 
-use crate::{
+use super::super::{
     localization::StudioLocale,
     state::{DocumentTab, StudioState},
     theme::StudioTheme,

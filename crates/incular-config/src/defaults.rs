@@ -93,29 +93,3 @@ impl Default for WidgetDefaults {
         Self::DEFAULT
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn application_defaults_are_valid_for_initialization() {
-        let defaults = ApplicationDefaults::DEFAULT;
-        assert!(defaults.initial_window_size.width > 0.0);
-        assert!(defaults.initial_window_size.height > 0.0);
-        assert!(defaults.scale_factor.is_finite() && defaults.scale_factor > 0.0);
-        assert!(defaults.text_scale.is_finite() && defaults.text_scale > 0.0);
-        assert_eq!(defaults, ApplicationDefaults::default());
-    }
-
-    #[test]
-    fn widget_defaults_are_explicit_and_safe_for_lazy_layout() {
-        let defaults = WidgetDefaults::DEFAULT;
-        assert!(defaults.text_size > 0.0);
-        assert!(defaults.lazy_item_extent > 0.0);
-        assert!(defaults.sliver_cache_extent >= 0.0);
-        assert!(defaults.sliver_fill_viewport_extent > 0.0);
-        assert_eq!(defaults.grid_cross_axis_count, 1);
-        assert_eq!(defaults, WidgetDefaults::default());
-    }
-}

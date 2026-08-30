@@ -7,11 +7,12 @@ mod shared;
 mod shell;
 mod widget_inspector;
 
-pub(crate) use self::shared::{
+pub use self::shared::{
     APP_BACKGROUND, BORDER, CONTROL, CONTROL_ACTIVE, DANGER, PRIMARY, SUCCESS, SURFACE, TEXT_MUTED,
     TEXT_PRIMARY, compact_button, gap, section, ui_text,
 };
-pub(crate) use self::shell::{ToolView, initial_tool_view};
+pub use self::shell::ToolView;
+pub(crate) use self::shell::initial_tool_view;
 
 use crate::{
     inspector::{InspectorSection, Shared},

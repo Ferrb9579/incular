@@ -21,6 +21,3 @@ pub use shell::{
     DrawerButtonIcon, DrawerHeader, EndDrawerButton, EndDrawerButtonIcon, ScaffoldMessenger,
     ScaffoldMessengerController,
 };
-
-#[cfg(test)]
-mod tests;

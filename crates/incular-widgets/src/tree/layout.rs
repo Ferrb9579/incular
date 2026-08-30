@@ -67,7 +67,8 @@ impl WidgetTree {
         }
     }
 
-    pub(super) fn content_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
+    #[doc(hidden)]
+    pub fn content_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
         let node = self.renders.get(id.0)?;
         match &node.kind {
             RenderKind::Transform { transform, origin } => {
@@ -147,8 +148,10 @@ impl WidgetTree {
         }
         world.transform_rect_bbox(Rect::from_origin_size(Offset::ZERO, size))
     }
-    #[cfg(test)]
-    pub(super) fn render_origin(&self, mut id: RenderObjectId) -> Offset {
+    /// Returns the retained world-space origin of a render object, including
+    /// scrolling and compositor translations applied along its ancestor path.
+    #[doc(hidden)]
+    pub fn render_origin(&self, mut id: RenderObjectId) -> Offset {
         let mut origin = Offset::ZERO;
         loop {
             let node = self.renders.get(id.0).expect("live render");

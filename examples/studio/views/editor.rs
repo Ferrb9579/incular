@@ -1,7 +1,7 @@
 //! Document tab bar and text editor workspace for Incular Studio.
 //! Uses persistent retained TextEditingController and ScrollController.
 
-use crate::{
+use super::super::{
     localization::StudioLocale,
     state::{DocumentTab, StudioState},
     theme::StudioTheme,

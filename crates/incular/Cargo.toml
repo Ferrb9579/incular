@@ -15,6 +15,127 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[test]]
+name = "example_animation"
+path = "../../examples/animation/tests/example_tests.rs"
+[[test]]
+name = "example_async_runtime"
+path = "../../examples/async_runtime/tests/example_tests.rs"
+[[test]]
+name = "example_base_ui_controls"
+path = "../../examples/base_ui_controls/tests/example_tests.rs"
+[[test]]
+name = "example_canvas_layers"
+path = "../../examples/canvas_layers/tests/example_tests.rs"
+[[test]]
+name = "example_color_effects"
+path = "../../examples/color_effects/tests/example_tests.rs"
+[[test]]
+name = "example_controls_gallery"
+path = "../../examples/controls_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_core_defaults"
+path = "../../examples/core_defaults/tests/example_tests.rs"
+[[test]]
+name = "example_counter"
+path = "../../examples/counter/tests/example_tests.rs"
+[[test]]
+name = "example_custom"
+path = "../../examples/custom/tests/example_tests.rs"
+[[test]]
+name = "example_effects"
+path = "../../examples/effects/tests/example_tests.rs"
+[[test]]
+name = "example_environment"
+path = "../../examples/environment/tests/example_tests.rs"
+[[test]]
+name = "example_flutter_widgets_gallery"
+path = "../../examples/flutter_widgets_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_gesture_gallery"
+path = "../../examples/gesture_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_images"
+path = "../../examples/images/tests/example_tests.rs"
+[[test]]
+name = "example_interaction_complete"
+path = "../../examples/interaction_complete/tests/example_tests.rs"
+[[test]]
+name = "example_layout_complete"
+path = "../../examples/layout_complete/tests/example_tests.rs"
+[[test]]
+name = "example_layout_gallery"
+path = "../../examples/layout_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_localization"
+path = "../../examples/localization/tests/example_tests.rs"
+[[test]]
+name = "example_material_gallery"
+path = "../../examples/material_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_material_workbench"
+path = "../../examples/material_workbench/tests/example_tests.rs"
+[[test]]
+name = "example_multi_window"
+path = "../../examples/multi_window/tests/example_tests.rs"
+[[test]]
+name = "example_navigation_showcase"
+path = "../../examples/navigation_showcase/tests/example_tests.rs"
+[[test]]
+name = "example_opacity"
+path = "../../examples/opacity/tests/example_tests.rs"
+[[test]]
+name = "example_painting"
+path = "../../examples/painting/tests/example_tests.rs"
+[[test]]
+name = "example_performance_gallery"
+path = "../../examples/performance_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_reactive"
+path = "../../examples/reactive/tests/example_tests.rs"
+[[test]]
+name = "example_responsive_layout"
+path = "../../examples/responsive_layout/tests/example_tests.rs"
+[[test]]
+name = "example_restoration"
+path = "../../examples/restoration/tests/example_tests.rs"
+[[test]]
+name = "example_scroll"
+path = "../../examples/scroll/tests/example_tests.rs"
+[[test]]
+name = "example_scrolling_complete"
+path = "../../examples/scrolling_complete/tests/example_tests.rs"
+[[test]]
+name = "example_semantics_gallery"
+path = "../../examples/semantics_gallery/tests/example_tests.rs"
+[[test]]
+name = "example_simulation"
+path = "../../examples/simulation/tests/example_tests.rs"
+[[test]]
+name = "example_slivers"
+path = "../../examples/slivers/tests/example_tests.rs"
+[[test]]
+name = "example_studio"
+path = "../../examples/studio/tests/example_tests.rs"
+[[test]]
+name = "example_text"
+path = "../../examples/text/tests/example_tests.rs"
+[[test]]
+name = "example_text_field"
+path = "../../examples/text_field/tests/example_tests.rs"
+[[test]]
+name = "example_text_quality"
+path = "../../examples/text_quality/tests/example_tests.rs"
+[[test]]
+name = "example_text_selection"
+path = "../../examples/text_selection/tests/example_tests.rs"
+[[test]]
+name = "example_widget_basics"
+path = "../../examples/widget_basics/tests/example_tests.rs"
+[[test]]
+name = "example_workbench"
+path = "../../examples/workbench/tests/example_tests.rs"
+
 [[example]]
 name = "animation"
 path = "../../examples/animation/main.rs"

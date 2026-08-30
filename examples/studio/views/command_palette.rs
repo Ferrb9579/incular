@@ -1,7 +1,7 @@
 //! Command palette modal overlay for Incular Studio.
 //! Provides fast command execution and keyboard navigation.
 
-use crate::{
+use super::super::{
     commands::StudioCommand,
     state::StudioState,
     theme::{StudioTheme, ThemeMode},

@@ -2,12 +2,10 @@ use incular::prelude::*;
 use incular::reactive::{Action, Effect, Memo};
 use incular_controls::Button;
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     let count = Signal::new(0_u32);

@@ -9,9 +9,6 @@ mod gradients;
 mod paint;
 mod paths;
 
-#[cfg(test)]
-mod tests;
-
 pub use compositor::{
     CompositorDiagnostics, FlattenedPicture, LayerId, LayerKind, LayerTree, normalize_opacity,
 };

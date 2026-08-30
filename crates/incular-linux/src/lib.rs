@@ -140,14 +140,14 @@ pub mod devtools_runner;
 
 #[cfg(feature = "devtools")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DevToolsLaunchMode {
+pub enum DevToolsLaunchMode {
     Disabled,
     AgentOnly,
     OpenUi,
 }
 
 #[cfg(feature = "devtools")]
-fn devtools_launch_mode_from(
+pub fn devtools_launch_mode_from(
     args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
     environment_enabled: bool,
 ) -> DevToolsLaunchMode {
@@ -174,7 +174,7 @@ fn devtools_launch_mode() -> DevToolsLaunchMode {
 }
 
 #[cfg(feature = "devtools")]
-fn devtools_ui_candidates(current_exe: Option<PathBuf>) -> Vec<PathBuf> {
+pub fn devtools_ui_candidates(current_exe: Option<PathBuf>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let ui_binary = if cfg!(windows) {
         "incular-devtools.exe"
@@ -1292,45 +1292,5 @@ fn environment_for(metrics: WindowMetrics) -> incular_config::RuntimeEnvironment
             stylus: false,
         },
         ..incular_config::RuntimeEnvironment::default()
-    }
-}
-
-#[cfg(all(test, feature = "devtools"))]
-mod devtools_launch_tests {
-    use super::*;
-
-    #[test]
-    fn explicit_flag_opens_the_ui() {
-        assert_eq!(
-            devtools_launch_mode_from(["app", "--devtools"], false),
-            DevToolsLaunchMode::OpenUi
-        );
-        assert_eq!(
-            devtools_launch_mode_from(["app", "--incular-devtools"], false),
-            DevToolsLaunchMode::OpenUi
-        );
-    }
-
-    #[test]
-    fn environment_preserves_agent_only_compatibility() {
-        assert_eq!(
-            devtools_launch_mode_from(["app"], true),
-            DevToolsLaunchMode::AgentOnly
-        );
-        assert_eq!(
-            devtools_launch_mode_from(["app"], false),
-            DevToolsLaunchMode::Disabled
-        );
-    }
-
-    #[test]
-    fn cargo_example_candidate_includes_profile_binary() {
-        let candidates =
-            devtools_ui_candidates(Some(PathBuf::from("/repo/target/debug/examples/gallery")));
-        let expected = PathBuf::from(format!(
-            "/repo/target/debug/incular-devtools{}",
-            std::env::consts::EXE_SUFFIX
-        ));
-        assert!(candidates.contains(&expected), "{candidates:?}");
     }
 }

@@ -1,7 +1,7 @@
 //! Interactive vector canvas preview pane for Incular Studio.
 //! Demonstrates CustomPaint, vector paths, brushes, gradients, zoom and pan.
 
-use crate::{state::StudioState, theme::StudioTheme};
+use super::super::{state::StudioState, theme::StudioTheme};
 use incular::material::MaterialButton;
 use incular::prelude::*;
 

@@ -55,13 +55,6 @@ impl MenuController {
     }
 }
 
-#[cfg(test)]
-impl MenuController {
-    pub(super) fn test_revision(&self) -> u64 {
-        self.revision.get()
-    }
-}
-
 /// A horizontal Material menu bar.
 ///
 /// `MenuBar` is a Material composition widget, not a renderer primitive. Its
@@ -444,13 +437,6 @@ impl MenuItemButton {
                     Vec::new()
                 }),
         )
-    }
-}
-
-#[cfg(test)]
-impl MenuItemButton {
-    pub(super) fn test_enabled(&self) -> bool {
-        self.enabled
     }
 }
 

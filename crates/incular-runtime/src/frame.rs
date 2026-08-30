@@ -3,9 +3,11 @@ use crate::application_types::{
 };
 #[cfg(feature = "devtools")]
 use crate::environment::DEV_TASK_COMPLETION;
+#[cfg(feature = "devtools")]
+use crate::environment::ReactiveRootId;
 use crate::environment::{
-    BuildScope, BuildScopeGuard, InitialBuildDependencies, ReactiveQueue, ReactiveRootId,
-    environment_change_mask, install_focus_scope_watch,
+    BuildScope, BuildScopeGuard, InitialBuildDependencies, ReactiveQueue, environment_change_mask,
+    install_focus_scope_watch,
 };
 use crate::profiling;
 use crate::profiling::FrameTimings;

@@ -80,33 +80,3 @@ impl From<Separator> for Widget {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builder_defaults_match_new() {
-        let new = Separator::new();
-        let built = Separator::builder().build();
-
-        assert_eq!(new.orientation, Orientation::Horizontal);
-        assert_eq!(new.orientation, built.orientation);
-        assert_eq!(new.thickness, 1.);
-        assert_eq!(new.thickness, built.thickness);
-        assert!(!new.decorative && !built.decorative);
-    }
-
-    #[test]
-    fn builder_preserves_orientation_and_thickness_behavior() {
-        let separator = Separator::builder()
-            .orientation(Orientation::Vertical)
-            .thickness(-2.)
-            .decorative(true)
-            .build();
-
-        assert_eq!(separator.orientation, Orientation::Vertical);
-        assert_eq!(separator.thickness, 0.);
-        assert!(separator.decorative);
-    }
-}

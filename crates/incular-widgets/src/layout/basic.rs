@@ -22,9 +22,6 @@ mod transforms;
 mod utility;
 mod visibility;
 
-#[cfg(test)]
-mod tests;
-
 pub use baseline_aspect_fractional::{
     AspectRatio, AspectRatioBuilder, Baseline, BaselineBuilder, FittedBox, FittedBoxBuilder,
     FractionallySizedBox, FractionallySizedBoxBuilder,

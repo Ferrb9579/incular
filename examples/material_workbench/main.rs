@@ -28,12 +28,10 @@ fn panel(title: &str, children: impl IntoIterator<Item = Widget>) -> Widget {
     .into()
 }
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     let mut options = WindowOptions::new("Incular Material workbench");

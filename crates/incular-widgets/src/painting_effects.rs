@@ -14,6 +14,3 @@ pub use decoration::{
 pub use geometry::{BorderRadius, BorderRadiusDirectional, Radius};
 pub use images::{ImageFiltered, ImageIcon, RawImage};
 pub use layers::{ClipRSuperellipse, GridPaper, PhysicalModel, PhysicalShape, SnapshotWidget};
-
-#[cfg(test)]
-mod tests;

@@ -14,9 +14,6 @@ mod undo;
 mod window_commands;
 mod window_state;
 
-#[cfg(test)]
-mod tests;
-
 #[allow(unused_imports)]
 use incular_accessibility::{
     AccessKitProjection, NativeAccessibilityUpdate, SemanticActionRequest,

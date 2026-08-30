@@ -389,21 +389,3 @@ impl incular_core::Lerp for EdgeInsetsDirectional {
         )
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn constructors_and_dimensions_are_consistent() {
-        let insets = EdgeInsets::from_xy(2.0, 3.0);
-        assert_eq!(insets, EdgeInsets::only(2.0, 3.0, 2.0, 3.0));
-        assert_eq!(insets.dimensions(), (4.0, 6.0));
-    }
-
-    #[test]
-    fn normalization_removes_invalid_values() {
-        let normalized = EdgeInsets::only(-1.0, f32::NAN, 2.0, f32::INFINITY).normalized();
-        assert_eq!(normalized, EdgeInsets::only(0.0, 0.0, 2.0, 0.0));
-    }
-}

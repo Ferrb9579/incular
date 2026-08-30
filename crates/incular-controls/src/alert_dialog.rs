@@ -92,30 +92,3 @@ impl From<Root> for Widget {
 
 pub type Viewport = Popup;
 pub type Backdrop = Portal;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builder_preserves_alert_dialog_defaults_and_accepts_widgets() {
-        let default = Root::default();
-        let built = Root::builder().build();
-
-        assert_eq!(default.is_open(), built.is_open());
-        assert!(default.child.is_none());
-        assert!(built.child.is_none());
-        assert!(built.on_open_change.is_none());
-
-        let root = Root::builder()
-            .child(Text::new("Alert"))
-            .open(true)
-            .on_open_change(|_| {})
-            .build();
-        assert!(root.is_open());
-        assert!(root.child.is_some());
-        assert!(root.on_open_change.is_some());
-        let _: Widget = root.into();
-    }
-}

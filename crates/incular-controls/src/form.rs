@@ -55,30 +55,3 @@ impl From<Form> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builder_preserves_form_defaults_and_accepts_widgets_and_callbacks() {
-        let default = Form::default();
-        let built = Form::builder().build();
-
-        assert!(default.child.is_none());
-        assert!(built.child.is_none());
-        assert!(!built.disabled);
-        assert!(built.on_submit.is_none());
-
-        let form = Form::builder()
-            .child(Text::new("Fields"))
-            .disabled(true)
-            .on_submit(|| {})
-            .build();
-        assert!(form.child.is_some());
-        assert!(form.disabled);
-        assert!(form.on_submit.is_some());
-        let _: Widget = form.into();
-    }
-}

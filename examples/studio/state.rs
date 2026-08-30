@@ -6,7 +6,7 @@ use incular_widgets::internal::TextEditingController;
 use incular_widgets::{FocusNode, ScrollController};
 use std::{collections::HashSet, sync::Arc};
 
-use crate::{localization::StudioLocale, restoration::RestorationData, theme::ThemeMode};
+use super::{localization::StudioLocale, restoration::RestorationData, theme::ThemeMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BottomTab {

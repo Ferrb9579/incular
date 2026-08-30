@@ -15,10 +15,6 @@ mod switch;
 #[path = "p0_controls/tabs.rs"]
 mod tabs;
 
-#[cfg(test)]
-#[path = "p0_controls/tests.rs"]
-mod tests;
-
 pub use checkbox_radio::*;
 pub use icons::*;
 pub use slider_range::*;

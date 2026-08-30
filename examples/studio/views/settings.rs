@@ -1,7 +1,7 @@
 //! Settings and configuration form view for Incular Studio.
 //! Uses typed Form, validation rules, and reactive state bindings.
 
-use crate::{
+use super::super::{
     localization::StudioLocale,
     state::StudioState,
     theme::{StudioTheme, ThemeMode},

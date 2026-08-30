@@ -378,34 +378,3 @@ impl From<Group> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn anatomy_builders_keep_checkbox_defaults_and_generic_children() {
-        let root = Root::builder().child(Text::new("Accept")).build();
-        assert_eq!(root.state_value(), CheckedState::Unchecked);
-        assert!(root.enabled);
-        assert!(!root.read_only);
-        assert!(!root.required);
-        assert!(root.child.is_some());
-        assert!(root.on_change.is_none());
-
-        let indicator = Indicator::builder().child(Text::new("check")).build();
-        assert!(indicator.child.is_some());
-
-        let group = Group::builder().values(["one", "two"]).build();
-        assert_eq!(group.selected(), vec!["one", "two"]);
-        assert!(group.enabled);
-    }
-
-    #[test]
-    fn anatomy_compatibility_constructors_use_builder_defaults() {
-        assert_eq!(Root::new().state_value(), Root::default().state_value());
-        assert!(Indicator::new().child.is_none());
-        assert!(Group::new().selected().is_empty());
-    }
-}

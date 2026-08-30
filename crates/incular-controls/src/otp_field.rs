@@ -48,28 +48,3 @@ impl From<Root> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builder_uses_explicit_defaults_and_normalizes_length() {
-        let default = Root::builder().build();
-        assert_eq!(default.length, 6);
-        assert!(default.child.is_none());
-        assert!(!default.masked);
-
-        let root = Root::builder()
-            .length(0)
-            .masked(true)
-            .child(Text::new("otp"))
-            .build();
-        assert_eq!(root.length(), 1);
-        assert!(root.is_masked());
-        assert!(root.child.is_some());
-
-        let _: Widget = Root::new(6).child(Text::new("legacy")).into();
-    }
-}

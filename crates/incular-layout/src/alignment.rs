@@ -9,21 +9,3 @@ pub use incular_config::{
     MainAxisAlignment, MainAxisSize, TextDirection, VerticalDirection, WrapAlignment,
     WrapCrossAlignment,
 };
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_core::{Offset, Size};
-
-    #[test]
-    fn alignment_places_child_in_remaining_space() {
-        assert_eq!(
-            Alignment::CENTER.within(Size::new(100.0, 80.0), Size::new(20.0, 10.0)),
-            Offset::new(40.0, 35.0)
-        );
-        assert_eq!(
-            AlignmentDirectional::CENTER_START.resolve(TextDirection::Rtl),
-            Alignment::CENTER_RIGHT
-        );
-    }
-}

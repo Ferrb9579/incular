@@ -20,9 +20,6 @@ mod theme;
 #[path = "foundation/theme_data.rs"]
 mod theme_data;
 
-#[cfg(test)]
-mod tests;
-
 pub use ink::*;
 pub use input::*;
 pub use state::*;

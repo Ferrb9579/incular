@@ -262,27 +262,3 @@ where
         Self::new(value)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unique_keys_are_distinct_and_cloneable() {
-        let first = UniqueKey::new();
-        let second = UniqueKey::new();
-        assert_ne!(first, second);
-        assert_eq!(first, first);
-        assert_eq!(KeyHandle::from(first), KeyHandle::from(first));
-    }
-
-    #[test]
-    fn value_keys_compare_by_value_after_erasure() {
-        let first = KeyHandle::from(ValueKey::new(42_u32));
-        let second = KeyHandle::from(ValueKey::new(42_u32));
-        let other = KeyHandle::from(ValueKey::new(7_u32));
-        assert_eq!(first, second);
-        assert_ne!(first, other);
-        assert_eq!(first.key_id(), second.key_id());
-    }
-}

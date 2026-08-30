@@ -57,29 +57,3 @@ impl From<Root> for Widget {
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builder_uses_combobox_defaults() {
-        let root = Root::builder().build();
-        assert!(root.child.is_none());
-        assert!(root.query.is_empty());
-        assert!(root.on_query_change.is_none());
-    }
-
-    #[test]
-    fn builder_accepts_widget_child_and_callback() {
-        let root = Root::builder()
-            .child(Text::new("Search"))
-            .query("ap")
-            .on_query_change(|_| {})
-            .build();
-        assert!(root.child.is_some());
-        assert_eq!(root.query, "ap");
-        assert!(root.on_query_change.is_some());
-    }
-}

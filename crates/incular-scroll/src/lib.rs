@@ -11,9 +11,6 @@ mod restoration;
 mod scrollbar;
 mod sliver;
 
-#[cfg(test)]
-mod tests;
-
 pub use activity::{DragStartBehavior, ScrollViewKeyboardDismissBehavior};
 pub use controller::ScrollController;
 pub use coordinator::NestedScrollCoordinator;

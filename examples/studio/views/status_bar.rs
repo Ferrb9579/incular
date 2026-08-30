@@ -1,6 +1,6 @@
 //! Bottom status bar for Incular Studio.
 
-use crate::{localization::StudioLocale, state::StudioState, theme::StudioTheme};
+use super::super::{localization::StudioLocale, state::StudioState, theme::StudioTheme};
 use incular::prelude::*;
 
 #[must_use]

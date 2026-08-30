@@ -13,6 +13,3 @@ pub use text::{
     TextScalerKind, TextShadow, TextWidthBasis,
 };
 pub use text_style::TextStyle;
-
-#[cfg(test)]
-mod tests;

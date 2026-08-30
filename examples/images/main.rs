@@ -1,11 +1,9 @@
 use incular::prelude::*;
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     // A valid encoded PNG deliberately exercises asset decode before the

@@ -735,16 +735,3 @@ pub(crate) fn blend_instance(
         ],
     }
 }
-/// Applies an isolated group alpha to a premultiplied offscreen sample. The
-/// compositor shader mirrors this operation before using premultiplied
-/// source-over blending.
-#[cfg(test)]
-pub(crate) fn apply_group_alpha(sample: [f32; 4], alpha: f32) -> [f32; 4] {
-    let alpha = normalize_opacity(alpha);
-    [
-        sample[0] * alpha,
-        sample[1] * alpha,
-        sample[2] * alpha,
-        sample[3] * alpha,
-    ]
-}

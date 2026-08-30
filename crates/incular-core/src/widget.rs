@@ -25,28 +25,3 @@ pub type WidgetRef = Rc<dyn Widget>;
 pub trait BuildableWidget: Widget {
     fn build(&self, context: &BuildContext) -> WidgetRef;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{KeyHandle, StringKey};
-
-    #[derive(Debug)]
-    struct ExampleWidget {
-        key: KeyHandle,
-    }
-
-    impl Widget for ExampleWidget {
-        fn key(&self) -> Option<&dyn Key> {
-            Some(self.key.as_key())
-        }
-    }
-
-    #[test]
-    fn widget_contract_exposes_an_optional_key() {
-        let widget = ExampleWidget {
-            key: StringKey::new("home".to_owned()).into(),
-        };
-        assert_eq!(widget.key().expect("key").key_id(), widget.key.key_id());
-    }
-}

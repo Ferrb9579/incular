@@ -120,35 +120,3 @@ impl From<Item> for Widget {
         value.child
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn builders_use_select_defaults() {
-        let root = Root::builder().build();
-        assert!(root.value.is_none());
-        assert!(root.child.is_none());
-        assert!(root.on_change.is_none());
-
-        let item = Item::builder().value("one").child(Text::new("One")).build();
-        assert_eq!(item.value(), "one");
-        assert!(!item.is_disabled());
-    }
-
-    #[test]
-    fn builders_accept_widget_children_and_callbacks() {
-        let root = Root::builder()
-            .value("one")
-            .child(Text::new("Choose"))
-            .on_change(|_| {})
-            .build();
-        assert!(root.child.is_some());
-        assert!(root.on_change.is_some());
-
-        let list = List::builder().child(Text::new("Options")).build();
-        let _: Widget = list.into();
-    }
-}

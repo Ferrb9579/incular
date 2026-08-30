@@ -8,9 +8,6 @@ mod presentation;
 mod registry;
 mod route_data;
 
-#[cfg(test)]
-mod tests;
-
 pub use navigator::{
     BackDispatchReport, BackDispatcher, NavigationEvent, Navigator, NavigatorObserver, PopDecision,
     PopResult,

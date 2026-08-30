@@ -211,25 +211,3 @@ impl<T: Tween> Default for TweenSequence<T> {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_core::Offset;
-
-    #[test]
-    fn typed_tween_interpolates_scalars_and_offsets() {
-        assert_eq!(TweenValue::new(0.0_f32, 10.0).evaluate(0.25), 2.5);
-        assert_eq!(
-            TweenValue::new(Offset::ZERO, Offset::new(10.0, 20.0)).evaluate(0.5),
-            Offset::new(5.0, 10.0)
-        );
-    }
-
-    #[test]
-    fn weighted_sequence_uses_local_progress() {
-        let sequence = TweenValue::new(0.0_f32, 10.0).then(TweenValue::new(10.0, 20.0));
-        assert_eq!(sequence.evaluate(0.25), Some(5.0));
-        assert_eq!(sequence.evaluate(0.75), Some(15.0));
-    }
-}

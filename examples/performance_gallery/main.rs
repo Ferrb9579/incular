@@ -124,7 +124,7 @@ fn scenario_tile(
         .into()
 }
 
-fn navigation(selected: usize, scenario: &Signal<usize>) -> Widget {
+pub(crate) fn navigation(selected: usize, scenario: &Signal<usize>) -> Widget {
     let tiles = SCENARIOS
         .iter()
         .enumerate()
@@ -213,11 +213,10 @@ fn gallery_header(selected: usize) -> Widget {
     .into()
 }
 
-#[path = "../support/mod.rs"]
-mod example_support;
-#[cfg(test)]
-mod example_tests;
-mod simulations;
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod example_support;
+#[path = "tests/simulations.rs"]
+pub(crate) mod simulations;
 
 fn main() {
     let scenario = Signal::new(0_usize);
@@ -388,7 +387,7 @@ fn schedule_autopilot_tick(runtime: &mut Runtime, scenario: Signal<usize>) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn scenario_view(
+pub(crate) fn scenario_view(
     selected: usize,
     _scenario: &Signal<usize>,
     translation: &TranslationController,
@@ -523,7 +522,7 @@ fn document_edit(edits: &Signal<u64>) -> Widget {
     )
 }
 
-fn hundred_thousand_widgets() -> Widget {
+pub(crate) fn hundred_thousand_widgets() -> Widget {
     // 100k logical rows backed by a native fixed-extent sliver: materialized
     // work stays bounded while the logical child count is huge.
     let controller = ScrollController::new();
@@ -570,7 +569,7 @@ fn million_fixed_list() -> Widget {
     )
 }
 
-fn million_variable_list() -> Widget {
+pub(crate) fn million_variable_list() -> Widget {
     let controller = ScrollController::new();
     labeled(
         "1,000,000 variable rows (jump near 900k by dragging)",
@@ -823,33 +822,6 @@ fn gesture_stress(hits: &Signal<u32>) -> Widget {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gallery_sliver_list_receives_a_bounded_nonempty_viewport() {
-        let mut tree = incular_widgets::internal::WidgetTree::new();
-        tree.mount(hundred_thousand_widgets()).unwrap();
-        tree.layout(Constraints::tight(Size::new(760., 640.)));
-
-        let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
-        assert_eq!(diagnostics.logical_item_count, 100_000);
-        assert!(diagnostics.viewport_extent > 0.);
-        assert!(diagnostics.viewport_extent <= 520.);
-        assert!(diagnostics.materialized_item_count > 0);
-        assert!(diagnostics.materialized_item_count < 100);
-
-        tree.mount(million_variable_list()).unwrap();
-        tree.layout(Constraints::tight(Size::new(760., 640.)));
-        let variable = tree.sliver_viewport_diagnostics().unwrap();
-        assert_eq!(variable.logical_item_count, 1_000_000);
-        assert!(variable.viewport_extent > 0.);
-        assert!(variable.materialized_item_count > 0);
-        assert!(variable.materialized_item_count < 100);
-    }
-}
-
 fn transform_animation(translation: &TranslationController) -> Widget {
     let trigger = translation.clone();
     trigger.animate_to(
@@ -869,7 +841,7 @@ fn transform_animation(translation: &TranslationController) -> Widget {
     )
 }
 
-fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widget {
+pub(crate) fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widget {
     let count = shared.get();
     let increment = shared.clone();
     let open_manager = manager.clone();

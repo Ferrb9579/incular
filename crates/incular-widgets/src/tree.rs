@@ -23,8 +23,6 @@ use incular_core::{
     Arena, ArenaId, Color, DirtyFlags, KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size,
     Transform as CoreTransform,
 };
-#[cfg(test)]
-use incular_core::{RestorationKey, RestorationScope};
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
 use incular_rendering::{
@@ -83,10 +81,7 @@ use widget::{
     sliver_viewport_size, unconstrained_constraints,
 };
 
-#[cfg(test)]
-mod tests;
-
-pub use rendering::{image_fit_rects, image_repeat_destinations};
+pub use rendering::{image_fit_rects, image_repeat_destinations, render_kind};
 pub use retained::{PERFORMANCE_OVERLAY_KEY, performance_overlay_placeholder};
 pub use values::*;
 pub use widget::Widget;
@@ -128,7 +123,8 @@ fn environment_chain(value: Rc<dyn Any>) -> Rc<InheritedEnvironment> {
     }
 }
 
-fn compose_environment(
+#[doc(hidden)]
+pub fn compose_environment(
     local: Option<Rc<dyn Any>>,
     inherited: Option<Rc<dyn Any>>,
 ) -> Option<Rc<dyn Any>> {

@@ -145,36 +145,3 @@ impl From<Root> for Widget {
 pub type Trigger = crate::popup::Trigger;
 pub type Portal = crate::popup::Portal;
 pub type Popup = crate::popup::Popup;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::{Text, Widget};
-
-    #[test]
-    fn builder_uses_explicit_defaults_and_generic_children() {
-        let default = Root::builder().build();
-        assert!(!default.open);
-        assert_eq!(default.side, Side::Right);
-        assert_eq!(default.width, 320.);
-        assert!(default.child.is_none());
-        assert!(default.panel.is_none());
-        assert!(default.modal);
-        assert!(default.on_open_change.is_none());
-
-        let drawer = Root::builder()
-            .open(true)
-            .side(Side::Left)
-            .width(0.)
-            .child(Text::new("page"))
-            .panel(Text::new("drawer"))
-            .modal(false)
-            .build();
-        assert_eq!(drawer.width, 1.);
-        assert!(drawer.child.is_some());
-        assert!(drawer.panel.is_some());
-        assert!(!drawer.modal);
-
-        let _: Widget = Root::new().child(Text::new("legacy")).into();
-    }
-}

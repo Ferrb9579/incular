@@ -13,7 +13,7 @@ use std::{
 pub(crate) type Shared = Arc<Mutex<InspectorModel>>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TreeRow {
+pub struct TreeRow {
     pub(crate) id: DevWidgetId,
     pub(crate) depth: u16,
 }
@@ -38,7 +38,7 @@ pub(crate) enum InspectorSection {
 /// Protocol-facing inspector state. It remains UI-framework independent so
 /// generation handling, deltas, and virtualization can be tested cheaply.
 #[derive(Default)]
-pub(crate) struct InspectorModel {
+pub struct InspectorModel {
     pub(crate) connected: bool,
     pub(crate) error: Option<String>,
     pub(crate) target: String,
@@ -80,7 +80,7 @@ pub(crate) struct InspectorModel {
     pub(crate) search: String,
 }
 
-pub(crate) fn editable_value(signal: &SignalSummary, input: &str) -> Option<EditableValue> {
+pub fn editable_value(signal: &SignalSummary, input: &str) -> Option<EditableValue> {
     match signal.type_name.rsplit("::").next()? {
         "bool" => input.parse().ok().map(EditableValue::Bool),
         "i64" => input.parse().ok().map(EditableValue::Int),
@@ -92,9 +92,48 @@ pub(crate) fn editable_value(signal: &SignalSummary, input: &str) -> Option<Edit
 }
 
 impl InspectorModel {
-    pub(crate) const FRAME_HISTORY: usize = 300;
-    pub(crate) const MAX_TRACE_EVENTS: usize = 200_000;
+    pub const FRAME_HISTORY: usize = 300;
+    pub const MAX_TRACE_EVENTS: usize = 200_000;
     pub(crate) const CONSOLE_HISTORY: usize = 500;
+
+    /// Returns the number of currently visible virtual tree rows.
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns the currently selected widget, if any.
+    pub fn selected_node(&self) -> Option<DevWidgetId> {
+        self.selected
+    }
+
+    /// Reports whether a widget's descendants are currently visible.
+    pub fn is_expanded(&self, id: DevWidgetId) -> bool {
+        self.expanded.contains(&id)
+    }
+
+    /// Returns the number of retained deep-trace frames.
+    pub fn deep_trace_count(&self) -> usize {
+        self.deep_traces.len()
+    }
+
+    /// Returns the number of retained deep-trace events tracked by the model.
+    pub fn deep_trace_event_count(&self) -> usize {
+        self.deep_trace_events
+    }
+
+    /// Computes the event count from retained frames for invariant checks.
+    pub fn deep_trace_event_total(&self) -> usize {
+        self.deep_traces
+            .iter()
+            .map(|trace| trace.events.len())
+            .sum()
+    }
+
+    /// Replaces the two snapshots used by the memory-diff view.
+    pub fn set_memory_snapshots(&mut self, first: MemorySnapshot, second: MemorySnapshot) {
+        self.memory_a = Some(first);
+        self.memory_b = Some(second);
+    }
 
     pub(crate) fn push_console(
         &mut self,
@@ -154,7 +193,7 @@ impl InspectorModel {
             .collect()
     }
 
-    pub(crate) fn push_deep_trace(&mut self, mut trace: DeepFrameTrace) {
+    pub fn push_deep_trace(&mut self, mut trace: DeepFrameTrace) {
         if trace.events.len() > Self::MAX_TRACE_EVENTS {
             let dropped = trace.events.len() - Self::MAX_TRACE_EVENTS;
             trace.events.truncate(Self::MAX_TRACE_EVENTS);
@@ -175,7 +214,7 @@ impl InspectorModel {
         self.deep_traces.push_back(trace);
     }
 
-    pub(crate) fn memory_diff_lines(&self) -> Vec<String> {
+    pub fn memory_diff_lines(&self) -> Vec<String> {
         let (Some(a), Some(b)) = (&self.memory_a, &self.memory_b) else {
             return Vec::new();
         };
@@ -215,11 +254,7 @@ impl InspectorModel {
         ]
     }
 
-    pub(crate) fn apply_tree(
-        &mut self,
-        revision: u64,
-        deltas: impl IntoIterator<Item = TreeDelta>,
-    ) {
+    pub fn apply_tree(&mut self, revision: u64, deltas: impl IntoIterator<Item = TreeDelta>) {
         self.tree_revision = revision;
         for delta in deltas {
             match delta {
@@ -316,7 +351,7 @@ impl InspectorModel {
         }
     }
 
-    pub(crate) fn reveal(&mut self, id: DevWidgetId) {
+    pub fn reveal(&mut self, id: DevWidgetId) {
         let mut current = self.nodes.get(&id).and_then(|node| node.parent);
         while let Some(parent) = current {
             self.expanded.insert(parent);
@@ -325,7 +360,7 @@ impl InspectorModel {
         self.rebuild_rows();
     }
 
-    pub(crate) fn toggle_expanded(&mut self, id: DevWidgetId) -> bool {
+    pub fn toggle_expanded(&mut self, id: DevWidgetId) -> bool {
         if self
             .nodes
             .get(&id)
@@ -340,12 +375,12 @@ impl InspectorModel {
         true
     }
 
-    pub(crate) fn collapse_all(&mut self) {
+    pub fn collapse_all(&mut self) {
         self.expanded.clear();
         self.rebuild_rows();
     }
 
-    pub(crate) fn expand_all(&mut self) {
+    pub fn expand_all(&mut self) {
         self.expanded = self
             .nodes
             .iter()
@@ -717,7 +752,8 @@ pub(crate) fn debug_value(value: &DebugValue) -> String {
     }
 }
 
-pub(crate) fn parse_debug_value(template: &DebugValue, input: &str) -> Option<DebugValue> {
+#[doc(hidden)]
+pub fn parse_debug_value(template: &DebugValue, input: &str) -> Option<DebugValue> {
     let input = input.trim();
     let floats = |expected: usize| -> Option<Vec<f32>> {
         let values = input

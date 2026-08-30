@@ -134,19 +134,3 @@ impl From<SafeArea> for Widget {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_core::{Color, Size};
-
-    #[test]
-    fn descriptor_resolves_without_platform_dependencies() {
-        let safe = SafeArea::new(crate::SizedBox::from_size(Size::new(1., 1.)).child(
-            crate::ColoredBox::new(Color::WHITE, crate::SizedBox::shrink()),
-        ))
-        .minimum(EdgeInsets::all(3.))
-        .sides(true, false, true, false);
-        let _widget = safe.resolve(EdgeInsets::only(8., 9., 2., 1.));
-    }
-}

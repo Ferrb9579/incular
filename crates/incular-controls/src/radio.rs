@@ -3,7 +3,8 @@
 use crate::{ControlTheme, Radio};
 use incular_core::Color;
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{Border, ExplicitSemantics, Widget, internal::ActionSurface};
+use incular_widgets::internal::ExplicitSemantics;
+use incular_widgets::{Border, Widget, internal::ActionSurface};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
@@ -234,42 +235,5 @@ impl From<Indicator> for Widget {
         value
             .child
             .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use incular_widgets::Text;
-
-    #[test]
-    fn anatomy_builders_keep_radio_defaults_and_generic_children() {
-        let group = Group::<u8>::builder()
-            .selected(2)
-            .child(Text::new("options"))
-            .build();
-        assert_eq!(group.selected, Some(2));
-        assert!(group.enabled);
-        assert!(group.child.is_some());
-
-        let root = Root::<u8>::builder()
-            .value(2)
-            .selected(2)
-            .child(Text::new("choice"))
-            .build();
-        assert_eq!(root.value, 2);
-        assert_eq!(root.selected, Some(2));
-        assert!(root.enabled);
-        assert!(root.child.is_some());
-        assert!(root.on_change.is_none());
-
-        let indicator = Indicator::builder().child(Text::new("dot")).build();
-        assert!(indicator.child.is_some());
-    }
-
-    #[test]
-    fn group_and_indicator_compatibility_constructors_keep_defaults() {
-        assert!(Group::<u8>::new().selected.is_none());
-        assert!(Indicator::new().child.is_none());
     }
 }

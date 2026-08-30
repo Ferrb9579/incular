@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use crate::theme::StudioTheme;
+use super::super::theme::StudioTheme;
 use incular::prelude::*;
 use incular_controls::prelude::{Button as ControlButton, ButtonStyle, GhostButton, PrimaryButton};
 
