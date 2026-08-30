@@ -4,11 +4,11 @@ This crate implements the deployable, curated subset of Flutter 3.47.1
 `widgets.dart` vocabulary:
 declarative widget descriptors, retained reconciliation, renderer-neutral
 layout/composition, editing, scrolling, focus, gestures, navigation, and
-semantics. Design-system components live in sibling packages. In particular,
-this crate exports `EditableText`, `RawRadio`, `RawScrollbar`, and `RawTooltip`
-because Flutter exports those symbols from `widgets.dart`; Material
-`ElevatedButton`/`TextField`/`TextFormField` and `RawMaterialButton` belong to
-`incular-material`.
+semantics. Design-system components live in sibling packages. The crate root
+exports only widgets whose behavior is implemented and tested; incomplete
+Flutter compatibility surfaces remain internal until their contracts are
+implemented. Material `ElevatedButton`/`TextField`/`TextFormField` and
+`RawMaterialButton` belong to `incular-material`.
 
 The public root is curated rather than glob-re-exported. Retained IDs, render
 objects, action surfaces, lazy sliver helpers, and other implementation-only
@@ -71,14 +71,14 @@ Wrap an editor in `UndoHistory` to configure its runtime undo/redo capacity.
 
 ## Read-only selection
 
-The core selection primitives (`SelectableRegion`, `SelectionContainer`, and
-`SelectionListener`) have no mutable text buffer, caret, or IME route. The
-Material package provides `SelectableText` and `SelectionArea` descriptors that
-wrap these primitives. Their coordinator derives caret positions and selection
-rectangles from the cached Parley-backed layout, including wrapped, mixed-font,
-and bidirectional text; selection changes only repaint the highlight and never
-reshape or rerasterize glyphs. Keep the optional `SelectionAreaController` when
-application code needs the copied selection.
+`SelectableRegion` is the retained selection primitive; it has no mutable text
+buffer, caret, or IME route. The Material package provides `SelectableText` and
+`SelectionArea` descriptors that wrap it. Their coordinator derives caret
+positions and selection rectangles from the cached Parley-backed layout,
+including wrapped, mixed-font, and bidirectional text; selection changes only
+repaint the highlight and never reshape or rerasterize glyphs. Keep the
+optional `SelectionAreaController` when application code needs the copied
+selection.
 
 ## Opt-in editor and form restoration
 
@@ -97,11 +97,11 @@ coordinate changes as painting. Incular's controller-backed viewport helpers
 remain internal implementation details while the public API follows Flutter's
 `ScrollView`, `ListView`, `GridView`, and sliver vocabulary.
 
-Scrollable viewports draw a logical-pixel overlay `ScrollbarStyle` by default.
-The proportional vertical thumb reads the shared controller's content/viewport
-extents, captures pointer drags, and track clicks page by one viewport.
-The retained `SliverViewport` keeps materialized rows bounded, so a thumb jump
-computes its destination offset without materializing intermediate rows. The
+Scrollbar presentation is owned by the controls layer. Widget viewports expose
+the canonical controller, metrics, notifications, and sliver protocol; they do
+not silently add a scrollbar or a renderer-specific style. The retained
+`SliverViewport` keeps materialized rows bounded, so a thumb jump computes its
+destination offset without materializing intermediate rows. The
 same viewport is used by `ListView`, `GridView`, `PageView`, and
 `CustomScrollView`; applications do not need a separate lazy-list primitive.
 

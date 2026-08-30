@@ -20,10 +20,22 @@ pub use incular_navigation as navigation;
 pub use incular_painting as painting;
 pub use incular_rendering as rendering;
 pub use incular_runtime as runtime;
-pub use incular_scroll as scroll;
 pub use incular_semantics as semantics;
 pub use incular_text as text;
 pub use incular_widgets as widgets;
+
+/// Public scrolling policies and notifications.
+///
+/// Retained extent indexes, scrollbar geometry, and viewport configuration
+/// are implementation details of the widget/runtime boundary and are kept
+/// out of the application facade.
+pub mod scroll {
+    pub use incular_scroll::{
+        BoundaryPhysics, ClampingScrollPhysics, DragStartBehavior, ScrollController, ScrollMetrics,
+        ScrollNotification, ScrollNotificationSubscription, ScrollNotificationType, ScrollPhysics,
+        ScrollViewKeyboardDismissBehavior, Scrollability, SnapPhysics,
+    };
+}
 
 /// Reactive values and owner-mounted asynchronous primitives. This namespace
 /// keeps [`Effect`] and [`Action`] distinct from Incular's rendering and
@@ -114,61 +126,45 @@ pub mod prelude {
         TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
     };
     pub use incular_widgets::{
-        AbsorbPointer, Action, ActionListener, ActionResult, Actions, Align, AlignTransition,
-        AnimatedAlign, AnimatedBuilder, AnimatedContainer, AnimatedCrossFade,
-        AnimatedDefaultTextStyle, AnimatedFractionallySizedBox, AnimatedGrid, AnimatedList,
-        AnimatedModalBarrier, AnimatedOpacity, AnimatedPadding, AnimatedPhysicalModel,
-        AnimatedPositioned, AnimatedPositionedDirectional, AnimatedRotation, AnimatedScale,
-        AnimatedSize, AnimatedSlide, AnimatedSwitcher, AnnotatedRegion, AspectRatio,
-        AutocompleteHighlightedOption, AutofillGroup, AutomaticKeepAlive, AutovalidateMode,
-        BackButtonListener, Banner, Baseline, Border, BorderDirectional, BorderRadius,
-        BorderRadiusDirectional, BorderSide, BorderStyle, BoxBorder, BoxDecoration, BoxFit,
-        BoxShadow, BoxShape, CallbackShortcuts, Center, CheckedModeBanner, ClipOval, ClipPath,
+        AbsorbPointer, Action, ActionResult, Actions, Align, AlignTransition, AspectRatio,
+        AutocompleteHighlightedOption, AutofillGroup, AutovalidateMode, Baseline, Border,
+        BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide, BorderStyle,
+        BoxBorder, BoxDecoration, BoxFit, BoxShadow, BoxShape, Center, ClipOval, ClipPath,
         ClipRRect, ClipRSuperellipse, ClipRect, ColorFiltered, ColoredBox, Column, Command,
         CommandId, ConstrainedBox, ConstraintsTransformBox, Container, CustomPaint, CustomPainter,
         CustomScrollView, DecoratedBox, DecoratedBoxTransition, DecoratedSliver, DecorationImage,
         DefaultSelectionStyle, DefaultTextStyle, DefaultTextStyleTransition, Directionality,
         DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable,
-        DraggableScrollableActuator, DraggableScrollableSheet, DualTransitionBuilder, EditableText,
-        ErrorWidget, ExcludeFocus, ExcludeFocusTraversal, Expanded, Expansible, FadeTransition,
-        FittedBox, Flex, Flexible, Focus, FocusManager, FocusNode, FocusScope, FocusScopeNode,
-        FocusTraversalGroup, FocusTraversalOrder, FocusTraversalPolicy, FocusableActionDetector,
-        Form, FormController, FormField, FormFieldState, FormState, FractionalTranslation,
-        FractionallySizedBox, GestureDetector, GridPaper, GridView, Hero, HeroControllerScope,
-        HeroMode, Icon, IconTheme, IgnorePointer, Image, ImageFiltered, ImageIcon, ImageRepeat,
-        IndexedSemantics, IndexedStack, Intent, KeepAlive, KeyboardListener, KeyedSubtree,
-        LayoutBuilder, LimitedBox, ListBody, ListView, ListWheelScrollView, Listener,
+        DualTransitionBuilder, EditableText, ErrorWidget, ExcludeFocus, ExcludeFocusTraversal,
+        Expanded, Expansible, FadeTransition, FittedBox, Flex, Flexible, Focus, FocusManager,
+        FocusNode, FocusScope, FocusScopeNode, FocusTraversalGroup, FocusTraversalOrder,
+        FocusTraversalPolicy, Form, FormController, FormField, FormFieldState, FormState,
+        FractionalTranslation, FractionallySizedBox, GestureDetector, GridPaper, GridView, Icon,
+        IconTheme, IgnorePointer, Image, ImageFiltered, ImageIcon, ImageRepeat, IndexedStack,
+        Intent, KeyboardListener, KeyedSubtree, LayoutBuilder, LimitedBox, ListBody, ListView,
         Localizations, LogicalShortcutKey, LongPressDraggable, MatrixTransition, MediaQuery,
-        MediaQueryData, MouseRegion, NavigationToolbar, NavigatorPopHandler, NestedScrollView,
-        NotificationListener, Offstage, Opacity, OrderedTraversalPolicy, Orientation,
-        OrientationBuilder, OverflowBar, OverflowBox, OverlayPortal, Padding, PageController,
-        PageStorage, PageView, PerformanceOverlay, PinnedHeaderSliver, PlatformMenuBar, PopScope,
+        MediaQueryData, NavigationToolbar, NestedScrollView, NotificationListener, Offstage,
+        Opacity, OrderedTraversalPolicy, Orientation, OrientationBuilder, OverflowBar, OverflowBox,
+        OverlayPortal, Padding, PageController, PageView, PerformanceOverlay, PinnedHeaderSliver,
         Positioned, PositionedTransition, PrimaryScrollController, RadioGroup, Radius,
-        RawAutocomplete, RawGestureDetector, RawImage, RawRadio, RawScrollbar, RawTooltip,
-        ReadingOrderTraversalPolicy, RelativePositionedTransition,
-        ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
-        RepaintBoundary, RepeatingAnimationBuilder, RootRestorationScope, RotatedBox,
-        RotationTransition, Router, Row, SafeArea, ScaleTransition, ScrollConfiguration,
-        ScrollController, ScrollMetrics, ScrollNotification, ScrollNotificationObserver,
-        ScrollNotificationSubscription, ScrollNotificationType, ScrollPhysics,
-        ScrollViewKeyboardDismissBehavior, ScrollbarStyle, SelectableRegion, SelectionContainer,
-        SelectionListener, Semantics, SemanticsDebugger, SensitiveContent, SensitiveContentHost,
-        ShaderMask, ShortcutKey, ShortcutTrigger, Shortcuts, SingleChildScrollView, SizeTransition,
-        SizedBox, SizedOverflowBox, SlideTransition, Sliver, SliverAnimatedGrid,
-        SliverAnimatedList, SliverAnimatedListController, SliverChildId, SliverChildLayout,
-        SliverConstrainedCrossAxis, SliverConstraints, SliverCrossAxisExpanded,
-        SliverCrossAxisGroup, SliverFillRemaining, SliverFillViewport, SliverFixedExtentList,
-        SliverFloatingHeader, SliverGeometry, SliverGrid, SliverLayout, SliverLayoutBuilder,
-        SliverList, SliverMainAxisGroup, SliverOffstage, SliverOpacity, SliverOverlapAbsorber,
-        SliverOverlapHandle, SliverOverlapInjector, SliverPadding, SliverPersistentHeader,
-        SliverPrototypeExtentList, SliverReorderController, SliverReorderableList,
-        SliverResizingHeader, SliverSafeArea, SliverToBoxAdapter, SliverVariedExtentList,
-        SliverVisibility, SnapshotWidget, Spacer, Stack, Table, TableCell, TapRegion,
-        TapRegionSurface, Text, TextFieldTapRegion, TextInputActionHint, TextInputTypeHint,
-        TickerMode, TileMode, Title, Transform, TreeSliver, TweenAnimationBuilder,
-        TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport,
-        UnconstrainedBox, UndoHistory, UnmanagedRestorationScope, View, ViewAnchor, Visibility,
-        Widget, WidgetOrderTraversalPolicy, WidgetsApp, Wrap,
+        RawAutocomplete, RawImage, RawRadio, ReadingOrderTraversalPolicy,
+        RelativePositionedTransition, RepaintBoundary, RotatedBox, RotationTransition, Row,
+        SafeArea, ScaleTransition, ScrollConfiguration, ScrollController, ScrollMetrics,
+        ScrollNotification, ScrollNotificationObserver, ScrollNotificationSubscription,
+        ScrollNotificationType, ScrollPhysics, ScrollViewKeyboardDismissBehavior, SelectableRegion,
+        Semantics, SensitiveContent, ShortcutKey, ShortcutTrigger, Shortcuts,
+        SingleChildScrollView, SizeTransition, SizedBox, SizedOverflowBox, SlideTransition, Sliver,
+        SliverAnimatedList, SliverAnimatedListController, SliverConstrainedCrossAxis,
+        SliverConstraints, SliverCrossAxisExpanded, SliverCrossAxisGroup, SliverFillRemaining,
+        SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader, SliverGrid,
+        SliverGridDelegate, SliverLayout, SliverLayoutBuilder, SliverList, SliverMainAxisGroup,
+        SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
+        SliverOverlapInjector, SliverPadding, SliverPersistentHeader, SliverPrototypeExtentList,
+        SliverReorderController, SliverReorderableList, SliverResizingHeader, SliverSafeArea,
+        SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, SnapshotWidget, Spacer,
+        Stack, Table, TableCell, Text, TextInputActionHint, TextInputTypeHint, TickerMode,
+        TileMode, Transform, UnconstrainedBox, UndoHistory, Visibility, Widget,
+        WidgetOrderTraversalPolicy, Wrap,
     };
 }
 

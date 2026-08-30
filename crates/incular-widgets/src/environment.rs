@@ -467,50 +467,6 @@ impl From<SensitiveContent> for Widget {
     }
 }
 
-/// Boundary host coordinating sensitive content obscuration.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct SensitiveContentHost {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl SensitiveContentHost {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<SensitiveContentHost> for Widget {
-    fn from(value: SensitiveContentHost) -> Self {
-        value.child
-    }
-}
-
-/// Isolates inherited widget lookups across boundaries.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct LookupBoundary {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl LookupBoundary {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<LookupBoundary> for Widget {
-    fn from(value: LookupBoundary) -> Self {
-        value.child
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

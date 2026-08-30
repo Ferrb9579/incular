@@ -225,25 +225,45 @@ pub struct LongPressEndDetails {
 #[derive(Clone, Default)]
 pub struct GestureCallbacks {
     pub on_tap: Option<Rc<dyn Fn()>>,
+    pub on_tap_down: Option<Rc<dyn Fn(TapDownDetails)>>,
+    pub on_tap_up: Option<Rc<dyn Fn(TapUpDetails)>>,
+    pub on_tap_cancel: Option<Rc<dyn Fn()>>,
     pub on_double_tap: Option<Rc<dyn Fn()>>,
+    pub on_double_tap_down: Option<Rc<dyn Fn(TapDownDetails)>>,
+    pub on_double_tap_cancel: Option<Rc<dyn Fn()>>,
     pub on_long_press: Option<Rc<dyn Fn()>>,
+    pub on_long_press_start: Option<Rc<dyn Fn(LongPressStartDetails)>>,
+    pub on_long_press_move_update: Option<Rc<dyn Fn(LongPressMoveUpdateDetails)>>,
+    pub on_long_press_up: Option<Rc<dyn Fn()>>,
+    pub on_long_press_end: Option<Rc<dyn Fn(LongPressEndDetails)>>,
+    pub on_pan_down: Option<Rc<dyn Fn(DragDownDetails)>>,
+    pub on_pan_start: Option<Rc<dyn Fn(DragStartDetails)>>,
     pub on_pan_update: Option<Rc<dyn Fn(Offset)>>,
     /// Called once when a pan ends normally. The callback receives the total
     /// displacement, velocity, and cancellation state for the pointer stream.
     pub on_pan_end: Option<Rc<dyn Fn(DragEndDetails)>>,
+    pub on_pan_cancel: Option<Rc<dyn Fn()>>,
+    pub on_horizontal_drag_down: Option<Rc<dyn Fn(DragDownDetails)>>,
+    pub on_horizontal_drag_start: Option<Rc<dyn Fn(DragStartDetails)>>,
     /// Receives a pan whose first slop-exceeding movement was horizontal.
     /// It competes with vertical drags in a retained `GestureDetector`.
     pub on_horizontal_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Called once when a horizontal drag ends normally.
     pub on_horizontal_drag_end: Option<Rc<dyn Fn(DragEndDetails)>>,
+    pub on_horizontal_drag_cancel: Option<Rc<dyn Fn()>>,
+    pub on_vertical_drag_down: Option<Rc<dyn Fn(DragDownDetails)>>,
+    pub on_vertical_drag_start: Option<Rc<dyn Fn(DragStartDetails)>>,
     /// Receives a pan whose first slop-exceeding movement was vertical.
     /// It competes with horizontal drags in a retained `GestureDetector`.
     pub on_vertical_drag_update: Option<Rc<dyn Fn(Offset)>>,
     /// Called once when a vertical drag ends normally.
     pub on_vertical_drag_end: Option<Rc<dyn Fn(DragEndDetails)>>,
+    pub on_vertical_drag_cancel: Option<Rc<dyn Fn()>>,
+    pub on_scale_start: Option<Rc<dyn Fn(ScaleStartDetails)>>,
     /// Receives the active focal point and relative distance for a retained
     /// multi-pointer region. Single-pointer recognizers ignore this callback.
     pub on_scale_update: Option<Rc<dyn Fn(ScaleUpdateDetails)>>,
+    pub on_scale_end: Option<Rc<dyn Fn(ScaleEndDetails)>>,
     /// Called once for a retained pointer sequence when this region loses its
     /// arena claim or the platform cancels the sequence.
     pub on_cancel: Option<Rc<dyn Fn()>>,
@@ -275,14 +295,32 @@ impl GestureCallbacks {
     #[must_use]
     pub fn has_pointer_recognizer(&self) -> bool {
         self.on_tap.is_some()
+            || self.on_tap_down.is_some()
+            || self.on_tap_up.is_some()
+            || self.on_tap_cancel.is_some()
             || self.on_double_tap.is_some()
+            || self.on_double_tap_down.is_some()
+            || self.on_double_tap_cancel.is_some()
             || self.on_long_press.is_some()
+            || self.on_long_press_start.is_some()
+            || self.on_long_press_move_update.is_some()
+            || self.on_long_press_up.is_some()
+            || self.on_long_press_end.is_some()
+            || self.on_pan_down.is_some()
+            || self.on_pan_start.is_some()
             || self.on_pan_update.is_some()
             || self.on_pan_end.is_some()
+            || self.on_pan_cancel.is_some()
+            || self.on_horizontal_drag_down.is_some()
+            || self.on_horizontal_drag_start.is_some()
             || self.on_horizontal_drag_update.is_some()
             || self.on_horizontal_drag_end.is_some()
+            || self.on_horizontal_drag_cancel.is_some()
+            || self.on_vertical_drag_down.is_some()
+            || self.on_vertical_drag_start.is_some()
             || self.on_vertical_drag_update.is_some()
             || self.on_vertical_drag_end.is_some()
+            || self.on_vertical_drag_cancel.is_some()
     }
 
     /// Whether this callback set carries retained keyboard/focus behavior.
@@ -400,14 +438,31 @@ pub struct ScaleGestureDetector {
     pointers: HashMap<u64, Offset>,
     initial_distance: Option<f32>,
     on_update: Option<Rc<dyn Fn(ScaleUpdateDetails)>>,
+    on_start: Option<Rc<dyn Fn(ScaleStartDetails)>>,
+    on_end: Option<Rc<dyn Fn(ScaleEndDetails)>>,
+    started: bool,
 }
 impl ScaleGestureDetector {
     #[must_use]
     pub fn new(on_update: impl Fn(ScaleUpdateDetails) + 'static) -> Self {
+        Self::with_callbacks(Some(Rc::new(on_update)), None, None)
+    }
+
+    /// Creates a scale recognizer with the complete Flutter-style callback
+    /// lifecycle. `new` remains the compact update-only constructor.
+    #[must_use]
+    pub fn with_callbacks(
+        on_update: Option<Rc<dyn Fn(ScaleUpdateDetails)>>,
+        on_start: Option<Rc<dyn Fn(ScaleStartDetails)>>,
+        on_end: Option<Rc<dyn Fn(ScaleEndDetails)>>,
+    ) -> Self {
         Self {
             pointers: HashMap::new(),
             initial_distance: None,
-            on_update: Some(Rc::new(on_update)),
+            on_update,
+            on_start,
+            on_end,
+            started: false,
         }
     }
     pub fn handle(&mut self, event: PointerEvent) -> bool {
@@ -439,12 +494,30 @@ impl ScaleGestureDetector {
                 let initial = self
                     .initial_distance
                     .get_or_insert(distance.max(f32::EPSILON));
-                Some(ScaleUpdateDetails::new(
+                let details = ScaleUpdateDetails::new(
                     Offset::new((first.x + second.x) * 0.5, (first.y + second.y) * 0.5),
                     distance / *initial,
-                ))
+                );
+                if !self.started {
+                    self.started = true;
+                    if let Some(callback) = &self.on_start {
+                        callback(ScaleStartDetails {
+                            focal_point: details.focal_point,
+                            pointer_count: details.pointer_count,
+                        });
+                    }
+                }
+                Some(details)
             }
             PointerPhase::Up | PointerPhase::Cancel => {
+                if self.started {
+                    self.started = false;
+                    if let Some(callback) = &self.on_end {
+                        callback(ScaleEndDetails {
+                            pointer_count: self.pointers.len(),
+                        });
+                    }
+                }
                 self.pointers.remove(&event.pointer);
                 self.reset_initial_distance();
                 None
@@ -1806,6 +1879,7 @@ pub struct PointerGestureRecognizer {
     last_tap: Option<Instant>,
     pan_started: bool,
     pan_action: Option<PanAction>,
+    long_press_started: bool,
 }
 
 /// Type alias for [`PointerGestureRecognizer`].
@@ -1832,6 +1906,7 @@ impl PointerGestureRecognizer {
             last_tap: None,
             pan_started: false,
             pan_action: None,
+            long_press_started: false,
         }
     }
     /// Observes an event without invoking user callbacks. This lets a
@@ -1840,10 +1915,46 @@ impl PointerGestureRecognizer {
     pub fn observe(&mut self, event: PointerEvent) -> GestureDecision {
         match event.phase {
             PointerPhase::Down => {
+                let is_double_tap = self.last_tap.is_some_and(|tap| {
+                    event.time.saturating_duration_since(tap) <= Self::DOUBLE_TAP_TIMEOUT
+                });
+                if !is_double_tap {
+                    self.last_tap = None;
+                }
                 self.down = Some(event);
                 self.last_event = Some(event);
                 self.pan_started = false;
                 self.pan_action = None;
+                self.long_press_started = false;
+                if let Some(callback) = &self.callbacks.on_tap_down {
+                    callback(TapDownDetails {
+                        global_position: event.position,
+                        local_position: event.position,
+                        kind: PointerDeviceKind::Mouse,
+                    });
+                }
+                if is_double_tap {
+                    if let Some(callback) = &self.callbacks.on_double_tap_down {
+                        callback(TapDownDetails {
+                            global_position: event.position,
+                            local_position: event.position,
+                            kind: PointerDeviceKind::Mouse,
+                        });
+                    }
+                }
+                let pan_down = DragDownDetails {
+                    global_position: event.position,
+                    local_position: event.position,
+                };
+                if let Some(callback) = &self.callbacks.on_pan_down {
+                    callback(pan_down);
+                }
+                if let Some(callback) = &self.callbacks.on_horizontal_drag_down {
+                    callback(pan_down);
+                }
+                if let Some(callback) = &self.callbacks.on_vertical_drag_down {
+                    callback(pan_down);
+                }
                 GestureDecision::Pending
             }
             PointerPhase::Move => {
@@ -1852,26 +1963,80 @@ impl PointerGestureRecognizer {
                 };
                 let delta = event.position - down.position;
                 self.last_event = Some(event);
+                if !self.pan_started
+                    && !self.long_press_started
+                    && event.time.saturating_duration_since(down.time) >= Self::LONG_PRESS_TIMEOUT
+                {
+                    self.long_press_started = true;
+                    if let Some(callback) = &self.callbacks.on_long_press_start {
+                        callback(LongPressStartDetails {
+                            global_position: down.position,
+                            local_position: down.position,
+                        });
+                    }
+                }
+                if self.long_press_started && !self.pan_started {
+                    if let Some(callback) = &self.callbacks.on_long_press_move_update {
+                        callback(LongPressMoveUpdateDetails {
+                            global_position: event.position,
+                            local_position: event.position,
+                            offset_from_origin: delta,
+                            local_offset_from_origin: delta,
+                        });
+                    }
+                }
                 if !self.pan_started && delta.x.hypot(delta.y) >= Self::PAN_SLOP {
                     self.pan_action = if delta.x.abs() >= delta.y.abs() {
-                        (self.callbacks.on_horizontal_drag_update.is_some()
-                            || self.callbacks.on_horizontal_drag_end.is_some())
+                        (self.callbacks.on_horizontal_drag_down.is_some()
+                            || self.callbacks.on_horizontal_drag_start.is_some()
+                            || self.callbacks.on_horizontal_drag_update.is_some()
+                            || self.callbacks.on_horizontal_drag_end.is_some()
+                            || self.callbacks.on_horizontal_drag_cancel.is_some())
                         .then_some(PanAction::Horizontal)
                         .or_else(|| {
-                            (self.callbacks.on_pan_update.is_some()
-                                || self.callbacks.on_pan_end.is_some())
+                            (self.callbacks.on_pan_down.is_some()
+                                || self.callbacks.on_pan_start.is_some()
+                                || self.callbacks.on_pan_update.is_some()
+                                || self.callbacks.on_pan_end.is_some()
+                                || self.callbacks.on_pan_cancel.is_some())
                             .then_some(PanAction::Pan)
                         })
                     } else {
-                        (self.callbacks.on_vertical_drag_update.is_some()
-                            || self.callbacks.on_vertical_drag_end.is_some())
+                        (self.callbacks.on_vertical_drag_down.is_some()
+                            || self.callbacks.on_vertical_drag_start.is_some()
+                            || self.callbacks.on_vertical_drag_update.is_some()
+                            || self.callbacks.on_vertical_drag_end.is_some()
+                            || self.callbacks.on_vertical_drag_cancel.is_some())
                         .then_some(PanAction::Vertical)
                         .or_else(|| {
-                            (self.callbacks.on_pan_update.is_some()
-                                || self.callbacks.on_pan_end.is_some())
+                            (self.callbacks.on_pan_down.is_some()
+                                || self.callbacks.on_pan_start.is_some()
+                                || self.callbacks.on_pan_update.is_some()
+                                || self.callbacks.on_pan_end.is_some()
+                                || self.callbacks.on_pan_cancel.is_some())
                             .then_some(PanAction::Pan)
                         })
                     };
+                    let start = DragStartDetails {
+                        global_position: down.position,
+                        local_position: down.position,
+                    };
+                    if let Some(callback) = &self.callbacks.on_pan_start {
+                        callback(start);
+                    }
+                    match self.pan_action {
+                        Some(PanAction::Horizontal) => {
+                            if let Some(callback) = &self.callbacks.on_horizontal_drag_start {
+                                callback(start);
+                            }
+                        }
+                        Some(PanAction::Vertical) => {
+                            if let Some(callback) = &self.callbacks.on_vertical_drag_start {
+                                callback(start);
+                            }
+                        }
+                        Some(PanAction::Pan) | None => {}
+                    }
                     self.pan_started = self.pan_action.is_some();
                     if self.pan_action.is_none() {
                         return GestureDecision::Reject;
@@ -1932,19 +2097,60 @@ impl PointerGestureRecognizer {
                 self.last_event = None;
                 let elapsed = event.time.saturating_duration_since(down.time);
                 if elapsed >= Self::LONG_PRESS_TIMEOUT {
-                    self.callbacks
-                        .on_long_press
-                        .as_ref()
-                        .map_or(GestureDecision::Reject, |_| {
-                            GestureDecision::Accept(GestureAction::LongPress)
-                        })
+                    if !self.long_press_started {
+                        self.long_press_started = true;
+                        if let Some(callback) = &self.callbacks.on_long_press_start {
+                            callback(LongPressStartDetails {
+                                global_position: down.position,
+                                local_position: down.position,
+                            });
+                        }
+                    }
+                    if let Some(callback) = &self.callbacks.on_long_press_up {
+                        callback();
+                    }
+                    if let Some(callback) = &self.callbacks.on_long_press_end {
+                        callback(LongPressEndDetails {
+                            global_position: event.position,
+                            local_position: event.position,
+                            velocity: Velocity::ZERO,
+                        });
+                    }
+                    self.long_press_started = false;
+                    if self.callbacks.on_long_press.is_some()
+                        || self.callbacks.on_long_press_start.is_some()
+                        || self.callbacks.on_long_press_move_update.is_some()
+                        || self.callbacks.on_long_press_up.is_some()
+                        || self.callbacks.on_long_press_end.is_some()
+                    {
+                        GestureDecision::Accept(GestureAction::LongPress)
+                    } else {
+                        GestureDecision::Reject
+                    }
                 } else if self.last_tap.is_some_and(|tap| {
                     event.time.saturating_duration_since(tap) <= Self::DOUBLE_TAP_TIMEOUT
                 }) && self.callbacks.on_double_tap.is_some()
                 {
+                    if let Some(callback) = &self.callbacks.on_tap_up {
+                        callback(TapUpDetails {
+                            global_position: event.position,
+                            local_position: event.position,
+                            kind: PointerDeviceKind::Mouse,
+                        });
+                    }
                     self.last_tap = None;
                     GestureDecision::Accept(GestureAction::DoubleTap)
-                } else if self.callbacks.on_tap.is_some() {
+                } else if self.callbacks.on_tap.is_some()
+                    || self.callbacks.on_tap_up.is_some()
+                    || self.callbacks.on_tap_cancel.is_some()
+                {
+                    if let Some(callback) = &self.callbacks.on_tap_up {
+                        callback(TapUpDetails {
+                            global_position: event.position,
+                            local_position: event.position,
+                            kind: PointerDeviceKind::Mouse,
+                        });
+                    }
                     self.last_tap = Some(event.time);
                     GestureDecision::Accept(GestureAction::Tap)
                 } else {
@@ -1956,6 +2162,7 @@ impl PointerGestureRecognizer {
                     self.last_event = None;
                     self.pan_started = false;
                     self.pan_action = None;
+                    self.long_press_started = false;
                     GestureDecision::Cancelled
                 } else {
                     GestureDecision::Reject
@@ -2011,6 +2218,21 @@ impl PointerGestureRecognizer {
         };
     }
     pub fn cancel(&self) {
+        if let Some(callback) = &self.callbacks.on_tap_cancel {
+            callback();
+        }
+        if let Some(callback) = &self.callbacks.on_double_tap_cancel {
+            callback();
+        }
+        if let Some(callback) = &self.callbacks.on_pan_cancel {
+            callback();
+        }
+        if let Some(callback) = &self.callbacks.on_horizontal_drag_cancel {
+            callback();
+        }
+        if let Some(callback) = &self.callbacks.on_vertical_drag_cancel {
+            callback();
+        }
         if let Some(callback) = &self.callbacks.on_cancel {
             callback();
         }

@@ -289,7 +289,8 @@ impl From<KeyboardListener> for Widget {
             .child
             .unwrap_or_else(|| crate::SizedBox::shrink().into());
         Widget::from_kind(WidgetKind::Gesture {
-            callbacks,
+            behavior: crate::gestures::HitTestBehavior::DeferToChild,
+            callbacks: Box::new(callbacks),
             child: Box::new(child),
         })
     }
@@ -308,87 +309,6 @@ impl KeyboardListener {
             include_semantics: self.include_semantics,
             ..incular_gestures::GestureCallbacks::default()
         }
-    }
-}
-
-/// Listens for action invocations within its subtree.
-#[derive(Clone, Default)]
-pub struct ActionListener {
-    child: Option<Widget>,
-}
-
-impl ActionListener {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: Some(child.into()),
-        }
-    }
-}
-
-impl From<ActionListener> for Widget {
-    fn from(value: ActionListener) -> Self {
-        value
-            .child
-            .unwrap_or_else(|| crate::SizedBox::shrink().into())
-    }
-}
-
-/// Defines key combination shortcut callbacks directly.
-#[derive(Clone, Default)]
-pub struct CallbackShortcuts {
-    child: Option<Widget>,
-}
-
-impl CallbackShortcuts {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: Some(child.into()),
-        }
-    }
-}
-
-impl From<CallbackShortcuts> for Widget {
-    fn from(value: CallbackShortcuts) -> Self {
-        value
-            .child
-            .unwrap_or_else(|| crate::SizedBox::shrink().into())
-    }
-}
-
-/// Combines focus management, shortcut handling, action execution, and mouse region tracking.
-#[derive(Clone, Default)]
-pub struct FocusableActionDetector {
-    autofocus: bool,
-    child: Option<Widget>,
-}
-
-impl FocusableActionDetector {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            autofocus: false,
-            child: Some(child.into()),
-        }
-    }
-
-    #[must_use]
-    pub fn autofocus(mut self, autofocus: bool) -> Self {
-        self.autofocus = autofocus;
-        self
-    }
-}
-
-impl From<FocusableActionDetector> for Widget {
-    fn from(value: FocusableActionDetector) -> Self {
-        Focus::new(
-            value
-                .child
-                .unwrap_or_else(|| crate::SizedBox::shrink().into()),
-        )
-        .autofocus(value.autofocus)
-        .into()
     }
 }
 

@@ -115,25 +115,8 @@ impl Semantics {
     }
 
     #[must_use]
-    pub fn increased_value(mut self, val: impl Into<String>) -> Self {
-        self.value = Some(val.into());
-        self
-    }
-
-    #[must_use]
-    pub fn decreased_value(mut self, val: impl Into<String>) -> Self {
-        self.value = Some(val.into());
-        self
-    }
-
-    #[must_use]
     pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
         self.description = Some(tooltip.into());
-        self
-    }
-
-    #[must_use]
-    pub const fn text_direction(self, _dir: incular_config::TextDirection) -> Self {
         self
     }
 
@@ -293,11 +276,6 @@ impl Semantics {
     }
 
     #[must_use]
-    pub fn on_dismiss(self, _callback: impl Fn() + 'static) -> Self {
-        self
-    }
-
-    #[must_use]
     pub fn on_increase(mut self, callback: impl Fn() + 'static) -> Self {
         self.role.get_or_insert(SemanticRole::Slider);
         self.on_increase = Some(Rc::new(callback));
@@ -337,21 +315,6 @@ impl Semantics {
         self.role.get_or_insert(SemanticRole::ScrollView);
         self.on_scroll_forward = Some(Rc::new(callback));
         self.action(SemanticAction::ScrollForward)
-    }
-
-    #[must_use]
-    pub fn on_copy(self, _callback: impl Fn() + 'static) -> Self {
-        self
-    }
-
-    #[must_use]
-    pub fn on_cut(self, _callback: impl Fn() + 'static) -> Self {
-        self
-    }
-
-    #[must_use]
-    pub fn on_paste(self, _callback: impl Fn() + 'static) -> Self {
-        self
     }
 
     fn explicit(&self) -> Option<crate::ExplicitSemantics> {

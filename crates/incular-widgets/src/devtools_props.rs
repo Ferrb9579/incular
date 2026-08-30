@@ -239,7 +239,9 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             out.push(prop("visible", DebugValue::Bool(*visible)));
             summarize_child(&mut out, child);
         }
-        WidgetKind::Gesture { callbacks, child } => {
+        WidgetKind::Gesture {
+            callbacks, child, ..
+        } => {
             out.push(prop("hasTap", DebugValue::Bool(callbacks.on_tap.is_some())));
             out.push(prop(
                 "hasDrag",

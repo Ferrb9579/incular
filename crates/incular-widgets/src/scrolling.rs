@@ -9,8 +9,7 @@ use incular_animation::AnimationController;
 use incular_config::{Axis, Clip, Constraints, EdgeInsets};
 use incular_core::Size;
 use incular_scroll::{
-    DragStartBehavior, MeasuredExtentIndex, ScrollCacheExtent, ScrollController,
-    ScrollNotification, ScrollPhysics, ScrollViewKeyboardDismissBehavior, SliverConstraints,
+    MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollPhysics, SliverConstraints,
     SliverGeometry,
 };
 use typed_builder::TypedBuilder;
@@ -19,7 +18,7 @@ use crate::drag_drop::DragDropContext;
 use crate::tree::WidgetKind;
 use crate::{Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox, Widget};
 
-type SliverLayoutBuilderFn = Rc<dyn Fn(&ScrollController, SliverConstraints) -> Widget>;
+type SliverLayoutBuilderFn = Rc<dyn Fn(SliverConstraints) -> Widget>;
 
 const DEFAULT_LAZY_ITEM_EXTENT: f32 = 48.0;
 const DEFAULT_SLIVER_CACHE_EXTENT: f32 = 250.0;
@@ -105,33 +104,6 @@ impl SingleChildScrollView {
         self.clip_behavior = clip;
         self
     }
-
-    /// Sets drag start behavior.
-    #[must_use]
-    pub const fn drag_start_behavior(self, _behavior: DragStartBehavior) -> Self {
-        self
-    }
-
-    /// Sets keyboard dismiss behavior.
-    #[must_use]
-    pub const fn keyboard_dismiss_behavior(
-        self,
-        _behavior: ScrollViewKeyboardDismissBehavior,
-    ) -> Self {
-        self
-    }
-
-    /// Sets whether this is the primary scroll view.
-    #[must_use]
-    pub const fn primary(self, _primary: bool) -> Self {
-        self
-    }
-
-    /// Sets restoration ID.
-    #[must_use]
-    pub fn restoration_id(self, _id: impl Into<String>) -> Self {
-        self
-    }
 }
 
 impl From<SingleChildScrollView> for Widget {
@@ -152,46 +124,14 @@ impl From<SingleChildScrollView> for Widget {
     }
 }
 
-/// Strategy for determining item main-axis extents in a scrollable list.
-#[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
-pub enum ItemExtentStrategy {
-    Measured,
-    Fixed(f32),
-    Builder(Rc<dyn Fn(usize) -> f32>),
-    Prototype(Widget),
-}
-
-/// Retention policy for offscreen lazy list item state.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum KeepAlivePolicy {
-    #[default]
-    Automatic,
-    Manual,
-    Disabled,
-}
-
-/// Repaint isolation policy for lazy list items.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum RepaintBoundaryPolicy {
-    #[default]
-    Automatic,
-    Manual,
-    Disabled,
-}
-
-/// Semantic node indexing policy for lazy list items.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum SemanticIndexPolicy {
-    #[default]
-    Automatic,
-    Manual,
-    Disabled,
-}
-
-/// Delegate governing 2D grid cell layout.
-#[derive(Clone)]
-pub enum GridDelegate {
+/// Delegate governing two-dimensional grid layout.
+///
+/// This is the Rust representation of Flutter's `SliverGridDelegate`. The
+/// delegate owns grid policy; `GridView` and `SliverGrid` only provide the
+/// child source and viewport. Keeping those responsibilities separate avoids
+/// the old `cross_axis_count`/`row_extent` constructor workaround.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SliverGridDelegate {
     FixedCrossAxisCount {
         cross_axis_count: usize,
         main_axis_spacing: f32,
@@ -208,23 +148,178 @@ pub enum GridDelegate {
     },
 }
 
+impl SliverGridDelegate {
+    /// Creates a delegate with a fixed number of children on the cross axis.
+    #[must_use]
+    pub fn fixed_cross_axis_count(cross_axis_count: usize) -> Self {
+        Self::FixedCrossAxisCount {
+            cross_axis_count: cross_axis_count.max(1),
+            main_axis_spacing: 0.,
+            cross_axis_spacing: 0.,
+            child_aspect_ratio: 1.,
+            main_axis_extent: None,
+        }
+    }
+
+    /// Creates a delegate that derives the cross-axis count from the
+    /// available extent and a maximum tile extent.
+    #[must_use]
+    pub fn max_cross_axis_extent(max_cross_axis_extent: f32) -> Self {
+        Self::MaxCrossAxisExtent {
+            max_cross_axis_extent: if max_cross_axis_extent.is_finite() {
+                max_cross_axis_extent.max(1.)
+            } else {
+                1.
+            },
+            main_axis_spacing: 0.,
+            cross_axis_spacing: 0.,
+            child_aspect_ratio: 1.,
+            main_axis_extent: None,
+        }
+    }
+
+    #[must_use]
+    pub fn main_axis_spacing(mut self, spacing: f32) -> Self {
+        let spacing = if spacing.is_finite() {
+            spacing.max(0.)
+        } else {
+            0.
+        };
+        match &mut self {
+            Self::FixedCrossAxisCount {
+                main_axis_spacing, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                main_axis_spacing, ..
+            } => *main_axis_spacing = spacing,
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn cross_axis_spacing(mut self, spacing: f32) -> Self {
+        let spacing = if spacing.is_finite() {
+            spacing.max(0.)
+        } else {
+            0.
+        };
+        match &mut self {
+            Self::FixedCrossAxisCount {
+                cross_axis_spacing, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                cross_axis_spacing, ..
+            } => *cross_axis_spacing = spacing,
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn child_aspect_ratio(mut self, ratio: f32) -> Self {
+        let ratio = if ratio.is_finite() {
+            ratio.max(f32::EPSILON)
+        } else {
+            1.
+        };
+        match &mut self {
+            Self::FixedCrossAxisCount {
+                child_aspect_ratio, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                child_aspect_ratio, ..
+            } => *child_aspect_ratio = ratio,
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn main_axis_extent(mut self, extent: f32) -> Self {
+        let extent = extent.is_finite().then_some(extent.max(1.));
+        match &mut self {
+            Self::FixedCrossAxisCount {
+                main_axis_extent, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                main_axis_extent, ..
+            } => *main_axis_extent = extent,
+        }
+        self
+    }
+
+    fn cross_axis_count(&self, available_extent: f32) -> usize {
+        match *self {
+            Self::FixedCrossAxisCount {
+                cross_axis_count, ..
+            } => cross_axis_count.max(1),
+            Self::MaxCrossAxisExtent {
+                max_cross_axis_extent,
+                cross_axis_spacing,
+                ..
+            } => ((available_extent.max(0.) + cross_axis_spacing)
+                / (max_cross_axis_extent + cross_axis_spacing))
+                .floor()
+                .max(1.) as usize,
+        }
+    }
+
+    fn resolved_cross_axis_spacing(&self) -> f32 {
+        match *self {
+            Self::FixedCrossAxisCount {
+                cross_axis_spacing, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                cross_axis_spacing, ..
+            } => cross_axis_spacing,
+        }
+    }
+
+    fn resolved_main_axis_spacing(&self) -> f32 {
+        match *self {
+            Self::FixedCrossAxisCount {
+                main_axis_spacing, ..
+            }
+            | Self::MaxCrossAxisExtent {
+                main_axis_spacing, ..
+            } => main_axis_spacing,
+        }
+    }
+
+    fn resolve_main_axis_extent(&self, cross_axis_extent: f32, columns: usize) -> f32 {
+        let (main_axis_extent, child_aspect_ratio) = match *self {
+            Self::FixedCrossAxisCount {
+                main_axis_extent,
+                child_aspect_ratio,
+                ..
+            }
+            | Self::MaxCrossAxisExtent {
+                main_axis_extent,
+                child_aspect_ratio,
+                ..
+            } => (main_axis_extent, child_aspect_ratio),
+        };
+        if let Some(extent) = main_axis_extent {
+            return extent.max(1.);
+        }
+        let spacing = self.resolved_cross_axis_spacing() * columns.saturating_sub(1) as f32;
+        ((cross_axis_extent - spacing).max(0.)
+            / columns.max(1) as f32
+            / child_aspect_ratio.max(f32::EPSILON))
+        .max(1.)
+    }
+}
+
+impl Default for SliverGridDelegate {
+    fn default() -> Self {
+        Self::fixed_cross_axis_count(1)
+    }
+}
+
 /// Content strategies for [`ListView`].
 #[derive(Clone)]
 enum ListViewStrategy {
     Children(Vec<Widget>),
     Builder {
         item_count: usize,
-        builder: Rc<dyn Fn(usize) -> Widget>,
-    },
-    FixedExtent {
-        item_count: usize,
-        item_extent: f32,
-        builder: Rc<dyn Fn(usize) -> Widget>,
-    },
-    VariableExtent {
-        item_count: usize,
-        estimated_extent: f32,
-        index: Option<MeasuredExtentIndex>,
         builder: Rc<dyn Fn(usize) -> Widget>,
     },
 }
@@ -239,10 +334,18 @@ pub struct ListView {
     children: Vec<Widget>,
     #[builder(default, setter(skip))]
     strategy: Option<ListViewStrategy>,
+    #[builder(default, setter(skip))]
+    item_extent: Option<f32>,
+    #[builder(default, setter(skip))]
+    item_extent_builder: Option<Rc<dyn Fn(usize) -> f32>>,
+    #[builder(default, setter(skip))]
+    prototype_item: Option<Widget>,
     #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
+    #[builder(default = false)]
+    shrink_wrap: bool,
     #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
     #[builder(default, setter(strip_option))]
@@ -268,8 +371,12 @@ impl ListView {
         Self {
             children: children.into_iter().map(Into::into).collect(),
             strategy: None,
+            item_extent: None,
+            item_extent_builder: None,
+            prototype_item: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
+            shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
@@ -290,8 +397,12 @@ impl ListView {
                 item_count,
                 builder: Rc::new(move |i| builder(i).into()),
             }),
+            item_extent: None,
+            item_extent_builder: None,
+            prototype_item: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
+            shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
@@ -330,63 +441,12 @@ impl ListView {
                     }
                 }),
             }),
+            item_extent: None,
+            item_extent_builder: None,
+            prototype_item: None,
             scroll_direction: Axis::Vertical,
             reverse: false,
-            controller: None,
-            padding: None,
-            cache_extent: None,
-            physics: None,
-            clip_behavior: Clip::HardEdge,
-        }
-    }
-
-    /// Creates a fixed-extent virtualized ListView.
-    #[must_use]
-    pub fn fixed_extent<W>(
-        item_count: usize,
-        item_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self {
-            children: Vec::new(),
-            strategy: Some(ListViewStrategy::FixedExtent {
-                item_count,
-                item_extent: item_extent.max(1.0),
-                builder: Rc::new(move |i| builder(i).into()),
-            }),
-            scroll_direction: Axis::Vertical,
-            reverse: false,
-            controller: None,
-            padding: None,
-            cache_extent: None,
-            physics: None,
-            clip_behavior: Clip::HardEdge,
-        }
-    }
-
-    /// Creates a variable-extent virtualized ListView.
-    #[must_use]
-    pub fn variable_extent<W>(
-        item_count: usize,
-        estimated_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self {
-            children: Vec::new(),
-            strategy: Some(ListViewStrategy::VariableExtent {
-                item_count,
-                estimated_extent: estimated_extent.max(1.0),
-                index: None,
-                builder: Rc::new(move |i| builder(i).into()),
-            }),
-            scroll_direction: Axis::Vertical,
-            reverse: false,
+            shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
@@ -429,17 +489,22 @@ impl ListView {
         self
     }
 
-    /// Sets cache extent in logical pixels.
+    /// Sets whether the list sizes itself to its contents instead of
+    /// requiring a bounded viewport extent.
     #[must_use]
-    pub fn cache_extent(mut self, cache_extent: f32) -> Self {
-        self.cache_extent = Some(cache_extent.max(0.0));
+    pub fn shrink_wrap(mut self, shrink_wrap: bool) -> Self {
+        self.shrink_wrap = shrink_wrap;
         self
     }
 
-    /// Sets cache extent using a typed policy.
+    /// Sets cache extent in logical pixels.
     #[must_use]
-    pub fn scroll_cache_extent(mut self, cache_extent: ScrollCacheExtent) -> Self {
-        self.cache_extent = Some(cache_extent.to_pixels(600.0));
+    pub fn cache_extent(mut self, cache_extent: f32) -> Self {
+        self.cache_extent = Some(if cache_extent.is_finite() {
+            cache_extent.max(0.0)
+        } else {
+            0.0
+        });
         self
     }
 
@@ -460,74 +525,28 @@ impl ListView {
     /// Sets fixed item extent.
     #[must_use]
     pub fn item_extent(mut self, extent: f32) -> Self {
-        if let Some(ListViewStrategy::Builder {
-            item_count,
-            builder,
-        }) = self.strategy
-        {
-            self.strategy = Some(ListViewStrategy::FixedExtent {
-                item_count,
-                item_extent: extent.max(1.0),
-                builder,
-            });
-        }
+        self.item_extent = extent.is_finite().then_some(extent.max(1.));
+        self.item_extent_builder = None;
+        self.prototype_item = None;
         self
     }
 
     /// Sets a prototype child item for measuring extent.
     #[must_use]
-    pub fn prototype_item(self, _prototype: impl Into<Widget>) -> Self {
+    pub fn prototype_item(mut self, prototype: impl Into<Widget>) -> Self {
+        self.prototype_item = Some(prototype.into());
+        self.item_extent = None;
+        self.item_extent_builder = None;
         self
     }
 
-    /// Sets keep-alive policy.
+    /// Sets the extent of each child using the same index as the item
+    /// builder. The measured index remains internal to the retained sliver.
     #[must_use]
-    pub const fn keep_alive_policy(self, _policy: KeepAlivePolicy) -> Self {
-        self
-    }
-
-    /// Sets repaint boundary policy.
-    #[must_use]
-    pub const fn repaint_boundary_policy(self, _policy: RepaintBoundaryPolicy) -> Self {
-        self
-    }
-
-    /// Sets semantic index policy.
-    #[must_use]
-    pub const fn semantic_index_policy(self, _policy: SemanticIndexPolicy) -> Self {
-        self
-    }
-
-    /// Sets whether this is the primary scroll view.
-    #[must_use]
-    pub const fn primary(self, _primary: bool) -> Self {
-        self
-    }
-
-    /// Sets whether the scroll view shrink wraps.
-    #[must_use]
-    pub const fn shrink_wrap(self, _shrink_wrap: bool) -> Self {
-        self
-    }
-
-    /// Sets restoration ID.
-    #[must_use]
-    pub fn restoration_id(self, _id: impl Into<String>) -> Self {
-        self
-    }
-
-    /// Sets drag start behavior.
-    #[must_use]
-    pub const fn drag_start_behavior(self, _behavior: DragStartBehavior) -> Self {
-        self
-    }
-
-    /// Sets keyboard dismiss behavior.
-    #[must_use]
-    pub const fn keyboard_dismiss_behavior(
-        self,
-        _behavior: ScrollViewKeyboardDismissBehavior,
-    ) -> Self {
+    pub fn item_extent_builder(mut self, builder: impl Fn(usize) -> f32 + 'static) -> Self {
+        self.item_extent_builder = Some(Rc::new(builder));
+        self.item_extent = None;
+        self.prototype_item = None;
         self
     }
 }
@@ -535,42 +554,35 @@ impl ListView {
 impl From<ListView> for Widget {
     fn from(value: ListView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let mut sliver: Box<dyn RenderSliver> = match value
+        let item_extent = value.item_extent;
+        let item_extent_builder = value.item_extent_builder;
+        let prototype_item = value.prototype_item;
+        let strategy = value
             .strategy
-            .unwrap_or_else(|| ListViewStrategy::Children(value.children))
-        {
+            .unwrap_or_else(|| ListViewStrategy::Children(value.children));
+        let mut sliver: Box<dyn RenderSliver> = match strategy {
             ListViewStrategy::Children(children) => {
                 let children = Rc::new(children);
-                Box::new(VariableExtentRenderSliver::new(
-                    MeasuredExtentIndex::new(children.len(), DEFAULT_LAZY_ITEM_EXTENT),
+                build_list_render_sliver(
+                    children.len(),
                     Rc::new(move |index| children[index].clone()),
-                ))
+                    value.scroll_direction,
+                    item_extent,
+                    item_extent_builder,
+                    prototype_item,
+                )
             }
             ListViewStrategy::Builder {
                 item_count,
                 builder,
-            } => Box::new(VariableExtentRenderSliver::new(
-                MeasuredExtentIndex::new(item_count, DEFAULT_LAZY_ITEM_EXTENT),
-                builder,
-            )),
-            ListViewStrategy::FixedExtent {
+            } => build_list_render_sliver(
                 item_count,
+                builder,
+                value.scroll_direction,
                 item_extent,
-                builder,
-            } => Box::new(FixedExtentRenderSliver::new(
-                item_count,
-                item_extent,
-                builder,
-            )),
-            ListViewStrategy::VariableExtent {
-                item_count,
-                estimated_extent,
-                index,
-                builder,
-            } => Box::new(VariableExtentRenderSliver::new(
-                index.unwrap_or_else(|| MeasuredExtentIndex::new(item_count, estimated_extent)),
-                builder,
-            )),
+                item_extent_builder,
+                prototype_item,
+            ),
         };
 
         if let Some(padding) = value.padding {
@@ -579,30 +591,58 @@ impl From<ListView> for Widget {
                 padding,
             });
         }
-        single_sliver_viewport(
-            controller,
-            value.scroll_direction,
-            value.reverse,
-            value.physics.unwrap_or_default(),
-            value.cache_extent.unwrap_or(DEFAULT_SLIVER_CACHE_EXTENT),
-            value.clip_behavior,
+        single_sliver_viewport_with_options(
+            SliverViewportOptions {
+                controller,
+                axis: value.scroll_direction,
+                reverse: value.reverse,
+                physics: value.physics.unwrap_or_default(),
+                cache_extent: value.cache_extent.unwrap_or(DEFAULT_SLIVER_CACHE_EXTENT),
+                clip_behavior: value.clip_behavior,
+                shrink_wrap: value.shrink_wrap,
+            },
             sliver,
         )
     }
+}
+
+fn build_list_render_sliver(
+    item_count: usize,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    axis: Axis,
+    item_extent: Option<f32>,
+    item_extent_builder: Option<Rc<dyn Fn(usize) -> f32>>,
+    prototype_item: Option<Widget>,
+) -> Box<dyn RenderSliver> {
+    if let Some(extent) = item_extent {
+        return Box::new(FixedExtentRenderSliver::new(item_count, extent, builder));
+    }
+    if let Some(prototype) = prototype_item {
+        let extent = widget_main_extent_hint(&prototype, axis)
+            .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
+            .max(1.);
+        return Box::new(FixedExtentRenderSliver::new(item_count, extent, builder));
+    }
+    let index = if let Some(extent_builder) = item_extent_builder {
+        MeasuredExtentIndex::with_estimates(item_count, DEFAULT_LAZY_ITEM_EXTENT, move |index| {
+            extent_builder(index)
+        })
+    } else {
+        MeasuredExtentIndex::new(item_count, DEFAULT_LAZY_ITEM_EXTENT)
+    };
+    Box::new(VariableExtentRenderSliver::new(index, builder))
 }
 
 /// Content strategy for [`GridView`].
 #[derive(Clone)]
 enum GridViewStrategy {
     Count {
-        cross_axis_count: usize,
+        delegate: SliverGridDelegate,
         children: Vec<Widget>,
-        row_extent: Option<f32>,
     },
     Builder {
         item_count: usize,
-        cross_axis_count: usize,
-        row_extent: f32,
+        delegate: SliverGridDelegate,
         builder: Rc<dyn Fn(usize) -> Widget>,
     },
 }
@@ -617,20 +657,24 @@ pub struct GridView {
     children: Vec<Widget>,
     #[builder(default, setter(skip))]
     strategy: Option<GridViewStrategy>,
-    #[builder(default = 1, setter(transform = |count: usize| count.max(1)))]
-    cross_axis_count: usize,
-    #[builder(default, setter(transform = |extent: f32| Some(extent.max(1.0))))]
-    row_extent: Option<f32>,
+    #[builder(default)]
+    grid_delegate: SliverGridDelegate,
     #[builder(default = Axis::Vertical)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
+    #[builder(default = false)]
+    shrink_wrap: bool,
     #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
     #[builder(default, setter(strip_option))]
     padding: Option<EdgeInsets>,
     #[builder(default, setter(strip_option))]
+    cache_extent: Option<f32>,
+    #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
+    #[builder(default = Clip::HardEdge)]
+    clip_behavior: Clip,
 }
 
 impl Default for GridView {
@@ -640,31 +684,59 @@ impl Default for GridView {
 }
 
 impl GridView {
+    /// Creates a grid from a Flutter-style sliver grid delegate and static
+    /// children.
+    #[must_use]
+    pub fn new(
+        grid_delegate: SliverGridDelegate,
+        children: impl IntoIterator<Item = impl Into<Widget>>,
+    ) -> Self {
+        Self {
+            children: children.into_iter().map(Into::into).collect(),
+            strategy: None,
+            grid_delegate,
+            scroll_direction: Axis::Vertical,
+            reverse: false,
+            shrink_wrap: false,
+            controller: None,
+            padding: None,
+            cache_extent: None,
+            physics: None,
+            clip_behavior: Clip::HardEdge,
+        }
+    }
+
+    /// Creates a grid whose column count is derived from the available
+    /// cross-axis extent.
+    #[must_use]
+    pub fn extent(
+        max_cross_axis_extent: f32,
+        children: impl IntoIterator<Item = impl Into<Widget>>,
+    ) -> Self {
+        Self::new(
+            SliverGridDelegate::max_cross_axis_extent(max_cross_axis_extent),
+            children,
+        )
+    }
+
     /// Creates a fixed cross-axis count grid from static children.
     #[must_use]
     pub fn count(
         cross_axis_count: usize,
         children: impl IntoIterator<Item = impl Into<Widget>>,
     ) -> Self {
-        Self {
-            children: children.into_iter().map(Into::into).collect(),
-            strategy: None,
-            cross_axis_count: cross_axis_count.max(1),
-            row_extent: None,
-            scroll_direction: Axis::Vertical,
-            reverse: false,
-            controller: None,
-            padding: None,
-            physics: None,
-        }
+        Self::new(
+            SliverGridDelegate::fixed_cross_axis_count(cross_axis_count),
+            children,
+        )
     }
 
-    /// Creates a lazily virtualized grid with a row-major builder.
+    /// Creates a lazily virtualized grid with a row-major builder and a
+    /// Flutter-style sliver grid delegate.
     #[must_use]
     pub fn builder<W>(
         item_count: usize,
-        cross_axis_count: usize,
-        row_extent: f32,
+        grid_delegate: SliverGridDelegate,
         builder: impl Fn(usize) -> W + 'static,
     ) -> Self
     where
@@ -674,17 +746,18 @@ impl GridView {
             children: Vec::new(),
             strategy: Some(GridViewStrategy::Builder {
                 item_count,
-                cross_axis_count: cross_axis_count.max(1),
-                row_extent: row_extent.max(1.0),
+                delegate: grid_delegate,
                 builder: Rc::new(move |i| builder(i).into()),
             }),
-            cross_axis_count: 1,
-            row_extent: None,
+            grid_delegate: SliverGridDelegate::default(),
             scroll_direction: Axis::Vertical,
             reverse: false,
+            shrink_wrap: false,
             controller: None,
             padding: None,
+            cache_extent: None,
             physics: None,
+            clip_behavior: Clip::HardEdge,
         }
     }
 
@@ -716,6 +789,38 @@ impl GridView {
         self
     }
 
+    /// Sets the sliver grid delegate for a static-child grid.
+    #[must_use]
+    pub fn grid_delegate(mut self, delegate: SliverGridDelegate) -> Self {
+        self.grid_delegate = delegate;
+        self
+    }
+
+    /// Sets whether the grid sizes itself to its contents.
+    #[must_use]
+    pub fn shrink_wrap(mut self, shrink_wrap: bool) -> Self {
+        self.shrink_wrap = shrink_wrap;
+        self
+    }
+
+    /// Sets the lazy child cache in logical pixels.
+    #[must_use]
+    pub fn cache_extent(mut self, cache_extent: f32) -> Self {
+        self.cache_extent = Some(if cache_extent.is_finite() {
+            cache_extent.max(0.)
+        } else {
+            0.
+        });
+        self
+    }
+
+    /// Sets clipping behavior at the viewport boundary.
+    #[must_use]
+    pub fn clip_behavior(mut self, clip: Clip) -> Self {
+        self.clip_behavior = clip;
+        self
+    }
+
     /// Sets scroll physics for the retained grid viewport.
     #[must_use]
     pub fn physics(mut self, physics: ScrollPhysics) -> Self {
@@ -737,51 +842,31 @@ impl GridView {
 impl From<GridView> for Widget {
     fn from(value: GridView) -> Self {
         let controller = value.controller.unwrap_or_default();
-        let mut sliver: Box<dyn RenderSliver> = match value.strategy.unwrap_or_else(|| {
-            GridViewStrategy::Count {
-                cross_axis_count: value.cross_axis_count,
+        let mut sliver: Box<dyn RenderSliver> =
+            match value.strategy.unwrap_or_else(|| GridViewStrategy::Count {
+                delegate: value.grid_delegate,
                 children: value.children,
-                row_extent: value.row_extent,
-            }
-        }) {
-            GridViewStrategy::Count {
-                cross_axis_count,
-                children,
-                row_extent,
-            } => {
-                let columns = cross_axis_count.max(1);
-                let children = Rc::new(children);
-                let extent = row_extent.unwrap_or(80.0);
-                Box::new(FixedExtentRenderSliver::new(
-                    children.len().div_ceil(columns),
-                    extent,
-                    Rc::new(move |row| {
-                        let start = row * columns;
-                        let end = (start + columns).min(children.len());
-                        Widget::from(Row::new(children[start..end].iter().cloned()))
-                    }),
-                ))
-            }
-            GridViewStrategy::Builder {
-                item_count,
-                cross_axis_count,
-                row_extent,
-                builder,
-            } => {
-                let columns = cross_axis_count.max(1);
-                let rows = item_count.div_ceil(columns);
-                Box::new(FixedExtentRenderSliver::new(
-                    rows,
-                    row_extent,
-                    Rc::new(move |row| {
-                        let start = row * columns;
-                        Widget::from(Row::new(
-                            (start..(start + columns).min(item_count)).map(|index| builder(index)),
-                        ))
-                    }),
-                ))
-            }
-        };
+            }) {
+                GridViewStrategy::Count { delegate, children } => {
+                    let children = Rc::new(children);
+                    Box::new(GridRenderSliver::new(
+                        children.len(),
+                        delegate,
+                        Rc::new(move |index| children[index].clone()),
+                        value.scroll_direction,
+                    ))
+                }
+                GridViewStrategy::Builder {
+                    item_count,
+                    delegate,
+                    builder,
+                } => Box::new(GridRenderSliver::new(
+                    item_count,
+                    delegate,
+                    builder,
+                    value.scroll_direction,
+                )),
+            };
 
         if let Some(padding) = value.padding {
             sliver = Box::new(PaddingRenderSliver {
@@ -789,13 +874,16 @@ impl From<GridView> for Widget {
                 padding,
             });
         }
-        single_sliver_viewport(
-            controller,
-            value.scroll_direction,
-            value.reverse,
-            value.physics.unwrap_or_default(),
-            DEFAULT_SLIVER_CACHE_EXTENT,
-            Clip::HardEdge,
+        single_sliver_viewport_with_options(
+            SliverViewportOptions {
+                controller,
+                axis: value.scroll_direction,
+                reverse: value.reverse,
+                physics: value.physics.unwrap_or_default(),
+                cache_extent: value.cache_extent.unwrap_or(DEFAULT_SLIVER_CACHE_EXTENT),
+                clip_behavior: value.clip_behavior,
+                shrink_wrap: value.shrink_wrap,
+            },
             sliver,
         )
     }
@@ -810,7 +898,6 @@ enum PageViewStrategy {
     Children(Vec<Widget>),
     Builder {
         page_count: usize,
-        page_extent: f32,
         builder: Rc<dyn Fn(usize) -> Widget>,
     },
 }
@@ -863,11 +950,7 @@ impl PageView {
 
     /// Creates a lazily virtualized PageView with a page builder closure.
     #[must_use]
-    pub fn builder<W>(
-        page_count: usize,
-        page_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
+    pub fn builder<W>(page_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
     where
         W: Into<Widget> + 'static,
     {
@@ -875,7 +958,6 @@ impl PageView {
             children: Vec::new(),
             strategy: Some(PageViewStrategy::Builder {
                 page_count,
-                page_extent: page_extent.max(1.0),
                 builder: Rc::new(move |i| builder(i).into()),
             }),
             controller: None,
@@ -955,11 +1037,11 @@ impl From<PageView> for Widget {
     fn from(value: PageView) -> Self {
         let controller = value.controller.unwrap_or_default();
         let fraction = value.viewport_fraction.max(0.01);
-        let physics_for_extent = |extent: f32| {
+        let physics_for_extent = || {
             if let Some(physics) = value.physics {
                 physics
             } else if value.page_snapping {
-                ScrollPhysics::clamping().page_snapping(extent)
+                ScrollPhysics::clamping().page()
             } else {
                 ScrollPhysics::clamping()
             }
@@ -969,7 +1051,6 @@ impl From<PageView> for Widget {
             .unwrap_or_else(|| PageViewStrategy::Children(value.children))
         {
             PageViewStrategy::Children(children) => {
-                let snap_extent = 600.0 * fraction;
                 let sliver = SliverFillViewport::new(children)
                     .viewport_fraction(fraction)
                     .fallback_extent(600.0);
@@ -979,7 +1060,7 @@ impl From<PageView> for Widget {
                     controller,
                     value.scroll_direction,
                     value.reverse,
-                    physics_for_extent(snap_extent),
+                    physics_for_extent(),
                     DEFAULT_SLIVER_CACHE_EXTENT,
                     Clip::HardEdge,
                     render,
@@ -987,20 +1068,18 @@ impl From<PageView> for Widget {
             }
             PageViewStrategy::Builder {
                 page_count,
-                page_extent,
                 builder,
             } => {
-                let snap_extent = page_extent * fraction;
                 let sliver = SliverFillViewport::builder(page_count, move |index| builder(index))
                     .viewport_fraction(fraction)
-                    .fallback_extent(page_extent);
+                    .fallback_extent(600.0);
                 let render =
                     sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse);
                 single_sliver_viewport(
                     controller,
                     value.scroll_direction,
                     value.reverse,
-                    physics_for_extent(snap_extent),
+                    physics_for_extent(),
                     DEFAULT_SLIVER_CACHE_EXTENT,
                     Clip::HardEdge,
                     render,
@@ -1338,6 +1417,131 @@ impl RenderSliver for FixedExtentRenderSliver {
                 }
             })
             .collect();
+        SliverLayout {
+            geometry: SliverGeometry::from_scroll_extent(constraints, total),
+            children,
+            absorbed_overlap: 0.,
+        }
+    }
+}
+
+/// Retained grid layout driven by a [`SliverGridDelegate`]. The grid only
+/// materializes rows/columns intersecting the paint and cache intervals, and
+/// recomputes tile dimensions from the current sliver constraints.
+struct GridRenderSliver {
+    item_count: usize,
+    delegate: SliverGridDelegate,
+    builder: Rc<dyn Fn(usize) -> Widget>,
+    axis: Axis,
+    widgets: HashMap<usize, Widget>,
+}
+
+impl GridRenderSliver {
+    fn new(
+        item_count: usize,
+        delegate: SliverGridDelegate,
+        builder: Rc<dyn Fn(usize) -> Widget>,
+        axis: Axis,
+    ) -> Self {
+        Self {
+            item_count,
+            delegate,
+            builder,
+            axis,
+            widgets: HashMap::new(),
+        }
+    }
+
+    fn child_widget(&mut self, index: usize) -> Widget {
+        if let Some(widget) = self.widgets.get(&index) {
+            return widget.clone();
+        }
+        let widget = (self.builder)(index);
+        self.widgets.insert(index, widget.clone());
+        widget
+    }
+}
+
+impl RenderSliver for GridRenderSliver {
+    fn child_count(&self) -> Option<usize> {
+        Some(self.item_count)
+    }
+
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let cross_extent = constraints.cross_axis_extent.max(0.);
+        let columns = self.delegate.cross_axis_count(cross_extent).max(1);
+        let main_extent = self
+            .delegate
+            .resolve_main_axis_extent(cross_extent, columns);
+        let main_spacing = self.delegate.resolved_main_axis_spacing();
+        let cross_spacing = self.delegate.resolved_cross_axis_spacing();
+        let rows = self.item_count.div_ceil(columns);
+        let row_step = (main_extent + main_spacing).max(1.);
+        let total = if rows == 0 {
+            0.
+        } else {
+            rows as f32 * main_extent + rows.saturating_sub(1) as f32 * main_spacing
+        };
+        let cache_start = (constraints.scroll_offset + constraints.cache_origin).max(0.);
+        let cache_end = (cache_start + constraints.remaining_cache_extent).max(cache_start);
+        let start_row = (cache_start / row_step).floor() as usize;
+        let end_row = (cache_end / row_step).ceil() as usize;
+        let row_range = start_row.min(rows)..end_row.min(rows).max(start_row.min(rows));
+        let first_item = row_range.start.saturating_mul(columns).min(self.item_count);
+        let last_item = row_range.end.saturating_mul(columns).min(self.item_count);
+        self.widgets
+            .retain(|index, _| (*index >= first_item) && (*index < last_item));
+
+        let cell_cross_extent = if columns == 0 {
+            0.
+        } else {
+            (cross_extent - cross_spacing * columns.saturating_sub(1) as f32).max(0.)
+                / columns as f32
+        };
+        let axis = self.axis;
+        let children = row_range
+            .map(|row| {
+                let start = row * columns;
+                let end = (start + columns).min(self.item_count);
+                let cells = (start..end).map(|index| -> Widget {
+                    let child = self.child_widget(index);
+                    if axis == Axis::Vertical {
+                        Widget::from(
+                            SizedBox::new()
+                                .width(cell_cross_extent)
+                                .height(main_extent)
+                                .child(child),
+                        )
+                    } else {
+                        Widget::from(
+                            SizedBox::new()
+                                .width(main_extent)
+                                .height(cell_cross_extent)
+                                .child(child),
+                        )
+                    }
+                });
+                let widget = if axis == Axis::Vertical {
+                    Widget::from(Row::new(cells).spacing(cross_spacing))
+                } else {
+                    Widget::from(Column::new(cells).spacing(cross_spacing))
+                };
+                SliverChildLayout {
+                    id: SliverChildId::list_item(row),
+                    widget,
+                    offset: row as f32 * row_step,
+                    cross_offset: 0.,
+                    constraints: sliver_child_constraints(
+                        constraints.axis,
+                        constraints.cross_axis_extent,
+                        Some(main_extent),
+                    ),
+                    extent: main_extent,
+                    pinned: false,
+                }
+            })
+            .collect();
+
         SliverLayout {
             geometry: SliverGeometry::from_scroll_extent(constraints, total),
             children,
@@ -1834,7 +2038,6 @@ struct WidgetWrapRenderSliver {
 }
 
 struct LayoutBuilderRenderSliver {
-    controller: ScrollController,
     builder: SliverLayoutBuilderFn,
     child: Widget,
     extent: Cell<f32>,
@@ -1845,7 +2048,7 @@ struct LayoutBuilderRenderSliver {
 impl RenderSliver for LayoutBuilderRenderSliver {
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         if self.last_constraints != Some(constraints) {
-            self.child = (self.builder)(&self.controller, constraints);
+            self.child = (self.builder)(constraints);
             self.last_constraints = Some(constraints);
             self.revision = self.revision.wrapping_add(1);
         }
@@ -2179,6 +2382,16 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
 /// Builds a viewport for one sliver. Box scrollables such as `ListView` and
 /// `PageView` use this same retained sliver protocol as `CustomScrollView`
 /// instead of maintaining a second lazy-list implementation.
+struct SliverViewportOptions {
+    controller: ScrollController,
+    axis: Axis,
+    reverse: bool,
+    physics: ScrollPhysics,
+    cache_extent: f32,
+    clip_behavior: Clip,
+    shrink_wrap: bool,
+}
+
 fn single_sliver_viewport(
     controller: ScrollController,
     axis: Axis,
@@ -2188,14 +2401,32 @@ fn single_sliver_viewport(
     clip_behavior: Clip,
     sliver: Box<dyn RenderSliver>,
 ) -> Widget {
+    single_sliver_viewport_with_options(
+        SliverViewportOptions {
+            controller,
+            axis,
+            reverse,
+            physics,
+            cache_extent,
+            clip_behavior,
+            shrink_wrap: false,
+        },
+        sliver,
+    )
+}
+
+fn single_sliver_viewport_with_options(
+    options: SliverViewportOptions,
+    sliver: Box<dyn RenderSliver>,
+) -> Widget {
     Widget::sliver_viewport_with_delegate_options(
-        controller,
-        axis,
-        reverse,
-        physics,
-        cache_extent,
-        false,
-        clip_behavior,
+        options.controller,
+        options.axis,
+        options.reverse,
+        options.physics,
+        options.cache_extent,
+        options.shrink_wrap,
+        options.clip_behavior,
         Rc::new(SequenceViewportDelegate::new(vec![sliver])),
     )
 }
@@ -2561,27 +2792,24 @@ impl Sliver for SliverToBoxAdapter {
     }
 }
 
-/// A lazy fixed-extent list sliver.
+/// A lazy variable-extent list sliver.
+///
+/// Use [`SliverFixedExtentList`] when every child has a known extent, or
+/// [`SliverVariedExtentList`] when the extent comes from an index builder.
 #[derive(Clone)]
 pub struct SliverList {
     item_count: usize,
-    item_extent: f32,
     builder: Rc<dyn Fn(usize) -> Widget>,
 }
 
 impl SliverList {
     #[must_use]
-    pub fn builder<W>(
-        item_count: usize,
-        item_extent: f32,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
+    pub fn builder<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
     where
         W: Into<Widget> + 'static,
     {
         Self {
             item_count,
-            item_extent: item_extent.max(1.0),
             builder: Rc::new(move |i| builder(i).into()),
         }
     }
@@ -2607,18 +2835,17 @@ impl Sliver for SliverList {
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
         Box::new(VariableExtentRenderSliver::new(
-            MeasuredExtentIndex::new(self.item_count, self.item_extent),
+            MeasuredExtentIndex::new(self.item_count, DEFAULT_LAZY_ITEM_EXTENT),
             self.builder.clone(),
         ))
     }
 }
 
-/// A lazy grid sliver.
+/// A lazy grid sliver driven by a [`SliverGridDelegate`].
 #[derive(Clone)]
 pub struct SliverGrid {
     item_count: usize,
-    cross_axis_count: usize,
-    row_extent: f32,
+    delegate: SliverGridDelegate,
     builder: Rc<dyn Fn(usize) -> Widget>,
 }
 
@@ -2626,8 +2853,7 @@ impl SliverGrid {
     #[must_use]
     pub fn builder<W>(
         item_count: usize,
-        cross_axis_count: usize,
-        row_extent: f32,
+        delegate: SliverGridDelegate,
         builder: impl Fn(usize) -> W + 'static,
     ) -> Self
     where
@@ -2635,8 +2861,7 @@ impl SliverGrid {
     {
         Self {
             item_count,
-            cross_axis_count: cross_axis_count.max(1),
-            row_extent: row_extent.max(1.0),
+            delegate,
             builder: Rc::new(move |i| builder(i).into()),
         }
     }
@@ -2658,21 +2883,14 @@ impl Sliver for SliverGrid {
     fn create_render_sliver(
         &self,
         _controller: &ScrollController,
-        _axis: Axis,
+        axis: Axis,
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
-        let columns = self.cross_axis_count;
-        let item_count = self.item_count;
-        let builder = self.builder.clone();
-        Box::new(FixedExtentRenderSliver::new(
-            item_count.div_ceil(columns),
-            self.row_extent,
-            Rc::new(move |row| {
-                let start = row * columns;
-                Widget::from(Row::new(
-                    (start..(start + columns).min(item_count)).map(|index| builder(index)),
-                ))
-            }),
+        Box::new(GridRenderSliver::new(
+            self.item_count,
+            self.delegate.clone(),
+            self.builder.clone(),
+            axis,
         ))
     }
 }
@@ -3175,46 +3393,6 @@ impl From<ShrinkWrappingViewport> for Widget {
     }
 }
 
-/// A configurable scrollbar widget.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct RawScrollbar {
-    #[builder(default, setter(strip_option))]
-    controller: Option<ScrollController>,
-    #[builder(default = false)]
-    thumb_visibility: bool,
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl RawScrollbar {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            controller: None,
-            thumb_visibility: false,
-            child: child.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn controller(mut self, controller: ScrollController) -> Self {
-        self.controller = Some(controller);
-        self
-    }
-
-    #[must_use]
-    pub fn thumb_visibility(mut self, visibility: bool) -> Self {
-        self.thumb_visibility = visibility;
-        self
-    }
-}
-
-impl From<RawScrollbar> for Widget {
-    fn from(value: RawScrollbar) -> Self {
-        value.child
-    }
-}
-
 /// A simple sequential layout along the main axis.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ListBody {
@@ -3254,108 +3432,6 @@ impl From<ListBody> for Widget {
             Axis::Horizontal => Row::new(value.children).into(),
             Axis::Vertical => Column::new(value.children).into(),
         }
-    }
-}
-
-/// A 3D cylindrical rotating wheel scroll list.
-#[derive(Clone, TypedBuilder)]
-pub struct ListWheelScrollView {
-    #[builder(setter(transform = |extent: f32| extent.max(1.0)))]
-    item_extent: f32,
-    #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
-        children.into_iter().map(Into::into).collect::<Vec<Widget>>()
-    }))]
-    children: Vec<Widget>,
-}
-
-impl ListWheelScrollView {
-    #[must_use]
-    pub fn new(item_extent: f32, children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
-        Self {
-            item_extent: item_extent.max(1.0),
-            children: children.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<ListWheelScrollView> for Widget {
-    fn from(value: ListWheelScrollView) -> Self {
-        let count = value.children.len();
-        let items = Rc::new(value.children);
-        ListView::fixed_extent(count, value.item_extent, move |i| items[i].clone()).into()
-    }
-}
-
-/// Draggable scrollable bottom sheet.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct DraggableScrollableSheet {
-    #[builder(default = 0.5, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
-    initial_child_size: f32,
-    #[builder(default = 0.25, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
-    min_child_size: f32,
-    #[builder(default = 1.0, setter(transform = |size: f32| size.clamp(0.0, 1.0)))]
-    max_child_size: f32,
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl DraggableScrollableSheet {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            initial_child_size: 0.5,
-            min_child_size: 0.25,
-            max_child_size: 1.0,
-            child: child.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn initial_child_size(mut self, size: f32) -> Self {
-        self.initial_child_size = size.clamp(0.0, 1.0);
-        self
-    }
-
-    #[must_use]
-    pub fn min_child_size(mut self, size: f32) -> Self {
-        self.min_child_size = size.clamp(0.0, 1.0);
-        self
-    }
-
-    #[must_use]
-    pub fn max_child_size(mut self, size: f32) -> Self {
-        self.max_child_size = size.clamp(0.0, 1.0);
-        self
-    }
-}
-
-impl From<DraggableScrollableSheet> for Widget {
-    fn from(value: DraggableScrollableSheet) -> Self {
-        crate::layout::FractionallySizedBox::new(value.child)
-            .height_factor(value.initial_child_size)
-            .into()
-    }
-}
-
-/// Notifies and controls the sheet extent of an ancestor [`DraggableScrollableSheet`].
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct DraggableScrollableActuator {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl DraggableScrollableActuator {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<DraggableScrollableActuator> for Widget {
-    fn from(value: DraggableScrollableActuator) -> Self {
-        value.child
     }
 }
 
@@ -3414,101 +3490,6 @@ impl ScrollNotificationObserver {
 impl From<ScrollNotificationObserver> for Widget {
     fn from(value: ScrollNotificationObserver) -> Self {
         value.child
-    }
-}
-
-/// Bidirectional (2D) scrollable coordinator.
-#[derive(Clone, TypedBuilder)]
-pub struct TwoDimensionalScrollable {
-    #[builder(default, setter(strip_option))]
-    horizontal_controller: Option<ScrollController>,
-    #[builder(default, setter(strip_option))]
-    vertical_controller: Option<ScrollController>,
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl TwoDimensionalScrollable {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            horizontal_controller: None,
-            vertical_controller: None,
-            child: child.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn horizontal_controller(mut self, controller: ScrollController) -> Self {
-        self.horizontal_controller = Some(controller);
-        self
-    }
-
-    #[must_use]
-    pub fn vertical_controller(mut self, controller: ScrollController) -> Self {
-        self.vertical_controller = Some(controller);
-        self
-    }
-}
-
-impl From<TwoDimensionalScrollable> for Widget {
-    fn from(value: TwoDimensionalScrollable) -> Self {
-        let h = SingleChildScrollView::new(value.child).scroll_direction(Axis::Horizontal);
-        let h = if let Some(c) = value.horizontal_controller {
-            h.controller(c)
-        } else {
-            h
-        };
-        let v = SingleChildScrollView::new(h).scroll_direction(Axis::Vertical);
-        if let Some(c) = value.vertical_controller {
-            v.controller(c).into()
-        } else {
-            v.into()
-        }
-    }
-}
-
-/// Bidirectional (2D) scrolling view.
-#[derive(Clone, TypedBuilder)]
-pub struct TwoDimensionalScrollView {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl TwoDimensionalScrollView {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<TwoDimensionalScrollView> for Widget {
-    fn from(value: TwoDimensionalScrollView) -> Self {
-        TwoDimensionalScrollable::new(value.child).into()
-    }
-}
-
-/// Bidirectional (2D) viewport.
-#[derive(Clone, TypedBuilder)]
-pub struct TwoDimensionalViewport {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl TwoDimensionalViewport {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<TwoDimensionalViewport> for Widget {
-    fn from(value: TwoDimensionalViewport) -> Self {
-        TwoDimensionalScrollable::new(value.child).into()
     }
 }
 
@@ -3840,55 +3821,41 @@ impl Sliver for SliverFillViewport {
     }
 }
 
-/// Sliver builder receiving the owning scroll controller.
+/// A sliver builder that receives the current sliver constraints during
+/// layout, matching Flutter's `SliverLayoutBuilder` contract.
 pub struct SliverLayoutBuilder {
     builder: SliverLayoutBuilderFn,
 }
 
 impl SliverLayoutBuilder {
     #[must_use]
-    pub fn new<W>(builder: impl Fn(&ScrollController) -> W + 'static) -> Self
+    pub fn new<W>(builder: impl Fn(SliverConstraints) -> W + 'static) -> Self
     where
         W: Into<Widget> + 'static,
     {
         Self {
-            builder: Rc::new(move |c, _| builder(c).into()),
-        }
-    }
-
-    /// Creates a layout builder that observes the complete sliver protocol
-    /// constraints. It is rebuilt only when those constraints change, just as
-    /// Flutter's `SliverLayoutBuilder` is driven by sliver layout rather than
-    /// by ordinary box constraints.
-    #[must_use]
-    pub fn new_with_sliver_constraints<W>(
-        builder: impl Fn(SliverConstraints) -> W + 'static,
-    ) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self {
-            builder: Rc::new(move |_, constraints| builder(constraints).into()),
+            builder: Rc::new(move |constraints| builder(constraints).into()),
         }
     }
 }
 
 impl Sliver for SliverLayoutBuilder {
-    fn build(&self, controller: &ScrollController) -> Widget {
-        (self.builder)(
-            controller,
-            SliverConstraints::new(Axis::Vertical, false, 0., 0., 0., 0., 0., 0., 0., 0.),
-        )
+    fn build(&self, _controller: &ScrollController) -> Widget {
+        // The callback belongs to the render-sliver layout phase. Calling it
+        // here would fabricate constraints and run application code twice:
+        // once while constructing the widget description and again when the
+        // viewport has real geometry. This placeholder is replaced by
+        // `LayoutBuilderRenderSliver::perform_layout`.
+        SizedBox::shrink().into()
     }
 
     fn create_render_sliver(
         &self,
-        controller: &ScrollController,
+        _controller: &ScrollController,
         _axis: Axis,
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
         Box::new(LayoutBuilderRenderSliver {
-            controller: controller.clone(),
             builder: self.builder.clone(),
             child: SizedBox::shrink().into(),
             extent: Cell::new(48.),
@@ -5052,91 +5019,6 @@ impl Sliver for SliverReorderableList {
     }
 }
 
-/// Hierarchical tree sliver.
-#[derive(TypedBuilder)]
-pub struct TreeSliver {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl TreeSliver {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl Sliver for TreeSliver {
-    fn build(&self, _controller: &ScrollController) -> Widget {
-        self.child.clone()
-    }
-}
-
-/// Animated list container.
-#[derive(Clone)]
-pub struct AnimatedList {
-    item_count: usize,
-    builder: Rc<dyn Fn(usize) -> Widget>,
-}
-
-impl AnimatedList {
-    #[must_use]
-    pub fn new<W>(item_count: usize, builder: impl Fn(usize) -> W + 'static) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self {
-            item_count,
-            builder: Rc::new(move |i| builder(i).into()),
-        }
-    }
-}
-
-impl From<AnimatedList> for Widget {
-    fn from(value: AnimatedList) -> Self {
-        let b = value.builder;
-        ListView::builder(value.item_count, move |i| b(i)).into()
-    }
-}
-
-/// Animated grid container.
-#[derive(Clone)]
-pub struct AnimatedGrid {
-    item_count: usize,
-    cross_axis_count: usize,
-    builder: Rc<dyn Fn(usize) -> Widget>,
-}
-
-impl AnimatedGrid {
-    #[must_use]
-    pub fn new<W>(
-        item_count: usize,
-        cross_axis_count: usize,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        Self {
-            item_count,
-            cross_axis_count: cross_axis_count.max(1),
-            builder: Rc::new(move |i| builder(i).into()),
-        }
-    }
-}
-
-impl From<AnimatedGrid> for Widget {
-    fn from(value: AnimatedGrid) -> Self {
-        let b = value.builder;
-        GridView::builder(value.item_count, value.cross_axis_count, 80.0, move |i| {
-            b(i)
-        })
-        .into()
-    }
-}
-
 struct AnimatedListEntry {
     id: u64,
     animation: AnimationController,
@@ -5531,76 +5413,6 @@ impl Sliver for SliverAnimatedList {
             self.controller.clone(),
             self.builder.clone(),
             48.,
-        ))
-    }
-}
-
-/// Animated grid sliver. Rows use the same retained size-transition engine;
-/// each row builder still receives the original cell indices.
-pub struct SliverAnimatedGrid {
-    item_count: usize,
-    cross_axis_count: usize,
-    builder: Rc<dyn Fn(usize) -> Widget>,
-    controller: SliverAnimatedListController,
-}
-
-impl SliverAnimatedGrid {
-    #[must_use]
-    pub fn new<W>(
-        item_count: usize,
-        cross_axis_count: usize,
-        builder: impl Fn(usize) -> W + 'static,
-    ) -> Self
-    where
-        W: Into<Widget> + 'static,
-    {
-        let cross_axis_count = cross_axis_count.max(1);
-        Self {
-            item_count,
-            cross_axis_count,
-            controller: SliverAnimatedListController::new(item_count.div_ceil(cross_axis_count)),
-            builder: Rc::new(move |i| builder(i).into()),
-        }
-    }
-
-    #[must_use]
-    pub fn controller(mut self, controller: SliverAnimatedListController) -> Self {
-        self.controller = controller;
-        self
-    }
-
-    #[must_use]
-    pub fn animation_controller(&self) -> SliverAnimatedListController {
-        self.controller.clone()
-    }
-}
-
-impl Sliver for SliverAnimatedGrid {
-    fn build(&self, controller: &ScrollController) -> Widget {
-        let b = self.builder.clone();
-        GridView::builder(self.item_count, self.cross_axis_count, 80.0, move |i| b(i))
-            .controller(controller.clone())
-            .into()
-    }
-
-    fn create_render_sliver(
-        &self,
-        _controller: &ScrollController,
-        _axis: Axis,
-        _reverse: bool,
-    ) -> Box<dyn RenderSliver> {
-        let columns = self.cross_axis_count;
-        let count = self.item_count;
-        let builder = self.builder.clone();
-        Box::new(AnimatedExtentRenderSliver::new(
-            self.controller.clone(),
-            Rc::new(move |row| {
-                let start = row * columns;
-                Widget::from(Row::new(
-                    (start..(start + columns).min(count)).map(|index| builder(index)),
-                ))
-            }),
-            80.,
         ))
     }
 }

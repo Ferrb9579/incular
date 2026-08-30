@@ -536,14 +536,18 @@ fn million_variable_list() -> Widget {
     let controller = ScrollController::new();
     labeled(
         "1,000,000 variable rows (jump near 900k by dragging)",
-        CustomScrollView::new(vec![Box::new(SliverList::builder(1_000_000, 40., |item| {
-            let height = if item % 3 == 0 { 56. } else { 28. };
-            stress_row(
-                format!("Variable item {item}  ·  {height:.0}px"),
-                height,
-                Color::rgba(60, 90 + (item % 4) as u8 * 30, 120, 255),
-            )
-        })) as Box<dyn Sliver>])
+        CustomScrollView::new(vec![Box::new(SliverVariedExtentList::new(
+            1_000_000,
+            |item| if item % 3 == 0 { 56. } else { 28. },
+            |item| {
+                let height = if item % 3 == 0 { 56. } else { 28. };
+                stress_row(
+                    format!("Variable item {item}  ·  {height:.0}px"),
+                    height,
+                    Color::rgba(60, 90 + (item % 4) as u8 * 30, 120, 255),
+                )
+            },
+        )) as Box<dyn Sliver>])
         .controller(controller),
     )
 }
@@ -720,15 +724,18 @@ fn effects_stack() -> Widget {
 fn nested_scroll() -> Widget {
     let outer = ScrollController::new();
     let inner = ScrollController::new();
-    let inner_list: Widget =
-        CustomScrollView::new(vec![Box::new(SliverList::builder(2_000, 36., |item| {
+    let inner_list: Widget = CustomScrollView::new(vec![Box::new(SliverVariedExtentList::new(
+        2_000,
+        |item| if item % 3 == 0 { 56. } else { 32. },
+        |item| {
             Widget::fixed_box(
                 Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                 Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
             )
-        })) as Box<dyn Sliver>])
-        .controller(inner.clone())
-        .into();
+        },
+    )) as Box<dyn Sliver>])
+    .controller(inner.clone())
+    .into();
     labeled(
         "Nested scrolling with boundary transfer",
         ScrollView::vertical(

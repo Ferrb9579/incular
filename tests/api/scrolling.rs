@@ -22,10 +22,8 @@ fn test_scrolling_widgets_and_physics_contract() {
             .padding(EdgeInsets::all(8.0))
             .into();
 
-    let page_view: Widget = PageView::builder(5, 1.0, |page| {
-        Center::new(Text::new(format!("Page {page}")))
-    })
-    .into();
+    let page_view: Widget =
+        PageView::builder(5, |page| Center::new(Text::new(format!("Page {page}")))).into();
 
     let single_child: Widget = SingleChildScrollView::new(Column::new([
         Text::new("Heading"),

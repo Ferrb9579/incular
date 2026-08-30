@@ -210,59 +210,6 @@ impl From<ImageFiltered> for Widget {
     }
 }
 
-/// Applies a shader / gradient mask over its child widget.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct ShaderMask {
-    #[builder(default = BlendMode::Multiply)]
-    blend_mode: BlendMode,
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl ShaderMask {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            blend_mode: BlendMode::Multiply,
-            child: child.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn blend_mode(mut self, mode: BlendMode) -> Self {
-        self.blend_mode = mode;
-        self
-    }
-}
-
-impl From<ShaderMask> for Widget {
-    fn from(value: ShaderMask) -> Self {
-        value.child
-    }
-}
-
-/// Injects system UI / status bar annotations into the tree hierarchy.
-#[derive(Clone, Debug, PartialEq, TypedBuilder)]
-pub struct AnnotatedRegion {
-    #[builder(setter(into))]
-    child: Widget,
-}
-
-impl AnnotatedRegion {
-    #[must_use]
-    pub fn new(child: impl Into<Widget>) -> Self {
-        Self {
-            child: child.into(),
-        }
-    }
-}
-
-impl From<AnnotatedRegion> for Widget {
-    fn from(value: AnnotatedRegion) -> Self {
-        value.child
-    }
-}
-
 /// Renders its child into a retained raster snapshot for performance optimization.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct SnapshotWidget {
@@ -1354,25 +1301,12 @@ mod tests {
 
     #[test]
     fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
-        let annotated = AnnotatedRegion::builder()
-            .child(Text::new("annotated"))
-            .build();
-        assert_eq!(annotated.child.text_if_any().as_deref(), Some("annotated"));
-        assert_eq!(
-            Widget::from(annotated).text_if_any().as_deref(),
-            Some("annotated")
-        );
-
         let filtered = ImageFiltered::builder()
             .sigma(3.0)
             .child(Text::new("filtered"))
             .build();
         assert_eq!(filtered.controller, None);
         let _: Widget = filtered.into();
-
-        let shader = ShaderMask::builder().child(Text::new("shader")).build();
-        assert_eq!(shader.blend_mode, BlendMode::Multiply);
-        let _: Widget = shader.into();
 
         let snapshot = SnapshotWidget::builder()
             .child(Text::new("snapshot"))

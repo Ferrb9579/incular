@@ -91,7 +91,11 @@ fn main() {
             Box::new(SliverPersistentHeader::new(48., pinned_header())),
             Box::new(SliverPadding::new(
                 EdgeInsets::all(12.),
-                SliverGrid::builder(80, 4, 76., tile),
+                SliverGrid::builder(
+                    80,
+                    SliverGridDelegate::fixed_cross_axis_count(4).main_axis_extent(76.),
+                    tile,
+                ),
             )),
         ])
         .controller(controller.clone())

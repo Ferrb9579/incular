@@ -188,8 +188,7 @@ fn base_widgets_cover_page_pinned_header_rotation_and_plain_composition() {
         Box::new(SliverToBoxAdapter::new(Text::new("content"))) as Box<dyn Sliver>,
     ])
     .physics(physics);
-    let pages =
-        PageView::builder(3, 240., |index| Text::new(format!("page {index}"))).reverse(true);
+    let pages = PageView::builder(3, |index| Text::new(format!("page {index}"))).reverse(true);
     let rotated: Widget = RotationTransition::from_turns(0.25, Text::new("rotate"))
         .alignment(Alignment::TOP_LEFT)
         .into();

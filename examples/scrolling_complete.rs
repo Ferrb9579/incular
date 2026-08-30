@@ -14,15 +14,18 @@ fn main() {
     // transfer by default.
     let _touch_policy = ScrollPhysics::clamping().bouncing().page_snapping(320.);
     let app = Application::new(move |_| {
-        let list: Widget =
-            CustomScrollView::new(vec![Box::new(SliverList::builder(2_000, 36., |item| {
+        let list: Widget = CustomScrollView::new(vec![Box::new(SliverVariedExtentList::new(
+            2_000,
+            |item| if item % 3 == 0 { 56. } else { 32. },
+            |item| {
                 Widget::fixed_box(
                     Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                     Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
                 )
-            })) as Box<dyn Sliver>])
-            .controller(inner.clone())
-            .into();
+            },
+        )) as Box<dyn Sliver>])
+        .controller(inner.clone())
+        .into();
         let inner_view: Widget = SizedBox::from_size(Size::new(360., 320.))
             .child(list)
             .into();

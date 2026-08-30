@@ -14,15 +14,12 @@ mod environment;
 mod focus_keyboard;
 mod forms;
 mod gestures;
-mod hero;
-mod implicit_animations;
 #[doc(hidden)]
 pub mod internal;
 mod layout;
 mod navigation_scopes;
 mod painting_effects;
 mod radio_selection;
-mod reactive_builders;
 mod safe_area;
 mod scrolling;
 mod selection;
@@ -42,36 +39,24 @@ pub use drag_drop::{
     DismissDirection, Dismissible, DragDropContext, DragTarget, Draggable, LongPressDraggable,
 };
 pub use environment::{
-    DefaultSelectionStyle, DefaultTextStyle, Directionality, IconTheme, Localizations,
-    LookupBoundary, MediaQuery, MediaQueryData, Orientation, OrientationBuilder,
-    PrimaryScrollController, ScrollConfiguration, SensitiveContent, SensitiveContentHost,
-    TickerMode,
+    DefaultSelectionStyle, DefaultTextStyle, Directionality, IconTheme, Localizations, MediaQuery,
+    MediaQueryData, Orientation, OrientationBuilder, PrimaryScrollController, ScrollConfiguration,
+    SensitiveContent, TickerMode,
 };
 pub use focus_keyboard::{
-    Action, ActionListener, ActionResult, Actions, CallbackShortcuts, Command, CommandId,
-    ExcludeFocus, ExcludeFocusTraversal, Focus, FocusManager, FocusNode, FocusScope,
-    FocusScopeNode, FocusScopeSubscription, FocusTraversalGroup, FocusTraversalOrder,
-    FocusTraversalPolicy, FocusTraversalPolicyKind, FocusableActionDetector, Intent,
-    KeyboardListener, LogicalShortcutKey, OrderedTraversalPolicy, ReadingOrderTraversalPolicy,
-    ShortcutKey, ShortcutTrigger, Shortcuts, WidgetOrderTraversalPolicy,
+    Action, ActionResult, Actions, Command, CommandId, ExcludeFocus, ExcludeFocusTraversal, Focus,
+    FocusManager, FocusNode, FocusScope, FocusScopeNode, FocusScopeSubscription,
+    FocusTraversalGroup, FocusTraversalOrder, FocusTraversalPolicy, FocusTraversalPolicyKind,
+    Intent, KeyboardListener, LogicalShortcutKey, OrderedTraversalPolicy,
+    ReadingOrderTraversalPolicy, ShortcutKey, ShortcutTrigger, Shortcuts,
+    WidgetOrderTraversalPolicy,
 };
 pub use forms::{
     AutocompleteHighlightedOption, AutofillGroup, AutovalidateMode, FilteringTextInputFormatter,
     Form, FormController, FormField, FormFieldState, FormState, LengthLimitingTextInputFormatter,
     MaxLengthEnforcement, RawAutocomplete, TextInputFormatter, UndoHistory,
 };
-pub use gestures::{
-    AbsorbPointer, GestureDetector, HitTestBehavior, IgnorePointer, Listener, MouseRegion,
-    RawGestureDetector, ReorderableDelayedDragStartListener, ReorderableDragStartListener,
-    ReorderableList, TapRegion, TapRegionSurface, TextFieldTapRegion,
-};
-pub use hero::{Hero, HeroControllerScope, HeroMode};
-pub use implicit_animations::{
-    AnimatedAlign, AnimatedContainer, AnimatedCrossFade, AnimatedDefaultTextStyle,
-    AnimatedFractionallySizedBox, AnimatedOpacity, AnimatedPadding, AnimatedPhysicalModel,
-    AnimatedPositioned, AnimatedPositionedDirectional, AnimatedRotation, AnimatedScale,
-    AnimatedSize, AnimatedSlide, AnimatedSwitcher,
-};
+pub use gestures::{AbsorbPointer, GestureDetector, HitTestBehavior, IgnorePointer};
 pub use incular_animation::{
     Animatable, Animation, AnimationController, AnimationStatus, Curve, Curves, Tween,
 };
@@ -89,7 +74,7 @@ pub use incular_rendering::{
 pub use incular_scroll::{
     ClampingScrollPhysics, ScrollController, ScrollMetrics, ScrollNotification,
     ScrollNotificationSubscription, ScrollNotificationType, ScrollPhysics,
-    ScrollViewKeyboardDismissBehavior, ScrollbarStyle, SliverConstraints, SliverGeometry,
+    ScrollViewKeyboardDismissBehavior, SliverConstraints,
 };
 pub use incular_text::{
     FontFeature, FontVariation, FontWeight, IconData, RichText, StrutStyle, TextAlign,
@@ -104,36 +89,26 @@ pub use layout::{
     OverflowBar, OverflowBox, Padding, Positioned, RepaintBoundary, RotatedBox, Row, SizedBox,
     SizedOverflowBox, Spacer, Stack, Table, TableCell, UnconstrainedBox, Visibility, Wrap,
 };
-pub use navigation_scopes::{
-    AnimatedModalBarrier, BackButtonListener, NavigatorPopHandler, OverlayPortal, PageStorage,
-    PlatformMenuBar, PopScope, RootRestorationScope, Router, Title, UnmanagedRestorationScope,
-    View, ViewAnchor, WidgetsApp,
-};
+pub use navigation_scopes::OverlayPortal;
 pub use painting_effects::{
-    AnnotatedRegion, Border, BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide,
-    BorderStyle, BoxBorder, BoxDecoration, BoxShadow, BoxShape, ClipRSuperellipse, CustomPainter,
-    DecorationImage, GridPaper, ImageFiltered, ImageIcon, Radius, RawImage, ShaderMask,
-    SnapshotWidget, TileMode,
+    Border, BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide, BorderStyle,
+    BoxBorder, BoxDecoration, BoxShadow, BoxShape, ClipRSuperellipse, CustomPainter,
+    DecorationImage, GridPaper, ImageFiltered, ImageIcon, Radius, RawImage, SnapshotWidget,
+    TileMode,
 };
-pub use radio_selection::{
-    RadioGroup, RawRadio, SelectableRegion, SelectionContainer, SelectionListener,
-};
-pub use reactive_builders::{AnimatedBuilder, RepeatingAnimationBuilder, TweenAnimationBuilder};
+pub use radio_selection::{RadioGroup, RawRadio, SelectableRegion};
 pub use safe_area::SafeArea;
 pub use scrolling::{
-    AnimatedGrid, AnimatedList, CustomScrollView, DecoratedSliver, DraggableScrollableActuator,
-    DraggableScrollableSheet, GridView, ListBody, ListView, ListWheelScrollView, NestedScrollView,
-    NotificationListener, PageController, PageView, PinnedHeaderSliver, RawScrollbar, RenderSliver,
-    ScrollNotificationObserver, Scrollable, SingleChildScrollView, Sliver, SliverAnimatedGrid,
-    SliverAnimatedList, SliverAnimatedListController, SliverChildId, SliverChildLayout,
+    CustomScrollView, DecoratedSliver, GridView, ListBody, ListView, NestedScrollView,
+    NotificationListener, PageController, PageView, PinnedHeaderSliver, ScrollNotificationObserver,
+    Scrollable, SingleChildScrollView, Sliver, SliverAnimatedList, SliverAnimatedListController,
     SliverConstrainedCrossAxis, SliverCrossAxisExpanded, SliverCrossAxisGroup, SliverFillRemaining,
     SliverFillViewport, SliverFixedExtentList, SliverFloatingHeader, SliverGrid,
-    SliverIgnorePointer, SliverLayout, SliverLayoutBuilder, SliverList, SliverMainAxisGroup,
-    SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
+    SliverGridDelegate, SliverIgnorePointer, SliverLayout, SliverLayoutBuilder, SliverList,
+    SliverMainAxisGroup, SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
     SliverOverlapInjector, SliverPadding, SliverPersistentHeader, SliverPrototypeExtentList,
     SliverReorderController, SliverReorderableList, SliverResizingHeader, SliverSafeArea,
-    SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, TreeSliver,
-    TwoDimensionalScrollView, TwoDimensionalScrollable, TwoDimensionalViewport, Viewport,
+    SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, Viewport,
 };
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
 pub use tree::{
@@ -141,10 +116,7 @@ pub use tree::{
     Opacity, RotationTransition, ScaleTransition, SlideTransition, Text, TextFieldInputSnapshot,
     TextInputActionHint, TextInputTypeHint, Transform, Widget,
 };
-pub use utilities::{
-    AutomaticKeepAlive, Banner, CheckedModeBanner, ErrorWidget, Expansible, IndexedSemantics,
-    KeepAlive, PerformanceOverlay, RawTooltip, SemanticsDebugger,
-};
+pub use utilities::{ErrorWidget, Expansible, PerformanceOverlay};
 
 // Internal implementation aliases.  These names are deliberately
 // `pub(crate)`: sibling crates use the documented `internal` bridge instead

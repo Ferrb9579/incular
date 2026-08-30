@@ -1628,23 +1628,6 @@ impl Drop for ScrollNotificationSubscription {
     }
 }
 
-/// Cache extent strategy for pre-rendering lazy list items.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ScrollCacheExtent {
-    Pixels(f32),
-    Viewport(f32),
-}
-
-impl ScrollCacheExtent {
-    #[must_use]
-    pub fn to_pixels(self, viewport_dimension: f32) -> f32 {
-        match self {
-            Self::Pixels(px) => px.max(0.0),
-            Self::Viewport(vp) => (vp * viewport_dimension).max(0.0),
-        }
-    }
-}
-
 /// How a scroll view dismisses the virtual keyboard.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ScrollViewKeyboardDismissBehavior {
@@ -1659,42 +1642,6 @@ pub enum DragStartBehavior {
     #[default]
     Start,
     Down,
-}
-
-/// Authoritative shared configuration for all scroll view widgets.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ScrollViewConfig {
-    pub direction: incular_config::Axis,
-    pub reverse: bool,
-    pub primary: Option<bool>,
-    pub physics: ScrollPhysics,
-    pub shrink_wrap: bool,
-    pub padding: Option<incular_config::EdgeInsets>,
-    pub scroll_cache_extent: Option<ScrollCacheExtent>,
-    pub semantic_child_count: Option<usize>,
-    pub drag_start_behavior: DragStartBehavior,
-    pub keyboard_dismiss_behavior: Option<ScrollViewKeyboardDismissBehavior>,
-    pub restoration_id: Option<String>,
-    pub clip_behavior: incular_config::Clip,
-}
-
-impl Default for ScrollViewConfig {
-    fn default() -> Self {
-        Self {
-            direction: incular_config::Axis::Vertical,
-            reverse: false,
-            primary: None,
-            physics: ScrollPhysics::clamping(),
-            shrink_wrap: false,
-            padding: None,
-            scroll_cache_extent: None,
-            semantic_child_count: None,
-            drag_start_behavior: DragStartBehavior::Start,
-            keyboard_dismiss_behavior: None,
-            restoration_id: None,
-            clip_behavior: incular_config::Clip::HardEdge,
-        }
-    }
 }
 
 /// General nested scrolling coordinator. Controllers are ordered innermost to

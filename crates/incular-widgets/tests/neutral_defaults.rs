@@ -161,7 +161,7 @@ fn scrollable_widget_defaults_match_flutter_axes() {
         Axis::Horizontal
     );
     assert_eq!(
-        PageView::builder(3, 240.0, |_| SizedBox::new()).get_scroll_direction(),
+        PageView::builder(3, |_| SizedBox::new()).get_scroll_direction(),
         Axis::Horizontal
     );
 }

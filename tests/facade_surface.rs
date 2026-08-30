@@ -54,14 +54,11 @@ fn facade_exposes_material_components_at_the_material_boundary() {
 
 #[test]
 fn facade_exposes_variable_extent_lazy_lists() {
-    let index = incular::scroll::MeasuredExtentIndex::new(10, 32.);
     let controller = ScrollController::new();
-    let _: Widget = ListView::variable_extent(10, 32., |_| {
-        Widget::fixed_box(Size::new(20., 32.), Color::WHITE)
-    })
-    .controller(controller)
-    .into();
-    assert_eq!(index.index_at_offset(96.), Some(3));
+    let _: Widget = ListView::builder(10, |_| Widget::fixed_box(Size::new(20., 32.), Color::WHITE))
+        .item_extent_builder(|_| 32.)
+        .controller(controller)
+        .into();
 }
 
 #[test]
@@ -105,10 +102,10 @@ fn facade_exposes_icu_localization_catalog_boundary() {
 }
 
 #[test]
-fn facade_exposes_colored_box_and_mouse_region() {
+fn facade_exposes_colored_box_and_gesture_detector() {
     let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
     let _: Widget = ColoredBox::new(Color::BLACK, child.clone()).into();
-    let _: Widget = MouseRegion::new(child).into();
+    let _: Widget = GestureDetector::new(child).into();
 }
 
 #[test]

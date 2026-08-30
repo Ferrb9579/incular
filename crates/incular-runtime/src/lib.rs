@@ -99,6 +99,30 @@ pub fn scheduler_counters() -> SchedulerCounters {
     }
 }
 
+/// Runtime and frame counters owned by one [`Application`]. The free
+/// [`scheduler_counters`] function intentionally remains a process-wide
+/// diagnostic for callers that need aggregate totals, while an application's
+/// performance snapshot must not be affected by another application's test,
+/// preview, or embedded runtime.
+#[derive(Clone, Copy, Debug, Default)]
+struct ApplicationSchedulerCounters {
+    runtime_wakes: u64,
+    redraw_requests: u64,
+    frames_started: u64,
+    frames_presented: u64,
+    frames_skipped: u64,
+}
+
+impl ApplicationSchedulerCounters {
+    fn apply_to(self, scheduler: &mut SchedulerCounters) {
+        scheduler.runtime_wakes = self.runtime_wakes;
+        scheduler.redraw_requests = self.redraw_requests;
+        scheduler.frames_started = self.frames_started;
+        scheduler.frames_presented = self.frames_presented;
+        scheduler.frames_skipped = self.frames_skipped;
+    }
+}
+
 /// Backend-neutral application lifecycle. Desktop adapters may only emit a
 /// subset; runtime users must therefore treat transitions as advisory rather
 /// than assume every state is observable on every platform.
@@ -3392,6 +3416,7 @@ pub struct Application {
     restoration_window_factories: HashMap<String, (WindowOptions, RestorableWindowFactory)>,
     profiler: PerformanceProfiler,
     hub: PerformanceHub,
+    scheduler_counters: ApplicationSchedulerCounters,
 }
 impl Application {
     /// Creates an application from a retained root builder.
@@ -3500,6 +3525,7 @@ impl Application {
             restoration_window_factories: HashMap::new(),
             profiler: PerformanceProfiler::new(ProfilerMode::Normal),
             hub: PerformanceHub::new(),
+            scheduler_counters: ApplicationSchedulerCounters::default(),
         })
     }
 
@@ -4311,6 +4337,8 @@ impl Application {
 
     pub fn note_frame_requested(&mut self, window_id: WindowId) {
         scheduler_counters::REDRAW_REQUESTS.fetch_add(1, Ordering::Relaxed);
+        self.scheduler_counters.redraw_requests =
+            self.scheduler_counters.redraw_requests.wrapping_add(1);
         let _ = self.with_window_mut(window_id, |record| {
             record.requested_frames = record.requested_frames.wrapping_add(1);
         });
@@ -4321,6 +4349,8 @@ impl Application {
     /// contract test relies on these counters staying independent.
     pub fn note_runtime_wake(&mut self) {
         scheduler_counters::RUNTIME_WAKES.fetch_add(1, Ordering::Relaxed);
+        self.scheduler_counters.runtime_wakes =
+            self.scheduler_counters.runtime_wakes.wrapping_add(1);
     }
 
     pub fn run_window_frame_at(
@@ -4360,8 +4390,14 @@ impl Application {
                 }
             })
             .unwrap_or(Ok(None));
+        if matches!(outcome, Ok(None)) && self.contains_window(window_id) {
+            self.scheduler_counters.frames_skipped =
+                self.scheduler_counters.frames_skipped.wrapping_add(1);
+        }
         if matches!(outcome, Ok(Some(_))) {
             scheduler_counters::FRAMES_STARTED.fetch_add(1, Ordering::Relaxed);
+            self.scheduler_counters.frames_started =
+                self.scheduler_counters.frames_started.wrapping_add(1);
         }
         outcome
     }
@@ -4605,8 +4641,10 @@ impl Application {
             accessibility.updates_skipped_unchanged +=
                 record.accessibility.semantic_updates_skipped_unchanged;
         }
+        let mut scheduler = scheduler_counters();
+        self.scheduler_counters.apply_to(&mut scheduler);
         PerformanceSnapshot {
-            scheduler: scheduler_counters(),
+            scheduler,
             budget: *self.profiler.budget(),
             fps: self.profiler.frames_per_second(),
             windows,
@@ -4625,8 +4663,12 @@ impl Application {
     pub fn note_presented(&mut self, window_id: WindowId, presented: bool) {
         if presented {
             scheduler_counters::FRAMES_PRESENTED.fetch_add(1, Ordering::Relaxed);
+            self.scheduler_counters.frames_presented =
+                self.scheduler_counters.frames_presented.wrapping_add(1);
         } else {
             scheduler_counters::FRAMES_SKIPPED.fetch_add(1, Ordering::Relaxed);
+            self.scheduler_counters.frames_skipped =
+                self.scheduler_counters.frames_skipped.wrapping_add(1);
         }
         self.profiler.note_present(presented);
         let _ = self.with_window_mut(window_id, |record| {

@@ -15,7 +15,7 @@ fn canonical_widgets_compose_without_material() {
 
     let list = ListView::builder(3, |index| Text::new(format!("row {index}")));
     assert_eq!(list.get_scroll_direction(), Axis::Vertical);
-    let page = PageView::builder(2, 120.0, |index| Text::new(format!("page {index}")));
+    let page = PageView::builder(2, |index| Text::new(format!("page {index}")));
     assert_eq!(page.get_scroll_direction(), Axis::Horizontal);
     let single = SingleChildScrollView::new(row);
     assert_eq!(single.get_scroll_direction(), Axis::Vertical);
@@ -23,8 +23,7 @@ fn canonical_widgets_compose_without_material() {
     let _root: Widget = Column::new([
         Widget::from(list),
         Widget::from(page),
-        Widget::from(RawScrollbar::new(single).thumb_visibility(true)),
-        Widget::from(RawTooltip::new("details", Text::new("hover"))),
+        Widget::from(single),
         Widget::from(RawRadio::new("a", Some("a"))),
     ])
     .into();

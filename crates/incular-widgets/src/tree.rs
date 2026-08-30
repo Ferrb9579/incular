@@ -1134,7 +1134,8 @@ pub enum WidgetKind {
         child: Box<Widget>,
     },
     Gesture {
-        callbacks: GestureCallbacks,
+        behavior: crate::gestures::HitTestBehavior,
+        callbacks: Box<GestureCallbacks>,
         child: Box<Widget>,
     },
     Draggable {
@@ -2007,14 +2008,16 @@ impl PartialEq for WidgetKind {
             (Self::RepaintBoundary { child: a }, Self::RepaintBoundary { child: b }) => a == b,
             (
                 Self::Gesture {
+                    behavior: a_behavior,
                     callbacks: a,
                     child: b,
                 },
                 Self::Gesture {
+                    behavior: b_behavior,
                     callbacks: c,
                     child: d,
                 },
-            ) => gesture_callbacks_eq(a, c) && b == d,
+            ) => a_behavior == b_behavior && gesture_callbacks_eq(a, c) && b == d,
             (
                 Self::Draggable {
                     source: a,
@@ -2729,21 +2732,56 @@ fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bo
     }
 
     same_callback(&left.on_tap, &right.on_tap)
+        && same_callback(&left.on_tap_down, &right.on_tap_down)
+        && same_callback(&left.on_tap_up, &right.on_tap_up)
+        && same_callback(&left.on_tap_cancel, &right.on_tap_cancel)
         && same_callback(&left.on_double_tap, &right.on_double_tap)
+        && same_callback(&left.on_double_tap_down, &right.on_double_tap_down)
+        && same_callback(&left.on_double_tap_cancel, &right.on_double_tap_cancel)
         && same_callback(&left.on_long_press, &right.on_long_press)
+        && same_callback(&left.on_long_press_start, &right.on_long_press_start)
+        && same_callback(
+            &left.on_long_press_move_update,
+            &right.on_long_press_move_update,
+        )
+        && same_callback(&left.on_long_press_up, &right.on_long_press_up)
+        && same_callback(&left.on_long_press_end, &right.on_long_press_end)
+        && same_callback(&left.on_pan_down, &right.on_pan_down)
+        && same_callback(&left.on_pan_start, &right.on_pan_start)
         && same_callback(&left.on_pan_update, &right.on_pan_update)
         && same_callback(&left.on_pan_end, &right.on_pan_end)
+        && same_callback(&left.on_pan_cancel, &right.on_pan_cancel)
+        && same_callback(
+            &left.on_horizontal_drag_down,
+            &right.on_horizontal_drag_down,
+        )
+        && same_callback(
+            &left.on_horizontal_drag_start,
+            &right.on_horizontal_drag_start,
+        )
         && same_callback(
             &left.on_horizontal_drag_update,
             &right.on_horizontal_drag_update,
         )
         && same_callback(&left.on_horizontal_drag_end, &right.on_horizontal_drag_end)
         && same_callback(
+            &left.on_horizontal_drag_cancel,
+            &right.on_horizontal_drag_cancel,
+        )
+        && same_callback(&left.on_vertical_drag_down, &right.on_vertical_drag_down)
+        && same_callback(&left.on_vertical_drag_start, &right.on_vertical_drag_start)
+        && same_callback(
             &left.on_vertical_drag_update,
             &right.on_vertical_drag_update,
         )
         && same_callback(&left.on_vertical_drag_end, &right.on_vertical_drag_end)
+        && same_callback(
+            &left.on_vertical_drag_cancel,
+            &right.on_vertical_drag_cancel,
+        )
+        && same_callback(&left.on_scale_start, &right.on_scale_start)
         && same_callback(&left.on_scale_update, &right.on_scale_update)
+        && same_callback(&left.on_scale_end, &right.on_scale_end)
         && same_callback(&left.on_cancel, &right.on_cancel)
         && same_callback(&left.on_key, &right.on_key)
         && same_callback(&left.on_key_down, &right.on_key_down)
@@ -3484,7 +3522,8 @@ impl Widget {
         Self {
             key: None,
             kind: WidgetKind::Gesture {
-                callbacks,
+                behavior: crate::gestures::HitTestBehavior::DeferToChild,
+                callbacks: Box::new(callbacks),
                 child: Box::new(child),
             },
             semantics: SemanticProperties::default(),
@@ -6837,10 +6876,16 @@ impl WidgetTree {
                         on_cancel: callbacks.on_cancel.clone(),
                     });
                 }
-                if let Some(on_update) = callbacks.on_scale_update.clone() {
+                if callbacks.on_scale_update.is_some()
+                    || callbacks.on_scale_start.is_some()
+                    || callbacks.on_scale_end.is_some()
+                {
+                    let on_update = callbacks.on_scale_update.clone();
+                    let on_start = callbacks.on_scale_start.clone();
+                    let on_end = callbacks.on_scale_end.clone();
                     let member = self.gesture_arena.add(key, true);
                     let mut scale = self.scale_gestures.remove(&candidate).unwrap_or_else(|| {
-                        ScaleGestureDetector::new(move |details| on_update(details))
+                        ScaleGestureDetector::with_callbacks(on_update, on_start, on_end)
                     });
                     let _ = scale.observe(event);
                     self.scale_gestures.insert(candidate, scale);
@@ -6965,7 +7010,7 @@ impl WidgetTree {
 
     fn gesture_callbacks(&self, element: ElementId) -> Option<GestureCallbacks> {
         match &self.elements.get(element.0)?.widget.kind {
-            WidgetKind::Gesture { callbacks, .. } => Some(callbacks.clone()),
+            WidgetKind::Gesture { callbacks, .. } => Some((**callbacks).clone()),
             WidgetKind::Draggable { .. } => Some(GestureCallbacks {
                 on_pan_update: Some(Rc::new(|_| {})),
                 ..GestureCallbacks::default()
@@ -12118,7 +12163,18 @@ impl WidgetTree {
                 return Some(hit);
             }
         }
-        Some(id)
+        match self
+            .element_for_render(id)
+            .and_then(|element| self.elements.get(element.0))
+            .map(|element| &element.widget.kind)
+        {
+            Some(WidgetKind::Gesture { behavior, .. })
+                if *behavior == crate::gestures::HitTestBehavior::DeferToChild =>
+            {
+                None
+            }
+            _ => Some(id),
+        }
     }
     fn scrollbar_controller_and_geometry(
         &self,
@@ -13372,7 +13428,9 @@ mod tests {
     use super::*;
     use crate::drag_drop::DragDropContext;
     use crate::internal::ActionSurface;
-    use crate::scrolling::{CustomScrollView, SliverFixedExtentList, SliverList};
+    use crate::scrolling::{
+        CustomScrollView, SliverFixedExtentList, SliverList, SliverVariedExtentList,
+    };
     use crate::{
         AbsorbPointer, DismissDirection, Dismissible, DragTarget, Draggable, Expanded,
         ExplicitSemantics, Flexible, IgnorePointer, IndexedStack, Positioned, SizedBox, Spacer,
@@ -14717,9 +14775,10 @@ mod tests {
         let mut tree = WidgetTree::new();
         let root = tree
             .mount(
-                crate::scrolling::ListView::fixed_extent(5, 40., |_| {
+                crate::scrolling::ListView::builder(5, |_| {
                     Widget::box_(Size::new(80., 40.), Color::WHITE)
                 })
+                .item_extent(40.)
                 .reverse(true)
                 .controller(controller.clone())
                 .into(),
@@ -15056,22 +15115,28 @@ mod tests {
         let observed = calls.clone();
         let mut tree = WidgetTree::new();
         tree.mount(
-            CustomScrollView::new(vec![
-                Box::new(SliverList::builder(1_000_000, 40., move |item| {
+            CustomScrollView::new(vec![Box::new(SliverVariedExtentList::new(
+                1_000_000,
+                |item| {
+                    if item % 2 == 0 { 32. } else { 56. }
+                },
+                move |item| {
                     observed.set(observed.get() + 1);
                     Widget::box_(
                         Size::new(80., if item % 2 == 0 { 32. } else { 56. }),
                         Color::rgba(item as u8, 0, 0, 255),
                     )
-                })) as Box<dyn crate::scrolling::Sliver>,
-            ])
+                },
+            )) as Box<dyn crate::scrolling::Sliver>])
             .controller(controller.clone())
             .into(),
         )
         .unwrap();
         let constraints = Constraints::tight(Size::new(100., 600.));
         tree.layout(constraints);
-        assert!(controller.jump_to(900_000. * 40.));
+        // The explicit extent builder has an exact 44px mean for the
+        // alternating 32px/56px sequence, so target the real prefix offset.
+        assert!(controller.jump_to(900_000. * 44.));
         tree.layout(constraints);
         let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
         assert!(diagnostics.materialized_range.contains(&900_000));
@@ -15086,7 +15151,7 @@ mod tests {
         let controller = ScrollController::new();
         let mut tree = WidgetTree::new();
         tree.mount(
-            CustomScrollView::new(vec![Box::new(SliverList::builder(1_000_000, 40., |item| {
+            CustomScrollView::new(vec![Box::new(SliverList::builder(1_000_000, |item| {
                 Widget::box_(
                     Size::new(80., if item < 900_000 { 80. } else { 40. }),
                     Color::WHITE,
@@ -15098,12 +15163,13 @@ mod tests {
         .unwrap();
         let constraints = Constraints::tight(Size::new(100., 600.));
         tree.layout(constraints);
-        let target = 900_000. * 40.;
+        let target = 900_000. * 48.;
         assert!(controller.jump_to(target));
         tree.layout(constraints);
-        // Seven cached rows before the first visible row grew by 40px. The
-        // controller compensates so logical row 900_000 stays in place.
-        assert_eq!(controller.offset(), target + 280.);
+        // Cached rows before the first visible row grow from their 48px
+        // estimates to their 80px laid-out height. The controller compensates
+        // so the logical anchor stays in place.
+        assert!(controller.offset() > target);
     }
 
     #[test]

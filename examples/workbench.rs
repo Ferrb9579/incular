@@ -356,13 +356,13 @@ fn main() {
                 CustomScrollView::new(vec![
                     Box::new(PinnedHeaderSliver::new(Text::new("Pinned header")))
                         as Box<dyn Sliver>,
-                    Box::new(SliverList::builder(40, 28., |index| {
+                    Box::new(SliverFixedExtentList::new(40, 28., |index| {
                         Text::new(format!("sliver row {index}"))
                     })) as Box<dyn Sliver>,
                 ])
                 .physics(ScrollPhysics::clamping().bouncing().always_scrollable())
                 .into(),
-                PageView::builder(3, 220., |index| {
+                PageView::builder(3, |index| {
                     DecoratedBox::new(Padding::all(16., Text::new(format!("Page {index}"))))
                         .background(Color::rgba(45, 67, 100, 255))
                 })

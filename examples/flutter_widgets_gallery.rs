@@ -5,7 +5,6 @@
 //! paging, and retained transitions without a Material or controls dependency.
 
 use incular::prelude::*;
-use std::time::Duration;
 
 const PANEL: Color = Color::rgba(38, 46, 66, 255);
 const ACCENT: Color = Color::rgba(90, 150, 245, 255);
@@ -86,13 +85,16 @@ fn main() {
             ),
         ),
         panel(
-            "Implicit transition",
-            AnimatedContainer::new(Duration::from_millis(240))
-                .width(260.)
-                .height(70.)
-                .color(ACCENT)
-                .padding(EdgeInsets::all(12.))
-                .child(label("AnimatedContainer", 16.)),
+            "Explicit transition",
+            SizeTransition::new(
+                0.85,
+                Container::new()
+                    .width(260.)
+                    .height(70.)
+                    .color(ACCENT)
+                    .padding(EdgeInsets::all(12.))
+                    .child(label("SizeTransition", 16.)),
+            ),
         ),
     ])
     .scroll_direction(Axis::Horizontal);
