@@ -5008,9 +5008,13 @@ fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
         .into_iter()
         .map(|line| Widget::from(Text::new(line).style(monospace())))
         .collect();
-    Widget::repaint_boundary(Widget::align(
-        incular_config::Alignment::TOP_LEFT,
-        Widget::from(
+    // The overlay is diagnostic chrome, not an application control. Keep the
+    // visual mounted in the tree while allowing the widgets underneath it to
+    // receive pointer events, just like Flutter's non-interactive performance
+    // overlay.
+    Widget::ignore_pointer(
+        true,
+        Widget::repaint_boundary(Widget::from(
             DecoratedBox::new(Padding::all(6., Widget::column(rows)))
                 .background(incular_core::Color::rgba(12, 14, 18, 216))
                 .radius(4.)
@@ -5018,8 +5022,8 @@ fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
                     color: incular_core::Color::rgba(120, 170, 245, 90),
                     width: 1.,
                 }),
-        ),
-    ))
+        )),
+    )
 }
 
 /// Truncates a Debug rendering to keep DevTools payloads bounded.

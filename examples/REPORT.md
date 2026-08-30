@@ -27,6 +27,13 @@ examples use a dedicated `tests.rs`; `performance_gallery` retains its focused
 unit tests in `main.rs` and `example_tests.rs`. Every example has a dedicated
 `simulations.rs` contract.
 
+The `performance_gallery` audit is stricter than the shared smoke sequence. It
+visits all fifteen workloads, scrolls the fixed and variable lists, taps the
+gesture grid twice, changes both reconciliation generations, reverses the
+keyed list twice, edits a document paragraph twice, updates the shared counter,
+opens the sibling window, sends keyboard input, and captures the resulting
+frames. That run completed successfully after the fixes below.
+
 ## Defects found and fixed
 
 - Material menu opening exhausted the Windows stack while shaping deeply nested
@@ -45,13 +52,28 @@ unit tests in `main.rs` and `example_tests.rs`. Every example has a dedicated
   click callback is registered.
 - The Flutter API parity entry for Material `TextField` now records behavior
   parity, satisfying the manifest's complete-audit contract.
+- The diagnostic performance overlay no longer expands to the full lower half
+  of the window or intercepts application pointer input. Its placeholder and
+  live rendering are both non-interactive.
+- A changed `LayoutBuilder` descriptor now invalidates layout and paint even
+  when its render kind and constraints stay unchanged, so a selected workload
+  cannot remain visually stale.
+- Retained sliver slots now replace incompatible widget shapes instead of
+  forcing an invalid element update when a workload changes.
+- The gallery's sibling-window action now opens a live view backed by the same
+  signal as the primary window; the strict simulation verifies the shared
+  counter update.
+- The gallery now starts at a high-DPI-friendly logical size and switches to
+  its scrollable single-column layout when needed, keeping its controls and
+  diagnostics inside the desktop work area.
 
 ## Visual review
 
 - `target/example-review/whole-screen/material_workbench.png`
 - `target/example-review/whole-screen/material_gallery.png`
 - `target/example-review/whole-screen/flutter_widgets_gallery.png`
-- `target/example-review/whole-screen/performance_gallery-final.png`
+- `target/example-review/whole-screen/performance_gallery-final-autopilot-5s.png`
+- `target/example-review/screenshots/performance_gallery/after-interaction.ppm`
 
 The final performance capture visibly reports `FPS idle`, CPU, GPU, build,
 layout, paint, composite, and render values. Debug-profile startup timings are

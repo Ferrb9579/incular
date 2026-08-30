@@ -9729,6 +9729,12 @@ impl WidgetTree {
                 element.layout_builder_constraints = None;
                 element.layout_builder_revision = 0;
             }
+            // LayoutBuilder has a stable render kind, so the normal
+            // old-kind/new-kind invalidation above does not run. Propagate the
+            // dirty bit explicitly; otherwise an unchanged parent can return
+            // from the layout cache before this builder gets a chance to
+            // materialize the new closure output.
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
         }
         self.diagnostics.rebuilds += 1;
         #[cfg(feature = "devtools")]
@@ -9908,11 +9914,21 @@ impl WidgetTree {
         let mut pinned = HashSet::new();
         for child in &layout.children {
             let child_id = child.id;
-            let retained = if let Some(existing) = existing.get(&child_id).copied() {
+            let retained = if let Some(existing) = existing
+                .get(&child_id)
+                .copied()
+                .filter(|existing| self.compatible(*existing, &child.widget))
+            {
                 self.update_existing(existing, &child.widget)
                     .expect("sliver child update must remain valid");
                 existing
             } else {
+                // A stable sliver item ID does not guarantee that the widget
+                // shape is unchanged. For example, a list row may gain a
+                // GestureDetector when a workload changes. Retained element
+                // identity is only reusable across compatible widget types;
+                // leave incompatible old children for the cleanup pass below
+                // and mount a fresh element for the same sliver slot.
                 let mut widget = child.widget.clone();
                 let handlers = &mut self.pending_handlers;
                 let next = &mut self.next_action;
@@ -13681,7 +13697,8 @@ mod tests {
     };
     use crate::{
         AbsorbPointer, DismissDirection, Dismissible, DragTarget, Draggable, Expanded,
-        ExplicitSemantics, Flexible, IgnorePointer, IndexedStack, Positioned, SizedBox, Spacer,
+        ExplicitSemantics, Flexible, GestureDetector, IgnorePointer, IndexedStack, Positioned,
+        SizedBox, Spacer,
     };
 
     #[derive(Default)]
@@ -13992,6 +14009,28 @@ mod tests {
         assert_eq!(builds.get(), 1);
         tree.layout(Constraints::new(0., 40., 0., 20.));
         assert_eq!(builds.get(), 2);
+    }
+
+    #[test]
+    fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(Widget::layout_builder(|_| Widget::text("old child")))
+            .unwrap();
+        let constraints = Constraints::tight(Size::new(200., 40.));
+
+        tree.layout(constraints);
+        tree.update_semantics();
+        assert!(tree.semantics_debug_dump().contains("old child"));
+
+        tree.update(root, Widget::layout_builder(|_| Widget::text("new child")))
+            .unwrap();
+        tree.layout(constraints);
+        tree.update_semantics();
+
+        let semantics = tree.semantics_debug_dump();
+        assert!(semantics.contains("new child"));
+        assert!(!semantics.contains("old child"));
     }
     #[test]
     fn plain_text_uses_the_documented_natural_default_style() {
@@ -15518,6 +15557,33 @@ mod tests {
     }
 
     #[test]
+    fn sliver_slot_replaces_an_incompatible_retained_widget() {
+        let controller = ScrollController::new();
+        let constraints = Constraints::tight(Size::new(100., 100.));
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(fixed_sliver_list(4, 40., controller.clone(), |_| {
+                Widget::box_(Size::new(80., 40.), Color::WHITE)
+            }))
+            .unwrap();
+        tree.layout(constraints);
+        let previous = tree.children(root).unwrap().to_vec();
+
+        tree.update(
+            root,
+            fixed_sliver_list(4, 40., controller, |_| {
+                GestureDetector::new(Widget::box_(Size::new(80., 40.), Color::WHITE)).on_tap(|| {})
+            }),
+        )
+        .unwrap();
+        tree.layout(constraints);
+
+        let current = tree.children(root).unwrap();
+        assert!(!current.is_empty());
+        assert!(current.iter().all(|id| !previous.contains(id)));
+    }
+
+    #[test]
     fn editing_uses_graphemes_and_keeps_utf8_boundaries() {
         let controller = TextEditingController::with_text("a👩‍💻é");
         controller.move_end(false);
@@ -16561,8 +16627,14 @@ pub const PERFORMANCE_OVERLAY_KEY: &str = "incular-performance-overlay";
 /// widget kind so the retained update path stays compatible.
 #[must_use]
 pub fn performance_overlay_placeholder() -> Widget {
-    Widget::repaint_boundary(Widget::box_(Size::ZERO, incular_core::Color::TRANSPARENT))
-        .with_key(Key::String(PERFORMANCE_OVERLAY_KEY.to_owned()))
+    // Keep the mount point itself non-interactive. The live overlay is
+    // diagnostic chrome and must never prevent application widgets beneath it
+    // from receiving pointer events.
+    Widget::ignore_pointer(
+        true,
+        Widget::repaint_boundary(Widget::box_(Size::ZERO, incular_core::Color::TRANSPARENT)),
+    )
+    .with_key(Key::String(PERFORMANCE_OVERLAY_KEY.to_owned()))
 }
 
 /// Property tests for retained child reconciliation: random operation

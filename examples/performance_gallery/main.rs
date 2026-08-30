@@ -8,14 +8,17 @@
 //! ```
 //!
 //! Scenarios are mounted one at a time through the retained tree, so switching
-//! unmounts the previous scenario's elements. The overlay at the top-left is
+//! unmounts the previous scenario's elements. The positioned overlay is
 //! repaint-contained and rebuilds only when the performance hub publishes.
 use incular::material::RawMaterialButton;
 use incular::prelude::*;
 use incular::widgets::internal::{
     Effects, Key, PathView, ScrollView, TranslationController, performance_overlay_placeholder,
 };
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 const SCENARIOS: [&str; 15] = [
     "100k widgets",
@@ -219,10 +222,8 @@ mod simulations;
 fn main() {
     let scenario = Signal::new(0_usize);
     let translation = TranslationController::new();
-    let animation_trigger = translation.clone();
 
     let shared_window_count = Signal::new(1_u32);
-    let window_opener_signal = Signal::new(0_u32);
     let recon_tick = Signal::new(0_u64);
     let reorder_flip = Signal::new(0_u64);
     let doc_edits = Signal::new(0_u64);
@@ -232,31 +233,23 @@ fn main() {
     // Auto-pilot: INCULAR_GALLERY_AUTOPILOT=1 cycles every scenario so a
     // single launch exercises the full gallery (useful for demos/CI runs).
     let autopilot = std::env::var("INCULAR_GALLERY_AUTOPILOT").is_ok();
+    let scenario_for_build = scenario.clone();
     let mut app = Application::new_with_options(
         WindowOptions {
             title: "Incular performance gallery".into(),
-            initial_logical_size: Size::new(1440., 900.),
-            minimum_logical_size: Some(Size::new(900., 650.)),
+            // Keep the gallery usable on a high-DPI desktop. The layout
+            // switches to its scrollable single-column form below 1,280
+            // logical pixels, so a smaller initial surface still exposes
+            // every workload without placing diagnostics off-screen.
+            initial_logical_size: Size::new(1000., 640.),
+            minimum_logical_size: Some(Size::new(800., 560.)),
             ..WindowOptions::default()
         },
         move |cx| {
-            let selected = scenario.get();
-            if autopilot {
-                let advance = scenario.clone();
-                cx.spawn_into(
-                    async move {
-                        tokio::time::sleep(Duration::from_secs(4)).await;
-                        0_u32
-                    },
-                    move |_result, _runtime| {
-                        advance.set((selected + 1) % SCENARIOS.len());
-                    },
-                );
-            }
-
+            let selected = scenario_for_build.get();
             let workload = scenario_view(
                 selected,
-                &scenario,
+                &scenario_for_build,
                 &translation,
                 &shared_window_count,
                 &recon_tick,
@@ -266,7 +259,7 @@ fn main() {
                 cx,
             )
             .into();
-            let navigation = navigation(selected, &scenario);
+            let navigation = navigation(selected, &scenario_for_build);
             let header = gallery_header(selected);
             let scroll = dashboard_scroll.clone();
 
@@ -359,10 +352,39 @@ fn main() {
         eprintln!("performance overlay unavailable: {error:?}");
     }
 
-    let _ = animation_trigger;
-    let _ = window_opener_signal;
+    if autopilot {
+        schedule_autopilot(&mut app, scenario.clone());
+    }
     example_support::spawn_if_requested(app.simulation(), simulations::run);
     incular::run(app).expect("native gallery");
+}
+
+fn schedule_autopilot(app: &mut Application, scenario: Signal<usize>) {
+    app.spawn_into(
+        async {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+        },
+        move |result, runtime| {
+            if result.is_ok() {
+                scenario.update(|selected| *selected = (*selected + 1) % SCENARIOS.len());
+                schedule_autopilot_tick(runtime, scenario);
+            }
+        },
+    );
+}
+
+fn schedule_autopilot_tick(runtime: &mut Runtime, scenario: Signal<usize>) {
+    runtime.spawn_into(
+        async {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+        },
+        move |result, runtime| {
+            if result.is_ok() {
+                scenario.update(|selected| *selected = (*selected + 1) % SCENARIOS.len());
+                schedule_autopilot_tick(runtime, scenario);
+            }
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -766,18 +788,27 @@ fn nested_scroll() -> Widget {
 }
 
 fn gesture_stress(hits: &Signal<u32>) -> Widget {
+    let tap_count = hits.get();
     let mut cells: Vec<Widget> = Vec::with_capacity(300);
     for index in 0..300 {
         let counter = hits.clone();
+        let callback = Rc::new(move || {
+            counter.update(|count| *count += 1);
+        });
+        let pointer_callback = callback.clone();
+        let semantic_callback = callback.clone();
+        let gesture = GestureDetector::new(Widget::fixed_box(
+            Size::new(72., 72.),
+            Color::rgba(120, 60 + ((index * 13) % 150) as u8, 90, 255),
+        ))
+        .on_tap(move || pointer_callback());
         cells.push(
-            GestureDetector::new(Widget::fixed_box(
-                Size::new(72., 72.),
-                Color::rgba(120, 60 + ((index * 13) % 150) as u8, 90, 255),
-            ))
-            .on_tap(move || {
-                counter.update(|count| *count += 1);
-            })
-            .into(),
+            Semantics::new(gesture)
+                .button(true)
+                .label(format!("gesture cell {index} (tap count {tap_count})"))
+                .enabled(true)
+                .on_tap(move || semantic_callback())
+                .into(),
         );
     }
     let display = hits.clone();
@@ -842,23 +873,23 @@ fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widget {
     let count = shared.get();
     let increment = shared.clone();
     let open_manager = manager.clone();
+    let sibling_shared = shared.clone();
     labeled(
         "Shared state across windows",
         Widget::column(vec![
             RawMaterialButton::new(format!("Shared counter: {count}"))
                 .on_press(move || increment.update(|value| *value += 1))
                 .into(),
-            RawMaterialButton::new("Open static sibling window")
+            RawMaterialButton::new("Open sibling window")
                 .on_press(move || {
                     let manager = open_manager.clone();
+                    let sibling_shared = sibling_shared.clone();
                     let opened = manager.open_window_with(
                         WindowOptions {
                             title: "Gallery sibling".into(),
                             ..WindowOptions::default()
                         },
-                        |_cx| {
-                            Widget::text("Static sibling window: it must never redraw on its own")
-                        },
+                        move |_cx| shared_counter_window(&sibling_shared),
                     );
                     if opened.is_err() {
                         eprintln!("gallery sibling window unavailable");
@@ -866,8 +897,20 @@ fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widget {
                 })
                 .into(),
             Widget::text(
-                "The sibling shares this Signal but stays idle unless you interact there.",
+                "The sibling reads and writes the same Signal; both retained roots update only after interaction.",
             ),
         ]),
     )
+}
+
+fn shared_counter_window(shared: &Signal<u32>) -> Widget {
+    let count = shared.get();
+    let increment = shared.clone();
+    Widget::column(vec![
+        Text::new("Gallery sibling window").into(),
+        RawMaterialButton::new(format!("Shared counter: {count}"))
+            .on_press(move || increment.update(|value| *value += 1))
+            .into(),
+        Text::new("This window is backed by the primary window's Signal.").into(),
+    ])
 }

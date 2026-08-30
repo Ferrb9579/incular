@@ -94,6 +94,7 @@ pub fn spawn_if_requested(
 }
 
 /// Runs the common pointer, keyboard, scrolling, and capture smoke sequence.
+#[allow(dead_code)]
 pub fn run_smoke(simulation: Simulation, scenario: ExampleScenario) {
     if let Err(error) = run_smoke_inner(&simulation, scenario) {
         eprintln!("example simulation [{}] failed: {error}", scenario.name);
@@ -109,6 +110,47 @@ pub fn run_smoke(simulation: Simulation, scenario: ExampleScenario) {
     }
 }
 
+/// Runs an example-owned interaction sequence with the same lifecycle and
+/// capture handling as [`run_smoke`]. The callback is intentionally supplied
+/// by the example so stateful controls can be checked instead of silently
+/// treated as optional labels.
+#[allow(dead_code)]
+pub fn run_custom(
+    simulation: Simulation,
+    scenario: ExampleScenario,
+    exercise: impl FnOnce(&Simulation) -> Result<(), SimulationError>,
+) {
+    let result = run_custom_inner(&simulation, scenario, exercise);
+    match result {
+        Ok(()) => {
+            eprintln!("example simulation [{}] completed", scenario.name);
+            if std::env::var_os(EXIT_AFTER_SIMULATION_ENV).is_some() {
+                std::process::exit(0);
+            }
+        }
+        Err(error) => {
+            eprintln!("example simulation [{}] failed: {error}", scenario.name);
+            if std::env::var_os(EXIT_AFTER_SIMULATION_ENV).is_some() {
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn run_custom_inner(
+    simulation: &Simulation,
+    scenario: ExampleScenario,
+    exercise: impl FnOnce(&Simulation) -> Result<(), SimulationError>,
+) -> Result<(), SimulationError> {
+    wait_for_settled_frame(simulation)?;
+    capture_to_disk(simulation, scenario.name, "initial")?;
+    exercise(simulation)?;
+    simulation.release_all_keys()?;
+    capture_to_disk(simulation, scenario.name, "after-interaction")
+}
+
+#[allow(dead_code)]
 fn run_smoke_inner(
     simulation: &Simulation,
     scenario: ExampleScenario,
@@ -145,6 +187,7 @@ fn run_smoke_inner(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn click_label_with_scroll(
     simulation: &Simulation,
     scenario: ExampleScenario,
@@ -212,7 +255,7 @@ fn click_label_with_scroll(
     Ok(())
 }
 
-fn wait_for_settled_frame(simulation: &Simulation) -> Result<(), SimulationError> {
+pub fn wait_for_settled_frame(simulation: &Simulation) -> Result<(), SimulationError> {
     // A retained layout may need one frame to install lazy children and a
     // second frame to paint their measured extents. Keep captures deterministic
     // without sleeping the application thread or depending on wall-clock time.
@@ -223,7 +266,7 @@ fn wait_for_settled_frame(simulation: &Simulation) -> Result<(), SimulationError
     Ok(())
 }
 
-fn capture_to_disk(
+pub fn capture_to_disk(
     simulation: &Simulation,
     example_name: &str,
     stage: &str,
