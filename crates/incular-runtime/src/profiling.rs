@@ -494,7 +494,7 @@ impl PerformanceSnapshot {
             "FPS {}",
             self.fps
                 .map(|fps| format!("{fps:.0}"))
-                .unwrap_or_else(|| "--".into())
+                .unwrap_or_else(|| "idle".into())
         ));
         let latest = self.windows.iter().find_map(|window| window.latest);
         if let Some(record) = latest {

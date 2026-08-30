@@ -216,18 +216,23 @@ impl MenuStyle {
                 .into();
         }
         let min = self.minimum_size.unwrap_or(Size::ZERO);
-        let max = self
+        let max_width = self
             .maximum_size
-            .unwrap_or(Size::new(f32::INFINITY, f32::INFINITY));
-        if min == Size::ZERO && !max.width.is_finite() && !max.height.is_finite() {
+            .map_or(f32::INFINITY, |size| size.width)
+            .max(min.width);
+        let max_height = self
+            .maximum_size
+            .map_or(f32::INFINITY, |size| size.height)
+            .max(min.height);
+        if min == Size::ZERO && !max_width.is_finite() && !max_height.is_finite() {
             widget
         } else {
             Container::with_child(widget)
                 .constraints(Constraints::new(
                     min.width.max(0.0),
-                    max.width.max(min.width),
+                    max_width,
                     min.height.max(0.0),
-                    max.height.max(min.height),
+                    max_height,
                 ))
                 .into()
         }
@@ -465,7 +470,8 @@ impl MenuController {
     }
 
     pub fn set_open(&self, value: bool) {
-        if self.open.replace(value) != value {
+        let previous = self.open.replace(value);
+        if previous != value {
             self.revision.set(self.revision.get().wrapping_add(1));
         }
     }
@@ -784,10 +790,20 @@ impl MenuItemButton {
         if let Some(icon) = &self.trailing_icon {
             children.push(icon.clone());
         }
-        let content: Widget = Row::new(children)
-            .spacing(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .into();
+        let content: Widget = if self.leading_icon.is_none() && self.trailing_icon.is_none() {
+            self.child.clone()
+        } else {
+            Row::new(children)
+                .spacing(8.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
+        };
+        let semantic_label = self
+            .semantics_label
+            .clone()
+            .filter(|label| !label.trim().is_empty())
+            .or_else(|| content.semantic_text())
+            .unwrap_or_default();
 
         let mut style = self
             .style
@@ -818,7 +834,10 @@ impl MenuItemButton {
             });
         }
 
-        let mut result: Widget = button.into();
+        // Menu rows are materialized by an already-deferred menu builder. Build
+        // the inner control eagerly here so opening a menu does not introduce
+        // another layout-builder boundary into a lazy sliver child.
+        let mut result: Widget = button.build(&current_control_theme());
         if let Some(hover) = self.on_hover.clone() {
             let enter = hover.clone();
             let exit = hover;
@@ -832,7 +851,7 @@ impl MenuItemButton {
 
         result.semantics(
             ExplicitSemantics::new(SemanticRole::Button)
-                .label(self.semantics_label.clone().unwrap_or_default())
+                .label(semantic_label)
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
@@ -1229,6 +1248,7 @@ impl MenuAnchor {
         let controller = self.controller.clone();
         let on_open = self.on_open.clone();
         let on_close = self.on_close.clone();
+        let anchor_label = anchor_child.semantic_text();
         let mut anchor = ActionSurface::with_child(anchor_child)
             .color(Color::TRANSPARENT)
             .enabled(self.enabled);
@@ -1246,20 +1266,20 @@ impl MenuAnchor {
             });
         }
         let anchor: Widget = anchor.into();
-        let anchor = anchor.semantics(
-            ExplicitSemantics::new(SemanticRole::Button)
-                .state(SemanticState {
-                    enabled: self.enabled,
-                    focusable: self.enabled,
-                    expanded: Some(open),
-                    ..SemanticState::default()
-                })
-                .actions(if self.enabled {
-                    vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
-                } else {
-                    Vec::new()
-                }),
-        );
+        let mut semantics = ExplicitSemantics::new(SemanticRole::Button).state(SemanticState {
+            enabled: self.enabled,
+            focusable: self.enabled,
+            expanded: Some(open),
+            ..SemanticState::default()
+        });
+        if let Some(label) = anchor_label {
+            semantics = semantics.label(label);
+        }
+        let anchor = anchor.semantics(semantics.actions(if self.enabled {
+            vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+        } else {
+            Vec::new()
+        }));
 
         if !open {
             return anchor;
@@ -1280,10 +1300,11 @@ impl MenuAnchor {
         } else {
             self.menu_children.clone()
         };
-        let panel = menu_panel(items, &style, &theme);
+        let (panel, panel_height) = menu_panel(items, &style, &theme);
         let panel: Widget = Positioned::new(panel)
             .left(self.alignment_offset.x)
             .top(self.alignment_offset.y)
+            .height(panel_height)
             .into();
         // The lower-level overlay portal is retained here.  When requested,
         // add a transparent, full-bounds barrier beneath the anchor/panel so
@@ -2071,10 +2092,11 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
         if let Some(value) = self.surface_tint_color {
             style = style.surface_tint_color(value);
         }
-        let panel = menu_panel(children, &style, &theme);
+        let (panel, panel_height) = menu_panel(children, &style, &theme);
         let panel: Widget = Positioned::new(panel)
             .left(self.offset.x)
             .top(self.offset.y)
+            .height(panel_height)
             .into();
         let overlay_child = if self.barrier_dismissible {
             let controller = self.controller.clone();
@@ -2877,7 +2899,8 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
         if let Some(height) = self.menu_height {
             style = style.maximum_size(Size::new(f32::INFINITY, height));
         }
-        let panel = menu_panel(item_widgets, &style, &theme);
+        let (panel, panel_height) = menu_panel(item_widgets, &style, &theme);
+        let panel: Widget = SizedBox::new().height(panel_height).child(panel).into();
 
         let mut decoration = InputDecoration::new();
         if let Some(label) = self.label.clone() {
@@ -3016,12 +3039,25 @@ fn menu_panel(
     children: Vec<Widget>,
     style: &MenuStyle,
     theme: &incular_controls::ControlTheme,
-) -> Widget {
+) -> (Widget, f32) {
+    const DEFAULT_MENU_ITEM_HEIGHT: f32 = 48.0;
+    let item_count = children.len() as f32;
     let state = ControlState::empty();
     let item_list: Widget = ListView::new(children).padding(EdgeInsets::ZERO).into();
     let padding = style
         .padding
         .unwrap_or_else(|| EdgeInsets::symmetric(0.0, 8.0));
+    let natural_height = item_count * DEFAULT_MENU_ITEM_HEIGHT + padding.top + padding.bottom;
+    let minimum_height = style.minimum_size.map_or(0.0, |size| size.height);
+    let maximum_height = style.maximum_size.map_or(f32::INFINITY, |size| size.height);
+    let panel_height = style
+        .fixed_size
+        .map(|size| size.height)
+        .filter(|height| height.is_finite())
+        .unwrap_or(natural_height)
+        .max(minimum_height)
+        .min(maximum_height)
+        .max(1.0);
     let shape = style.resolve_shape(state);
     let border = style.side.as_ref().map(|value| value.resolve(state));
     let surface: Widget = Container::with_child(item_list)
@@ -3043,12 +3079,15 @@ fn menu_panel(
     } else {
         material.into()
     };
-    style.constrained(material)
+    (style.constrained(material), panel_height)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        AppBar, Card, FilledButton, FloatingActionButton, MaterialApp, Scaffold, ScaffoldMessenger,
+    };
 
     #[test]
     fn menu_style_merge_keeps_explicit_values() {
@@ -3094,6 +3133,65 @@ mod tests {
             SubmenuButton::new(Text::new("Edit"), [MenuItemButton::label("Undo")]).into(),
         ];
         let _: Widget = MenuBar::new(children).spacing(4.0).into();
+    }
+
+    #[test]
+    fn menu_anchor_opens_in_a_retained_tree() {
+        let controller = MenuController::new();
+        let widget: Widget = MenuAnchor::new([MenuItemButton::label("New")])
+            .controller(controller.clone())
+            .child(FilledButton::tonal("Menu"))
+            .into();
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        tree.mount(ListView::new([widget]).into())
+            .expect("mount menu anchor");
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)));
+        controller.open();
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)));
+        tree.update_semantics();
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.label.as_deref() == Some("New"))
+        );
+    }
+
+    #[test]
+    fn menu_anchor_opens_inside_material_scaffold() {
+        let controller = MenuController::new();
+        let body: Widget = Container::new()
+            .color(Color::WHITE)
+            .padding(EdgeInsets::all(24.0))
+            .child(ListView::new([Card::new(
+                Column::new([
+                    Widget::from(Text::new("Button families")),
+                    MenuAnchor::new([MenuItemButton::label("New document")])
+                        .controller(controller.clone())
+                        .child(FilledButton::tonal("Menu"))
+                        .into(),
+                ])
+                .spacing(12.0),
+            )]))
+            .into();
+        let root = MaterialApp::new(ScaffoldMessenger::new(
+            Scaffold::new(body)
+                .app_bar(AppBar::new(Text::new("Material Workbench")))
+                .floating_action_button(FloatingActionButton::extended("Create")),
+        ))
+        .build();
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        tree.mount(root).expect("mount material scaffold");
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
+        controller.open();
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
+        let _ = tree.paint();
+        tree.update_semantics();
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.label.as_deref() == Some("New document"))
+        );
     }
 
     #[test]

@@ -96,6 +96,18 @@ impl ActionSurface {
         }
     }
 
+    /// Supplies the accessible name for a custom-content action surface.
+    ///
+    /// A child widget is visual content; it is not necessarily a semantic
+    /// label. Keeping the two values separate matches Flutter's low-level
+    /// button APIs and lets simulations, accessibility adapters, and keyboard
+    /// navigation address icon-only or custom-content buttons reliably.
+    #[must_use]
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
     #[must_use]
     pub fn on_press(mut self, callback: impl Fn() + 'static) -> Self {
         self.callback = Some(Rc::new(callback));

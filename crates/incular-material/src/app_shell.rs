@@ -17,8 +17,8 @@ use incular_controls::overlay::Side;
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
 use incular_widgets::{
-    BoxDecoration, Column, Container, Icon, Row, ScrollConfiguration, ScrollPhysics, SizedBox,
-    Stack, Text, Widget,
+    BoxDecoration, Column, Container, DefaultTextStyle, Icon, Row, ScrollConfiguration,
+    ScrollPhysics, SizedBox, Stack, Text, Widget,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -385,7 +385,13 @@ impl MaterialApp {
                 .unwrap_or_else(ThemeData::dark_shared),
             ThemeMode::System => self.theme.clone(),
         };
+        let text_style = theme.text_theme.body_medium.clone();
         let themed: Widget = Theme::scope_shared(theme, child);
+        // MaterialApp supplies the ambient body style just like Flutter's
+        // WidgetsApp/MaterialApp. Plain `Text::new` remains intentionally
+        // lightweight outside an application root, while descendants of a
+        // Material app inherit the theme's readable foreground color.
+        let themed = DefaultTextStyle::new(text_style, themed).into();
         let localized = if let Some(locale) = self.locale.clone() {
             Widget::environment_scope(locale, themed)
         } else {
@@ -1461,6 +1467,33 @@ mod tests {
         assert!(controller.is_showing());
         assert!(controller.hide_current_snack_bar().is_some());
         assert!(!controller.is_showing());
+    }
+
+    #[test]
+    fn messenger_mount_exposes_the_current_snackbar_action() {
+        let controller = ScaffoldMessengerController::new();
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        tree.mount(
+            ScaffoldMessenger::with_controller(controller.clone(), SizedBox::shrink()).into(),
+        )
+        .expect("mount messenger");
+        tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
+            400.0, 100.0,
+        )));
+
+        controller.show_snack_bar(
+            SnackBar::text("Saved").action(crate::SnackBarAction::new("Dismiss", || {})),
+        );
+        tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
+            400.0, 100.0,
+        )));
+        tree.update_semantics();
+
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.label.as_deref() == Some("Dismiss"))
+        );
     }
 
     #[test]

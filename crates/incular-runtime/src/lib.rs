@@ -1147,6 +1147,37 @@ pub struct Runtime {
     window_scope: TaskScope,
     window_manager: Option<WindowManager>,
 }
+
+fn diagnostic_input_trigger(event: &InputEvent) -> String {
+    match event {
+        InputEvent::Pointer { phase, position } => {
+            format!("pointer({phase:?}, {:.1}, {:.1})", position.x, position.y)
+        }
+        InputEvent::PointerWithId {
+            pointer,
+            phase,
+            position,
+        } => format!(
+            "pointer({pointer}, {phase:?}, {:.1}, {:.1})",
+            position.x, position.y
+        ),
+        InputEvent::Scroll { delta } => format!("scroll({:.1}, {:.1})", delta.x, delta.y),
+        InputEvent::Key(event) => format!("key({:?}, {:?})", event.state, event.code),
+        InputEvent::Text(text) => format!("text_input(chars={})", text.chars().count()),
+        InputEvent::Ime(ImeEvent::Preedit { text, .. }) => {
+            format!("ime_preedit(chars={})", text.chars().count())
+        }
+        InputEvent::Ime(ImeEvent::Commit(text)) => {
+            format!("ime_commit(chars={})", text.chars().count())
+        }
+        InputEvent::Ime(ImeEvent::End) => "ime_end".to_owned(),
+        InputEvent::WindowResized { size, scale_factor } => format!(
+            "window_resize({:.1}x{:.1}, scale={scale_factor:.2})",
+            size.width, size.height
+        ),
+    }
+}
+
 impl Runtime {
     pub fn new(root: Widget) -> Result<Self, TreeError> {
         Self::with_scheduler(root, tasks::TaskScheduler::new())
@@ -1800,12 +1831,29 @@ impl Runtime {
     }
     #[must_use]
     pub fn handle_input(&mut self, event: InputEvent) -> Option<EventTarget> {
+        let trigger = diagnostic_input_trigger(&event);
+        self.handle_input_with_trigger(event, trigger)
+    }
+
+    pub(crate) fn handle_input_with_trigger(
+        &mut self,
+        event: InputEvent,
+        trigger: impl Into<String>,
+    ) -> Option<EventTarget> {
+        self.tree.set_diagnostic_trigger(trigger);
         let started = std::time::Instant::now();
         let target = self.handle_input_inner(event);
         self.pending_event_processing_us = self
             .pending_event_processing_us
             .saturating_add(us_since_instant(started));
         target
+    }
+
+    /// Associates subsequent frame work with a higher-level command such as a
+    /// semantic simulation click. The trigger survives the input callback so
+    /// deferred build/layout failures retain their original cause.
+    pub fn set_diagnostic_trigger(&self, trigger: impl Into<String>) {
+        self.tree.set_diagnostic_trigger(trigger);
     }
     fn handle_input_inner(&mut self, event: InputEvent) -> Option<EventTarget> {
         let (pointer, phase, position) = match event {
@@ -4995,17 +5043,20 @@ fn us_since_instant(started: std::time::Instant) -> u32 {
 mod tests {
     use super::*;
     use accesskit::{Action, ActionRequest, NodeId, TreeId};
+    use incular_config::{Constraints, EdgeInsets};
     use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
     use incular_rendering::{DisplayList, PaintCommand};
     use incular_semantics::{Role as SemanticRole, SemanticAction};
+    use incular_text::TextStyle;
     use incular_widgets::internal::{GestureCallbacks, TextEditingController};
     use incular_widgets::{
-        CustomScrollView, DecoratedBox, GestureDetector, SliverFixedExtentList, Text,
-        internal::ActionSurface,
+        Align, BorderRadius, BoxDecoration, Container, CustomScrollView, DecoratedBox,
+        DefaultTextStyle, GestureDetector, SliverFixedExtentList, Text, internal::ActionSurface,
     };
     use std::time::{Duration, Instant};
     use std::{
         cell::Cell,
+        rc::Rc,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -5068,6 +5119,81 @@ mod tests {
             .iter()
             .find_map(|(id, node)| (node.role == role).then_some(id))
             .expect("semantic node")
+    }
+
+    #[test]
+    fn rounded_text_inserted_by_a_layout_builder_is_frame_stable() {
+        let open = Rc::new(Cell::new(false));
+        let revision = Rc::new(Cell::new(0));
+        let open_for_builder = open.clone();
+        let root = Widget::stateful_layout_builder(revision.clone(), move |_| {
+            if open_for_builder.get() {
+                Container::new()
+                    .height(32.0)
+                    .padding(EdgeInsets::symmetric(12.0, 0.0))
+                    .decoration(BoxDecoration::new().border_radius(BorderRadius::circular(4.0)))
+                    .child(Align::new(
+                        incular_config::Alignment::CENTER,
+                        Text::new("New document"),
+                    ))
+                    .into()
+            } else {
+                Text::new("Menu").into()
+            }
+        });
+        let root = DefaultTextStyle::new(TextStyle::default().font_size(14.0), root).into();
+        let mut runtime = Runtime::new(root).expect("mount rounded text test");
+        let constraints = Constraints::tight(Size::new(320.0, 120.0));
+        runtime.run_frame(constraints).expect("initial frame");
+        open.set(true);
+        revision.set(1);
+        runtime.run_frame(constraints).expect("opened frame");
+        runtime.run_frame(constraints).expect("stable opened frame");
+    }
+
+    #[test]
+    fn installed_performance_overlay_receives_presented_renderer_metrics() {
+        let mut app =
+            Application::new(|_| incular_widgets::internal::performance_overlay_placeholder())
+                .expect("performance application");
+        app.set_profiler_mode(ProfilerMode::Diagnostic);
+        let window = app.primary_window();
+        app.install_performance_overlay(window)
+            .expect("install performance overlay");
+        app.run_window_frame_at(
+            window,
+            Constraints::tight(Size::new(320.0, 180.0)),
+            Instant::now(),
+        )
+        .expect("initial overlay frame");
+        app.note_presented(window, true);
+        app.note_render_metrics(
+            window,
+            RenderFrameMetrics {
+                draw_calls: 7,
+                instances: 13,
+                render_passes: 1,
+                prepare_us: 120,
+                encode_us: 80,
+                submit_us: 40,
+                ..RenderFrameMetrics::default()
+            },
+            Some(GpuSample {
+                supported: true,
+                frame: 1,
+                main_pass_us: 75.0,
+            }),
+        );
+
+        let snapshot = app.performance_hub().snapshot();
+        assert_eq!(snapshot.windows[0].render.draw_calls, 7);
+        assert_eq!(snapshot.windows[0].render.instances, 13);
+        assert_eq!(
+            snapshot.windows[0].gpu.expect("GPU sample").main_pass_us,
+            75.0
+        );
+        assert!(snapshot.widgets.elements_total > 0);
+        assert!(app.frame_requested(window));
     }
 
     #[cfg(feature = "devtools")]

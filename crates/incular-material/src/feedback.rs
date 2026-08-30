@@ -1019,6 +1019,11 @@ impl SnackBarAction {
             )
             .enabled(self.enabled)
             .action(SemanticAction::Activate);
+        if self.enabled {
+            if let Some(callback) = self.on_pressed.clone() {
+                semantics = semantics.on_tap(move || callback());
+            }
+        }
         if !self.enabled {
             semantics = semantics.state(SemanticState {
                 enabled: false,
@@ -1817,5 +1822,22 @@ mod tests {
             .trigger_mode(TooltipTriggerMode::Manual)
             .into();
         let _ = (snackbar, simple, tooltip);
+    }
+
+    #[test]
+    fn snackbar_action_is_semantically_exposed() {
+        let snackbar = SnackBar::text("Saved")
+            .action(SnackBarAction::new("Dismiss", || {}))
+            .build(&current_control_theme());
+        let mut tree = incular_widgets::internal::WidgetTree::new();
+        tree.mount(snackbar).expect("mount snackbar");
+        tree.layout(incular_config::Constraints::tight(Size::new(400.0, 100.0)));
+        tree.update_semantics();
+
+        assert!(
+            tree.semantics()
+                .iter()
+                .any(|(_, node)| node.label.as_deref() == Some("Dismiss"))
+        );
     }
 }

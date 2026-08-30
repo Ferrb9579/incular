@@ -22,6 +22,7 @@ use incular_controls::{
 };
 use incular_core::{Color, Offset, Size};
 use incular_rendering::{Canvas, LineCap, LineJoin, Path, Stroke};
+use incular_semantics::SemanticAction;
 use incular_text::TextStyle;
 use incular_widgets::internal::{ActionSurface, Expanded};
 use incular_widgets::{
@@ -509,8 +510,9 @@ impl Scaffold {
         let scaffold_background = Theme::of_shared().map_or(theme.colors.background, |theme| {
             theme.scaffold_background_color
         });
-        let body = Material::new(Expanded::new(self.body.clone()))
-            .color(self.background.unwrap_or(scaffold_background));
+        let body = Expanded::new(
+            Material::new(self.body.clone()).color(self.background.unwrap_or(scaffold_background)),
+        );
         children.push(body.into());
         if let Some(sheet) = self.bottom_sheet.clone() {
             children.push(sheet);
@@ -1974,13 +1976,21 @@ impl ListTile {
         } else {
             raw
         };
-        let semantics = Semantics::new(raw).button(has_action);
+        let mut semantics = Semantics::new(raw).button(has_action).enabled(self.enabled);
+        if has_action {
+            semantics = semantics.action(SemanticAction::Activate);
+        }
         let _ = (
             self.min_leading_width,
             self.horizontal_title_gap,
             self.autofocus,
         );
-        match self.semantic_label.clone() {
+        let semantic_label = self
+            .semantic_label
+            .clone()
+            .filter(|label| !label.trim().is_empty())
+            .or_else(|| self.title.semantic_text());
+        match semantic_label {
             Some(label) => semantics.label(label).into(),
             None => semantics.into(),
         }
@@ -2286,7 +2296,11 @@ impl<T: PartialEq + Clone + 'static> RadioListTile<T> {
             surface = surface.on_click(move || callback(value.clone()));
         }
         let raw: Widget = surface.into();
-        let semantics = Semantics::new(raw).button(self.on_changed.is_some());
+        let has_action = self.enabled && self.on_changed.is_some();
+        let mut semantics = Semantics::new(raw).button(has_action).enabled(self.enabled);
+        if has_action {
+            semantics = semantics.action(SemanticAction::Activate);
+        }
         match self.semantic_label.clone() {
             Some(label) => semantics.label(label).into(),
             None => semantics.into(),
@@ -2768,7 +2782,10 @@ impl RawChip {
             && (self.on_pressed.is_some()
                 || self.on_selected.is_some()
                 || self.on_deleted.is_some());
-        let semantics = Semantics::new(raw).button(has_action);
+        let mut semantics = Semantics::new(raw).button(has_action).enabled(self.enabled);
+        if has_action {
+            semantics = semantics.action(SemanticAction::Activate);
+        }
         semantics
             .label(
                 self.semantic_label

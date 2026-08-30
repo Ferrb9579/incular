@@ -14,9 +14,10 @@ use incular_platform::{
     touch_event, wheel_event,
 };
 use incular_runtime::{
-    Application, ApplicationLifecycle, NativeWindowCommand, Runtime, RuntimeWake, Screenshot,
+    Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
+    RuntimeWake, Screenshot,
 };
-use incular_wgpu::{RendererError, SharedGpuContext, WgpuRenderer};
+use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::internal::ActionId;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 #[cfg(feature = "devtools")]
@@ -41,6 +42,23 @@ impl std::fmt::Display for RunError {
     }
 }
 impl std::error::Error for RunError {}
+
+fn runtime_render_metrics(stats: &RenderStats) -> RenderFrameMetrics {
+    RenderFrameMetrics {
+        draw_calls: stats.draw_calls,
+        instances: stats.total_instances(),
+        render_passes: stats.render_passes,
+        path_triangles: stats.path_triangles,
+        upload_bytes: stats.upload_bytes,
+        texture_upload_bytes: stats.texture_upload_bytes,
+        pipelines_created: stats.pipelines_created,
+        queue_submissions: stats.queue_submissions,
+        prepare_us: stats.prepare_us,
+        encode_us: stats.encode_us,
+        submit_us: stats.submit_us,
+        ..RenderFrameMetrics::default()
+    }
+}
 /// Runs a native Linux window until close. The native window stays alive for the
 /// complete lifetime of the renderer's unsafe raw-handle surface.
 pub fn run_window(
@@ -842,6 +860,16 @@ impl MultiApp {
                 match state.renderer.render(&list, metrics.scale_factor) {
                     Ok(stats) => {
                         self.application.note_presented(id, stats.presented);
+                        let gpu = state.renderer.gpu_frame_timings().map(|timing| GpuSample {
+                            supported: true,
+                            frame: timing.frame,
+                            main_pass_us: timing.main_pass_us,
+                        });
+                        self.application.note_render_metrics(
+                            id,
+                            runtime_render_metrics(&stats),
+                            gpu,
+                        );
                         let capture = state.renderer.take_capture().map(|result| {
                             result.and_then(|frame| {
                                 Screenshot::from_rgba8(frame.width, frame.height, frame.rgba8)

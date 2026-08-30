@@ -1,5 +1,19 @@
 # incular-widgets
 
+## Frame recursion diagnostics
+
+Build, layout, paint, semantics, and compositor traversal track their active
+retained paths. In debug and DevTools builds, re-entering the same node in one
+phase panics early with the triggering input, constraints, widget path, last
+external call, and a backtrace. All builds retain a configurable depth guard.
+Reports are written to the platform crash-report directory; override it with
+`INCULAR_CRASH_REPORT_DIR` and override the fallback depth with
+`INCULAR_RECURSION_LIMIT`.
+
+Legitimate deep trees use segmented stack growth at recursive traversal
+boundaries, so a finite hierarchy is not mistaken for a cycle and does not
+exhaust the native UI-thread stack.
+
 This crate implements the deployable, curated subset of Flutter 3.47.1
 `widgets.dart` vocabulary:
 declarative widget descriptors, retained reconciliation, renderer-neutral

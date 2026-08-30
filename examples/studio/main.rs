@@ -24,6 +24,13 @@ use crate::{
 use incular::prelude::*;
 use incular::widgets::internal::SplitView;
 
+#[path = "../support/mod.rs"]
+mod example_support;
+#[cfg(test)]
+#[path = "tests.rs"]
+mod example_tests;
+mod simulations;
+
 fn main() {
     let stress_tree_count = std::env::var("INCULAR_STUDIO_STRESS_TREE")
         .ok()
@@ -37,6 +44,7 @@ fn main() {
         .expect("valid Incular Studio application");
 
     eprintln!("Launching Incular Studio...");
+    example_support::spawn_if_requested(app.simulation(), simulations::run);
     if let Err(err) = incular::run(app) {
         eprintln!("Incular Studio runtime error: {err:?}");
     }

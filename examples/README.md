@@ -1,7 +1,9 @@
 # Examples
 
-Runnable examples live at the workspace root so they are easy to discover.
-They remain registered with the `incular` package and can be run with:
+Every runnable example has its own directory, matching the Studio layout. The
+directory contains `main.rs`, a local `simulations.rs` scenario, and a local
+test module. Examples remain registered with the `incular` package and keep
+their stable Cargo target names:
 
 ```text
 cargo run -p incular --example counter
@@ -11,7 +13,7 @@ The API-focused examples demonstrate both construction styles:
 
 - `core_defaults` uses `Container::new()` with fluent setters alongside
   `Container::builder()` and explicit defaults.
-- `widget_basics.rs` shows a generic `Container` child containing `Text`, a
+- `widget_basics` shows a generic `Container` child containing `Text`, a
   feature-gated Controls button, and a feature-gated Material action surface.
 - `counter` keeps its increment surface compact: the raw Material hit target
   has a transparent interaction layer, while the visible child owns its color
@@ -75,3 +77,32 @@ Additional visual feature demos:
   stack, and a stable auxiliary inspector window. It prints the development
   snapshot path; close and relaunch to verify reconstruction, or use Reset to
   start a clean next session.
+
+## Example QA
+
+Each example owns a deterministic QA contract in `simulations.rs` and a
+contract test in `tests.rs`. The shared harness exercises the normalized
+pointer, keyboard, scroll, semantic-click, and application-frame capture paths
+without using the host mouse, keyboard, or desktop capture APIs.
+
+Run one simulation and save its two application-frame captures:
+
+```text
+$env:INCULAR_EXAMPLE_SIMULATION=1
+$env:INCULAR_EXAMPLE_SIMULATION_EXIT=1
+cargo run -p incular --example counter
+```
+
+Captures are written below `target/example-review/screenshots/<example>/` as
+portable PPM files. Set `INCULAR_EXAMPLE_SCREENSHOT_DIR` to choose another
+output directory. The exit flag is intended for CI/review batches; omit it to
+leave the example open after the simulation completes.
+
+Run the local example contract tests with:
+
+```text
+cargo test -p incular --example counter
+```
+
+`examples/REPORT.md` records the review matrix, screenshot evidence, and any
+example-specific limitations.

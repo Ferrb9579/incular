@@ -95,6 +95,7 @@ kurbo = "0.13"
 tokio = { version = "1.53", features = ["rt-multi-thread", "sync", "time", "net", "io-util"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+stacker = "0.1.25"
 tempfile = "3.27"
 # Keep the platform-native adapter at the desktop boundary.  The `tokio`
 # feature selects AccessKit's Unix Tokio integration instead of its default
@@ -109,6 +110,8 @@ icu_datetime = { version = "2.2.0", features = ["compiled_data"] }
 icu_plurals = { version = "2.2.0", features = ["compiled_data"] }
 icu_segmenter = { version = "2.2.0", features = ["compiled_data"] }
 keyboard-types = "0.8.3"
+crash-handler = "0.6.2"
+minidump-writer = "0.11.0"
 
 # Optimized build with symbols for external profilers (`perf`,samply).
 [profile.profiling]

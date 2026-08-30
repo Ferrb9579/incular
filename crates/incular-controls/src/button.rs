@@ -284,8 +284,13 @@ impl Button {
                 raw = raw.on_click(move || cb());
             }
         }
+        let semantic_label = self
+            .label
+            .clone()
+            .or_else(|| self.child.as_ref().and_then(Widget::semantic_text))
+            .unwrap_or_default();
         let mut semantics = ExplicitSemantics::new(SemanticRole::Button)
-            .label(self.label.clone().unwrap_or_default())
+            .label(semantic_label)
             .state(SemanticState {
                 enabled: effective_enabled,
                 focusable: self.enabled || self.focusable_when_disabled || self.loading,
@@ -336,11 +341,16 @@ fn has_visible_border(border: &Border) -> bool {
 impl From<Button> for Widget {
     fn from(value: Button) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
+        let semantic_label = value
+            .label
+            .clone()
+            .or_else(|| value.child.as_ref().and_then(Widget::semantic_text));
+        let widget = Widget::layout_builder(move |_| {
             let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
                 .unwrap_or_default();
             value.build(&theme)
-        })
+        });
+        semantic_label.map_or(widget.clone(), |label| widget.accessibility_label(label))
     }
 }
 

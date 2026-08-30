@@ -20,6 +20,7 @@ mod layout;
 mod navigation_scopes;
 mod painting_effects;
 mod radio_selection;
+mod recursion;
 mod safe_area;
 mod scrolling;
 mod selection;

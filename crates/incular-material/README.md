@@ -45,6 +45,6 @@ cargo run -p incular --example material_workbench --features material
 
 That gallery exercises the theme scope, button families, chips, list tiles,
 navigation, progress indicators, Material surfaces, menus, dialogs, tabs,
-feedback, and decorated text input. `examples/material_workbench.rs` is the
-Material public-API application smoke test; `examples/workbench.rs` remains
+feedback, and decorated text input. `examples/material_workbench/main.rs` is the
+Material public-API application smoke test; `examples/workbench/main.rs` remains
 the base-Widgets workbench.

@@ -12,112 +12,118 @@ path = "src/lib.rs"
 
 [[example]]
 name = "animation"
-path = "../../examples/animation.rs"
+path = "../../examples/animation/main.rs"
 [[example]]
 name = "async_runtime"
-path = "../../examples/async_runtime.rs"
+path = "../../examples/async_runtime/main.rs"
 [[example]]
 name = "color_effects"
-path = "../../examples/color_effects.rs"
+path = "../../examples/color_effects/main.rs"
 [[example]]
 name = "canvas_layers"
-path = "../../examples/canvas_layers.rs"
+path = "../../examples/canvas_layers/main.rs"
 [[example]]
 name = "counter"
-path = "../../examples/counter.rs"
+path = "../../examples/counter/main.rs"
 [[example]]
 name = "custom"
-path = "../../examples/custom.rs"
+path = "../../examples/custom/main.rs"
 [[example]]
 name = "simulation"
-path = "../../examples/simulation.rs"
+path = "../../examples/simulation/main.rs"
 [[example]]
 name = "effects"
-path = "../../examples/effects.rs"
+path = "../../examples/effects/main.rs"
 [[example]]
 name = "environment"
-path = "../../examples/environment.rs"
+path = "../../examples/environment/main.rs"
 [[example]]
 name = "gesture_gallery"
-path = "../../examples/gesture_gallery.rs"
+path = "../../examples/gesture_gallery/main.rs"
 [[example]]
 name = "interaction_complete"
-path = "../../examples/interaction_complete.rs"
+path = "../../examples/interaction_complete/main.rs"
 [[example]]
 name = "images"
-path = "../../examples/images.rs"
+path = "../../examples/images/main.rs"
 [[example]]
 name = "layout_gallery"
-path = "../../examples/layout_gallery.rs"
+path = "../../examples/layout_gallery/main.rs"
 [[example]]
 name = "layout_complete"
-path = "../../examples/layout_complete.rs"
+path = "../../examples/layout_complete/main.rs"
 [[example]]
 name = "localization"
-path = "../../examples/localization.rs"
+path = "../../examples/localization/main.rs"
 [[example]]
 name = "multi_window"
-path = "../../examples/multi_window.rs"
+path = "../../examples/multi_window/main.rs"
 [[example]]
 name = "opacity"
-path = "../../examples/opacity.rs"
+path = "../../examples/opacity/main.rs"
 [[example]]
 name = "navigation_showcase"
-path = "../../examples/navigation_showcase.rs"
+path = "../../examples/navigation_showcase/main.rs"
 [[example]]
 name = "painting"
-path = "../../examples/painting.rs"
+path = "../../examples/painting/main.rs"
 [[example]]
 name = "scroll"
-path = "../../examples/scroll.rs"
+path = "../../examples/scroll/main.rs"
 [[example]]
 name = "scrolling_complete"
-path = "../../examples/scrolling_complete.rs"
+path = "../../examples/scrolling_complete/main.rs"
 [[example]]
 name = "responsive_layout"
-path = "../../examples/responsive_layout.rs"
+path = "../../examples/responsive_layout/main.rs"
 [[example]]
 name = "reactive"
-path = "../../examples/reactive.rs"
+path = "../../examples/reactive/main.rs"
 [[example]]
 name = "restoration"
-path = "../../examples/restoration.rs"
+path = "../../examples/restoration/main.rs"
 [[example]]
 name = "semantics_gallery"
-path = "../../examples/semantics_gallery.rs"
+path = "../../examples/semantics_gallery/main.rs"
 [[example]]
 name = "slivers"
-path = "../../examples/slivers.rs"
+path = "../../examples/slivers/main.rs"
 [[example]]
 name = "text"
-path = "../../examples/text.rs"
+path = "../../examples/text/main.rs"
 [[example]]
 name = "text_field"
-path = "../../examples/text_field.rs"
+path = "../../examples/text_field/main.rs"
+[[example]]
+name = "text_selection"
+path = "../../examples/text_selection/main.rs"
 [[example]]
 name = "text_quality"
-path = "../../examples/text_quality.rs"
+path = "../../examples/text_quality/main.rs"
 [[example]]
 name = "core_defaults"
-path = "../../examples/core_defaults.rs"
+path = "../../examples/core_defaults/main.rs"
 [[example]]
 name = "controls_gallery"
-path = "../../examples/controls_gallery.rs"
+path = "../../examples/controls_gallery/main.rs"
 [[example]]
 name = "material_gallery"
-path = "../../examples/material_gallery.rs"
+path = "../../examples/material_gallery/main.rs"
 [[example]]
 name = "material_workbench"
-path = "../../examples/material_workbench.rs"
+path = "../../examples/material_workbench/main.rs"
 [[example]]
 name = "flutter_widgets_gallery"
-path = "../../examples/flutter_widgets_gallery.rs"
+path = "../../examples/flutter_widgets_gallery/main.rs"
 [[example]]
 name = "workbench"
-path = "../../examples/workbench.rs"
+path = "../../examples/workbench/main.rs"
+[[example]]
+name = "widget_basics"
+path = "../../examples/widget_basics/main.rs"
 [[example]]
 name = "base_ui_controls"
-path = "../../examples/base_ui_controls.rs"
+path = "../../examples/base_ui_controls/main.rs"
 [[example]]
 name = "studio"
 path = "../../examples/studio/main.rs"
@@ -169,4 +175,4 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 [[example]]
 name = "performance_gallery"
-path = "../../examples/performance_gallery.rs"
+path = "../../examples/performance_gallery/main.rs"

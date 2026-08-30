@@ -56,6 +56,8 @@ use crate::gestures::{
     GestureCallbacks, GestureDecision, GestureDisposition, PointerEvent, PointerGestureRecognizer,
     ScaleGestureDetector,
 };
+use crate::recursion::{DiagnosticNode, DiagnosticNodeId, RecursionDiagnostics};
+pub use crate::recursion::{FramePhase, RecursionReport};
 use crate::scrolling::{
     SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };
@@ -66,6 +68,14 @@ thread_local! {
     /// materialized. Control libraries use this hook for ambient, typed
     /// scopes without coupling the raw widget crate to a design-system crate.
     static BUILD_ENVIRONMENT: RefCell<Vec<Option<Rc<dyn Any>>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn text_call_label(method: &str, text: &str) -> String {
+    let mut preview = text.chars().take(80).collect::<String>();
+    if text.chars().count() > 80 {
+        preview.push('…');
+    }
+    format!("{method}({preview:?})")
 }
 
 /// A persistent chain of typed values inherited by a retained subtree.
@@ -2794,7 +2804,7 @@ fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bo
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WidgetType {
+pub(crate) enum WidgetType {
     Box,
     Shape,
     CustomPaint,
@@ -2848,6 +2858,65 @@ enum WidgetType {
     DropShadow,
     ColorFiltered,
     Blend,
+}
+impl WidgetType {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Box => "Box",
+            Self::Shape => "Shape",
+            Self::CustomPaint => "CustomPaint",
+            Self::Decorated => "DecoratedBox",
+            Self::Image => "Image",
+            Self::Button => "Button",
+            Self::Text => "Text",
+            Self::SelectableText => "SelectableText",
+            Self::SelectionArea => "SelectionArea",
+            Self::TextField => "TextField",
+            Self::Padding => "Padding",
+            Self::Constrained => "ConstrainedBox",
+            Self::Limited => "LimitedBox",
+            Self::Overflow => "OverflowBox",
+            Self::Unconstrained => "UnconstrainedBox",
+            Self::Fractional => "FractionallySizedBox",
+            Self::Baseline => "Baseline",
+            Self::RepaintBoundary => "RepaintBoundary",
+            Self::Gesture => "GestureDetector",
+            Self::Draggable => "Draggable",
+            Self::DragTarget => "DragTarget",
+            Self::IgnorePointer => "IgnorePointer",
+            Self::AbsorbPointer => "AbsorbPointer",
+            Self::Align => "Align",
+            Self::Flex => "Flex",
+            Self::Flexible => "Flexible",
+            Self::Wrap => "Wrap",
+            Self::Table => "Table",
+            Self::Stack => "Stack",
+            Self::Positioned => "Positioned",
+            Self::IndexedStack => "IndexedStack",
+            Self::SafeArea => "SafeArea",
+            Self::ClipRect => "ClipRect",
+            Self::ClipRRect => "ClipRRect",
+            Self::ClipOval => "ClipOval",
+            Self::ClipPath => "ClipPath",
+            Self::LayoutBuilder => "LayoutBuilder",
+            Self::Visibility => "Visibility",
+            Self::AspectRatio => "AspectRatio",
+            Self::Scroll => "ScrollView",
+            Self::PersistentHeader => "PersistentHeader",
+            Self::NotificationListener => "NotificationListener",
+            Self::SliverViewport => "SliverViewport",
+            Self::Translate => "Translate",
+            Self::Transform => "Transform",
+            Self::Scale => "ScaleTransition",
+            Self::Rotation => "RotationTransition",
+            Self::FittedBox => "FittedBox",
+            Self::Opacity => "Opacity",
+            Self::Blur => "ImageFiltered",
+            Self::DropShadow => "DropShadow",
+            Self::ColorFiltered => "ColorFiltered",
+            Self::Blend => "Blend",
+        }
+    }
 }
 impl Widget {
     /// Creates a widget from a internal kind descriptor.
@@ -2949,6 +3018,29 @@ impl Widget {
         }
     }
 
+    /// Returns the best text label exposed by this widget or a transparent
+    /// semantic/layout wrapper around it.
+    ///
+    /// Control crates use this when a Flutter-shaped control accepts a custom
+    /// child instead of a dedicated `label` argument. The visual child and
+    /// the accessible name are separate concepts, but text children provide a
+    /// safe default for ordinary custom-content controls.
+    #[doc(hidden)]
+    pub fn semantic_text(&self) -> Option<String> {
+        self.semantics
+            .label
+            .clone()
+            .filter(|label| !label.trim().is_empty())
+            .or_else(|| {
+                self.semantics
+                    .explicit
+                    .as_ref()
+                    .and_then(|semantics| semantics.label.clone())
+                    .filter(|label| !label.trim().is_empty())
+            })
+            .or_else(|| widget_text(self))
+    }
+
     #[must_use]
     pub fn box_(size: Size, color: Color) -> Self {
         Self {
@@ -3041,7 +3133,11 @@ impl Widget {
     /// applications should use `GestureDetector` or a Material button.
     #[doc(hidden)]
     pub(crate) fn action_surface(surface: crate::internal::ActionSurface) -> Self {
-        let semantic_label = surface.label.clone();
+        let semantic_label = if surface.label.is_empty() {
+            surface.content.as_ref().and_then(Widget::semantic_text)
+        } else {
+            Some(surface.label.clone())
+        };
         let label = surface.content.unwrap_or_else(|| {
             Widget::padding(
                 surface.padding,
@@ -3069,11 +3165,9 @@ impl Widget {
                 child: Some(Box::new(label)),
             },
             semantics: SemanticProperties {
-                // An action surface with a custom child has no label of its
-                // own. Keep the field unset so an outer control's explicit
-                // semantics (for example Button("Save")) or the child's
-                // text can provide the accessible label.
-                label: (!semantic_label.is_empty()).then_some(semantic_label),
+                // Custom content is inspected for a text or explicit semantic
+                // label so low-level controls retain a useful accessible name.
+                label: semantic_label,
                 ..SemanticProperties::default()
             },
         }
@@ -6188,6 +6282,7 @@ pub struct WidgetTree {
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selection: Option<StaticSelection>,
     environment: RuntimeEnvironment,
+    recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,
 }
@@ -6309,6 +6404,7 @@ impl WidgetTree {
             semantic_ids: HashMap::new(),
             static_selection: None,
             environment: RuntimeEnvironment::default(),
+            recursion_diagnostics: RecursionDiagnostics::new(),
             #[cfg(feature = "devtools")]
             deep_trace: None,
         }
@@ -6331,6 +6427,74 @@ impl WidgetTree {
     #[must_use]
     pub fn environment(&self) -> &RuntimeEnvironment {
         &self.environment
+    }
+
+    /// Records the input or command responsible for subsequent frame work.
+    /// The value is retained until another trigger replaces it so an input
+    /// callback that merely schedules a frame remains attributable later.
+    pub fn set_diagnostic_trigger(&self, trigger: impl Into<String>) {
+        self.recursion_diagnostics.set_trigger(trigger);
+    }
+
+    /// Returns the most recent recursion report. Reports are also persisted to
+    /// the platform crash-report directory before the guard panics.
+    #[must_use]
+    pub fn last_recursion_report(&self) -> Option<RecursionReport> {
+        self.recursion_diagnostics.last_report()
+    }
+
+    /// Overrides the recursion crash-log directory, primarily for embedders
+    /// and deterministic tests.
+    pub fn set_recursion_report_directory(&self, path: impl Into<std::path::PathBuf>) {
+        self.recursion_diagnostics.set_report_directory(path);
+    }
+
+    /// Sets the maximum nested pipeline depth. Debug and DevTools builds also
+    /// detect exact retained-node re-entry before this fallback is reached.
+    pub fn set_recursion_limit(&self, limit: usize) {
+        self.recursion_diagnostics.set_limit(limit);
+    }
+
+    fn guard_phase_root(&self, phase: FramePhase) -> crate::recursion::ActivePhaseGuard {
+        self.recursion_diagnostics
+            .enter(DiagnosticNode::phase_root(phase))
+    }
+
+    fn guard_element(
+        &self,
+        phase: FramePhase,
+        id: ElementId,
+    ) -> crate::recursion::ActivePhaseGuard {
+        let kind = self
+            .elements
+            .get(id.0)
+            .map_or("UnmountedElement", |element| element.widget.type_().name());
+        self.recursion_diagnostics.enter(DiagnosticNode {
+            phase,
+            id: Some(DiagnosticNodeId::Element(id)),
+            kind,
+            constraints: None,
+        })
+    }
+
+    fn guard_render(
+        &self,
+        phase: FramePhase,
+        id: RenderObjectId,
+        constraints: Option<Constraints>,
+    ) -> crate::recursion::ActivePhaseGuard {
+        let kind = self
+            .element_for_render(id)
+            .and_then(|element| self.elements.get(element.0))
+            .map_or("DetachedRenderObject", |element| {
+                element.widget.type_().name()
+            });
+        self.recursion_diagnostics.enter(DiagnosticNode {
+            phase,
+            id: Some(DiagnosticNodeId::Render(id)),
+            kind,
+            constraints,
+        })
     }
 
     /// Starts one bounded Deep-profiler frame. Calling this again discards an
@@ -6369,6 +6533,7 @@ impl WidgetTree {
         }
     }
     pub fn mount(&mut self, widget: Widget) -> Result<ElementId, TreeError> {
+        let _phase_guard = self.guard_phase_root(FramePhase::Build);
         if let Some(root) = self.root {
             self.unmount(root)?;
         }
@@ -7332,6 +7497,7 @@ impl WidgetTree {
     /// Applies only retained compositor properties. It never marks a render
     /// object for build, layout, or paint.
     pub fn update_compositor(&mut self, now: Instant) -> (bool, bool) {
+        let _phase_guard = self.guard_phase_root(FramePhase::Compositor);
         #[cfg(feature = "devtools")]
         let trace = self
             .root
@@ -7366,6 +7532,11 @@ impl WidgetTree {
             blend_layer,
         ) in nodes
         {
+            let constraints = self
+                .renders
+                .get(_render.0)
+                .and_then(|render| render.constraints);
+            let _node_guard = self.guard_render(FramePhase::Compositor, _render, constraints);
             #[cfg(feature = "devtools")]
             let changed_before_node = changed;
             match kind {
@@ -7925,6 +8096,7 @@ impl WidgetTree {
         Ok(())
     }
     pub fn layout(&mut self, constraints: Constraints) {
+        let _phase_guard = self.guard_phase_root(FramePhase::Layout);
         self.refresh_text_fields();
         self.refresh_sliver_ranges();
         self.refresh_stateful_layout_builders();
@@ -7961,6 +8133,7 @@ impl WidgetTree {
     /// is valid. Non-semantic layout widgets merge their descendants into the
     /// closest meaningful semantic ancestor.
     pub fn update_semantics(&mut self) {
+        let _phase_guard = self.guard_phase_root(FramePhase::Semantics);
         #[cfg(feature = "devtools")]
         let trace = self
             .root
@@ -8036,6 +8209,18 @@ impl WidgetTree {
         semantic_parent: Option<ElementId>,
         out: &mut Vec<SemanticBuild>,
     ) {
+        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+            self.collect_semantics_inner(element, semantic_parent, out);
+        });
+    }
+
+    fn collect_semantics_inner(
+        &self,
+        element: ElementId,
+        semantic_parent: Option<ElementId>,
+        out: &mut Vec<SemanticBuild>,
+    ) {
+        let _node_guard = self.guard_element(FramePhase::Semantics, element);
         let Some(entry) = self.elements.get(element.0) else {
             return;
         };
@@ -8222,7 +8407,14 @@ impl WidgetTree {
                 element,
                 parent: semantic_parent,
                 role,
-                label: entry.widget.semantics.label.clone().or(default_label),
+                label: entry
+                    .widget
+                    .semantics
+                    .explicit
+                    .as_ref()
+                    .and_then(|semantics| semantics.label.clone())
+                    .or_else(|| entry.widget.semantics.label.clone())
+                    .or(default_label),
                 value,
                 description: entry
                     .widget
@@ -8265,6 +8457,7 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn paint(&mut self) -> DisplayList {
+        let _phase_guard = self.guard_phase_root(FramePhase::Paint);
         let mut ignored = DisplayList::new();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.paint_render(root, &mut ignored);
@@ -9359,6 +9552,13 @@ impl WidgetTree {
     }
 
     fn update_existing(&mut self, id: ElementId, widget: &Widget) -> Result<(), TreeError> {
+        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+            self.update_existing_inner(id, widget)
+        })
+    }
+
+    fn update_existing_inner(&mut self, id: ElementId, widget: &Widget) -> Result<(), TreeError> {
+        let _node_guard = self.guard_element(FramePhase::Build, id);
         // Borrow-compare first: the unchanged-subtree bailout must not clone
         // either widget. This is the dominant hot path for wide static trees
         // under a rebuilding parent (Task 15 measured bottleneck).
@@ -9759,7 +9959,14 @@ impl WidgetTree {
     }
 
     fn materialize_layout_builder(&mut self, id: RenderObjectId, constraints: Constraints) {
+        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+            self.materialize_layout_builder_inner(id, constraints);
+        });
+    }
+
+    fn materialize_layout_builder_inner(&mut self, id: RenderObjectId, constraints: Constraints) {
         let element_id = self.element_for_render(id).expect("layout builder element");
+        let _build_guard = self.guard_element(FramePhase::Build, element_id);
         let (builder, revision, previous_constraints, previous_revision, previous_children) = {
             let element = self
                 .elements
@@ -10582,6 +10789,13 @@ impl WidgetTree {
         }
     }
     fn layout_render(&mut self, id: RenderObjectId, constraints: Constraints) {
+        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+            self.layout_render_inner(id, constraints);
+        });
+    }
+
+    fn layout_render_inner(&mut self, id: RenderObjectId, constraints: Constraints) {
+        let _node_guard = self.guard_render(FramePhase::Layout, id, Some(constraints));
         let needs = self
             .renders
             .get(id.0)
@@ -11340,6 +11554,9 @@ impl WidgetTree {
                 let width = constraints
                     .is_width_bounded()
                     .then_some(constraints.max_width);
+                let _external_call = self
+                    .recursion_diagnostics
+                    .external_call(text_call_label("TextEngine::layout_with_options", &text));
                 let layout = self.text_engine.layout_with_options(
                     &text,
                     &style,
@@ -11358,6 +11575,9 @@ impl WidgetTree {
                 let width = constraints
                     .is_width_bounded()
                     .then_some(constraints.max_width);
+                let _external_call = self
+                    .recursion_diagnostics
+                    .external_call(text_call_label("TextEngine::layout", &text));
                 let layout = self.text_engine.layout(&text, &style, width, align);
                 let size = constraints.constrain(layout.metrics.size);
                 let node = self.renders.get_mut(id.0).expect("live");
@@ -11412,6 +11632,9 @@ impl WidgetTree {
                     260.0
                 };
                 let width_for_text = (intrinsic_width - 16.).max(0.);
+                let _external_call = self
+                    .recursion_diagnostics
+                    .external_call(text_call_label("TextEngine::layout_with_options", &display));
                 let layout = self.text_engine.layout_with_options(
                     &display,
                     &style,
@@ -11586,6 +11809,14 @@ impl WidgetTree {
         self.devtools_trace_end(trace);
     }
     fn paint_render(&mut self, id: RenderObjectId, output: &mut DisplayList) {
+        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+            self.paint_render_inner(id, output);
+        });
+    }
+
+    fn paint_render_inner(&mut self, id: RenderObjectId, output: &mut DisplayList) {
+        let constraints = self.renders.get(id.0).and_then(|render| render.constraints);
+        let _node_guard = self.guard_render(FramePhase::Paint, id, constraints);
         if matches!(
             self.renders.get(id.0).expect("live").kind,
             RenderKind::Visibility { visible: false }
@@ -12270,15 +12501,32 @@ fn widget_text(widget: &Widget) -> Option<String> {
             Some(text.clone())
         }
         WidgetKind::Button { child, .. } => child.as_deref().and_then(widget_text),
-        WidgetKind::Padding { child, .. }
+        WidgetKind::Decorated { child, .. }
+        | WidgetKind::Padding { child, .. }
+        | WidgetKind::Constrained { child, .. }
         | WidgetKind::Limited { child, .. }
         | WidgetKind::Overflow { child, .. }
+        | WidgetKind::Unconstrained { child, .. }
+        | WidgetKind::Fractional { child, .. }
+        | WidgetKind::Baseline { child, .. }
+        | WidgetKind::RepaintBoundary { child }
+        | WidgetKind::Gesture { child, .. }
+        | WidgetKind::Draggable { child, .. }
+        | WidgetKind::DragTarget { child, .. }
+        | WidgetKind::IgnorePointer { child, .. }
+        | WidgetKind::AbsorbPointer { child, .. }
         | WidgetKind::Align { child, .. }
         | WidgetKind::Flexible { child, .. }
         | WidgetKind::Positioned { child, .. }
+        | WidgetKind::SafeArea { child, .. }
+        | WidgetKind::ClipRect { child, .. }
+        | WidgetKind::ClipRRect { child, .. }
+        | WidgetKind::ClipOval { child, .. }
+        | WidgetKind::ClipPath { child, .. }
         | WidgetKind::Visibility { child, .. }
         | WidgetKind::AspectRatio { child, .. }
         | WidgetKind::Scroll { child, .. }
+        | WidgetKind::PersistentHeader { child, .. }
         | WidgetKind::NotificationListener { child, .. }
         | WidgetKind::Translate { child, .. }
         | WidgetKind::Transform { child, .. }

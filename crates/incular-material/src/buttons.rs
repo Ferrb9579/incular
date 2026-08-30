@@ -633,11 +633,20 @@ impl ButtonSpec {
 
     fn into_widget(self) -> Widget {
         let spec = Rc::new(self);
-        Widget::layout_builder(move |_| {
+        let semantic_label = spec
+            .semantic_label
+            .clone()
+            .filter(|label| !label.trim().is_empty())
+            .or_else(|| spec.child.as_ref().and_then(Widget::semantic_text));
+        let widget = Widget::layout_builder(move |_| {
             let theme = Theme::of_shared().unwrap_or_else(ThemeData::light_shared);
             let controls_theme = theme.control_theme();
             spec.build(&theme, &controls_theme)
-        })
+        });
+        match semantic_label {
+            Some(label) => widget.accessibility_label(label),
+            None => widget,
+        }
     }
 }
 

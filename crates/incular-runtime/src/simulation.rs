@@ -687,10 +687,15 @@ impl Application {
                 label,
                 reply,
             } => {
+                let trigger = format!("click({label:?})");
                 let result = self
                     .simulation_label_bounds(window_id, &label)
                     .and_then(|bounds| {
-                        self.dispatch_simulation_click_prepared(window_id, bounds.center())
+                        self.dispatch_simulation_click_prepared(
+                            window_id,
+                            bounds.center(),
+                            &trigger,
+                        )
                     });
                 let _ = reply.send(result);
             }
@@ -726,6 +731,16 @@ impl Application {
         window_id: WindowId,
         event: InputEvent,
     ) -> Result<(), SimulationError> {
+        let trigger = format!("simulation::{}", super::diagnostic_input_trigger(&event));
+        self.dispatch_simulation_input_with_trigger(window_id, event, &trigger)
+    }
+
+    fn dispatch_simulation_input_with_trigger(
+        &mut self,
+        window_id: WindowId,
+        event: InputEvent,
+        trigger: &str,
+    ) -> Result<(), SimulationError> {
         if let InputEvent::Pointer { position, .. } | InputEvent::PointerWithId { position, .. } =
             &event
         {
@@ -739,7 +754,7 @@ impl Application {
         }
         let applied = self.with_window_mut(window_id, |record| {
             record.input_events = record.input_events.wrapping_add(1);
-            let _ = record.runtime.handle_input(event);
+            let _ = record.runtime.handle_input_with_trigger(event, trigger);
         });
         applied
             .map(|_| ())
@@ -753,34 +768,42 @@ impl Application {
     ) -> Result<(), SimulationError> {
         valid_offset(position)?;
         self.ensure_simulation_layout(window_id)?;
-        self.dispatch_simulation_click_prepared(window_id, position)
+        self.dispatch_simulation_click_prepared(
+            window_id,
+            position,
+            &format!("click_at({:.1}, {:.1})", position.x, position.y),
+        )
     }
 
     fn dispatch_simulation_click_prepared(
         &mut self,
         window_id: WindowId,
         position: Offset,
+        trigger: &str,
     ) -> Result<(), SimulationError> {
-        self.dispatch_simulation_input(
+        self.dispatch_simulation_input_with_trigger(
             window_id,
             InputEvent::Pointer {
                 phase: PointerPhase::Move,
                 position,
             },
+            trigger,
         )?;
-        self.dispatch_simulation_input(
+        self.dispatch_simulation_input_with_trigger(
             window_id,
             InputEvent::Pointer {
                 phase: PointerPhase::Down,
                 position,
             },
+            trigger,
         )?;
-        self.dispatch_simulation_input(
+        self.dispatch_simulation_input_with_trigger(
             window_id,
             InputEvent::Pointer {
                 phase: PointerPhase::Up,
                 position,
             },
+            trigger,
         )
     }
 
@@ -811,6 +834,10 @@ impl Application {
         label: &str,
     ) -> Result<Rect, SimulationError> {
         self.ensure_simulation_layout(window_id)?;
+        let viewport = self
+            .window_diagnostics(window_id)
+            .map(|diagnostics| Rect::from_origin_size(Offset::ZERO, diagnostics.logical_size))
+            .ok_or(SimulationError::WindowNotFound(window_id))?;
         let result = self.registry.borrow().get(window_id).and_then(|record| {
             let mut fallback = None;
             record
@@ -822,10 +849,19 @@ impl Application {
                     if node.label.as_deref() != Some(label) || !node.state.enabled {
                         return None;
                     }
-                    if node.actions.contains(&SemanticActionKind::Activate) {
-                        return Some(node.bounds);
+                    // Semantic trees can retain children just outside a
+                    // viewport (especially sliver children). Resolve a
+                    // pointer target only from the visible intersection so a
+                    // simulation never reports a click that the pointer
+                    // pipeline cannot receive.
+                    let visible_bounds = node.bounds.intersection(viewport)?;
+                    if visible_bounds.size.width <= 0.0 || visible_bounds.size.height <= 0.0 {
+                        return None;
                     }
-                    fallback = Some(node.bounds);
+                    if node.actions.contains(&SemanticActionKind::Activate) {
+                        return Some(visible_bounds);
+                    }
+                    fallback = Some(visible_bounds);
                     None
                 })
                 .or(fallback)
