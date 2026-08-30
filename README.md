@@ -34,10 +34,13 @@ Run the full validation suite before submitting a change:
 ```text
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
-cargo test --workspace
+cargo test-constrained
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
+
+`cargo test-constrained` preserves Cargo's normal build parallelism and runs
+the stock test harness with one test thread.
 
 Windows PowerShell uses `$env:RUSTDOCFLAGS='-D warnings'` for the final command.
 

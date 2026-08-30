@@ -38,6 +38,6 @@ Run these checks after workspace or crate changes:
 ```text
 cargo fmt --all -- --check
 cargo check --workspace
-cargo test --workspace
+cargo test-constrained
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```

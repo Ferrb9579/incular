@@ -15,9 +15,12 @@ focused changes with clear tests are especially valuable.
    ```text
    cargo fmt --all -- --check
    cargo check --workspace --all-targets
-   cargo test --workspace
+   cargo test-constrained
    cargo clippy --workspace --all-targets --all-features -- -D warnings
    ```
+
+   `cargo test-constrained` preserves Cargo's normal build parallelism while
+   running the stock test harness on one test thread.
 
    For documentation changes, also run `cargo doc --workspace --no-deps` with
    `RUSTDOCFLAGS=-D warnings`.

@@ -436,7 +436,7 @@ Run targeted checks first:
 ```text
 cargo fmt --all -- --check
 cargo check -p <changed-crate>
-cargo test -p <changed-crate>
+cargo test -p <changed-crate> -- --test-threads=1
 cargo clippy -p <changed-crate> --all-targets --all-features -- -D warnings
 ```
 
@@ -445,7 +445,7 @@ After all phases:
 ```text
 cargo fmt --all -- --check
 cargo check --workspace
-cargo test --workspace
+cargo test-constrained
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo build -p incular --examples
 ```

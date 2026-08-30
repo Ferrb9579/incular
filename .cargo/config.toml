@@ -9,3 +9,11 @@ incremental = false
 
 [env]
 CARGO_INCREMENTAL = "0"
+# Keep the stock libtest fallback bounded as well. Contributors can override
+# this explicitly for a local experiment, but the repository default is safe.
+RUST_TEST_THREADS = "1"
+
+[alias]
+# Keep the workspace test command sequential without changing Cargo's normal
+# build parallelism.
+test-constrained = "test --workspace -- --test-threads=1"

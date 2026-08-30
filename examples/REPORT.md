@@ -87,7 +87,7 @@ The final repository state passed:
 ```text
 cargo fmt --all -- --check
 cargo check --workspace
-cargo test --workspace
+cargo test-constrained
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
