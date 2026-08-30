@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 directories = { workspace = true }
+incular-config = { workspace = true }
 incular-core = { workspace = true }
 keyboard-types = { workspace = true }
 winit = { workspace = true }

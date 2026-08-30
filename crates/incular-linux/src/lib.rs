@@ -299,10 +299,14 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
         if self.window.is_some() {
             return;
         }
+        let defaults = incular_config::ApplicationDefaults::DEFAULT;
         let window = match loop_target.create_window(
             WindowAttributes::default()
-                .with_title("Incular counter")
-                .with_inner_size(winit::dpi::LogicalSize::new(420., 300.))
+                .with_title(defaults.window_title)
+                .with_inner_size(winit::dpi::LogicalSize::new(
+                    f64::from(defaults.initial_window_size.width),
+                    f64::from(defaults.initial_window_size.height),
+                ))
                 .with_visible(false),
         ) {
             Ok(window) => window,

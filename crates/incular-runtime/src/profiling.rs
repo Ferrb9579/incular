@@ -163,8 +163,11 @@ impl FrameHistory {
 /// Aggregated counter snapshot for scheduler/reactivity behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SchedulerCounters {
+    /// Number of signal reads.
     pub signal_reads: u64,
+    /// Number of state-changing signal writes.
     pub signal_writes: u64,
+    /// Number of unique dependent queue entries created after deduplication.
     pub dependents_enqueued: u64,
     pub runtime_wakes: u64,
     pub redraw_requests: u64,

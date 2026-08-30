@@ -2009,6 +2009,7 @@ name = "incular-platform"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "incular-config",
  "incular-core",
  "keyboard-types",
  "raw-window-handle",
@@ -2075,6 +2076,7 @@ dependencies = [
  "criterion",
  "icu_segmenter",
  "incular-assets",
+ "incular-config",
  "incular-core",
  "incular-rendering",
  "parley",

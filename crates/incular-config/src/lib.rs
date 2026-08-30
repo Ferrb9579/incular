@@ -6,6 +6,7 @@
 
 mod alignment;
 mod constraints;
+mod defaults;
 mod environment;
 mod insets;
 mod localization;
@@ -16,6 +17,7 @@ pub use alignment::{
     WrapAlignment, WrapCrossAlignment,
 };
 pub use constraints::{ConstraintError, Constraints};
+pub use defaults::{ApplicationDefaults, WidgetDefaults};
 pub use environment::{Brightness, InputCapabilities, RuntimeEnvironment};
 pub use icu_locale::Locale;
 pub use insets::{EdgeInsets, EdgeInsetsDirectional};

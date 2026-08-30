@@ -62,11 +62,12 @@ pub mod prelude {
         TweenSegment, TweenSequence, TweenValue,
     };
     pub use incular_config::{
-        Alignment, AlignmentDirectional, Axis, AxisDirection, Brightness, Constraints,
-        CrossAxisAlignment, EdgeInsets, EdgeInsetsDirectional, FlexFit, FractionalOffset,
-        InputCapabilities, Locale, LocaleResolver, LocalizationCatalog, LocalizationError,
-        LocalizedMessage, MainAxisAlignment, MainAxisSize, PluralCategory, PluralForms,
-        RuntimeEnvironment, TextDirection, VerticalDirection, WrapAlignment, WrapCrossAlignment,
+        Alignment, AlignmentDirectional, ApplicationDefaults, Axis, AxisDirection, Brightness,
+        Constraints, CrossAxisAlignment, EdgeInsets, EdgeInsetsDirectional, FlexFit,
+        FractionalOffset, InputCapabilities, Locale, LocaleResolver, LocalizationCatalog,
+        LocalizationError, LocalizedMessage, MainAxisAlignment, MainAxisSize, PluralCategory,
+        PluralForms, RuntimeEnvironment, TextDirection, VerticalDirection, WidgetDefaults,
+        WrapAlignment, WrapCrossAlignment,
     };
     pub use incular_core::{
         ChangeImpact, Code, Color, DirtyFlags, HslColor, HsvColor, ImeEvent, InputEvent,

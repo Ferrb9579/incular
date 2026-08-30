@@ -1,4 +1,4 @@
-use incular_config::{Axis, Constraints};
+use incular_config::{Constraints, WidgetDefaults};
 use incular_core::{Color, Size};
 use incular_rendering::PaintCommand;
 use incular_text::{LineHeight, TextStyle};
@@ -140,28 +140,29 @@ fn text_style_line_height_multiplier_and_inheritance() {
 
 #[test]
 fn scrollable_widget_defaults_match_flutter_axes() {
+    let defaults = WidgetDefaults::DEFAULT;
     assert_eq!(
         SingleChildScrollView::new(SizedBox::new()).get_scroll_direction(),
-        Axis::Vertical
+        defaults.scroll_direction
     );
     assert_eq!(
         ListView::new(Vec::<Widget>::new()).get_scroll_direction(),
-        Axis::Vertical
+        defaults.scroll_direction
     );
     assert_eq!(
         ListView::builder(10, |_| SizedBox::new()).get_scroll_direction(),
-        Axis::Vertical
+        defaults.scroll_direction
     );
     assert_eq!(
         ListView::separated(10, |_| SizedBox::new(), |_| SizedBox::new()).get_scroll_direction(),
-        Axis::Vertical
+        defaults.scroll_direction
     );
     assert_eq!(
         PageView::new(Vec::<Widget>::new()).get_scroll_direction(),
-        Axis::Horizontal
+        defaults.page_scroll_direction
     );
     assert_eq!(
         PageView::builder(3, |_| SizedBox::new()).get_scroll_direction(),
-        Axis::Horizontal
+        defaults.page_scroll_direction
     );
 }

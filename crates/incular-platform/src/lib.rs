@@ -4,6 +4,7 @@
 //! between those coordinates and physical surface/window coordinates.
 
 use directories::ProjectDirs;
+use incular_config::ApplicationDefaults;
 use incular_core::{
     Code, ImeEvent, InputEvent, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers,
     NamedKey, Offset, PointerPhase, Rect, Size,
@@ -102,16 +103,17 @@ pub struct WindowOptions {
 
 impl Default for WindowOptions {
     fn default() -> Self {
+        let defaults = ApplicationDefaults::DEFAULT;
         Self {
-            title: "Incular".to_owned(),
-            initial_logical_size: Size::new(800.0, 600.0),
+            title: defaults.window_title.to_owned(),
+            initial_logical_size: defaults.initial_window_size,
             minimum_logical_size: None,
             maximum_logical_size: None,
-            resizable: true,
-            visible: true,
-            decorations: true,
-            transparent: false,
-            maximized: false,
+            resizable: defaults.resizable,
+            visible: defaults.visible,
+            decorations: defaults.decorations,
+            transparent: defaults.transparent,
+            maximized: defaults.maximized,
             fullscreen: None,
         }
     }
@@ -740,6 +742,21 @@ mod tests {
         assert_eq!(replacement.index(), 7);
         assert_eq!(replacement.generation(), 3);
         assert_eq!(replacement.to_string(), "Window#8@3");
+    }
+
+    #[test]
+    fn window_options_use_the_shared_application_defaults() {
+        let defaults = incular_config::ApplicationDefaults::DEFAULT;
+        let options = WindowOptions::default();
+
+        assert_eq!(options.title, defaults.window_title);
+        assert_eq!(options.initial_logical_size, defaults.initial_window_size);
+        assert_eq!(options.resizable, defaults.resizable);
+        assert_eq!(options.visible, defaults.visible);
+        assert_eq!(options.decorations, defaults.decorations);
+        assert_eq!(options.transparent, defaults.transparent);
+        assert_eq!(options.maximized, defaults.maximized);
+        assert!(options.fullscreen.is_none());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! details. `incular-runtime` owns their current value and invalidation; native
 //! adapters only normalize platform data into this snapshot.
 
-use crate::{EdgeInsets, LocaleResolver, TextDirection};
+use crate::{ApplicationDefaults, EdgeInsets, LocaleResolver, TextDirection};
 use icu_locale::Locale;
 use incular_core::Size;
 
@@ -52,18 +52,19 @@ pub struct RuntimeEnvironment {
 
 impl Default for RuntimeEnvironment {
     fn default() -> Self {
+        let defaults = ApplicationDefaults::DEFAULT;
         Self {
             viewport: Size::ZERO,
             physical_width: 0,
             physical_height: 0,
-            scale_factor: 1.0,
-            brightness: Brightness::Light,
-            text_scale: 1.0,
+            scale_factor: defaults.scale_factor,
+            brightness: defaults.brightness,
+            text_scale: defaults.text_scale,
             safe_insets: EdgeInsets::ZERO,
             view_insets: EdgeInsets::ZERO,
             locales: Vec::new(),
-            text_direction: TextDirection::Ltr,
-            reduced_motion: false,
+            text_direction: defaults.text_direction,
+            reduced_motion: defaults.reduced_motion,
             input: InputCapabilities::default(),
             window_focused: false,
         }

@@ -22,3 +22,10 @@ framework-neutral integer/date formatting and ICU cardinal-plural selection
 through `PluralForms`. The catalog owns messages and any message-template
 syntax; Incular does not impose a translation file format or load application
 resources at runtime.
+
+`ApplicationDefaults` and `WidgetDefaults` are the shared default contract.
+Window/environment constructors, plain text, and sliver-backed widgets consume
+these values rather than maintaining independent copies. A base container does
+not acquire a background from this contract: transparent/no-paint is the
+neutral widget default, and visible surfaces belong to an explicit root widget
+or design-system theme.

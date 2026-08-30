@@ -492,15 +492,21 @@ impl ReactiveQueue {
         }))
     }
 
-    fn enqueue(&mut self, id: ElementId) {
+    fn enqueue(&mut self, id: ElementId) -> bool {
         if self.queued.insert(id) {
             self.order.push_back(id);
+            true
+        } else {
+            false
         }
     }
-    fn enqueue_node(&mut self, id: ReactiveNodeId, node: Weak<dyn ReactiveNode>) {
+    fn enqueue_node(&mut self, id: ReactiveNodeId, node: Weak<dyn ReactiveNode>) -> bool {
         self.register_node(id, node);
         if self.queued_nodes.insert(id) {
             self.node_order.push_back(id);
+            true
+        } else {
+            false
         }
     }
     fn register_node(&mut self, id: ReactiveNodeId, node: Weak<dyn ReactiveNode>) {
@@ -622,6 +628,43 @@ struct BuildScope {
     owner_scope: tasks::TaskScope,
 }
 thread_local! { static BUILD_SCOPE: RefCell<Option<BuildScope>> = const { RefCell::new(None) }; }
+
+/// Restores the previous builder scope even when user code panics.
+struct BuildScopeGuard {
+    previous: Option<BuildScope>,
+}
+
+impl BuildScopeGuard {
+    fn enter(next: BuildScope) -> Self {
+        let previous = BUILD_SCOPE.with(|scope| scope.replace(Some(next)));
+        Self { previous }
+    }
+}
+
+impl Drop for BuildScopeGuard {
+    fn drop(&mut self) {
+        BUILD_SCOPE.with(|scope| {
+            scope.replace(self.previous.take());
+        });
+    }
+}
+
+fn assert_reactive_mutation_allowed() {
+    BUILD_SCOPE.with(|scope| {
+        let current = scope.borrow();
+        let Some(scope) = current.as_ref() else {
+            return;
+        };
+        let owner = scope.element.map_or_else(
+            || "the application root".to_owned(),
+            |id| format!("element {id:?}"),
+        );
+        panic!(
+            "Incular reactive state was mutated while building {owner}; move the mutation to an event callback, Effect, or Action"
+        );
+    });
+}
+
 #[cfg(feature = "devtools")]
 thread_local! { static DEV_TASK_COMPLETION: Cell<bool> = const { Cell::new(false) }; }
 struct SignalInner<T> {
@@ -880,10 +923,16 @@ impl<T: 'static> Signal<T> {
         reactive::track_dependency(self.inner.clone());
         self.inner.value.borrow().clone()
     }
+    /// Replaces the value and invalidates dependents when it changed.
+    ///
+    /// Reactive state must be changed from an event callback, [`Effect`], or
+    /// [`Action`]. Mutating a signal while a widget builder is running is
+    /// rejected because builders must remain side-effect free.
     pub fn set(&self, value: T) -> bool
     where
         T: PartialEq,
     {
+        assert_reactive_mutation_allowed();
         if *self.inner.value.borrow() == value {
             return false;
         }
@@ -918,7 +967,10 @@ impl<T: 'static> Signal<T> {
             .sum()
     }
     /// Mutates the value once and schedules only the Elements that read it.
+    ///
+    /// See [`Signal::set`] for the builder-side-effect rule.
     pub fn update(&self, update: impl FnOnce(&mut T)) {
+        assert_reactive_mutation_allowed();
         #[cfg(feature = "devtools")]
         let old_summary = self
             .inner
@@ -940,6 +992,42 @@ impl<T: 'static> Signal<T> {
             }
         }
         self.enqueue_dependents();
+    }
+
+    /// Mutates the value and invalidates dependents only when the value
+    /// changed. This is the equality-aware counterpart to [`Signal::update`]
+    /// for mutable values that implement [`Clone`] and [`PartialEq`].
+    pub fn update_if_changed(&self, update: impl FnOnce(&mut T)) -> bool
+    where
+        T: Clone + PartialEq,
+    {
+        assert_reactive_mutation_allowed();
+        let previous = self.inner.value.borrow().clone();
+        #[cfg(feature = "devtools")]
+        let old_summary = self
+            .inner
+            .dev_summarize
+            .borrow()
+            .as_ref()
+            .map(|format| format(&previous));
+        update(&mut self.inner.value.borrow_mut());
+        if *self.inner.value.borrow() == previous {
+            return false;
+        }
+        #[cfg(feature = "devtools")]
+        {
+            let new_summary = self
+                .inner
+                .dev_summarize
+                .borrow()
+                .as_ref()
+                .map(|format| format(&self.inner.value.borrow()));
+            if old_summary.is_some() || new_summary.is_some() {
+                *self.inner.dev_last_write.borrow_mut() = (old_summary, new_summary);
+            }
+        }
+        self.enqueue_dependents();
+        true
     }
 
     fn enqueue_dependents(&self) {
@@ -985,7 +1073,7 @@ impl<T: 'static> Signal<T> {
             if let Some(queue) = queues.get(&root).and_then(Weak::upgrade) {
                 let mut queue = queue.borrow_mut();
                 for element in elements {
-                    queue.enqueue(element);
+                    let newly_queued = queue.enqueue(element);
                     #[cfg(feature = "devtools")]
                     {
                         if DEV_TASK_COMPLETION.with(Cell::get) {
@@ -995,7 +1083,9 @@ impl<T: 'static> Signal<T> {
                             queue.note_cause(element, cause.clone());
                         }
                     }
-                    enqueued += 1;
+                    if newly_queued {
+                        enqueued += 1;
+                    }
                 }
             }
         }
@@ -1004,10 +1094,12 @@ impl<T: 'static> Signal<T> {
             if let Some(queue) = node_queues.get(&root).and_then(Weak::upgrade) {
                 let mut queue = queue.borrow_mut();
                 for (node_id, weak_node) in nodes {
-                    if let Some(node) = weak_node.upgrade() {
-                        node.mark_dirty();
+                    let newly_queued = queue.enqueue_node(node_id, weak_node.clone());
+                    if newly_queued {
+                        if let Some(node) = weak_node.upgrade() {
+                            node.mark_dirty();
+                        }
                     }
-                    queue.enqueue_node(node_id, weak_node);
                 }
             }
         }
@@ -2581,8 +2673,8 @@ impl Runtime {
     }
     fn rebuild_from_builder(&mut self, id: ElementId) -> Result<(), TreeError> {
         self.reactive.borrow_mut().refresh(id);
-        let old = BUILD_SCOPE.with(|scope| {
-            scope.replace(Some(BuildScope {
+        let widget = {
+            let _build_scope = BuildScopeGuard::enter(BuildScope {
                 root: self.reactive.borrow().root,
                 element: Some(id),
                 queue: Rc::downgrade(&self.reactive),
@@ -2593,12 +2685,9 @@ impl Runtime {
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| self.window_scope.clone()),
-            }))
-        });
-        let widget = self.builders.get_mut(&id).expect("registered builder")();
-        BUILD_SCOPE.with(|scope| {
-            scope.replace(old);
-        });
+            });
+            self.builders.get_mut(&id).expect("registered builder")()
+        };
         let mut widget = widget;
         self.prepare_widget(&mut widget);
         self.tree.update(id, widget)?;
@@ -3219,21 +3308,15 @@ impl WindowManager {
             restoration_scope.clone(),
         );
         let initial = {
-            let previous = BUILD_SCOPE.with(|scope| {
-                scope.replace(Some(BuildScope {
-                    root: reactive.borrow().root,
-                    element: None,
-                    queue: Rc::downgrade(&reactive),
-                    initial_dependencies: Some(initial_dependencies.clone()),
-                    spawner: spawner.clone(),
-                    owner_scope: root_scope.clone(),
-                }))
+            let _build_scope = BuildScopeGuard::enter(BuildScope {
+                root: reactive.borrow().root,
+                element: None,
+                queue: Rc::downgrade(&reactive),
+                initial_dependencies: Some(initial_dependencies.clone()),
+                spawner: spawner.clone(),
+                owner_scope: root_scope.clone(),
             });
-            let result = (build.borrow_mut())(&mut build_context);
-            BUILD_SCOPE.with(|scope| {
-                scope.replace(previous);
-            });
-            result
+            (build.borrow_mut())(&mut build_context)
         };
         let mut runtime = Runtime::with_window_and_reactive(
             initial,
@@ -3438,7 +3521,7 @@ fn initial_metrics(options: &WindowOptions) -> WindowMetrics {
             options.initial_logical_size.width.ceil() as u32,
             options.initial_logical_size.height.ceil() as u32,
         ),
-        1.0,
+        incular_config::ApplicationDefaults::DEFAULT.scale_factor,
     )
 }
 
@@ -5515,12 +5598,23 @@ mod tests {
             .unwrap();
         assert_eq!(signal.dependent_count(), 1);
         assert!(signal.set(3));
+        assert!(signal.set(4));
         let (_, stats) = runtime
             .run_frame(Constraints::tight(Size::new(20., 20.)))
             .unwrap();
         assert_eq!(stats.updated_elements, 1);
         assert!(!runtime.tree().is_build_dirty(children[0]));
-        assert!(!signal.set(3));
+        assert!(!signal.set(4));
+    }
+
+    #[test]
+    fn equality_aware_signal_update_skips_noop_invalidations() {
+        let signal = Signal::new(1_u32);
+
+        assert!(!signal.update_if_changed(|value| *value = 1));
+        assert_eq!(signal.get(), 1);
+        assert!(signal.update_if_changed(|value| *value = 2));
+        assert_eq!(signal.get(), 2);
     }
 
     #[test]
@@ -5553,6 +5647,7 @@ mod tests {
         assert_eq!(builds.get(), 1);
 
         source.set(2);
+        source.set(3);
         let (_, stats) = runtime.run_frame(constraints).unwrap();
         assert_eq!(computations.get(), 2);
         assert_eq!(builds.get(), 2);
@@ -6168,11 +6263,32 @@ mod tests {
         assert_eq!(signal.dependent_count(), 1);
 
         let mut runtime = application.into_runtime();
+        runtime
+            .run_frame(Constraints::tight(Size::new(20., 20.)))
+            .unwrap();
+        assert_eq!(builds.get(), 1);
         assert!(signal.set(true));
         runtime
             .run_frame(Constraints::tight(Size::new(20., 20.)))
             .unwrap();
         assert_eq!(builds.get(), 2);
+    }
+
+    #[test]
+    fn reactive_mutation_during_build_fails_without_poisoning_scope() {
+        let signal = Signal::new(0_u32);
+        let observed_signal = signal.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = Application::new(move |_| {
+                observed_signal.set(1);
+                Widget::box_(Size::new(1., 1.), Color::WHITE)
+            });
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(signal.get(), 0);
+        assert!(signal.update_if_changed(|value| *value = 1));
+        assert_eq!(signal.get(), 1);
     }
 
     #[test]

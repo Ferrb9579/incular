@@ -6,7 +6,7 @@ use std::{
 };
 
 use incular_animation::AnimationController;
-use incular_config::{Axis, Clip, Constraints, EdgeInsets};
+use incular_config::{Axis, Clip, Constraints, EdgeInsets, WidgetDefaults};
 use incular_core::Size;
 use incular_scroll::{
     MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollPhysics, SliverConstraints,
@@ -20,15 +20,15 @@ use crate::{Column, DecoratedBox, DragTarget, Draggable, Padding, Row, SizedBox,
 
 type SliverLayoutBuilderFn = Rc<dyn Fn(SliverConstraints) -> Widget>;
 
-const DEFAULT_LAZY_ITEM_EXTENT: f32 = 48.0;
-const DEFAULT_SLIVER_CACHE_EXTENT: f32 = 250.0;
+const DEFAULT_LAZY_ITEM_EXTENT: f32 = WidgetDefaults::DEFAULT.lazy_item_extent;
+const DEFAULT_SLIVER_CACHE_EXTENT: f32 = WidgetDefaults::DEFAULT.sliver_cache_extent;
 
 /// A first-class scrollable box that scrolls a single child.
 #[derive(Clone, TypedBuilder)]
 pub struct SingleChildScrollView {
     #[builder(setter(into))]
     child: Widget,
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
@@ -38,7 +38,7 @@ pub struct SingleChildScrollView {
     controller: Option<ScrollController>,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = Clip::HardEdge)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
     clip_behavior: Clip,
 }
 
@@ -48,12 +48,12 @@ impl SingleChildScrollView {
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
             child: child.into(),
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             padding: None,
             controller: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -310,7 +310,7 @@ impl SliverGridDelegate {
 
 impl Default for SliverGridDelegate {
     fn default() -> Self {
-        Self::fixed_cross_axis_count(1)
+        Self::fixed_cross_axis_count(WidgetDefaults::DEFAULT.grid_cross_axis_count)
     }
 }
 
@@ -340,7 +340,7 @@ pub struct ListView {
     item_extent_builder: Option<Rc<dyn Fn(usize) -> f32>>,
     #[builder(default, setter(skip))]
     prototype_item: Option<Widget>,
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
@@ -354,7 +354,7 @@ pub struct ListView {
     cache_extent: Option<f32>,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = Clip::HardEdge)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
     clip_behavior: Clip,
 }
 
@@ -374,14 +374,14 @@ impl ListView {
             item_extent: None,
             item_extent_builder: None,
             prototype_item: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -400,14 +400,14 @@ impl ListView {
             item_extent: None,
             item_extent_builder: None,
             prototype_item: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -444,14 +444,14 @@ impl ListView {
             item_extent: None,
             item_extent_builder: None,
             prototype_item: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -659,7 +659,7 @@ pub struct GridView {
     strategy: Option<GridViewStrategy>,
     #[builder(default)]
     grid_delegate: SliverGridDelegate,
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
@@ -673,7 +673,7 @@ pub struct GridView {
     cache_extent: Option<f32>,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = Clip::HardEdge)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
     clip_behavior: Clip,
 }
 
@@ -695,14 +695,14 @@ impl GridView {
             children: children.into_iter().map(Into::into).collect(),
             strategy: None,
             grid_delegate,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -750,14 +750,14 @@ impl GridView {
                 builder: Rc::new(move |i| builder(i).into()),
             }),
             grid_delegate: SliverGridDelegate::default(),
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             shrink_wrap: false,
             controller: None,
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: Clip::HardEdge,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -914,7 +914,7 @@ pub struct PageView {
     strategy: Option<PageViewStrategy>,
     #[builder(default, setter(strip_option))]
     controller: Option<PageController>,
-    #[builder(default = Axis::Horizontal)]
+    #[builder(default = WidgetDefaults::DEFAULT.page_scroll_direction)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
@@ -940,7 +940,7 @@ impl PageView {
             children: children.into_iter().map(Into::into).collect(),
             strategy: None,
             controller: None,
-            scroll_direction: Axis::Horizontal,
+            scroll_direction: WidgetDefaults::DEFAULT.page_scroll_direction,
             reverse: false,
             page_snapping: true,
             viewport_fraction: 1.0,
@@ -961,7 +961,7 @@ impl PageView {
                 builder: Rc::new(move |i| builder(i).into()),
             }),
             controller: None,
-            scroll_direction: Axis::Horizontal,
+            scroll_direction: WidgetDefaults::DEFAULT.page_scroll_direction,
             reverse: false,
             page_snapping: true,
             viewport_fraction: 1.0,
@@ -1053,7 +1053,7 @@ impl From<PageView> for Widget {
             PageViewStrategy::Children(children) => {
                 let sliver = SliverFillViewport::new(children)
                     .viewport_fraction(fraction)
-                    .fallback_extent(600.0);
+                    .fallback_extent(WidgetDefaults::DEFAULT.sliver_fill_viewport_extent);
                 let render =
                     sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse);
                 single_sliver_viewport(
@@ -1062,7 +1062,7 @@ impl From<PageView> for Widget {
                     value.reverse,
                     physics_for_extent(),
                     DEFAULT_SLIVER_CACHE_EXTENT,
-                    Clip::HardEdge,
+                    WidgetDefaults::DEFAULT.scroll_clip_behavior,
                     render,
                 )
             }
@@ -1072,7 +1072,7 @@ impl From<PageView> for Widget {
             } => {
                 let sliver = SliverFillViewport::builder(page_count, move |index| builder(index))
                     .viewport_fraction(fraction)
-                    .fallback_extent(600.0);
+                    .fallback_extent(WidgetDefaults::DEFAULT.sliver_fill_viewport_extent);
                 let render =
                     sliver.create_render_sliver(&controller, value.scroll_direction, value.reverse);
                 single_sliver_viewport(
@@ -1081,7 +1081,7 @@ impl From<PageView> for Widget {
                     value.reverse,
                     physics_for_extent(),
                     DEFAULT_SLIVER_CACHE_EXTENT,
-                    Clip::HardEdge,
+                    WidgetDefaults::DEFAULT.scroll_clip_behavior,
                     render,
                 )
             }
@@ -1305,7 +1305,7 @@ impl BoxRenderSliver {
     fn new(child: Widget) -> Self {
         Self {
             child,
-            extent: Cell::new(48.),
+            extent: Cell::new(DEFAULT_LAZY_ITEM_EXTENT),
             pinned: false,
         }
     }
@@ -3088,15 +3088,15 @@ pub struct CustomScrollView {
     slivers: Vec<Box<dyn Sliver>>,
     #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     scroll_direction: Axis,
     #[builder(default = false)]
     reverse: bool,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = 250.0, setter(transform = |extent: f32| extent.max(0.0)))]
+    #[builder(default = WidgetDefaults::DEFAULT.sliver_cache_extent, setter(transform = |extent: f32| extent.max(0.0)))]
     cache_extent: f32,
-    #[builder(default = Clip::HardEdge)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
     clip_behavior: Clip,
 }
 
@@ -3113,11 +3113,11 @@ impl CustomScrollView {
         Self {
             slivers: slivers.into_iter().collect(),
             controller: None,
-            scroll_direction: Axis::Vertical,
+            scroll_direction: WidgetDefaults::DEFAULT.scroll_direction,
             reverse: false,
             physics: None,
-            cache_extent: 250.,
-            clip_behavior: Clip::HardEdge,
+            cache_extent: WidgetDefaults::DEFAULT.sliver_cache_extent,
+            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -3297,7 +3297,7 @@ pub struct Viewport {
     slivers: Vec<Box<dyn Sliver>>,
     #[builder(default, setter(strip_option))]
     controller: Option<ScrollController>,
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     axis_direction: Axis,
 }
 
@@ -3313,7 +3313,7 @@ impl Viewport {
         Self {
             slivers: slivers.into_iter().collect(),
             controller: None,
-            axis_direction: Axis::Vertical,
+            axis_direction: WidgetDefaults::DEFAULT.scroll_direction,
         }
     }
 
@@ -3382,12 +3382,12 @@ impl From<ShrinkWrappingViewport> for Widget {
             .collect();
         Widget::sliver_viewport_with_delegate_options(
             controller,
-            Axis::Vertical,
+            WidgetDefaults::DEFAULT.scroll_direction,
             false,
             ScrollPhysics::default(),
-            250.,
+            DEFAULT_SLIVER_CACHE_EXTENT,
             true,
-            Clip::HardEdge,
+            WidgetDefaults::DEFAULT.scroll_clip_behavior,
             Rc::new(SequenceViewportDelegate::new(render_slivers)),
         )
     }
@@ -3396,7 +3396,7 @@ impl From<ShrinkWrappingViewport> for Widget {
 /// A simple sequential layout along the main axis.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ListBody {
-    #[builder(default = Axis::Vertical)]
+    #[builder(default = WidgetDefaults::DEFAULT.scroll_direction)]
     main_axis: Axis,
     #[builder(default, setter(transform = |children: impl IntoIterator<Item = impl Into<Widget>>| {
         children.into_iter().map(Into::into).collect::<Vec<Widget>>()
@@ -3414,7 +3414,7 @@ impl ListBody {
     #[must_use]
     pub fn new(children: impl IntoIterator<Item = impl Into<Widget>>) -> Self {
         Self {
-            main_axis: Axis::Vertical,
+            main_axis: WidgetDefaults::DEFAULT.scroll_direction,
             children: children.into_iter().map(Into::into).collect(),
         }
     }
@@ -3594,9 +3594,11 @@ impl Sliver for SliverVariedExtentList {
         _axis: Axis,
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
-        let index = MeasuredExtentIndex::with_estimates(self.item_count, 48., |index| {
-            (self.extent_builder)(index)
-        });
+        let index = MeasuredExtentIndex::with_estimates(
+            self.item_count,
+            DEFAULT_LAZY_ITEM_EXTENT,
+            |index| (self.extent_builder)(index),
+        );
         Box::new(VariableExtentRenderSliver::new(
             index,
             self.item_builder.clone(),
@@ -3658,7 +3660,7 @@ impl Sliver for SliverPrototypeExtentList {
         // available; constraint-dependent prototypes fall back to the normal
         // warm-up estimate and are corrected by the retained child pass.
         let prototype_extent = widget_main_extent_hint(&self.prototype_item, axis)
-            .unwrap_or(48.)
+            .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
             .max(1.);
         Box::new(FixedExtentRenderSliver::new(
             self.item_count,
@@ -3731,7 +3733,7 @@ pub struct SliverFillViewport {
     item_count: Option<usize>,
     #[builder(default = 1.0, setter(transform = |fraction: f32| fraction.max(0.01)))]
     viewport_fraction: f32,
-    #[builder(default = 600.0, setter(transform = |extent: f32| extent.max(1.0)))]
+    #[builder(default = WidgetDefaults::DEFAULT.sliver_fill_viewport_extent, setter(transform = |extent: f32| extent.max(1.0)))]
     fallback_extent: f32,
 }
 
@@ -3749,7 +3751,7 @@ impl SliverFillViewport {
             builder: None,
             item_count: None,
             viewport_fraction: 1.0,
-            fallback_extent: 600.0,
+            fallback_extent: WidgetDefaults::DEFAULT.sliver_fill_viewport_extent,
         }
     }
 
@@ -3764,7 +3766,7 @@ impl SliverFillViewport {
             builder: Some(Rc::new(move |index| builder(index).into())),
             item_count: Some(item_count),
             viewport_fraction: 1.0,
-            fallback_extent: 600.0,
+            fallback_extent: WidgetDefaults::DEFAULT.sliver_fill_viewport_extent,
         }
     }
 
@@ -3858,7 +3860,7 @@ impl Sliver for SliverLayoutBuilder {
         Box::new(LayoutBuilderRenderSliver {
             builder: self.builder.clone(),
             child: SizedBox::shrink().into(),
-            extent: Cell::new(48.),
+            extent: Cell::new(DEFAULT_LAZY_ITEM_EXTENT),
             last_constraints: None,
             revision: 0,
         })
@@ -4506,7 +4508,7 @@ impl Sliver for SliverFloatingHeader {
     ) -> Widget {
         SliverPersistentHeader::new(
             widget_main_extent_hint(&self.child, axis)
-                .unwrap_or(48.0)
+                .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
                 .max(1.0),
             self.child.clone(),
         )
@@ -4524,7 +4526,7 @@ impl Sliver for SliverFloatingHeader {
             child: self.child.clone(),
             extent: Cell::new(
                 widget_main_extent_hint(&self.child, axis)
-                    .unwrap_or(48.)
+                    .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
                     .max(1.),
             ),
             last_scroll_offset: None,
@@ -4819,7 +4821,7 @@ impl ReorderableRenderSliver {
     ) -> Self {
         let order = controller.order();
         Self {
-            index: MeasuredExtentIndex::new(order.len(), 48.),
+            index: MeasuredExtentIndex::new(order.len(), DEFAULT_LAZY_ITEM_EXTENT),
             builder,
             controller_revision: controller.revision(),
             controller,
@@ -5412,7 +5414,7 @@ impl Sliver for SliverAnimatedList {
         Box::new(AnimatedExtentRenderSliver::new(
             self.controller.clone(),
             self.builder.clone(),
-            48.,
+            DEFAULT_LAZY_ITEM_EXTENT,
         ))
     }
 }

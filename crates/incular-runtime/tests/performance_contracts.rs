@@ -360,10 +360,16 @@ fn ten_thousand_signal_writes_coalesce_into_one_rebuild() {
     // Exactly one dependent rebuild carrying the FINAL value.
     assert_eq!(stats.updated_elements, 1, "one dependent rebuild");
     let after = app.performance_snapshot();
-    // set(0) is an equality no-op, so exactly 9_999 writes propagate.
+    // set(0) is an equality no-op, so exactly 9_999 writes are recorded. The
+    // dependent queue is deduplicated, so it receives one unique entry.
     assert_eq!(
-        after.scheduler.dependents_enqueued - baseline.scheduler.dependents_enqueued,
+        after.scheduler.signal_writes - baseline.scheduler.signal_writes,
         9_999,
         "every state-changing write is observed"
+    );
+    assert_eq!(
+        after.scheduler.dependents_enqueued - baseline.scheduler.dependents_enqueued,
+        1,
+        "the dependent queue coalesces repeated writes"
     );
 }

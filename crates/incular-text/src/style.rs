@@ -1,5 +1,6 @@
 //! Typography values shared by plain and rich text.
 
+use incular_config::WidgetDefaults;
 use incular_core::{ChangeImpact, Color, Lerp};
 use incular_rendering::Shadow;
 use std::sync::Arc;
@@ -1305,7 +1306,7 @@ impl Default for TextStyle {
             has_explicit_family: false,
             family: FontFamily::SystemUi,
             fallback_families: Arc::new([]),
-            size: 16.0,
+            size: WidgetDefaults::DEFAULT.text_size,
             weight: FontWeight::NORMAL,
             style: FontStyle::Normal,
             color: Color::WHITE,
@@ -1340,6 +1341,11 @@ mod tests {
         assert_eq!(TextScaler::linear(1.5).scale(16.0), 24.0);
         assert_eq!(TextScaler::no_scaling().scale(16.0), 16.0);
         assert_eq!(TextScaler::linear(-1.0).scale(16.0), 16.0);
+    }
+
+    #[test]
+    fn text_style_uses_the_shared_widget_default_size() {
+        assert_eq!(TextStyle::default().size, WidgetDefaults::DEFAULT.text_size);
     }
 
     #[test]

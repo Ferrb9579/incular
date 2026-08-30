@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 incular-assets = { workspace = true }
+incular-config = { workspace = true }
 incular-core = { workspace = true }
 incular-rendering = { workspace = true }
 parley = { workspace = true }

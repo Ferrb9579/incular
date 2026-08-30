@@ -199,10 +199,12 @@ fn notify_dependents(
             let mut queue = queue.borrow_mut();
             for (id, node) in nodes {
                 if Some(id) != skip_node {
-                    if let Some(node) = node.upgrade() {
-                        node.mark_dirty();
+                    let newly_queued = queue.enqueue_node(id, node.clone());
+                    if newly_queued {
+                        if let Some(node) = node.upgrade() {
+                            node.mark_dirty();
+                        }
                     }
-                    queue.enqueue_node(id, node);
                 }
             }
         }
