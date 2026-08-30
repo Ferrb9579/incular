@@ -118,6 +118,7 @@ fn material_and_widgets_do_not_duplicate_canonical_primitives() {
 
     let material_sources = [
         "crates/incular-material/src/foundation.rs",
+        "crates/incular-material/src/foundation/surfaces.rs",
         "crates/incular-material/src/components.rs",
     ];
     let material_struct_count = material_sources
