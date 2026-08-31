@@ -64,7 +64,9 @@ use crate::painting_effects::BoxShadow;
 use crate::raw_input::{GestureRecognizer, RawInputKind};
 use crate::recursion::{DiagnosticNode, DiagnosticNodeId, RecursionDiagnostics};
 pub use crate::recursion::{FramePhase, RecursionReport};
-use crate::render_object::{LegacyRenderLayers, RenderGeometry, RenderNode, RenderObjectPayload};
+use crate::render_object::{
+    LegacyRenderLayers, RenderGeometry, RenderInvalidation, RenderNode, RenderObjectPayload,
+};
 use crate::scrolling::{
     SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };

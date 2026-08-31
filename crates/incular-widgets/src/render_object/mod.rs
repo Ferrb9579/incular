@@ -22,6 +22,9 @@ use crate::{
     tree::{ButtonState, RenderKind, RenderObjectId, Widget},
 };
 
+mod update;
+pub(crate) use update::RenderInvalidation;
+
 /// Geometry that is meaningful for every retained render node.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct RenderGeometry {

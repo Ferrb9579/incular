@@ -2,11 +2,7 @@
 
 use super::*;
 
-use super::rendering::{
-    affine_composite_only_change, carry_replaced_transition, custom_paint_only_change,
-    effect_composite_only_change, opacity_composite_only_change, render_kind,
-    text_paint_only_change,
-};
+use super::rendering::{carry_replaced_transition, render_kind};
 
 impl WidgetTree {
     pub fn update(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
@@ -600,18 +596,23 @@ impl WidgetTree {
             };
             if changed {
                 let new_kind = render_kind(&widget, effective.as_ref());
-                self.renders
+                let invalidation = self
+                    .renders
                     .get_mut(render.0)
                     .expect("live child render")
                     .object
-                    .replace_kind(new_kind);
+                    .update_kind(new_kind);
                 {
                     let element = self.elements.get_mut(child.0).expect("live child");
                     element.environment = effective;
                     element.layout_builder_constraints = None;
                     element.layout_builder_revision = 0;
                 }
-                self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+                if invalidation.contains(RenderInvalidation::LAYOUT) {
+                    self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+                } else if invalidation.contains(RenderInvalidation::PAINT) {
+                    self.mark_render_dirty(render, DirtyFlags::PAINT, false);
+                }
             }
             self.propagate_environment(child);
         }
@@ -710,14 +711,12 @@ impl WidgetTree {
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
         if old_kind != new_kind {
-            let opacity_only = opacity_composite_only_change(&old_kind, &new_kind);
-            let effect_only = effect_composite_only_change(&old_kind, &new_kind);
-            let affine_only = affine_composite_only_change(&old_kind, &new_kind);
-            self.renders
+            let invalidation = self
+                .renders
                 .get_mut(render.0)
                 .expect("present")
                 .object
-                .replace_kind(new_kind.clone());
+                .update_kind(new_kind.clone());
             if let RenderKind::Banner { shadow, .. } = &new_kind
                 && let Some(layer) = self
                     .renders
@@ -730,28 +729,22 @@ impl WidgetTree {
                     DropShadowEffect::asymmetric(shadow.offset, sigma, sigma, shadow.color),
                 );
             }
-            if opacity_only {
+            if invalidation.contains(RenderInvalidation::COMPOSITE) {
+                self.diagnostics.compositor_only_updates += 1;
                 #[cfg(feature = "devtools")]
                 {
-                    work_reasons.2 = Some("retained opacity property changed".into());
+                    work_reasons.2 = Some("retained compositor property changed".into());
                 }
-                // Alpha is consumed by the retained compositor layer. Keep
-                // paint/layout caches warm for opacity-only rebuilds.
-                if let RenderKind::Opacity { alpha, .. } = new_kind {
-                    if let Some(layer) = self
-                        .renders
-                        .get(render.0)
-                        .and_then(|n| n.object.layers.opacity)
-                    {
-                        self.compositor.update_opacity(layer, alpha);
+                match new_kind.clone() {
+                    RenderKind::Opacity { alpha, .. } => {
+                        if let Some(layer) = self
+                            .renders
+                            .get(render.0)
+                            .and_then(|node| node.object.layers.opacity)
+                        {
+                            self.compositor.update_opacity(layer, alpha);
+                        }
                     }
-                }
-            } else if effect_only {
-                #[cfg(feature = "devtools")]
-                {
-                    work_reasons.2 = Some("retained effect property changed".into());
-                }
-                match new_kind {
                     RenderKind::Blur {
                         sigma_x, sigma_y, ..
                     } => {
@@ -875,30 +868,29 @@ impl WidgetTree {
                             );
                         }
                     }
+                    RenderKind::Transform { .. }
+                    | RenderKind::Scale { .. }
+                    | RenderKind::Rotation { .. } => {
+                        if let (Some(layer), Some(transform)) = (
+                            self.renders
+                                .get(render.0)
+                                .and_then(|node| node.object.layers.content),
+                            self.content_transform(render),
+                        ) {
+                            self.compositor.update_transform(layer, transform);
+                        }
+                    }
                     _ => {}
                 }
-            } else if affine_only {
-                #[cfg(feature = "devtools")]
-                {
-                    work_reasons.2 = Some("retained affine transform changed".into());
-                }
-                if let (Some(layer), Some(transform)) = (
-                    self.renders
-                        .get(render.0)
-                        .and_then(|node| node.object.layers.content),
-                    self.content_transform(render),
-                ) {
-                    self.compositor.update_transform(layer, transform);
-                }
-            } else if text_paint_only_change(&old_kind, &new_kind)
-                || custom_paint_only_change(&old_kind, &new_kind)
+            } else if invalidation.contains(RenderInvalidation::PAINT)
+                && !invalidation.contains(RenderInvalidation::LAYOUT)
             {
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.1 = Some("paint-only configuration changed".into());
                 }
                 self.mark_render_dirty(render, DirtyFlags::PAINT, false);
-            } else {
+            } else if invalidation.contains(RenderInvalidation::LAYOUT) {
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.0 = Some("layout-affecting configuration changed".into());
