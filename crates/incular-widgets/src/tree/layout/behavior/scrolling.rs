@@ -95,7 +95,7 @@ impl WidgetTree {
                 }
                 (constraints.constrain(layout_size), offsets)
             }
-            RenderKind::DraggableScrollableSheet { sheet } => {
+            RenderKind::DraggableScrollableSheet { config } => {
                 if let Some(state) = self
                     .renders
                     .get(id.0)
@@ -106,7 +106,7 @@ impl WidgetTree {
                     state.set_parent_height(viewport_size.height);
                     let extent = state.extent();
                     let child_height = extent.current_pixels().clamp(0.0, viewport_size.height);
-                    let sheet_height = if sheet.0.borrow().expands() {
+                    let sheet_height = if config.expand {
                         viewport_size.height
                     } else {
                         child_height

@@ -463,6 +463,92 @@ pub struct ListWheelViewport<T> {
     last_selected_index: Option<usize>,
 }
 
+/// Immutable list-wheel configuration captured by the declarative widget
+/// layer. The retained tree owns the mutable [`ListWheelViewport`] instantiated
+/// from this snapshot.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct WheelViewportConfig<T> {
+    controller: ScrollController,
+    physics: ScrollPhysics,
+    item_extent: f32,
+    projection: WheelProjection,
+    magnification: f32,
+    use_magnifier: bool,
+    over_under_center_opacity: f32,
+    render_children_outside_viewport: bool,
+    clip_behavior: Clip,
+    delegate: WheelChildDelegate<T>,
+    change_reporting_behavior: ChangeReportingBehavior,
+    on_selected_item_changed: Option<Rc<dyn Fn(usize)>>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for WheelViewportConfig<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WheelViewportConfig")
+            .field("controller", &self.controller)
+            .field("physics", &self.physics)
+            .field("item_extent", &self.item_extent)
+            .field("projection", &self.projection)
+            .field("magnification", &self.magnification)
+            .field("use_magnifier", &self.use_magnifier)
+            .field(
+                "render_children_outside_viewport",
+                &self.render_children_outside_viewport,
+            )
+            .field("clip_behavior", &self.clip_behavior)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: PartialEq> PartialEq for WheelViewportConfig<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.controller == other.controller
+            && self.physics == other.physics
+            && self.item_extent == other.item_extent
+            && self.projection == other.projection
+            && self.magnification == other.magnification
+            && self.use_magnifier == other.use_magnifier
+            && self.over_under_center_opacity == other.over_under_center_opacity
+            && self.render_children_outside_viewport == other.render_children_outside_viewport
+            && self.clip_behavior == other.clip_behavior
+            && wheel_delegate_eq(&self.delegate, &other.delegate)
+            && self.change_reporting_behavior == other.change_reporting_behavior
+            && same_callback(
+                &self.on_selected_item_changed,
+                &other.on_selected_item_changed,
+            )
+    }
+}
+
+fn same_callback<T: ?Sized>(left: &Option<Rc<T>>, right: &Option<Rc<T>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn wheel_delegate_eq<T: PartialEq>(
+    left: &WheelChildDelegate<T>,
+    right: &WheelChildDelegate<T>,
+) -> bool {
+    match (left, right) {
+        (WheelChildDelegate::Children(left), WheelChildDelegate::Children(right)) => left == right,
+        (
+            WheelChildDelegate::Builder {
+                child_count: left_count,
+                builder: left_builder,
+            },
+            WheelChildDelegate::Builder {
+                child_count: right_count,
+                builder: right_builder,
+            },
+        ) => left_count == right_count && Rc::ptr_eq(left_builder, right_builder),
+        _ => false,
+    }
+}
+
 impl<T> ListWheelViewport<T> {
     /// Creates a wheel with Flutter's default diameter ratio, perspective, and
     /// clamping/fixed-extent physics.
@@ -500,6 +586,23 @@ impl<T> ListWheelViewport<T> {
     #[must_use]
     pub fn controller(&self) -> ScrollController {
         self.controller.clone()
+    }
+
+    pub(crate) fn into_retained_config(self) -> WheelViewportConfig<T> {
+        WheelViewportConfig {
+            controller: self.controller,
+            physics: self.physics,
+            item_extent: self.item_extent,
+            projection: self.projection,
+            magnification: self.magnification,
+            use_magnifier: self.use_magnifier,
+            over_under_center_opacity: self.over_under_center_opacity,
+            render_children_outside_viewport: self.render_children_outside_viewport,
+            clip_behavior: self.clip_behavior,
+            delegate: self.delegate,
+            change_reporting_behavior: self.change_reporting_behavior,
+            on_selected_item_changed: self.on_selected_item_changed,
+        }
     }
 
     /// Sets wheel projection and magnifier properties.
@@ -750,6 +853,32 @@ impl<T> ListWheelViewport<T> {
     }
 }
 
+impl<T: Clone> WheelViewportConfig<T> {
+    pub(crate) fn instantiate(&self) -> ListWheelViewport<T> {
+        ListWheelViewport {
+            controller: self.controller.clone(),
+            physics: self.physics,
+            item_extent: self.item_extent,
+            projection: self.projection,
+            magnification: self.magnification,
+            use_magnifier: self.use_magnifier,
+            over_under_center_opacity: self.over_under_center_opacity,
+            render_children_outside_viewport: self.render_children_outside_viewport,
+            clip_behavior: self.clip_behavior,
+            delegate: self.delegate.clone(),
+            change_reporting_behavior: self.change_reporting_behavior,
+            on_selected_item_changed: self.on_selected_item_changed.clone(),
+            last_selected_index: None,
+        }
+    }
+
+    pub(crate) fn update_runtime(&self, viewport: &mut ListWheelViewport<T>) {
+        let last_selected_index = viewport.last_selected_index;
+        *viewport = self.instantiate();
+        viewport.last_selected_index = last_selected_index;
+    }
+}
+
 /// A convenience wrapper corresponding to Flutter's `ListWheelScrollView`.
 pub struct ListWheelScrollView<T> {
     viewport: ListWheelViewport<T>,
@@ -777,6 +906,10 @@ impl<T> ListWheelScrollView<T> {
     /// Returns the mutable viewport model.
     pub fn viewport_mut(&mut self) -> &mut ListWheelViewport<T> {
         &mut self.viewport
+    }
+
+    pub(crate) fn into_retained_config(self) -> WheelViewportConfig<T> {
+        self.viewport.into_retained_config()
     }
 
     /// Lays out the wheel.

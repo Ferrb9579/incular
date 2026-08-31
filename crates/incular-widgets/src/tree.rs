@@ -52,6 +52,10 @@ use crate::advanced_scrolling::{
     ListWheelViewport, RawScrollbar, RawScrollbarStyle, TwoDimensionalScrollView,
     TwoDimensionalViewport,
 };
+use crate::advanced_scrolling::{
+    draggable::DraggableSheetConfig, two_dimensional::TwoDimensionalViewportConfig,
+    wheel::WheelViewportConfig,
+};
 use crate::compositing::ShaderCallback;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
 use crate::focus_keyboard::FocusTraversalPolicyKind;
@@ -112,52 +116,6 @@ pub use rendering::{image_fit_rects, image_repeat_destinations, render_kind};
 pub use retained::{PERFORMANCE_OVERLAY_KEY, performance_overlay_placeholder};
 pub use values::*;
 pub use widget::Widget;
-
-/// Shared handles keep algorithm state owned by the retained descriptor while
-/// allowing a cheap declarative widget clone. The focused scrolling models
-/// themselves remain renderer-neutral and are only driven by the tree adapter.
-#[derive(Clone)]
-pub struct RetainedWheelScrollView(pub(crate) Rc<RefCell<ListWheelScrollView<Widget>>>);
-
-#[derive(Clone)]
-pub struct RetainedWheelViewport(pub(crate) Rc<RefCell<ListWheelViewport<Widget>>>);
-
-#[derive(Clone)]
-pub struct RetainedDraggableSheet(pub(crate) Rc<RefCell<DraggableScrollableSheet<Widget>>>);
-
-#[derive(Clone)]
-pub struct RetainedActuator(pub(crate) Rc<DraggableScrollableActuator>);
-
-#[derive(Clone)]
-pub struct RetainedTwoDimensionalScrollView(
-    pub(crate) Rc<RefCell<TwoDimensionalScrollView<Widget>>>,
-);
-
-#[derive(Clone)]
-pub struct RetainedTwoDimensionalViewport(pub(crate) Rc<RefCell<TwoDimensionalViewport<Widget>>>);
-
-macro_rules! retained_rc_handle_traits {
-    ($name:ident, $label:literal) => {
-        impl std::fmt::Debug for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_tuple($label).field(&"retained").finish()
-            }
-        }
-
-        impl PartialEq for $name {
-            fn eq(&self, other: &Self) -> bool {
-                Rc::ptr_eq(&self.0, &other.0)
-            }
-        }
-    };
-}
-
-retained_rc_handle_traits!(RetainedWheelScrollView, "ListWheelScrollView");
-retained_rc_handle_traits!(RetainedWheelViewport, "ListWheelViewport");
-retained_rc_handle_traits!(RetainedDraggableSheet, "DraggableScrollableSheet");
-retained_rc_handle_traits!(RetainedActuator, "DraggableScrollableActuator");
-retained_rc_handle_traits!(RetainedTwoDimensionalScrollView, "TwoDimensionalScrollView");
-retained_rc_handle_traits!(RetainedTwoDimensionalViewport, "TwoDimensionalViewport");
 
 thread_local! {
     /// Type-erased values made available while a retained layout builder is
@@ -757,23 +715,23 @@ pub enum WidgetKind {
         child: Widget,
     },
     ListWheelScrollView {
-        view: RetainedWheelScrollView,
+        config: Rc<WheelViewportConfig<Widget>>,
     },
     ListWheelViewport {
-        viewport: RetainedWheelViewport,
+        config: Rc<WheelViewportConfig<Widget>>,
     },
     DraggableScrollableSheet {
-        sheet: RetainedDraggableSheet,
+        config: Rc<DraggableSheetConfig<Widget>>,
     },
     DraggableScrollableActuator {
-        actuator: RetainedActuator,
+        actuator: DraggableScrollableActuator,
         child: Widget,
     },
     TwoDimensionalScrollView {
-        view: RetainedTwoDimensionalScrollView,
+        config: Rc<TwoDimensionalViewportConfig<Widget>>,
     },
     TwoDimensionalViewport {
-        viewport: RetainedTwoDimensionalViewport,
+        config: Rc<TwoDimensionalViewportConfig<Widget>>,
     },
     /// A flow child which remains in the scrolling layout while an inner
     /// compositor transform pins it at the viewport's leading edge.
@@ -2610,22 +2568,22 @@ pub enum RenderKind {
         style: RawScrollbarStyle,
     },
     ListWheelScrollView {
-        view: RetainedWheelScrollView,
+        config: Rc<WheelViewportConfig<Widget>>,
     },
     ListWheelViewport {
-        viewport: RetainedWheelViewport,
+        config: Rc<WheelViewportConfig<Widget>>,
     },
     DraggableScrollableSheet {
-        sheet: RetainedDraggableSheet,
+        config: Rc<DraggableSheetConfig<Widget>>,
     },
     DraggableScrollableActuator {
-        actuator: RetainedActuator,
+        actuator: DraggableScrollableActuator,
     },
     TwoDimensionalScrollView {
-        view: RetainedTwoDimensionalScrollView,
+        config: Rc<TwoDimensionalViewportConfig<Widget>>,
     },
     TwoDimensionalViewport {
-        viewport: RetainedTwoDimensionalViewport,
+        config: Rc<TwoDimensionalViewportConfig<Widget>>,
     },
     PersistentHeader {
         controller: ScrollController,

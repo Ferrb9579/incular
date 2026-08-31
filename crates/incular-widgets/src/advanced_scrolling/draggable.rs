@@ -187,6 +187,19 @@ pub struct DraggableScrollableActuator {
     state: Rc<RefCell<ActuatorState>>,
 }
 
+impl std::fmt::Debug for DraggableScrollableActuator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DraggableScrollableActuator")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for DraggableScrollableActuator {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+}
+
 impl DraggableScrollableActuator {
     /// Creates an actuator with no descendants attached.
     #[must_use]
@@ -293,6 +306,22 @@ impl DraggableScrollableController {
         self.state.borrow_mut().sheet = Some(Rc::downgrade(sheet));
     }
 
+    fn same_handle(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    fn detach_from(&self, sheet: &Rc<RefCell<SheetState>>) {
+        let mut controller = self.state.borrow_mut();
+        if controller
+            .sheet
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_some_and(|attached| Rc::ptr_eq(&attached, sheet))
+        {
+            controller.sheet = None;
+        }
+    }
+
     fn upgrade_sheet(&self) -> Option<Rc<RefCell<SheetState>>> {
         self.state.borrow().sheet.as_ref().and_then(Weak::upgrade)
     }
@@ -389,6 +418,51 @@ pub struct DraggableScrollableSheet<T> {
     builder: Rc<dyn Fn(&ScrollController) -> T>,
 }
 
+/// Immutable sheet configuration stored by declarative widget descriptors.
+/// Mounted extent, inner-scroll and activity state is created and owned by the
+/// retained render node.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct DraggableSheetConfig<T> {
+    pub(crate) min_child_size: f32,
+    pub(crate) max_child_size: f32,
+    pub(crate) initial_child_size: f32,
+    pub(crate) expand: bool,
+    pub(crate) should_close_on_min_extent: bool,
+    pub(crate) snap: DraggableSnap,
+    pub(crate) controller: DraggableScrollableController,
+    builder: Rc<dyn Fn(&ScrollController) -> T>,
+}
+
+impl<T> std::fmt::Debug for DraggableSheetConfig<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DraggableSheetConfig")
+            .field("min_child_size", &self.min_child_size)
+            .field("max_child_size", &self.max_child_size)
+            .field("initial_child_size", &self.initial_child_size)
+            .field("expand", &self.expand)
+            .field(
+                "should_close_on_min_extent",
+                &self.should_close_on_min_extent,
+            )
+            .field("snap", &self.snap)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> PartialEq for DraggableSheetConfig<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.min_child_size == other.min_child_size
+            && self.max_child_size == other.max_child_size
+            && self.initial_child_size == other.initial_child_size
+            && self.expand == other.expand
+            && self.should_close_on_min_extent == other.should_close_on_min_extent
+            && self.snap == other.snap
+            && Rc::ptr_eq(&self.controller.state, &other.controller.state)
+            && Rc::ptr_eq(&self.builder, &other.builder)
+    }
+}
+
 impl<T> DraggableScrollableSheet<T> {
     /// Creates a configured sheet.
     #[must_use]
@@ -453,6 +527,19 @@ impl<T> DraggableScrollableSheet<T> {
         self.controller.clone()
     }
 
+    pub(crate) fn into_retained_config(self) -> DraggableSheetConfig<T> {
+        DraggableSheetConfig {
+            min_child_size: self.min_child_size,
+            max_child_size: self.max_child_size,
+            initial_child_size: self.initial_child_size,
+            expand: self.expand,
+            should_close_on_min_extent: self.should_close_on_min_extent,
+            snap: self.snap,
+            controller: self.controller,
+            builder: self.builder,
+        }
+    }
+
     /// Returns whether the sheet should occupy unused parent space.
     #[must_use]
     pub fn expands(&self) -> bool {
@@ -472,6 +559,59 @@ impl<T> DraggableScrollableSheet<T> {
         );
         let child = (self.builder)(&state.inner_controller());
         (state, child)
+    }
+}
+
+impl<T> DraggableSheetConfig<T> {
+    pub(crate) fn mount(&self) -> (DraggableScrollableState, T) {
+        let state = DraggableScrollableState::new(
+            self.min_child_size,
+            self.max_child_size,
+            self.initial_child_size,
+            self.should_close_on_min_extent,
+            self.snap.clone(),
+            self.controller.clone(),
+        );
+        let child = (self.builder)(&state.inner_controller());
+        (state, child)
+    }
+
+    pub(crate) fn update_mounted_state(
+        &self,
+        state: &DraggableScrollableState,
+        previous: Option<&Self>,
+    ) {
+        if let Some(previous) = previous
+            && !previous.controller.same_handle(&self.controller)
+        {
+            previous.controller.detach_from(&state.state);
+        }
+        let mut mounted = state.state.borrow_mut();
+        let current_size = mounted.extent.current_size;
+        let available_pixels = mounted.extent.available_pixels;
+        let has_dragged = mounted.extent.has_dragged;
+        let has_changed = mounted.extent.has_changed;
+        mounted.extent = DraggableSheetExtent::new(
+            self.min_child_size,
+            self.max_child_size,
+            self.initial_child_size,
+            self.should_close_on_min_extent,
+        );
+        mounted.extent.available_pixels = available_pixels;
+        mounted.extent.current_size = current_size.clamp(self.min_child_size, self.max_child_size);
+        mounted.extent.has_dragged = has_dragged;
+        mounted.extent.has_changed = has_changed;
+        mounted.snap = self.snap.clone();
+        drop(mounted);
+        self.controller.attach(&state.state);
+    }
+
+    pub(crate) fn builder_ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.builder, &other.builder)
+    }
+
+    pub(crate) fn build_child(&self, state: &DraggableScrollableState) -> T {
+        (self.builder)(&state.inner_controller())
     }
 }
 

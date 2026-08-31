@@ -20,25 +20,25 @@ pub(super) fn lower_scrolling(widget: &Widget) -> RenderKind {
             controller: controller.clone(),
             style: *style,
         },
-        WidgetKind::ListWheelScrollView { view } => {
-            RenderKind::ListWheelScrollView { view: view.clone() }
-        }
-        WidgetKind::ListWheelViewport { viewport } => RenderKind::ListWheelViewport {
-            viewport: viewport.clone(),
+        WidgetKind::ListWheelScrollView { config } => RenderKind::ListWheelScrollView {
+            config: config.clone(),
         },
-        WidgetKind::DraggableScrollableSheet { sheet } => RenderKind::DraggableScrollableSheet {
-            sheet: sheet.clone(),
+        WidgetKind::ListWheelViewport { config } => RenderKind::ListWheelViewport {
+            config: config.clone(),
+        },
+        WidgetKind::DraggableScrollableSheet { config } => RenderKind::DraggableScrollableSheet {
+            config: config.clone(),
         },
         WidgetKind::DraggableScrollableActuator { actuator, .. } => {
             RenderKind::DraggableScrollableActuator {
                 actuator: actuator.clone(),
             }
         }
-        WidgetKind::TwoDimensionalScrollView { view } => {
-            RenderKind::TwoDimensionalScrollView { view: view.clone() }
-        }
-        WidgetKind::TwoDimensionalViewport { viewport } => RenderKind::TwoDimensionalViewport {
-            viewport: viewport.clone(),
+        WidgetKind::TwoDimensionalScrollView { config } => RenderKind::TwoDimensionalScrollView {
+            config: config.clone(),
+        },
+        WidgetKind::TwoDimensionalViewport { config } => RenderKind::TwoDimensionalViewport {
+            config: config.clone(),
         },
         WidgetKind::PersistentHeader {
             controller,

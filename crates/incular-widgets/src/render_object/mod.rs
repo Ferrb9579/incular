@@ -7,6 +7,7 @@
 
 use std::{
     ops::{Deref, DerefMut},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -16,8 +17,10 @@ use incular_rendering::DisplayList;
 use incular_text::TextLayout;
 
 use crate::{
+    advanced_scrolling::draggable::DraggableSheetConfig,
     advanced_scrolling::{
-        DraggableScrollableState, RawScrollbar, TwoDimensionalViewportLayout, WheelLayout,
+        DraggableScrollableState, ListWheelViewport, RawScrollbar, TwoDimensionalViewport,
+        TwoDimensionalViewportLayout, WheelLayout,
     },
     tree::{ButtonState, RenderKind, RenderObjectId, Widget},
 };
@@ -90,16 +93,19 @@ pub(crate) struct RenderScrollState {
 
 #[derive(Default)]
 pub(crate) struct RenderWheelState {
+    pub(crate) viewport: Option<Box<ListWheelViewport<Widget>>>,
     pub(crate) layout: Option<WheelLayout<Widget>>,
 }
 
 #[derive(Default)]
 pub(crate) struct RenderDraggableSheetState {
     pub(crate) state: Option<DraggableScrollableState>,
+    pub(crate) mounted_config: Option<Rc<DraggableSheetConfig<Widget>>>,
 }
 
 #[derive(Default)]
 pub(crate) struct RenderTwoDimensionalState {
+    pub(crate) viewport: Option<Box<TwoDimensionalViewport<Widget>>>,
     pub(crate) layout: Option<TwoDimensionalViewportLayout<Widget>>,
 }
 
@@ -167,23 +173,39 @@ impl RenderFeatureState {
     }
 
     fn for_kind(kind: &RenderKind) -> Self {
-        match Self::class_for(kind) {
-            FeatureClass::None => Self::None,
-            FeatureClass::Text => Self::Text(RenderTextState::default()),
-            FeatureClass::SelectableText => {
-                Self::SelectableText(RenderSelectableTextState::default())
+        match kind {
+            RenderKind::ListWheelScrollView { config }
+            | RenderKind::ListWheelViewport { config } => Self::Wheel(RenderWheelState {
+                viewport: Some(Box::new(config.instantiate())),
+                layout: None,
+            }),
+            RenderKind::TwoDimensionalScrollView { config }
+            | RenderKind::TwoDimensionalViewport { config } => {
+                Self::TwoDimensional(RenderTwoDimensionalState {
+                    viewport: Some(Box::new(config.instantiate())),
+                    layout: None,
+                })
             }
-            FeatureClass::TextField => Self::TextField(RenderTextFieldState::default()),
-            FeatureClass::Button => Self::Button(RenderButtonState::default()),
-            FeatureClass::RawScrollbar => Self::RawScrollbar(RenderRawScrollbarState::default()),
-            FeatureClass::Scroll => Self::Scroll(RenderScrollState::default()),
-            FeatureClass::Wheel => Self::Wheel(RenderWheelState::default()),
-            FeatureClass::DraggableSheet => {
-                Self::DraggableSheet(RenderDraggableSheetState::default())
-            }
-            FeatureClass::TwoDimensional => {
-                Self::TwoDimensional(RenderTwoDimensionalState::default())
-            }
+            _ => match Self::class_for(kind) {
+                FeatureClass::None => Self::None,
+                FeatureClass::Text => Self::Text(RenderTextState::default()),
+                FeatureClass::SelectableText => {
+                    Self::SelectableText(RenderSelectableTextState::default())
+                }
+                FeatureClass::TextField => Self::TextField(RenderTextFieldState::default()),
+                FeatureClass::Button => Self::Button(RenderButtonState::default()),
+                FeatureClass::RawScrollbar => {
+                    Self::RawScrollbar(RenderRawScrollbarState::default())
+                }
+                FeatureClass::Scroll => Self::Scroll(RenderScrollState::default()),
+                FeatureClass::Wheel => Self::Wheel(RenderWheelState::default()),
+                FeatureClass::DraggableSheet => {
+                    Self::DraggableSheet(RenderDraggableSheetState::default())
+                }
+                FeatureClass::TwoDimensional => {
+                    Self::TwoDimensional(RenderTwoDimensionalState::default())
+                }
+            },
         }
     }
 
@@ -191,6 +213,26 @@ impl RenderFeatureState {
         let expected = Self::class_for(kind);
         if self.class() != expected {
             *self = Self::for_kind(kind);
+            return;
+        }
+        match (self, kind) {
+            (
+                Self::Wheel(state),
+                RenderKind::ListWheelScrollView { config }
+                | RenderKind::ListWheelViewport { config },
+            ) => match state.viewport.as_mut() {
+                Some(viewport) => config.update_runtime(viewport.as_mut()),
+                None => state.viewport = Some(Box::new(config.instantiate())),
+            },
+            (
+                Self::TwoDimensional(state),
+                RenderKind::TwoDimensionalScrollView { config }
+                | RenderKind::TwoDimensionalViewport { config },
+            ) => match state.viewport.as_mut() {
+                Some(viewport) => config.update_runtime(viewport.as_mut()),
+                None => state.viewport = Some(Box::new(config.instantiate())),
+            },
+            _ => {}
         }
     }
 }

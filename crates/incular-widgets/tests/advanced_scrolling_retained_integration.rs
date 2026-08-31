@@ -1,12 +1,17 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
-use incular_widgets::internal::WidgetKind;
+use incular_config::Constraints;
+use incular_widgets::internal::{WidgetKind, WidgetTree};
 use incular_widgets::{
-    Axis, CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, Color, DiagonalDragBehavior,
-    DraggableScrollableActuator, DraggableScrollableSheet, ListWheelScrollView, ListWheelViewport,
-    Offset, RawScrollbar, RawScrollbarOrientation, RawScrollbarStyle, ScrollController, Size,
-    TwoDimensionalChildDelegate, TwoDimensionalScrollView, TwoDimensionalViewport,
-    WheelChildDelegate, Widget,
+    Axis, CacheExtentStyle, ChangeReportingBehavior, ChildVicinity, Clip, Color,
+    DiagonalDragBehavior, DraggableScrollableActuator, DraggableScrollableSheet,
+    ListWheelScrollView, ListWheelViewport, Offset, RawScrollbar, RawScrollbarOrientation,
+    RawScrollbarStyle, ScrollController, Size, TwoDimensionalChildDelegate,
+    TwoDimensionalScrollView, TwoDimensionalViewport, WheelChildDelegate, Widget,
 };
 
 fn wheel_children(count: usize) -> Vec<Widget> {
@@ -291,4 +296,94 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
         converted_viewport.kind().clone(),
         WidgetKind::TwoDimensionalViewport { .. }
     ));
+}
+
+#[test]
+fn retained_two_dimensional_runtime_cache_survives_compatible_config_updates() {
+    let builds = Rc::new(Cell::new(0_usize));
+    let builds_for_delegate = builds.clone();
+    let delegate = TwoDimensionalChildDelegate::new(20, 20, move |vicinity| {
+        builds_for_delegate.set(builds_for_delegate.get() + 1);
+        Some(
+            Widget::fixed_box(Size::new(20.0, 20.0), Color::WHITE)
+                .with_key((vicinity.y_index * 20 + vicinity.x_index) as u64),
+        )
+    });
+    let horizontal = ScrollController::new();
+    let vertical = ScrollController::new();
+    let constraints = Constraints::tight(Size::new(80.0, 60.0));
+
+    let mut first = TwoDimensionalViewport::new(
+        delegate.clone(),
+        horizontal.clone(),
+        vertical.clone(),
+        20.0,
+        20.0,
+    );
+    first.set_cache_extent(0.0, CacheExtentStyle::Pixels);
+
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::two_dimensional_viewport(first))
+        .expect("two-dimensional viewport mounts");
+    tree.try_layout(constraints).expect("initial layout");
+    let initial_builds = builds.get();
+    assert!(initial_builds > 0);
+
+    let mut updated = TwoDimensionalViewport::new(delegate, horizontal, vertical, 20.0, 20.0);
+    updated.set_cache_extent(0.0, CacheExtentStyle::Pixels);
+    updated.set_clip_behavior(Clip::AntiAlias);
+    tree.update(root, Widget::two_dimensional_viewport(updated))
+        .expect("compatible viewport update");
+    tree.try_layout(constraints).expect("updated layout");
+
+    assert_eq!(
+        builds.get(),
+        initial_builds,
+        "a config-only update must reuse the retained cell cache"
+    );
+}
+
+#[test]
+fn retained_draggable_sheet_preserves_extent_and_rebinds_updated_config() {
+    let first = DraggableScrollableSheet::new(|inner| {
+        Widget::scroll_view(
+            inner.clone(),
+            Widget::fixed_box(Size::new(100.0, 600.0), Color::WHITE),
+        )
+    })
+    .extents(0.25, 1.0, 0.5)
+    .expand(false);
+    let first_controller = first.controller();
+    let constraints = Constraints::tight(Size::new(120.0, 400.0));
+
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::draggable_scrollable_sheet(first))
+        .expect("sheet mounts");
+    tree.try_layout(constraints).expect("initial sheet layout");
+    assert!(first_controller.jump_to(0.75));
+    assert_eq!(first_controller.size(), Some(0.75));
+
+    let replacement_builds = Rc::new(Cell::new(0_usize));
+    let replacement_builds_for_builder = replacement_builds.clone();
+    let replacement = DraggableScrollableSheet::new(move |inner| {
+        replacement_builds_for_builder.set(replacement_builds_for_builder.get() + 1);
+        Widget::scroll_view(
+            inner.clone(),
+            Widget::fixed_box(Size::new(100.0, 800.0), Color::WHITE),
+        )
+    })
+    .extents(0.2, 0.8, 0.4)
+    .expand(false);
+    let replacement_controller = replacement.controller();
+
+    tree.update(root, Widget::draggable_scrollable_sheet(replacement))
+        .expect("compatible sheet update");
+    tree.try_layout(constraints).expect("updated sheet layout");
+
+    assert!(!first_controller.is_attached());
+    assert!(replacement_controller.is_attached());
+    assert_eq!(replacement_controller.size(), Some(0.75));
+    assert_eq!(replacement_builds.get(), 1);
 }

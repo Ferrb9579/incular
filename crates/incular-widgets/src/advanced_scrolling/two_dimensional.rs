@@ -427,9 +427,73 @@ pub struct TwoDimensionalViewport<T> {
     cache_extent: f32,
     cache_extent_style: CacheExtentStyle,
     clip_behavior: Clip,
+    row_estimate: f32,
+    column_estimate: f32,
     rows: MeasuredExtentIndex,
     columns: MeasuredExtentIndex,
     cache: BTreeMap<ChildVicinity, T>,
+}
+
+/// Immutable two-dimensional viewport configuration captured by a widget
+/// descriptor. Measured extent indexes and the materialized child cache are
+/// deliberately absent and live only in retained runtime state.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct TwoDimensionalViewportConfig<T> {
+    delegate: TwoDimensionalChildDelegate<T>,
+    horizontal_controller: ScrollController,
+    vertical_controller: ScrollController,
+    horizontal_physics: ScrollPhysics,
+    vertical_physics: ScrollPhysics,
+    horizontal_axis_direction: AxisDirection,
+    vertical_axis_direction: AxisDirection,
+    main_axis: Axis,
+    cache_extent: f32,
+    cache_extent_style: CacheExtentStyle,
+    clip_behavior: Clip,
+    row_estimate: f32,
+    column_estimate: f32,
+}
+
+impl<T> std::fmt::Debug for TwoDimensionalViewportConfig<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TwoDimensionalViewportConfig")
+            .field("rows", &self.delegate.row_count())
+            .field("columns", &self.delegate.column_count())
+            .field("horizontal_controller", &self.horizontal_controller)
+            .field("vertical_controller", &self.vertical_controller)
+            .field("horizontal_physics", &self.horizontal_physics)
+            .field("vertical_physics", &self.vertical_physics)
+            .field("horizontal_axis_direction", &self.horizontal_axis_direction)
+            .field("vertical_axis_direction", &self.vertical_axis_direction)
+            .field("main_axis", &self.main_axis)
+            .field("cache_extent", &self.cache_extent)
+            .field("cache_extent_style", &self.cache_extent_style)
+            .field("clip_behavior", &self.clip_behavior)
+            .field("row_estimate", &self.row_estimate)
+            .field("column_estimate", &self.column_estimate)
+            .finish()
+    }
+}
+
+impl<T> PartialEq for TwoDimensionalViewportConfig<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.delegate.row_count == other.delegate.row_count
+            && self.delegate.column_count == other.delegate.column_count
+            && Rc::ptr_eq(&self.delegate.builder, &other.delegate.builder)
+            && self.horizontal_controller == other.horizontal_controller
+            && self.vertical_controller == other.vertical_controller
+            && self.horizontal_physics == other.horizontal_physics
+            && self.vertical_physics == other.vertical_physics
+            && self.horizontal_axis_direction == other.horizontal_axis_direction
+            && self.vertical_axis_direction == other.vertical_axis_direction
+            && self.main_axis == other.main_axis
+            && self.cache_extent == other.cache_extent
+            && self.cache_extent_style == other.cache_extent_style
+            && self.clip_behavior == other.clip_behavior
+            && self.row_estimate == other.row_estimate
+            && self.column_estimate == other.column_estimate
+    }
 }
 
 impl<T> TwoDimensionalViewport<T> {
@@ -458,7 +522,27 @@ impl<T> TwoDimensionalViewport<T> {
             cache_extent: 250.0,
             cache_extent_style: CacheExtentStyle::Pixels,
             clip_behavior: Clip::HardEdge,
+            row_estimate,
+            column_estimate,
             cache: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn into_retained_config(self) -> TwoDimensionalViewportConfig<T> {
+        TwoDimensionalViewportConfig {
+            delegate: self.delegate,
+            horizontal_controller: self.horizontal_controller,
+            vertical_controller: self.vertical_controller,
+            horizontal_physics: self.horizontal_physics,
+            vertical_physics: self.vertical_physics,
+            horizontal_axis_direction: self.horizontal_axis_direction,
+            vertical_axis_direction: self.vertical_axis_direction,
+            main_axis: self.main_axis,
+            cache_extent: self.cache_extent,
+            cache_extent_style: self.cache_extent_style,
+            clip_behavior: self.clip_behavior,
+            row_estimate: self.row_estimate,
+            column_estimate: self.column_estimate,
         }
     }
 
@@ -766,6 +850,60 @@ impl<T> TwoDimensionalViewport<T> {
     }
 }
 
+impl<T: Clone> TwoDimensionalViewportConfig<T> {
+    pub(crate) fn instantiate(&self) -> TwoDimensionalViewport<T> {
+        TwoDimensionalViewport {
+            delegate: self.delegate.clone(),
+            horizontal_controller: self.horizontal_controller.clone(),
+            vertical_controller: self.vertical_controller.clone(),
+            horizontal_physics: self.horizontal_physics,
+            vertical_physics: self.vertical_physics,
+            horizontal_axis_direction: self.horizontal_axis_direction,
+            vertical_axis_direction: self.vertical_axis_direction,
+            main_axis: self.main_axis,
+            cache_extent: self.cache_extent,
+            cache_extent_style: self.cache_extent_style,
+            clip_behavior: self.clip_behavior,
+            row_estimate: self.row_estimate,
+            column_estimate: self.column_estimate,
+            rows: MeasuredExtentIndex::new(self.delegate.row_count(), self.row_estimate),
+            columns: MeasuredExtentIndex::new(self.delegate.column_count(), self.column_estimate),
+            cache: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn update_runtime(&self, viewport: &mut TwoDimensionalViewport<T>) {
+        let topology_changed = viewport.delegate.row_count() != self.delegate.row_count()
+            || viewport.delegate.column_count() != self.delegate.column_count()
+            || viewport.row_estimate != self.row_estimate
+            || viewport.column_estimate != self.column_estimate;
+        let delegate_changed = !Rc::ptr_eq(&viewport.delegate.builder, &self.delegate.builder);
+
+        viewport.delegate = self.delegate.clone();
+        viewport.horizontal_controller = self.horizontal_controller.clone();
+        viewport.vertical_controller = self.vertical_controller.clone();
+        viewport.horizontal_physics = self.horizontal_physics;
+        viewport.vertical_physics = self.vertical_physics;
+        viewport.horizontal_axis_direction = self.horizontal_axis_direction;
+        viewport.vertical_axis_direction = self.vertical_axis_direction;
+        viewport.main_axis = self.main_axis;
+        viewport.cache_extent = self.cache_extent;
+        viewport.cache_extent_style = self.cache_extent_style;
+        viewport.clip_behavior = self.clip_behavior;
+
+        if topology_changed {
+            viewport.row_estimate = self.row_estimate;
+            viewport.column_estimate = self.column_estimate;
+            viewport.rows = MeasuredExtentIndex::new(self.delegate.row_count(), self.row_estimate);
+            viewport.columns =
+                MeasuredExtentIndex::new(self.delegate.column_count(), self.column_estimate);
+            viewport.cache.clear();
+        } else if delegate_changed {
+            viewport.cache.clear();
+        }
+    }
+}
+
 /// A two-dimensional scroll view that owns the scrollable and viewport pair.
 pub struct TwoDimensionalScrollView<T> {
     scrollable: TwoDimensionalScrollable,
@@ -814,6 +952,10 @@ impl<T> TwoDimensionalScrollView<T> {
     /// Returns the mutable viewport model.
     pub fn viewport_mut(&mut self) -> &mut TwoDimensionalViewport<T> {
         &mut self.viewport
+    }
+
+    pub(crate) fn into_retained_config(self) -> TwoDimensionalViewportConfig<T> {
+        self.viewport.into_retained_config()
     }
 
     /// Applies one gesture/wheel delta.

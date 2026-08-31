@@ -135,11 +135,16 @@ impl WidgetTree {
                     }
                 }
             }
-            RenderKind::ListWheelScrollView { view } => {
-                let layout = view
-                    .0
-                    .borrow_mut()
-                    .viewport_mut()
+            RenderKind::ListWheelScrollView { .. } => {
+                let layout = self
+                    .renders
+                    .get_mut(id.0)
+                    .expect("wheel render")
+                    .wheel_state_mut()
+                    .expect("wheel render must own wheel state")
+                    .viewport
+                    .as_mut()
+                    .expect("wheel render must own retained viewport")
                     .layout_with_measure(viewport_size, |_, child_constraints| {
                         child_constraints.biggest()
                     });
@@ -159,10 +164,16 @@ impl WidgetTree {
                     .expect("wheel render must own wheel state")
                     .layout = Some(layout);
             }
-            RenderKind::ListWheelViewport { viewport } => {
-                let layout = viewport
-                    .0
-                    .borrow_mut()
+            RenderKind::ListWheelViewport { .. } => {
+                let layout = self
+                    .renders
+                    .get_mut(id.0)
+                    .expect("wheel render")
+                    .wheel_state_mut()
+                    .expect("wheel render must own wheel state")
+                    .viewport
+                    .as_mut()
+                    .expect("wheel render must own retained viewport")
                     .layout_with_measure(viewport_size, |_, child_constraints| {
                         child_constraints.biggest()
                     });
@@ -182,22 +193,48 @@ impl WidgetTree {
                     .expect("wheel render must own wheel state")
                     .layout = Some(layout);
             }
-            RenderKind::DraggableScrollableSheet { sheet } => {
-                let state = if let Some(state) = self
+            RenderKind::DraggableScrollableSheet { config } => {
+                let retained = self
                     .renders
                     .get(id.0)
                     .and_then(|render| render.draggable_sheet_state())
-                    .and_then(|state| state.state.clone())
-                {
+                    .map(|state| (state.state.clone(), state.mounted_config.clone()));
+                let state = if let Some((Some(state), mounted_config)) = retained {
+                    let builder_changed = mounted_config
+                        .as_ref()
+                        .is_none_or(|mounted| !mounted.builder_ptr_eq(&config));
+                    config.update_mounted_state(&state, mounted_config.as_deref());
+                    if builder_changed {
+                        let child = config.build_child(&state);
+                        let result = self.materialize_advanced_children(
+                            element_id,
+                            vec![(AdvancedChildKey::Sheet, child)],
+                        );
+                        if !self.record_tree_result(result) {
+                            return false;
+                        }
+                    }
+                    self.renders
+                        .get_mut(id.0)
+                        .expect("draggable sheet render")
+                        .draggable_sheet_state_mut()
+                        .expect("draggable-sheet render must own draggable state")
+                        .mounted_config = Some(config.clone());
                     state
                 } else {
-                    let (state, child) = sheet.0.borrow().mount();
+                    let (state, child) = config.mount();
                     self.renders
                         .get_mut(id.0)
                         .expect("draggable sheet render")
                         .draggable_sheet_state_mut()
                         .expect("draggable-sheet render must own draggable state")
                         .state = Some(state.clone());
+                    self.renders
+                        .get_mut(id.0)
+                        .expect("draggable sheet render")
+                        .draggable_sheet_state_mut()
+                        .expect("draggable-sheet render must own draggable state")
+                        .mounted_config = Some(config.clone());
                     let result = self.materialize_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::Sheet, child)],
@@ -232,11 +269,16 @@ impl WidgetTree {
                     }
                 }
             }
-            RenderKind::TwoDimensionalScrollView { view } => {
-                let layout = view
-                    .0
-                    .borrow_mut()
-                    .viewport_mut()
+            RenderKind::TwoDimensionalScrollView { .. } => {
+                let layout = self
+                    .renders
+                    .get_mut(id.0)
+                    .expect("two-dimensional render")
+                    .two_dimensional_state_mut()
+                    .expect("two-dimensional render must own viewport state")
+                    .viewport
+                    .as_mut()
+                    .expect("two-dimensional render must own retained viewport")
                     .layout_with_measure(viewport_size, |_, child_constraints| {
                         child_constraints.biggest()
                     });
@@ -261,10 +303,16 @@ impl WidgetTree {
                     .expect("two-dimensional render must own viewport state")
                     .layout = Some(layout);
             }
-            RenderKind::TwoDimensionalViewport { viewport } => {
-                let layout = viewport
-                    .0
-                    .borrow_mut()
+            RenderKind::TwoDimensionalViewport { .. } => {
+                let layout = self
+                    .renders
+                    .get_mut(id.0)
+                    .expect("two-dimensional render")
+                    .two_dimensional_state_mut()
+                    .expect("two-dimensional render must own viewport state")
+                    .viewport
+                    .as_mut()
+                    .expect("two-dimensional render must own retained viewport")
                     .layout_with_measure(viewport_size, |_, child_constraints| {
                         child_constraints.biggest()
                     });
@@ -325,7 +373,7 @@ impl WidgetTree {
         while let Some(candidate) = parent {
             let element = self.elements.get(candidate.0)?;
             if let WidgetKind::DraggableScrollableActuator { actuator, .. } = &element.widget.kind {
-                return Some(actuator.0.as_ref().clone());
+                return Some(actuator.clone());
             }
             parent = element.parent;
         }

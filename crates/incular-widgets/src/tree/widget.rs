@@ -647,30 +647,30 @@ impl std::fmt::Debug for WidgetKind {
                 .field("style", style)
                 .field("child", child)
                 .finish(),
-            Self::ListWheelScrollView { view } => f
+            Self::ListWheelScrollView { config } => f
                 .debug_struct("ListWheelScrollView")
-                .field("view", view)
+                .field("config", config)
                 .finish(),
-            Self::ListWheelViewport { viewport } => f
+            Self::ListWheelViewport { config } => f
                 .debug_struct("ListWheelViewport")
-                .field("viewport", viewport)
+                .field("config", config)
                 .finish(),
-            Self::DraggableScrollableSheet { sheet } => f
+            Self::DraggableScrollableSheet { config } => f
                 .debug_struct("DraggableScrollableSheet")
-                .field("sheet", sheet)
+                .field("config", config)
                 .finish(),
             Self::DraggableScrollableActuator { actuator, child } => f
                 .debug_struct("DraggableScrollableActuator")
                 .field("actuator", actuator)
                 .field("child", child)
                 .finish(),
-            Self::TwoDimensionalScrollView { view } => f
+            Self::TwoDimensionalScrollView { config } => f
                 .debug_struct("TwoDimensionalScrollView")
-                .field("view", view)
+                .field("config", config)
                 .finish(),
-            Self::TwoDimensionalViewport { viewport } => f
+            Self::TwoDimensionalViewport { config } => f
                 .debug_struct("TwoDimensionalViewport")
-                .field("viewport", viewport)
+                .field("config", config)
                 .finish(),
             Self::PersistentHeader { .. } => f.debug_struct("PersistentHeader").finish(),
             Self::NotificationListener { child, .. } => f
@@ -1262,15 +1262,15 @@ impl PartialEq for WidgetKind {
                     child: f,
                 },
             ) => a == d && b == e && c == f,
-            (Self::ListWheelScrollView { view: a }, Self::ListWheelScrollView { view: b }) => {
+            (Self::ListWheelScrollView { config: a }, Self::ListWheelScrollView { config: b }) => {
                 a == b
             }
-            (Self::ListWheelViewport { viewport: a }, Self::ListWheelViewport { viewport: b }) => {
+            (Self::ListWheelViewport { config: a }, Self::ListWheelViewport { config: b }) => {
                 a == b
             }
             (
-                Self::DraggableScrollableSheet { sheet: a },
-                Self::DraggableScrollableSheet { sheet: b },
+                Self::DraggableScrollableSheet { config: a },
+                Self::DraggableScrollableSheet { config: b },
             ) => a == b,
             (
                 Self::DraggableScrollableActuator {
@@ -1283,12 +1283,12 @@ impl PartialEq for WidgetKind {
                 },
             ) => a == c && b == d,
             (
-                Self::TwoDimensionalScrollView { view: a },
-                Self::TwoDimensionalScrollView { view: b },
+                Self::TwoDimensionalScrollView { config: a },
+                Self::TwoDimensionalScrollView { config: b },
             ) => a == b,
             (
-                Self::TwoDimensionalViewport { viewport: a },
-                Self::TwoDimensionalViewport { viewport: b },
+                Self::TwoDimensionalViewport { config: a },
+                Self::TwoDimensionalViewport { config: b },
             ) => a == b,
             (
                 Self::PersistentHeader {
@@ -3469,7 +3469,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelViewport {
-                viewport: RetainedWheelViewport(Rc::new(RefCell::new(viewport))),
+                config: Rc::new(viewport.into_retained_config()),
             },
             semantics: SemanticProperties::default(),
         })
@@ -3481,7 +3481,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelScrollView {
-                view: RetainedWheelScrollView(Rc::new(RefCell::new(view))),
+                config: Rc::new(view.into_retained_config()),
             },
             semantics: SemanticProperties::default(),
         })
@@ -3493,7 +3493,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DraggableScrollableSheet {
-                sheet: RetainedDraggableSheet(Rc::new(RefCell::new(sheet))),
+                config: Rc::new(sheet.into_retained_config()),
             },
             semantics: SemanticProperties::default(),
         })
@@ -3508,7 +3508,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DraggableScrollableActuator {
-                actuator: RetainedActuator(Rc::new(actuator)),
+                actuator,
                 child: child.into(),
             },
             semantics: SemanticProperties::default(),
@@ -3521,7 +3521,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalViewport {
-                viewport: RetainedTwoDimensionalViewport(Rc::new(RefCell::new(viewport))),
+                config: Rc::new(viewport.into_retained_config()),
             },
             semantics: SemanticProperties::default(),
         })
@@ -3533,7 +3533,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalScrollView {
-                view: RetainedTwoDimensionalScrollView(Rc::new(RefCell::new(view))),
+                config: Rc::new(view.into_retained_config()),
             },
             semantics: SemanticProperties::default(),
         })
