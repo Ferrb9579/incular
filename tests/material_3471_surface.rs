@@ -133,7 +133,8 @@ fn material_slider_uses_retained_keyboard_focus_and_range_constraints() {
         .on_changed(move |value| callback_value.set(value));
     let mut tree = WidgetTree::new();
     tree.mount(slider.into()).expect("mount material slider");
-    tree.layout(Constraints::loose(Size::new(320.0, 80.0)));
+    tree.layout(Constraints::loose(Size::new(320.0, 80.0)))
+        .expect("layout");
     let focused = tree.autofocus_element().expect("slider autofocus node");
     tree.set_keyboard_focus(focused, true);
     assert!(tree.dispatch_keyboard(

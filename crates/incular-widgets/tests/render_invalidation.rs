@@ -16,7 +16,7 @@ fn frame() -> Constraints {
 fn prepared(widget: Widget) -> (WidgetTree, incular_widgets::internal::ElementId) {
     let mut tree = WidgetTree::default();
     let root = tree.mount(widget).expect("mount");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
     (tree, root)
 }
@@ -29,7 +29,7 @@ fn opacity_property_update_is_compositor_only() {
 
     tree.update(root, Widget::opacity(0.75, child()))
         .expect("update");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
 
     let after = tree.diagnostics();
@@ -55,7 +55,7 @@ fn affine_property_update_is_compositor_only() {
         Widget::transform(Transform::translation(Offset::new(18.0, 7.0)), child()),
     )
     .expect("update");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
 
     let after = tree.diagnostics();
@@ -82,7 +82,7 @@ fn text_color_update_repaints_without_relayout() {
         Widget::text_styled("retained", style(Color::WHITE), TextAlign::Start),
     )
     .expect("update");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
 
     let after = tree.diagnostics();
@@ -108,7 +108,7 @@ fn text_metric_update_invalidates_layout_and_paint() {
         ),
     )
     .expect("update");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
 
     let after = tree.diagnostics();
@@ -124,7 +124,7 @@ fn fixed_box_color_update_repaints_without_relayout() {
 
     tree.update(root, Widget::box_(size, Color::WHITE))
         .expect("update");
-    tree.layout(frame());
+    tree.layout(frame()).expect("layout");
     let _ = tree.paint();
 
     let after = tree.diagnostics();

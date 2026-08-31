@@ -69,7 +69,8 @@ fn box_reorderable_list_uses_listener_index_and_flutter_callback_conventions() {
     let order = list.reorder_controller();
     let mut tree = WidgetTree::new();
     tree.mount(list.into()).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 140.)));
+    tree.layout(Constraints::tight(Size::new(100., 140.)))
+        .expect("layout");
 
     assert_eq!(scroll.max_offset(), 20.);
     let now = std::time::Instant::now();
@@ -121,7 +122,8 @@ fn adjusted_on_reorder_item_reports_post_removal_index_and_same_drop_ends() {
     let order = list.reorder_controller();
     let mut tree = WidgetTree::new();
     tree.mount(list.into()).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 140.)));
+    tree.layout(Constraints::tight(Size::new(100., 140.)))
+        .expect("layout");
 
     let now = std::time::Instant::now();
     dispatch(&mut tree, 2, now, PointerPhase::Down, Offset::new(10., 60.));
@@ -176,7 +178,8 @@ fn delayed_listener_rejects_early_motion_and_starts_after_long_press() {
     let order = list.reorder_controller();
     let mut tree = WidgetTree::new();
     tree.mount(list.into()).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 140.)));
+    tree.layout(Constraints::tight(Size::new(100., 140.)))
+        .expect("layout");
 
     let now = std::time::Instant::now();
     dispatch(&mut tree, 3, now, PointerPhase::Down, Offset::new(10., 20.));
@@ -245,7 +248,8 @@ fn box_reorderable_list_requires_an_enabled_listener_for_a_drag() {
         let order = list.reorder_controller();
         let mut tree = WidgetTree::new();
         tree.mount(list.into()).unwrap();
-        tree.layout(Constraints::tight(Size::new(100., 80.)));
+        tree.layout(Constraints::tight(Size::new(100., 80.)))
+            .expect("layout");
         let now = std::time::Instant::now();
         dispatch(&mut tree, 5, now, PointerPhase::Down, Offset::new(10., 20.));
         dispatch(
@@ -278,7 +282,8 @@ fn box_reorderable_list_requires_an_enabled_listener_for_a_drag() {
     let order = list.reorder_controller();
     let mut tree = WidgetTree::new();
     tree.mount(list.into()).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 80.)));
+    tree.layout(Constraints::tight(Size::new(100., 80.)))
+        .expect("layout");
     let now = std::time::Instant::now();
     dispatch(&mut tree, 6, now, PointerPhase::Down, Offset::new(10., 20.));
     dispatch(

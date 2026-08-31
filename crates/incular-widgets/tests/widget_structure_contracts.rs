@@ -33,7 +33,7 @@ fn dynamic_children_are_not_eager_declarative_children() {
         .expect("layout-builder mount");
 
     assert_eq!(tree.element_count(), 1);
-    tree.try_layout(Constraints::tight(Size::new(100.0, 100.0)))
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
         .expect("generated child layout");
     assert_eq!(tree.element_count(), 2);
 }

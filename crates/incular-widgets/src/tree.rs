@@ -2772,8 +2772,6 @@ pub struct WidgetTree {
     dependency_root: DependencyContext,
     inherited_consumers: HashMap<ConsumerId, (ElementId, InheritedDependencyKind)>,
     environment: RuntimeEnvironment,
-    pending_tree_error: Option<TreeError>,
-    last_tree_error: Option<TreeError>,
     recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,

@@ -1537,7 +1537,7 @@ impl Runtime {
         drop(build_guard);
         let _layout_guard = tracing::info_span!("incular.layout").entered();
         let layout_span = profiling::PhaseSpan::start();
-        self.tree.try_layout(constraints)?;
+        self.tree.layout(constraints)?;
         let layout = layout_span.elapsed_us();
         drop(_layout_guard);
         for (action, handler) in self.tree.take_pending_handlers() {
@@ -1556,7 +1556,7 @@ impl Runtime {
         self.prune_handlers();
         let _composite_guard = tracing::info_span!("incular.composite").entered();
         let composite_span = profiling::PhaseSpan::start();
-        let (composited, animations_active) = self.tree.update_compositor(now);
+        let (composited, animations_active) = self.tree.update_compositor(now)?;
         let composite = composite_span.elapsed_us();
         drop(_composite_guard);
         let _semantics_guard = tracing::info_span!("incular.semantics").entered();

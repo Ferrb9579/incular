@@ -30,7 +30,7 @@ fn keyed_row(items: usize, generation: u64) -> Widget {
 fn prepared(root: Widget) -> (WidgetTree, ElementId) {
     let mut tree = WidgetTree::default();
     let id = tree.mount(root).expect("mount");
-    tree.layout(frame_constraints());
+    tree.layout(frame_constraints()).expect("layout");
     (tree, id)
 }
 
@@ -43,7 +43,7 @@ fn bench(c: &mut Criterion) {
             b.iter(|| {
                 let same = keyed_row(std::hint::black_box(size), 0);
                 tree.update(root, same).expect("update");
-                tree.layout(frame_constraints());
+                tree.layout(frame_constraints()).expect("layout");
             });
         });
 
@@ -56,7 +56,7 @@ fn bench(c: &mut Criterion) {
                 b.iter(|| {
                     let next = keyed_row(std::hint::black_box(size), 1);
                     tree.update(root, next).expect("update");
-                    tree.layout(frame_constraints());
+                    tree.layout(frame_constraints()).expect("layout");
                 });
             },
         );
@@ -70,7 +70,7 @@ fn bench(c: &mut Criterion) {
                 b.iter(|| {
                     let next = unkeyed_row(std::hint::black_box(size), 1);
                     tree.update(root, next).expect("update");
-                    tree.layout(frame_constraints());
+                    tree.layout(frame_constraints()).expect("layout");
                 });
             },
         );
@@ -89,7 +89,7 @@ fn bench(c: &mut Criterion) {
                 }
                 let next = Widget::column(children);
                 tree.update(root, next).expect("update");
-                tree.layout(frame_constraints());
+                tree.layout(frame_constraints()).expect("layout");
             });
         });
     }
@@ -145,7 +145,9 @@ fn extended_bench(c: &mut Criterion) {
             &size,
             |b, &size| {
                 let (mut tree, _root) = prepared(keyed_row(size, 0));
-                b.iter(|| tree.layout(frame_constraints()));
+                b.iter(|| {
+                    tree.layout(frame_constraints()).expect("layout");
+                });
             },
         );
     }
@@ -171,7 +173,7 @@ fn extended_bench(c: &mut Criterion) {
                     .collect();
                 let next = Widget::column(children);
                 tree.update(root, next).expect("update");
-                tree.layout(frame_constraints());
+                tree.layout(frame_constraints()).expect("layout");
             });
         });
     }
@@ -192,7 +194,7 @@ fn extended_bench(c: &mut Criterion) {
             );
             let next = Widget::column(children);
             tree.update(root, next).expect("update");
-            tree.layout(frame_constraints());
+            tree.layout(frame_constraints()).expect("layout");
         });
     });
     group.bench_function("remove_middle", |b| {
@@ -207,7 +209,7 @@ fn extended_bench(c: &mut Criterion) {
                 .collect();
             let next = Widget::column(children);
             tree.update(root, next).expect("update");
-            tree.layout(frame_constraints());
+            tree.layout(frame_constraints()).expect("layout");
         });
     });
 
@@ -224,7 +226,7 @@ fn extended_bench(c: &mut Criterion) {
                 .collect();
             let next = Widget::column(children);
             tree.update(root, next).expect("update");
-            tree.layout(frame_constraints());
+            tree.layout(frame_constraints()).expect("layout");
         });
     });
     group.bench_function("rotate_keyed_by_one", |b| {
@@ -239,7 +241,7 @@ fn extended_bench(c: &mut Criterion) {
                 .collect();
             let next = Widget::column(children);
             tree.update(root, next).expect("update");
-            tree.layout(frame_constraints());
+            tree.layout(frame_constraints()).expect("layout");
         });
     });
 
@@ -249,7 +251,7 @@ fn extended_bench(c: &mut Criterion) {
         b.iter(|| {
             let same = mixed_row(std::hint::black_box(10_000), 0);
             tree.update(root, same).expect("update");
-            tree.layout(frame_constraints());
+            tree.layout(frame_constraints()).expect("layout");
         });
     });
 
@@ -264,7 +266,7 @@ fn extended_bench(c: &mut Criterion) {
             b.iter(|| {
                 let same = keyed_row(std::hint::black_box(100_000), 0);
                 tree.update(root, same).expect("update");
-                tree.layout(frame_constraints());
+                tree.layout(frame_constraints()).expect("layout");
             });
         });
     }

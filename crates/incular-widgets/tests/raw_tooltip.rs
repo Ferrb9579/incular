@@ -125,7 +125,8 @@ fn descriptor_retains_semantics_and_composited_overlay_hooks() {
     tree.mount(tooltip.into()).expect("tooltip should mount");
     tree.layout(incular_layout::Constraints::tight(
         incular_widgets::Size::new(120.0, 80.0),
-    ));
+    ))
+    .expect("layout");
     tree.update_semantics();
 
     let descriptions = tree

@@ -351,7 +351,8 @@ fn focus_scope_orders_descendants_and_selects_scope_autofocus_candidate() {
                 .into(),
         )
         .expect("mount focus scope");
-    tree.layout(Constraints::tight(Size::new(40., 10.)));
+    tree.layout(Constraints::tight(Size::new(40., 10.)))
+        .expect("layout");
 
     let children = tree.children(root).expect("scope children").to_vec();
     assert_eq!(children.len(), 2);

@@ -40,7 +40,8 @@ mod library_tests {
         tree.mount(button).unwrap();
         tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
             240.0, 64.0,
-        )));
+        )))
+        .expect("layout");
         let _ = tree.paint();
     }
 
@@ -192,7 +193,8 @@ mod button_tests {
 
         let mut tree = WidgetTree::new();
         let root = tree.mount(TextButton::new("Text").into()).unwrap();
-        tree.layout(Constraints::loose(Size::new(240.0, 120.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 120.0)))
+            .expect("layout");
         assert!(
             tree.render_size(tree.render_id(root).unwrap())
                 .unwrap()
@@ -303,7 +305,8 @@ mod feedback_tests {
             .into();
         let mut tree = incular_widgets::internal::WidgetTree::new();
         tree.mount(snackbar).expect("mount snackbar");
-        tree.layout(incular_config::Constraints::tight(Size::new(400.0, 100.0)));
+        tree.layout(incular_config::Constraints::tight(Size::new(400.0, 100.0)))
+            .expect("layout");
         tree.update_semantics();
 
         assert!(
@@ -372,9 +375,11 @@ mod menu_tests {
         let mut tree = WidgetTree::new();
         tree.mount(ListView::new([widget]).into())
             .expect("mount menu anchor");
-        tree.layout(Constraints::tight(Size::new(320.0, 240.0)));
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)))
+            .expect("layout");
         controller.open();
-        tree.layout(Constraints::tight(Size::new(320.0, 240.0)));
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)))
+            .expect("layout");
         tree.update_semantics();
         assert!(
             tree.semantics()
@@ -408,10 +413,13 @@ mod menu_tests {
         .into();
         let mut tree = WidgetTree::new();
         tree.mount(root).expect("mount material scaffold");
-        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)))
+            .expect("layout");
         controller.open();
-        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
-        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)))
+            .expect("layout");
+        tree.layout(Constraints::tight(Size::new(1180.0, 820.0)))
+            .expect("layout");
         let _ = tree.paint();
         tree.update_semantics();
         assert!(
@@ -436,7 +444,9 @@ mod menu_tests {
             .build();
         let mut item_tree = WidgetTree::new();
         item_tree.mount(item.into()).expect("mount menu item");
-        item_tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        item_tree
+            .layout(Constraints::loose(Size::new(240.0, 80.0)))
+            .expect("layout");
         item_tree.update_semantics();
         assert!(
             item_tree.semantics().iter().any(|(_, node)| node.role
@@ -539,13 +549,15 @@ mod app_shell_tests {
         .expect("mount messenger");
         tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
             400.0, 100.0,
-        )));
+        )))
+        .expect("layout");
 
         controller
             .show_snack_bar(SnackBar::text("Saved").action(SnackBarAction::new("Dismiss", || {})));
         tree.layout(incular_config::Constraints::tight(incular_core::Size::new(
             400.0, 100.0,
-        )));
+        )))
+        .expect("layout");
         tree.update_semantics();
 
         assert!(

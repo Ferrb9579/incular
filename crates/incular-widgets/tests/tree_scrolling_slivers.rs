@@ -23,8 +23,10 @@ fn scroll_positions_are_logical_clamped_and_clip_the_viewport() {
         ),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
-    let _ = tree.update_compositor(Instant::now());
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(controller.max_offset(), 100.);
     assert_eq!(
         rect_origins(&tree.paint())
@@ -38,7 +40,8 @@ fn scroll_positions_are_logical_clamped_and_clip_the_viewport() {
         ]
     );
     assert!(controller.jump_to(50.));
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -52,7 +55,8 @@ fn scroll_positions_are_logical_clamped_and_clip_the_viewport() {
     );
     assert!(controller.jump_to(10_000.));
     assert_eq!(controller.offset(), 100.);
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -84,8 +88,10 @@ fn horizontal_scroll_preserves_axis_in_layout_transform_and_hit_testing() {
             .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
-    let _ = tree.update_compositor(Instant::now());
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(controller.max_offset(), 100.);
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
@@ -103,7 +109,8 @@ fn horizontal_scroll_preserves_axis_in_layout_transform_and_hit_testing() {
         ]
     );
     assert!(controller.jump_to(20.));
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -143,8 +150,10 @@ fn reverse_scroll_starts_at_the_physical_trailing_edge() {
             .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
-    let _ = tree.update_compositor(Instant::now());
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(controller.max_offset(), 100.);
     let children = tree.children(root).unwrap().to_vec();
     assert_eq!(children.len(), 5);
@@ -158,7 +167,8 @@ fn reverse_scroll_starts_at_the_physical_trailing_edge() {
         60.
     );
     assert!(controller.jump_to(100.));
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         tree.render_origin(tree.render_id(children[0]).unwrap()).y,
         0.
@@ -184,7 +194,8 @@ fn page_view_static_children_fill_viewport_and_preserve_reverse_direction() {
             .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     assert_eq!(controller.max_offset(), 100.);
     let pages = tree.children(root).expect("page children");
     assert_eq!(
@@ -216,7 +227,9 @@ fn page_view_static_children_fill_viewport_and_preserve_reverse_direction() {
             .into(),
         )
         .unwrap();
-    reverse_tree.layout(Constraints::tight(Size::new(100., 40.)));
+    reverse_tree
+        .layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     let reverse_pages = reverse_tree
         .children(reverse_root)
         .expect("reverse page children");
@@ -251,7 +264,8 @@ fn scroll_physics_survives_descriptor_lowering_and_controls_input() {
             .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let render = tree.render_id(root).unwrap();
     assert!(matches!(
         tree.render_object_kind(render).expect("scroll render"),
@@ -283,7 +297,8 @@ fn persistent_headers_pin_in_flow_and_are_pushed_by_the_next_header() {
             ]),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let flow = tree.children(root).unwrap()[0];
     let children = tree.children(flow).unwrap();
     let first = tree.render_id(children[1]).unwrap();
@@ -292,12 +307,20 @@ fn persistent_headers_pin_in_flow_and_are_pushed_by_the_next_header() {
     assert_eq!(tree.render_origin(second), Offset::new(0., 120.));
 
     assert!(controller.jump_to(50.));
-    assert!(tree.update_compositor(Instant::now()).0);
+    assert!(
+        tree.update_compositor(Instant::now())
+            .expect("compositor update")
+            .0
+    );
     assert_eq!(tree.render_origin(first), Offset::ZERO);
     assert_eq!(tree.render_origin(second), Offset::new(0., 70.));
 
     assert!(controller.jump_to(130.));
-    assert!(tree.update_compositor(Instant::now()).0);
+    assert!(
+        tree.update_compositor(Instant::now())
+            .expect("compositor update")
+            .0
+    );
     assert_eq!(tree.render_origin(first), Offset::new(0., -30.));
     assert_eq!(tree.render_origin(second), Offset::ZERO);
     // The flattened retained display list applies the same dynamic
@@ -325,7 +348,8 @@ fn pinned_header_sliver_pins_vertical_without_rebuilding_on_scroll() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     // A real sliver viewport retains its materialized sliver children
     // directly; there is no synthetic Column/flow box between the
     // viewport and its sliver children.
@@ -335,7 +359,11 @@ fn pinned_header_sliver_pins_vertical_without_rebuilding_on_scroll() {
     assert_eq!(tree.render_origin(header_render), Offset::ZERO);
     let before = tree.diagnostics();
     assert!(controller.jump_to(80.));
-    assert!(tree.update_compositor(Instant::now()).0);
+    assert!(
+        tree.update_compositor(Instant::now())
+            .expect("compositor update")
+            .0
+    );
     assert_eq!(tree.render_origin(header_render), Offset::ZERO);
     assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
 }
@@ -362,14 +390,17 @@ fn pinned_header_sliver_supports_horizontal_and_reverse_viewports() {
                     .into(),
             )
             .unwrap();
-        tree.layout(Constraints::tight(Size::new(100., 40.)));
+        tree.layout(Constraints::tight(Size::new(100., 40.)))
+            .expect("layout");
         let header = tree.children(root).expect("sliver children")[0];
         (tree, controller, header)
     };
 
     let (mut forward, controller, header) = make_tree(false);
     assert!(controller.jump_to(80.));
-    forward.update_compositor(Instant::now());
+    forward
+        .update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         forward.render_origin(forward.render_id(header).unwrap()).x,
         0.
@@ -377,7 +408,9 @@ fn pinned_header_sliver_supports_horizontal_and_reverse_viewports() {
 
     let (mut reverse, controller, header) = make_tree(true);
     assert_eq!(controller.offset(), 0.);
-    reverse.update_compositor(Instant::now());
+    reverse
+        .update_compositor(Instant::now())
+        .expect("compositor update");
     // Reverse content enters from the physical trailing edge, so the
     // pinned header's leading edge is the viewport's trailing edge.
     assert_eq!(
@@ -423,7 +456,8 @@ fn notification_listener_bubbles_sliver_events_and_honors_stop() {
                 .into(),
         )
         .expect("notification listener mount");
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
 
     assert!(controller.jump_to(40.));
     assert!(
@@ -451,12 +485,14 @@ fn million_item_sliver_list_materializes_only_viewport_and_cache() {
         },
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let initial = tree.sliver_viewport_diagnostics().unwrap();
     assert!(initial.materialized_item_count < 100);
     assert_eq!(calls.get(), initial.materialized_item_count);
     assert!(controller.jump_to(900_000. * 40.));
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let jumped = tree.sliver_viewport_diagnostics().unwrap();
     assert!(jumped.materialized_range.contains(&900_000));
     assert!(jumped.materialized_item_count < 100);
@@ -493,11 +529,11 @@ fn million_item_sliver_list_deep_jump_builds_only_destination_rows() {
     )
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 600.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     // The explicit extent builder has an exact 44px mean for the
     // alternating 32px/56px sequence, so target the real prefix offset.
     assert!(controller.jump_to(900_000. * 44.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
     assert!(diagnostics.materialized_range.contains(&900_000));
     assert!(diagnostics.materialized_item_count < 100);
@@ -523,10 +559,10 @@ fn variable_measurements_above_visible_anchor_compensate_scroll_offset() {
     )
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 600.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     let target = 900_000. * 48.;
     assert!(controller.jump_to(target));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     // Cached rows before the first visible row grow from their 48px
     // estimates to their 80px laid-out height. The controller compensates
     // so the logical anchor stays in place.
@@ -553,7 +589,8 @@ fn restored_sliver_list_offset_stays_viewport_bounded() {
     ))
     .unwrap();
 
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
     assert!(diagnostics.materialized_range.contains(&900_000));
     assert!(diagnostics.materialized_item_count < 100);
@@ -581,13 +618,13 @@ fn sliver_children_retain_identity_inside_the_cache_and_release_outside() {
         }))
         .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     let before = tree.children(root).unwrap().to_vec();
     assert!(controller.jump_to(3.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert_eq!(tree.children(root).unwrap(), before.as_slice());
     assert!(controller.jump_to(400.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert!(before.iter().any(|id| !tree.element_exists(*id)));
     assert!(before.iter().any(|id| tree.element_exists(*id)));
     let after = tree.sliver_viewport_diagnostics().unwrap();
@@ -605,7 +642,7 @@ fn sliver_count_changes_retain_valid_rows_and_release_invalid_ones() {
             Widget::box_(Size::new(80., 40.), Color::WHITE)
         }))
         .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     let retained = tree.children(root).unwrap()[0];
     tree.update(
         root,
@@ -614,10 +651,10 @@ fn sliver_count_changes_retain_valid_rows_and_release_invalid_ones() {
         }),
     )
     .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert!(tree.element_exists(retained));
     assert!(controller.jump_to(1_000.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     tree.update(
         root,
         fixed_sliver_list(0, 40., controller.clone(), |_| {
@@ -625,7 +662,7 @@ fn sliver_count_changes_retain_valid_rows_and_release_invalid_ones() {
         }),
     )
     .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert_eq!(controller.offset(), 0.);
     assert!(tree.children(root).unwrap().is_empty());
 }
@@ -640,7 +677,7 @@ fn sliver_slot_replaces_an_incompatible_retained_widget() {
             Widget::box_(Size::new(80., 40.), Color::WHITE)
         }))
         .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     let previous = tree.children(root).unwrap().to_vec();
 
     tree.update(
@@ -650,7 +687,7 @@ fn sliver_slot_replaces_an_incompatible_retained_widget() {
         }),
     )
     .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
 
     let current = tree.children(root).unwrap();
     assert!(!current.is_empty());
@@ -666,7 +703,8 @@ fn scrollbar_geometry_and_drag_share_the_controller() {
         Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let geometry = tree.scrollbar_diagnostics().pop().unwrap();
     assert!(geometry.visible);
     assert_eq!(geometry.thumb.size.height, 24.);
@@ -689,7 +727,8 @@ fn scrollbar_geometry_round_trips_offsets_and_thumb_tops() {
         Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let geometry = tree.scrollbar_diagnostics().pop().unwrap();
     assert_eq!(geometry.thumb.size.height, 90.);
     assert_eq!(geometry.thumb_travel, 510.);
@@ -713,7 +752,8 @@ fn sliver_list_small_thumb_drag_is_continuous_and_reversible() {
         Widget::fixed_box(Size::new(100., 40.), Color::WHITE)
     }))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let geometry = tree.scrollbar_diagnostics().pop().unwrap();
     assert_eq!(controller.max_offset(), 3_400.);
     assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 5.)));
@@ -740,7 +780,8 @@ fn sliver_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
         |_| Widget::fixed_box(Size::new(100., 40.), Color::WHITE),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let geometry = tree.scrollbar_diagnostics().pop().unwrap();
     assert_eq!(geometry.thumb.size.height, 24.);
     assert_eq!(geometry.thumb_travel, 576.);
@@ -752,7 +793,8 @@ fn sliver_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
     assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Move, Offset::new(95., 300.)));
     let middle = controller.offset();
     assert!(middle > controller.max_offset() * 0.45 && middle < controller.max_offset() * 0.55);
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     let middle_rows = tree.sliver_viewport_diagnostics().unwrap();
     assert!(middle_rows.materialized_range.contains(&(500_000usize)));
     assert!(middle_rows.materialized_item_count < 100);
@@ -772,7 +814,8 @@ fn scrollbar_does_not_scroll_when_thumb_has_no_travel() {
         Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 20.)));
+    tree.layout(Constraints::tight(Size::new(100., 20.)))
+        .expect("layout");
     let geometry = tree.scrollbar_diagnostics().pop().unwrap();
     assert_eq!(geometry.thumb_travel, 0.);
     assert!(tree.scrollbar_pointer(incular_core::PointerPhase::Down, Offset::new(95., 10.)));
@@ -789,7 +832,8 @@ fn scrollbar_stays_synchronized_after_wheel_and_programmatic_offset_changes() {
         Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 600.)));
+    tree.layout(Constraints::tight(Size::new(100., 600.)))
+        .expect("layout");
     assert!(tree.scroll_at(Offset::new(50., 50.), Offset::new(0., 600.)));
     let after_wheel = tree.scrollbar_diagnostics().pop().unwrap();
     assert!(after_wheel.thumb.origin.y > after_wheel.track.origin.y);
@@ -828,7 +872,8 @@ fn wheel_at_nested_scroll_transfers_child_boundary_remainder_to_parent_once() {
     let mut tree = WidgetTree::new();
     tree.mount(Widget::scroll_view(outer.clone(), content))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     assert!(outer.jump_to(100.));
     assert_eq!(inner.offset(), 0.);
     // At the inner top, upward wheel delta is consumed by the outer

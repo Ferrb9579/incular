@@ -7,8 +7,8 @@ impl WidgetTree {
         kind: RenderKind,
         _children: &[RenderObjectId],
         constraints: Constraints,
-    ) -> (Size, Vec<Offset>) {
-        match kind {
+    ) -> Result<(Size, Vec<Offset>), TreeError> {
+        Ok(match kind {
             RenderKind::Text {
                 text,
                 style,
@@ -126,6 +126,6 @@ impl WidgetTree {
                 (size, Vec::new())
             }
             _ => unreachable!("text layout received a non-text render kind"),
-        }
+        })
     }
 }

@@ -51,7 +51,7 @@ fn stack_tree(depth: usize) -> Widget {
 fn prepared(root: Widget) -> (WidgetTree, ElementId) {
     let mut tree = WidgetTree::default();
     let id = tree.mount(root).expect("mount");
-    tree.layout(frame(600.));
+    tree.layout(frame(600.)).expect("layout");
     (tree, id)
 }
 
@@ -60,23 +60,35 @@ fn bench(c: &mut Criterion) {
 
     group.bench_function("deep_100_fully_cached", |b| {
         let (mut tree, root) = prepared(deep_tree(100));
-        b.iter(|| tree.layout(frame(std::hint::black_box(600.))));
+        b.iter(|| {
+            tree.layout(frame(std::hint::black_box(600.)))
+                .expect("layout");
+        });
         let _ = root;
     });
 
     group.bench_function("wide_1000_fully_cached", |b| {
         let (mut tree, _) = prepared(wide_tree(1_000));
-        b.iter(|| tree.layout(frame(std::hint::black_box(600.))));
+        b.iter(|| {
+            tree.layout(frame(std::hint::black_box(600.)))
+                .expect("layout");
+        });
     });
 
     group.bench_function("flex_500_fully_cached", |b| {
         let (mut tree, _) = prepared(flex_tree(500));
-        b.iter(|| tree.layout(frame(std::hint::black_box(600.))));
+        b.iter(|| {
+            tree.layout(frame(std::hint::black_box(600.)))
+                .expect("layout");
+        });
     });
 
     group.bench_function("stack_200_fully_cached", |b| {
         let (mut tree, _) = prepared(stack_tree(200));
-        b.iter(|| tree.layout(frame(std::hint::black_box(600.))));
+        b.iter(|| {
+            tree.layout(frame(std::hint::black_box(600.)))
+                .expect("layout");
+        });
     });
 
     // Root constraints changed: every node re-resolves (worst case).
@@ -85,7 +97,8 @@ fn bench(c: &mut Criterion) {
         let mut width = 601.;
         b.iter(|| {
             width += 1.;
-            tree.layout(frame(std::hint::black_box(width)));
+            tree.layout(frame(std::hint::black_box(width)))
+                .expect("layout");
         });
     });
 
@@ -97,7 +110,7 @@ fn bench(c: &mut Criterion) {
                 b.iter(|| {
                     let mut tree = WidgetTree::default();
                     tree.mount(wide_tree(size)).expect("mount");
-                    tree.layout(frame(600.));
+                    tree.layout(frame(600.)).expect("layout");
                 });
             },
         );

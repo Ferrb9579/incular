@@ -326,7 +326,7 @@ fn retained_two_dimensional_runtime_cache_survives_compatible_config_updates() {
     let root = tree
         .mount(Widget::two_dimensional_viewport(first))
         .expect("two-dimensional viewport mounts");
-    tree.try_layout(constraints).expect("initial layout");
+    tree.layout(constraints).expect("initial layout");
     let initial_builds = builds.get();
     assert!(initial_builds > 0);
 
@@ -335,7 +335,7 @@ fn retained_two_dimensional_runtime_cache_survives_compatible_config_updates() {
     updated.set_clip_behavior(Clip::AntiAlias);
     tree.update(root, Widget::two_dimensional_viewport(updated))
         .expect("compatible viewport update");
-    tree.try_layout(constraints).expect("updated layout");
+    tree.layout(constraints).expect("updated layout");
 
     assert_eq!(
         builds.get(),
@@ -361,7 +361,7 @@ fn retained_draggable_sheet_preserves_extent_and_rebinds_updated_config() {
     let root = tree
         .mount(Widget::draggable_scrollable_sheet(first))
         .expect("sheet mounts");
-    tree.try_layout(constraints).expect("initial sheet layout");
+    tree.layout(constraints).expect("initial sheet layout");
     assert!(first_controller.jump_to(0.75));
     assert_eq!(first_controller.size(), Some(0.75));
 
@@ -380,7 +380,7 @@ fn retained_draggable_sheet_preserves_extent_and_rebinds_updated_config() {
 
     tree.update(root, Widget::draggable_scrollable_sheet(replacement))
         .expect("compatible sheet update");
-    tree.try_layout(constraints).expect("updated sheet layout");
+    tree.layout(constraints).expect("updated sheet layout");
 
     assert!(!first_controller.is_attached());
     assert!(replacement_controller.is_attached());

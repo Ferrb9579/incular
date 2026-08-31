@@ -40,7 +40,8 @@ fn recursive_layout_is_reported_before_stack_exhaustion() {
         .expect("mount recursive builder");
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
     }));
 
     assert!(panic.is_err());
@@ -66,7 +67,8 @@ fn recursion_report_display_includes_public_diagnostics() {
         .expect("mount recursive builder");
 
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tree.layout(Constraints::tight(Size::new(80., 80.)));
+        tree.layout(Constraints::tight(Size::new(80., 80.)))
+            .expect("layout");
     }));
 
     let report = tree.last_recursion_report().expect("recursion report");

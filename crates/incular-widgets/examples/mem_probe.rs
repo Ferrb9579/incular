@@ -65,7 +65,7 @@ fn main() {
     for items in [1_000usize, 2_000, 4_000, 8_000] {
         let mut tree = WidgetTree::default();
         tree.mount(row(items)).expect("mount");
-        tree.layout(constraints);
+        tree.layout(constraints).expect("layout");
         // Force paint so display-list caches exist like a real frame.
         let _ = tree.paint();
         trees.push(tree);

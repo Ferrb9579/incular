@@ -33,7 +33,7 @@ mod reconciliation_structural_contracts {
     fn prepared(root: Widget) -> (WidgetTree, ElementId) {
         let mut tree = WidgetTree::default();
         let root_id = tree.mount(root).expect("mount");
-        tree.layout(frame());
+        tree.layout(frame()).expect("layout");
         (tree, root_id)
     }
 
@@ -58,7 +58,7 @@ mod reconciliation_structural_contracts {
         let before = tree.diagnostics();
 
         tree.update(root, build(9.)).expect("update");
-        tree.layout(frame());
+        tree.layout(frame()).expect("layout");
         let _ = tree.paint();
 
         let after = tree.diagnostics();
@@ -90,7 +90,7 @@ mod reconciliation_structural_contracts {
         let before = tree.diagnostics();
 
         tree.update(root, keyed_row(10_000, 1)).expect("update");
-        tree.layout(frame());
+        tree.layout(frame()).expect("layout");
         let _ = tree.paint();
 
         let after = tree.diagnostics();
@@ -126,7 +126,7 @@ mod reconciliation_structural_contracts {
 
         // Pure reorder: [4,3,2,1,0].
         tree.update(root, build(&[4, 3, 2, 1, 0])).expect("reorder");
-        tree.layout(frame());
+        tree.layout(frame()).expect("layout");
 
         let after = tree.diagnostics();
         assert_eq!(

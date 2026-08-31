@@ -41,7 +41,8 @@ mod autocomplete_tests {
             .build();
         tree.mount(root.build(&ControlTheme::light()))
             .expect("mount autocomplete");
-        tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 80.0)))
+            .expect("layout");
         tree.update_semantics();
         assert!(
             tree.semantics()
@@ -70,7 +71,8 @@ mod avatar_tests {
         tree.mount(new.build(&theme)).expect("mount avatar");
         tree.mount(built.build(&theme))
             .expect("mount avatar builder");
-        tree.layout(Constraints::loose(Size::new(160.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(160.0, 80.0)))
+            .expect("layout");
     }
 
     #[test]
@@ -86,7 +88,8 @@ mod avatar_tests {
         let mut tree = WidgetTree::new();
         tree.mount(avatar.build(&ControlTheme::light()))
             .expect("mount avatar");
-        tree.layout(Constraints::loose(Size::new(160.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(160.0, 80.0)))
+            .expect("layout");
         tree.update_semantics();
         assert!(
             tree.semantics()
@@ -156,7 +159,8 @@ mod button_tests {
     fn button_defaults_shrink_wrap_and_fixed_size_is_honored() {
         let mut tree = WidgetTree::new();
         let root = tree.mount(Button::new("OK").into()).unwrap();
-        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+            .expect("layout");
         let size = tree.render_size(tree.render_id(root).unwrap()).unwrap();
         assert!(size.width > 0.0 && size.width < 400.0);
         assert_eq!(size.height, 32.0);
@@ -169,7 +173,8 @@ mod button_tests {
                     .into(),
             )
             .unwrap();
-        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+            .expect("layout");
         let size = tree.render_size(tree.render_id(root).unwrap()).unwrap();
         assert_eq!(size, Size::new(180.0, 48.0));
     }
@@ -179,7 +184,8 @@ mod button_tests {
         let mut tree = WidgetTree::new();
         tree.mount(Button::new("Increment").on_click(|| ()).into())
             .unwrap();
-        tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+        tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+            .expect("layout");
         tree.update_semantics();
 
         let semantic = tree
@@ -195,7 +201,8 @@ mod button_tests {
     fn primary_button_has_no_decorative_default_border() {
         let mut tree = WidgetTree::new();
         let root = tree.mount(PrimaryButton::new("Save").into()).unwrap();
-        tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 80.0)))
+            .expect("layout");
         let _ = tree.render_id(root).unwrap();
         let list = tree.paint();
 
@@ -331,7 +338,8 @@ mod containers_tests {
 
         let mut tree = WidgetTree::new();
         let root = tree.mount(card.into()).unwrap();
-        tree.layout(Constraints::loose(Size::new(240.0, 120.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 120.0)))
+            .expect("layout");
         assert!(
             tree.render_size(tree.render_id(root).unwrap())
                 .unwrap()
@@ -859,7 +867,8 @@ mod scrollbar_tests {
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");
-        tree.layout(Constraints::tight(Size::new(120., 100.)));
+        tree.layout(Constraints::tight(Size::new(120., 100.)))
+            .expect("layout");
 
         let geometry = tree
             .scrollbar_diagnostics()
@@ -889,7 +898,8 @@ mod scrollbar_tests {
             .thumb_visibility(true);
         let mut tree = WidgetTree::new();
         tree.mount(widget.into()).expect("mount scrollbar");
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
 
         let commands = tree.paint();
         assert!(commands.commands().iter().any(|command| {
@@ -912,7 +922,8 @@ mod scrollbar_tests {
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
         assert!(tree.scroll_at(Offset::new(10., 50.), Offset::new(0., 100.)));
         assert!(controller.offset() > 0.);
     }
@@ -994,7 +1005,8 @@ mod selection_tests {
 
         let mut tree = WidgetTree::new();
         tree.mount(enabled.into()).expect("mount switch");
-        tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 80.0)))
+            .expect("layout");
         tree.update_semantics();
         assert!(
             tree.semantics()

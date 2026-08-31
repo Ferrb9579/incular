@@ -32,7 +32,8 @@ fn nested_environment_scopes_keep_all_typed_values() {
     let widget = Widget::environment_scope(outer, Widget::environment_scope(inner.clone(), child));
     let mut tree = WidgetTree::new();
     tree.mount(widget).expect("mount nested scopes");
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
 
     assert_eq!(*seen.borrow(), Some((Some(inner), Some(outer))));
 }
@@ -44,7 +45,8 @@ fn default_text_style_is_resolved_for_descendant_text() {
     let root = tree
         .mount(DefaultTextStyle::new(default_style.clone(), Text::new("hello")).into())
         .expect("mount default text style");
-    tree.layout(Constraints::tight(Size::new(200.0, 80.0)));
+    tree.layout(Constraints::tight(Size::new(200.0, 80.0)))
+        .expect("layout");
 
     let child = tree.children(root).expect("materialized text")[0];
     let RenderKind::Text { style, .. } = tree
@@ -67,12 +69,16 @@ fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
             Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
         ))
         .unwrap();
-    limited.layout(Constraints::new(0., f32::INFINITY, 0., f32::INFINITY));
+    limited
+        .layout(Constraints::new(0., f32::INFINITY, 0., f32::INFINITY))
+        .expect("layout");
     assert_eq!(
         limited.render_size(limited.render_id(root).unwrap()),
         Some(Size::new(20., 30.))
     );
-    limited.layout(Constraints::new(0., 100., 0., 100.));
+    limited
+        .layout(Constraints::new(0., 100., 0., 100.))
+        .expect("layout");
     assert_eq!(
         limited.render_size(limited.render_id(root).unwrap()),
         Some(Size::new(80., 80.))
@@ -88,7 +94,9 @@ fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
             Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
         ))
         .unwrap();
-    overflow.layout(Constraints::tight(Size::new(20., 20.)));
+    overflow
+        .layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     let child = overflow.children(root).unwrap()[0];
     assert_eq!(
         overflow.render_size(overflow.render_id(root).unwrap()),
@@ -115,7 +123,8 @@ fn flexible_expanded_and_spacer_allocate_bounded_main_axis_space() {
             Spacer::new().flex(1).into(),
         ]))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 20.)));
+    tree.layout(Constraints::tight(Size::new(100., 20.)))
+        .expect("layout");
     let children = tree.children(root).unwrap().to_vec();
     assert_eq!(
         tree.render_size(tree.render_id(children[1]).unwrap()),
@@ -142,7 +151,8 @@ fn positioned_and_indexed_stacks_keep_only_the_selected_branch_interactive_and_s
     let root = tree
         .mount(Widget::stack(Alignment::TOP_LEFT, vec![positioned.into()]))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let positioned = tree.children(root).unwrap()[0];
     assert_eq!(
         tree.render_size(tree.render_id(positioned).unwrap()),
@@ -161,7 +171,9 @@ fn positioned_and_indexed_stacks_keep_only_the_selected_branch_interactive_and_s
                 .into(),
         )
         .unwrap();
-    indexed.layout(Constraints::tight(Size::new(100., 40.)));
+    indexed
+        .layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     indexed.update_semantics();
     assert_eq!(indexed.semantics().len(), 1);
     assert!(indexed.semantics_debug_dump().contains("shown"));
@@ -179,15 +191,18 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
             Widget::fixed_box(Size::new(constraints.max_width, 10.), Color::WHITE)
         }))
         .unwrap();
-    tree.layout(Constraints::new(0., 30., 0., 20.));
+    tree.layout(Constraints::new(0., 30., 0., 20.))
+        .expect("layout");
     let child = tree.children(root).unwrap()[0];
     assert_eq!(
         tree.render_size(tree.render_id(child).unwrap()),
         Some(Size::new(30., 10.))
     );
-    tree.layout(Constraints::new(0., 30., 0., 20.));
+    tree.layout(Constraints::new(0., 30., 0., 20.))
+        .expect("layout");
     assert_eq!(builds.get(), 1);
-    tree.layout(Constraints::new(0., 40., 0., 20.));
+    tree.layout(Constraints::new(0., 40., 0., 20.))
+        .expect("layout");
     assert_eq!(builds.get(), 2);
 }
 
@@ -199,7 +214,7 @@ fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
         .unwrap();
     let constraints = Constraints::tight(Size::new(200., 40.));
 
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     tree.update_semantics();
     assert!(tree.semantics_debug_dump().contains("old child"));
 
@@ -208,7 +223,7 @@ fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
         Widget::layout_builder(|_, _| Widget::text("new child")),
     )
     .unwrap();
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     tree.update_semantics();
 
     let semantics = tree.semantics_debug_dump();
@@ -220,7 +235,8 @@ fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
 fn plain_text_uses_the_documented_natural_default_style() {
     let mut tree = WidgetTree::new();
     let root = tree.mount(Text::new("hello").into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(400., 100.)));
+    tree.layout(Constraints::loose(Size::new(400., 100.)))
+        .expect("layout");
     let render = tree.render_id(root).unwrap();
     let size = tree.render_size(render).unwrap();
     assert!(size.width > 0.0 && size.width < 100.0);
@@ -261,14 +277,14 @@ fn stateful_layout_builder_rebuilds_when_local_revision_changes() {
         }))
         .unwrap();
     let constraints = Constraints::loose(Size::new(80., 20.));
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert_eq!(builds.get(), 1);
     assert_eq!(
         tree.render_size(tree.render_id(tree.children(root).unwrap()[0]).unwrap()),
         Some(Size::new(10., 10.))
     );
     state.set(3);
-    tree.layout(constraints);
+    tree.layout(constraints).expect("layout");
     assert_eq!(builds.get(), 2);
     assert_eq!(
         tree.render_size(tree.render_id(tree.children(root).unwrap()[0]).unwrap()),
@@ -286,8 +302,11 @@ fn affine_transform_uses_inverse_hit_testing_and_transformed_semantics() {
         ))
         .unwrap();
     let button = tree.children(root).unwrap()[0];
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
-    let (changed, _) = tree.update_compositor(Instant::now());
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    let (changed, _) = tree
+        .update_compositor(Instant::now())
+        .expect("compositor update");
     assert!(changed);
     assert_eq!(
         tree.element_for_render(tree.hit_test(Offset::new(25., 15.)).unwrap()),
@@ -314,8 +333,10 @@ fn fitted_box_scales_hits_into_the_child_coordinate_space() {
         ))
         .unwrap();
     let child = tree.children(root).unwrap()[0];
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
-    let _ = tree.update_compositor(Instant::now());
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         tree.element_for_render(tree.hit_test(Offset::new(30., 10.)).unwrap()),
         Some(child)
@@ -335,7 +356,8 @@ fn retained_text_honors_wrap_line_limit_overflow_and_rich_text_conversion() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(75., 30.)));
+    tree.layout(Constraints::tight(Size::new(75., 30.)))
+        .expect("layout");
     let render = tree.render_id(label).unwrap();
     let layout = tree.text_layout(render).expect("text layout");
     assert_eq!(layout.lines.len(), 1);
@@ -346,7 +368,8 @@ fn retained_text_honors_wrap_line_limit_overflow_and_rich_text_conversion() {
         .overflow(TextOverflow::Clip)
         .into();
     let rich_label = tree.mount(rich).unwrap();
-    tree.layout(Constraints::tight(Size::new(60., 30.)));
+    tree.layout(Constraints::tight(Size::new(60., 30.)))
+        .expect("layout");
     let rich_render = tree.render_id(rich_label).unwrap();
     assert!(
         tree.text_layout(rich_render)
@@ -371,12 +394,17 @@ fn scale_and_rotation_transitions_update_only_retained_compositor_layers() {
         .into(),
     )
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(80., 80.)));
+    tree.layout(Constraints::tight(Size::new(80., 80.)))
+        .expect("layout");
     let _ = tree.paint();
     let before = tree.diagnostics();
     scale.set_scale(1.5);
     rotation.set_radians(0.25);
-    assert!(tree.update_compositor(Instant::now()).0);
+    assert!(
+        tree.update_compositor(Instant::now())
+            .expect("compositor update")
+            .0
+    );
     let after = tree.diagnostics();
     assert_eq!(after.layouts, before.layouts);
     assert_eq!(after.paints, before.paints);
@@ -394,7 +422,8 @@ fn rotation_transition_quarter_turn_uses_compositor_transform() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(80., 80.)));
+    tree.layout(Constraints::tight(Size::new(80., 80.)))
+        .expect("layout");
     let render = tree.render_id(root).unwrap();
     let transform = tree.content_transform(render).expect("rotation transform");
     let bounds =
@@ -421,7 +450,8 @@ fn rotation_transition_alignment_changes_pivot_and_hit_testing_follows_it() {
     let rotations = tree.children(root).expect("row children");
     let centered = rotations[0];
     let aligned = rotations[1];
-    tree.layout(Constraints::tight(Size::new(80., 80.)));
+    tree.layout(Constraints::tight(Size::new(80., 80.)))
+        .expect("layout");
     let centered_transform = tree
         .content_transform(tree.render_id(centered).unwrap())
         .expect("centered transform");
@@ -462,8 +492,8 @@ fn replacement_opacity_controller_keeps_a_controlled_transition_alive() {
         .unwrap();
     let constraints = Constraints::tight(Size::new(40., 40.));
     let start = Instant::now();
-    tree.layout(constraints);
-    tree.update_compositor(start);
+    tree.layout(constraints).expect("layout");
+    tree.update_compositor(start).expect("compositor update");
 
     let replacement = OpacityController::new();
     tree.update(
@@ -476,7 +506,8 @@ fn replacement_opacity_controller_keeps_a_controlled_transition_alive() {
     )
     .unwrap();
     assert!(replacement.opacity() < 0.01);
-    tree.update_compositor(start + Duration::from_millis(70));
+    tree.update_compositor(start + Duration::from_millis(70))
+        .expect("compositor update");
     assert!(replacement.opacity() > 0.01 && replacement.opacity() < 0.99);
 }
 
@@ -489,7 +520,8 @@ fn nested_layout_and_paint_cache_are_incremental() {
             Widget::box_(Size::new(10., 5.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(20., 20.))
@@ -510,13 +542,15 @@ fn constrained_box_tightens_child_bounds_without_escaping_the_parent() {
             Widget::fixed_box(Size::new(5., 20.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(20., 20.)));
+    tree.layout(Constraints::loose(Size::new(20., 20.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(10., 12.))
     );
 
-    tree.layout(Constraints::tight(Size::new(8., 8.)));
+    tree.layout(Constraints::tight(Size::new(8., 8.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(8., 8.))
@@ -532,7 +566,8 @@ fn unconstrained_box_uses_natural_child_size_but_stays_parent_bounded() {
             Widget::fixed_box(Size::new(30., 5.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(20., 20.)));
+    tree.layout(Constraints::loose(Size::new(20., 20.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(20., 5.))
@@ -558,7 +593,8 @@ fn wrap_starts_a_new_run_when_a_child_exceeds_the_remaining_main_axis() {
             ],
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(17., 20.)));
+    tree.layout(Constraints::loose(Size::new(17., 20.)))
+        .expect("layout");
     let children = tree.children(root).unwrap();
     assert_eq!(
         tree.render_origin(tree.render_id(children[0]).unwrap()),
@@ -584,7 +620,8 @@ fn fractional_box_tightens_requested_axes_to_parent_factors() {
             Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(40., 20.)));
+    tree.layout(Constraints::tight(Size::new(40., 20.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(40., 20.))
@@ -611,7 +648,8 @@ fn table_uses_max_content_cell_sizes_and_row_major_offsets() {
             ],
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(40., 40.)));
+    tree.layout(Constraints::loose(Size::new(40., 40.)))
+        .expect("layout");
     let children = tree.children(root).unwrap();
     assert_eq!(
         tree.render_origin(tree.render_id(children[1]).unwrap()),
@@ -636,7 +674,8 @@ fn baseline_offsets_a_child_using_its_bottom_as_the_default_baseline() {
             Widget::fixed_box(Size::new(8., 5.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(20., 20.)));
+    tree.layout(Constraints::loose(Size::new(20., 20.)))
+        .expect("layout");
     let child = tree.children(root).unwrap()[0];
     assert_eq!(
         tree.render_origin(tree.render_id(child).unwrap()),
@@ -668,7 +707,8 @@ fn custom_paint_replays_its_display_list_in_the_retained_picture() {
     let mut tree = WidgetTree::new();
     tree.mount(Widget::custom_paint(Size::new(10., 8.), display_list))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(10., 8.)));
+    tree.layout(Constraints::tight(Size::new(10., 8.)))
+        .expect("layout");
     assert!(tree.paint().commands().iter().any(|command| {
         matches!(command, PaintCommand::Rect { rect, .. } if rect.size == Size::new(4., 3.))
     }));
@@ -691,7 +731,8 @@ fn repaint_boundary_keeps_its_picture_when_child_custom_paint_changes() {
             list(Color::WHITE),
         )))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(10., 8.)));
+    tree.layout(Constraints::tight(Size::new(10., 8.)))
+        .expect("layout");
     let _ = tree.paint();
     let before = tree.diagnostics().paints;
     tree.update(
@@ -715,7 +756,8 @@ fn stack_aligns_children_and_hits_the_frontmost_child() {
             ],
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     let children = tree.children(root).unwrap();
     let front = children[1];
     assert_eq!(
@@ -737,7 +779,8 @@ fn invisible_widgets_skip_child_layout_hit_testing_and_semantics() {
             action(Size::new(20., 20.), Color::WHITE, ActionId(1)),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     tree.update_semantics();
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
@@ -756,7 +799,8 @@ fn aspect_ratio_uses_the_largest_fitting_box() {
             Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::loose(Size::new(100., 80.)));
+    tree.layout(Constraints::loose(Size::new(100., 80.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(100., 50.))
@@ -775,7 +819,8 @@ fn hit_test_uses_reverse_paint_order_and_nested_offsets() {
             ]),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(30., 20.)));
+    tree.layout(Constraints::tight(Size::new(30., 20.)))
+        .expect("layout");
     let hit = tree.hit_test(Offset::new(13., 5.)).unwrap();
     let row = tree.children(root).unwrap()[0];
     let second = tree.children(row).unwrap()[1];
@@ -802,7 +847,8 @@ fn retained_pictures_apply_column_row_and_padding_offsets_once() {
         ]),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(200., 200.)));
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -832,7 +878,8 @@ fn retained_text_pictures_keep_independent_column_origins() {
             Widget::text_styled("C", style, TextAlign::Start),
         ]))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(200., 200.)));
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
     let origins = glyph_origins(&tree.paint());
     assert_eq!(origins.len(), 3);
     let children = tree.children(root).unwrap();
@@ -859,7 +906,8 @@ fn button_label_receives_the_button_parent_placement() {
             .into(),
     ]))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(200., 120.)));
+    tree.layout(Constraints::tight(Size::new(200., 120.)))
+        .expect("layout");
     let list = tree.paint();
     let button_origin = rrect_origins(&list)[0];
     let label_origin = glyph_origins(&list)[0];
@@ -882,7 +930,8 @@ fn compositional_button_keeps_configured_size_and_content_semantics() {
         )
         .unwrap();
 
-    tree.layout(Constraints::new(0., 300., 0., 100.));
+    tree.layout(Constraints::new(0., 300., 0., 100.))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).unwrap()),
         Some(Size::new(180., 34.))
@@ -923,8 +972,9 @@ fn scroll_and_animation_compose_with_static_layout_placement() {
     ))
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 40.));
-    tree.layout(constraints);
-    let _ = tree.update_compositor(Instant::now());
+    tree.layout(constraints).expect("layout");
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -933,7 +983,8 @@ fn scroll_and_animation_compose_with_static_layout_placement() {
         vec![Offset::new(15., 10.), Offset::new(15., 30.)]
     );
     assert!(scroll.jump_to(10.));
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert_eq!(
         rect_origins(&tree.paint())
             .into_iter()
@@ -951,7 +1002,8 @@ fn transparent_opacity_keeps_hit_testing_and_semantics() {
         ActionSurface::new("Still active").into(),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(140., 60.)));
+    tree.layout(Constraints::tight(Size::new(140., 60.)))
+        .expect("layout");
     tree.update_semantics();
     assert!(tree.hit_test(Offset::new(10., 10.)).is_some());
     assert!(
@@ -967,12 +1019,16 @@ fn effect_parameter_animation_is_compositor_only_and_keeps_semantics() {
     let mut tree = WidgetTree::new();
     tree.mount(Blur::controlled(blur.clone(), ActionSurface::new("Still active")).into())
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(140., 60.)));
+    tree.layout(Constraints::tight(Size::new(140., 60.)))
+        .expect("layout");
     let _ = tree.paint();
     let paints = tree.diagnostics().paints;
-    let _ = tree.update_compositor(Instant::now());
+    tree.update_compositor(Instant::now())
+        .expect("compositor update");
     assert!(blur.set_sigma(14.));
-    let (changed, _) = tree.update_compositor(Instant::now());
+    let (changed, _) = tree
+        .update_compositor(Instant::now())
+        .expect("compositor update");
     assert!(changed);
     let list = tree.paint();
     assert!(list.commands().iter().any(|command| {
@@ -992,15 +1048,18 @@ fn effect_parameter_animation_is_compositor_only_and_keeps_semantics() {
 fn text_picture_replacement_and_root_unmount_do_not_leak_layers() {
     let mut tree = WidgetTree::new();
     let root = tree.mount(Widget::text("Count: 0")).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     let _ = tree.paint();
     let before = tree.compositor_diagnostics().layers;
     tree.update(root, Widget::text("Count: 1")).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     let _ = tree.paint();
     assert_eq!(tree.compositor_diagnostics().layers, before);
     tree.update(root, Widget::text("Count: 2")).unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     let _ = tree.paint();
     assert_eq!(tree.compositor_diagnostics().layers, before);
     tree.mount(Widget::box_(Size::new(1., 1.), Color::WHITE))
@@ -1020,11 +1079,14 @@ fn color_filter_and_blend_updates_stay_in_the_retained_compositor() {
     );
     let mut tree = WidgetTree::new();
     tree.mount(widget.into()).expect("mount effect tree");
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let _ = tree.paint();
     let before = tree.diagnostics();
     assert!(controller.set_filter(ColorFilter::sepia(1.)));
-    let (changed, _) = tree.update_compositor(Instant::now());
+    let (changed, _) = tree
+        .update_compositor(Instant::now())
+        .expect("compositor update");
     let after = tree.diagnostics();
     assert!(changed);
     assert_eq!(after.paints, before.paints);
@@ -1054,14 +1116,16 @@ fn replacing_effect_families_releases_the_old_attachment_subtree() {
 
     let mut tree = WidgetTree::new();
     let root_id = tree.mount(root(0)).expect("mount effect root");
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let _ = tree.paint();
     let stable_layers = tree.compositor_diagnostics().layers;
 
     for index in 1..100 {
         tree.update(root_id, root(index))
             .expect("replace keyed effect");
-        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        tree.layout(Constraints::tight(Size::new(100., 100.)))
+            .expect("layout");
         let _ = tree.paint();
         assert_eq!(
             tree.compositor_diagnostics().layers,

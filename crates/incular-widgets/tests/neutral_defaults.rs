@@ -12,7 +12,8 @@ fn container_empty_expands_when_bounded_shrinks_when_unbounded_and_paints_nothin
     // 1. Bounded parent: Container expands to fill available constraints
     let mut tree = WidgetTree::new();
     let root = tree.mount(Container::new().into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(500.0, 300.0)));
+    tree.layout(Constraints::loose(Size::new(500.0, 300.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert_eq!(
@@ -40,7 +41,9 @@ fn container_empty_expands_when_bounded_shrinks_when_unbounded_and_paints_nothin
     // 2. Unbounded parent: Container shrinks to zero
     let mut tree_unbounded = WidgetTree::new();
     let root_unbounded = tree_unbounded.mount(Container::new().into()).unwrap();
-    tree_unbounded.layout(Constraints::unbounded());
+    tree_unbounded
+        .layout(Constraints::unbounded())
+        .expect("layout");
     let render_id_unbounded = tree_unbounded.render_id(root_unbounded).unwrap();
     let size_unbounded = tree_unbounded.render_size(render_id_unbounded).unwrap();
     assert_eq!(
@@ -57,7 +60,8 @@ fn button_with_child_sizes_strictly_to_child_and_is_unpainted() {
     let button = ActionSurface::with_child(child);
     let root = tree.mount(button.into()).unwrap();
 
-    tree.layout(Constraints::loose(Size::new(500.0, 500.0)));
+    tree.layout(Constraints::loose(Size::new(500.0, 500.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert_eq!(size, Size::new(50.0, 25.0));
@@ -80,7 +84,8 @@ fn button_with_color_paints_background_rrect() {
     let button = ActionSurface::with_child(child).color(Color::rgba(100, 150, 200, 255));
     let _root = tree.mount(button.into()).unwrap();
 
-    tree.layout(Constraints::loose(Size::new(500.0, 500.0)));
+    tree.layout(Constraints::loose(Size::new(500.0, 500.0)))
+        .expect("layout");
     let display_list = tree.paint();
     let has_rrect = display_list
         .commands()
@@ -101,7 +106,9 @@ fn split_view_first_and_second_extents_are_unambiguous() {
     )
     .first_extent(160.0);
     let root_first = tree_first.mount(split_first.into()).unwrap();
-    tree_first.layout(Constraints::tight(Size::new(800.0, 600.0)));
+    tree_first
+        .layout(Constraints::tight(Size::new(800.0, 600.0)))
+        .expect("layout");
     let render_id = tree_first.render_id(root_first).unwrap();
     let total_size = tree_first.render_size(render_id).unwrap();
     assert_eq!(total_size, Size::new(800.0, 600.0));
@@ -113,7 +120,9 @@ fn split_view_first_and_second_extents_are_unambiguous() {
     )
     .second_extent(240.0);
     let root_second = tree_second.mount(split_second.into()).unwrap();
-    tree_second.layout(Constraints::tight(Size::new(800.0, 600.0)));
+    tree_second
+        .layout(Constraints::tight(Size::new(800.0, 600.0)))
+        .expect("layout");
     let render_id_second = tree_second.render_id(root_second).unwrap();
     let total_size_second = tree_second.render_size(render_id_second).unwrap();
     assert_eq!(total_size_second, Size::new(800.0, 600.0));

@@ -37,7 +37,8 @@ fn assert_retained_viewport(widget: Widget, logical_count: usize) {
         Some(RenderKind::SliverViewport { .. })
     ));
 
-    tree.layout(Constraints::tight(Size::new(100., 80.)));
+    tree.layout(Constraints::tight(Size::new(100., 80.)))
+        .expect("layout");
     let diagnostics = tree
         .sliver_viewport_diagnostics()
         .expect("viewport diagnostics");
@@ -107,7 +108,8 @@ fn completed_navigation_facade_scopes_reconcile_and_route_retained_interaction()
 
     let mut tree = WidgetTree::new();
     let root = tree.mount(listener.into()).expect("mount navigation scope");
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     assert_eq!(dispatcher.handler_count(), 1);
     assert_eq!(dispatcher.pop_scope_count(), 1);
     assert!(dispatcher.dispatch_back().handled);
@@ -115,7 +117,8 @@ fn completed_navigation_facade_scopes_reconcile_and_route_retained_interaction()
 
     tree.update(root, BackButtonListener::new(SizedBox::shrink()).into())
         .expect("reconcile navigation scope");
-    tree.layout(Constraints::tight(Size::new(100., 40.)));
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     assert_eq!(dispatcher.handler_count(), 0);
     assert_eq!(dispatcher.pop_scope_count(), 0);
 
@@ -129,7 +132,9 @@ fn completed_navigation_facade_scopes_reconcile_and_route_retained_interaction()
         .into();
     let mut barrier_tree = WidgetTree::new();
     barrier_tree.mount(barrier).expect("mount modal barrier");
-    barrier_tree.layout(Constraints::tight(Size::new(100., 40.)));
+    barrier_tree
+        .layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
     barrier_tree.update_semantics();
     assert!(
         barrier_tree

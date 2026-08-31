@@ -39,7 +39,8 @@ fn selectable_text_drag_uses_cached_parley_layout_and_copies_across_widgets() {
             ]),
         ))
         .expect("mount selection area");
-    tree.layout(Constraints::tight(Size::new(180., 80.)));
+    tree.layout(Constraints::tight(Size::new(180., 80.)))
+        .expect("layout");
     let column = tree.children(area).unwrap()[0];
     let labels = tree.children(column).unwrap();
     let first = labels[0];
@@ -72,7 +73,8 @@ fn selectable_text_keyboard_motion_stays_on_grapheme_boundaries() {
             ),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(180., 40.)));
+    tree.layout(Constraints::tight(Size::new(180., 40.)))
+        .expect("layout");
     let label = tree.children(area).unwrap()[0];
     assert!(tree.selectable_text_move(label, true, false));
     assert!(tree.selectable_text_move(label, true, true));
@@ -91,7 +93,8 @@ fn standalone_selectable_text_has_its_own_read_only_selection_region() {
             TextAlign::Start,
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 30.)));
+    tree.layout(Constraints::tight(Size::new(100., 30.)))
+        .expect("layout");
     assert!(tree.selectable_text_select_all(label));
     assert_eq!(
         tree.selectable_text_selected_text(label),
@@ -197,7 +200,8 @@ fn textarea_uses_shaped_lines_for_pointer_and_vertical_navigation() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(120., 100.)));
+    tree.layout(Constraints::tight(Size::new(120., 100.)))
+        .expect("layout");
     tree.text_field_set_caret(root, Offset::new(30., 10.), false, Instant::now());
     let initial = controller.value().selection.extent;
     assert!(initial > 0 && initial <= 6);
@@ -225,7 +229,8 @@ fn transparent_button_focus_is_an_outline_not_a_surface_fill() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(96., 32.)));
+    tree.layout(Constraints::tight(Size::new(96., 32.)))
+        .expect("layout");
     tree.set_focused(root, true, Instant::now()).unwrap();
     let list = tree.paint();
 
@@ -282,7 +287,8 @@ fn focused_text_field_does_not_paint_framework_outline() {
                 .into(),
         )
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(180., 32.)));
+    tree.layout(Constraints::tight(Size::new(180., 32.)))
+        .expect("layout");
     tree.set_focused(root, true, Instant::now()).unwrap();
     let list = tree.paint();
 
@@ -316,7 +322,8 @@ fn gesture_region_captures_a_hit_tested_pointer_sequence() {
             Widget::box_(Size::new(40., 40.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     assert_eq!(
         tree.dispatch_gesture(PointerEvent {
@@ -353,7 +360,8 @@ fn gesture_region_combines_identified_contacts_for_scale_updates() {
             Widget::box_(Size::new(100., 100.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for (pointer, position) in [(10, Offset::new(10., 10.)), (11, Offset::new(20., 10.))] {
         assert_eq!(
@@ -417,7 +425,8 @@ fn retained_arena_allows_drag_to_defeat_nested_tap_before_callbacks() {
         ),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for (phase, position) in [
         (incular_core::PointerPhase::Down, Offset::new(10., 10.)),
@@ -464,7 +473,8 @@ fn retained_arena_arbitrates_horizontal_against_vertical_drag() {
         ),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for (phase, position) in [
         (incular_core::PointerPhase::Down, Offset::new(10., 10.)),
@@ -512,7 +522,8 @@ fn retained_arena_cancels_long_press_when_drag_claims_stream() {
         ),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     let _ = tree.dispatch_gesture(PointerEvent {
         pointer: 3,
@@ -562,7 +573,8 @@ fn retained_arena_allows_scale_to_defeat_pan_and_share_two_contacts() {
         ),
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for (pointer, position) in [(10, Offset::new(10., 10.)), (11, Offset::new(20., 10.))] {
         let _ = tree.dispatch_gesture(PointerEvent {
@@ -614,7 +626,8 @@ fn ignore_pointer_skips_its_subtree_and_reveals_a_stacked_target() {
         ],
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for phase in [
         incular_core::PointerPhase::Down,
@@ -663,7 +676,8 @@ fn absorb_pointer_blocks_descendant_and_stacked_gesture_targets() {
         ],
     ))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     for phase in [
         incular_core::PointerPhase::Down,
@@ -695,7 +709,8 @@ fn retained_pointer_capture_is_window_local_and_released_with_the_stream() {
             Widget::box_(Size::new(100., 100.), Color::WHITE),
         ))
         .unwrap();
-    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    tree.layout(Constraints::tight(Size::new(100., 100.)))
+        .expect("layout");
     let now = Instant::now();
     let _ = tree.dispatch_gesture_in_window(
         9,
@@ -767,7 +782,8 @@ fn typed_local_drag_drop_enters_updates_and_drops_through_the_arena() {
         .into(),
     ]))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(200., 80.)));
+    tree.layout(Constraints::tight(Size::new(200., 80.)))
+        .expect("layout");
     let now = Instant::now();
     for (phase, position) in [
         (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
@@ -820,7 +836,8 @@ fn typed_local_drag_drop_leaves_and_cancels_without_drop() {
             .into(),
     ]))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(200., 80.)));
+    tree.layout(Constraints::tight(Size::new(200., 80.)))
+        .expect("layout");
     let now = Instant::now();
     for (phase, position) in [
         (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
@@ -858,7 +875,8 @@ fn dismissible_claims_its_directional_drag_before_callback() {
         .into(),
     )
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(120., 80.)));
+    tree.layout(Constraints::tight(Size::new(120., 80.)))
+        .expect("layout");
     let now = Instant::now();
     for (phase, position) in [
         (incular_core::PointerPhase::Down, Offset::new(10., 20.)),
@@ -894,7 +912,8 @@ fn explicit_merge_exclude_and_block_semantics_transform_the_retained_tree() {
         vec![background, decorative, dialog],
     ))
     .expect("mount modal semantics");
-    tree.layout(Constraints::tight(Size::new(160., 100.)));
+    tree.layout(Constraints::tight(Size::new(160., 100.)))
+        .expect("layout");
     tree.update_semantics();
     let nodes: Vec<_> = tree.semantics().iter().collect();
     assert_eq!(nodes.len(), 1);
@@ -912,7 +931,8 @@ fn meaningful_images_are_semantic_but_unlabelled_images_are_decorative() {
         Widget::from(Image::new(image)).accessibility_label("Incular logo"),
     ]))
     .unwrap();
-    tree.layout(Constraints::tight(Size::new(80., 40.)));
+    tree.layout(Constraints::tight(Size::new(80., 40.)))
+        .expect("layout");
     tree.update_semantics();
     let images: Vec<_> = tree
         .semantics()

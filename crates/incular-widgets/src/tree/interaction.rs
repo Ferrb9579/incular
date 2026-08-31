@@ -586,9 +586,10 @@ impl WidgetTree {
         self.animation_clock = Some((real_now, animation_now));
         animation_now
     }
-    /// Applies only retained compositor properties. It never marks a render
-    /// object for build, layout, or paint.
-    pub fn update_compositor(&mut self, now: Instant) -> (bool, bool) {
+    /// Advances retained compositor properties. Pinned slivers may perform an
+    /// immediate retained relayout so standalone `WidgetTree` users observe
+    /// controller changes in the same update; any builder error is propagated.
+    pub fn update_compositor(&mut self, now: Instant) -> Result<(bool, bool), TreeError> {
         let _phase_guard = self.guard_phase_root(FramePhase::Compositor);
         #[cfg(feature = "devtools")]
         let trace = self
@@ -692,7 +693,7 @@ impl WidgetTree {
                                 // placement is observable immediately; the
                                 // runtime reuses the cached result on its next
                                 // layout.
-                                self.layout_render(_render, constraints);
+                                self.layout_render(_render, constraints)?;
                             }
                         }
                     }
@@ -961,7 +962,7 @@ impl WidgetTree {
         }
         #[cfg(feature = "devtools")]
         self.devtools_trace_end(trace);
-        (changed, active)
+        Ok((changed, active))
     }
     pub fn scroll_at(&mut self, point: Offset, delta: Offset) -> bool {
         let Some(mut element) = self

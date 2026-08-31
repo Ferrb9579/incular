@@ -157,7 +157,7 @@ mod reconciliation_property {
         let desired: Vec<Widget> = model.iter().map(widget_for).collect();
         tree.update(parent, Widget::column(desired))
             .expect("reconcile");
-        tree.layout(frame());
+        tree.layout(frame()).expect("layout");
     }
 
     proptest! {
@@ -182,7 +182,7 @@ mod reconciliation_property {
             let mut model: Model = Vec::new();
             let mut tree = WidgetTree::default();
             let parent = tree.mount(Widget::column(Vec::new())).expect("mount");
-            tree.layout(frame());
+            tree.layout(frame()).expect("layout");
 
             for op in &ops {
                 apply(&mut model, op);

@@ -133,7 +133,8 @@ pub(crate) mod simulations;
 fn main() {
     let mut tree = WidgetTree::new();
     tree.mount(dashboard()).expect("mount semantics gallery");
-    tree.layout(Constraints::tight(Size::new(640., 760.)));
+    tree.layout(Constraints::tight(Size::new(640., 760.)))
+        .expect("layout");
     tree.update_semantics();
     println!("{}", tree.semantics_debug_dump());
     println!(

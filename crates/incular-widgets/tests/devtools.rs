@@ -47,7 +47,8 @@ fn editable_opacity_override_is_typed_and_visible_in_details() {
             Widget::box_(Size::new(10., 10.), Color::WHITE),
         ))
         .expect("mount");
-    tree.layout(Constraints::tight(Size::new(10., 10.)));
+    tree.layout(Constraints::tight(Size::new(10., 10.)))
+        .expect("layout");
     let id = dev_id(&tree, root);
     let before = tree
         .devtools_node_details(root, id, DevWindowId::new(1, 0))
@@ -70,7 +71,8 @@ fn editable_opacity_override_is_typed_and_visible_in_details() {
 fn compatible_updates_report_curated_property_changes_through_details() {
     let mut tree = WidgetTree::new();
     let root = tree.mount(Widget::text("Count: 7")).expect("mount");
-    tree.layout(Constraints::tight(Size::new(100., 30.)));
+    tree.layout(Constraints::tight(Size::new(100., 30.)))
+        .expect("layout");
     tree.update(root, Widget::text("Count: 8")).expect("update");
     let details = tree
         .devtools_node_details(root, dev_id(&tree, root), DevWindowId::new(1, 0))
@@ -101,7 +103,8 @@ fn flex_inspection_uses_retained_child_constraints_and_offsets() {
             ),
         ]))
         .expect("mount");
-    tree.layout(Constraints::tight(Size::new(100., 30.)));
+    tree.layout(Constraints::tight(Size::new(100., 30.)))
+        .expect("layout");
     let details = tree
         .devtools_node_details(root, dev_id(&tree, root), DevWindowId::new(1, 1))
         .expect("details");
@@ -132,7 +135,8 @@ fn whole_tree_overlay_snapshot_has_a_hard_bound() {
                 .collect::<Vec<_>>(),
         ))
         .expect("mount");
-    tree.layout(Constraints::tight(Size::new(10., 40.)));
+    tree.layout(Constraints::tight(Size::new(10., 40.)))
+        .expect("layout");
     assert_eq!(tree.devtools_layout_bounds(3).len(), 3);
     assert!(tree.devtools_subtree_layout_bounds(root, 2).len() <= 2);
 }
@@ -163,16 +167,19 @@ fn animation_time_scale_changes_only_retained_animation_progression() {
         Widget::box_(Size::new(10., 10.), Color::WHITE),
     ))
     .expect("mount");
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     let origin = Instant::now();
     tree.set_animation_time_scale(0.5);
-    let _ = tree.update_compositor(origin);
+    tree.update_compositor(origin).expect("compositor update");
     controller.animate_to(Offset::new(100., 0.), Duration::from_millis(100), origin);
-    let _ = tree.update_compositor(origin + Duration::from_millis(16));
+    tree.update_compositor(origin + Duration::from_millis(16))
+        .expect("compositor update");
     assert!((controller.offset().x - 8.).abs() < 0.1);
 
     tree.set_animation_time_scale(0.);
-    let _ = tree.update_compositor(origin + Duration::from_millis(32));
+    tree.update_compositor(origin + Duration::from_millis(32))
+        .expect("compositor update");
     assert!((controller.offset().x - 8.).abs() < 0.1);
 }
 
@@ -180,7 +187,8 @@ fn animation_time_scale_changes_only_retained_animation_progression() {
 fn phase_snapshot_uses_existing_work_counters_and_respects_limit() {
     let mut tree = WidgetTree::new();
     let root = tree.mount(Widget::text("phase")).expect("mount");
-    tree.layout(Constraints::tight(Size::new(50., 20.)));
+    tree.layout(Constraints::tight(Size::new(50., 20.)))
+        .expect("layout");
     let _ = tree.paint();
     let phase = tree.devtools_phase_nodes(1);
     assert_eq!(phase.len(), 1);
@@ -197,11 +205,13 @@ fn deep_trace_is_opt_in_and_layout_events_preserve_parentage() {
         Color::WHITE,
     )]))
     .expect("mount");
-    tree.layout(Constraints::tight(Size::new(20., 20.)));
+    tree.layout(Constraints::tight(Size::new(20., 20.)))
+        .expect("layout");
     assert!(tree.take_deep_trace().is_none());
 
     tree.begin_deep_trace(32);
-    tree.layout(Constraints::tight(Size::new(24., 24.)));
+    tree.layout(Constraints::tight(Size::new(24., 24.)))
+        .expect("layout");
     let (events, dropped) = tree.take_deep_trace().expect("deep trace");
     let layouts = events
         .iter()
@@ -228,7 +238,8 @@ fn deep_trace_event_buffer_reports_truncation_inputs() {
     ))
     .expect("mount");
     tree.begin_deep_trace(2);
-    tree.layout(Constraints::tight(Size::new(10., 20.)));
+    tree.layout(Constraints::tight(Size::new(10., 20.)))
+        .expect("layout");
     let (events, dropped) = tree.take_deep_trace().expect("trace");
     assert_eq!(events.len(), 2);
     assert!(dropped > 0);
@@ -242,7 +253,8 @@ fn auxiliary_overlays_read_retained_subsystems_and_stay_bounded() {
         ActionSurface::new("Still active").into(),
     ))
     .expect("mount");
-    tree.layout(Constraints::tight(Size::new(40., 30.)));
+    tree.layout(Constraints::tight(Size::new(40., 30.)))
+        .expect("layout");
     tree.update_semantics();
     let before = tree.diagnostics();
     assert_eq!(tree.devtools_scroll_viewports(1).len(), 1);

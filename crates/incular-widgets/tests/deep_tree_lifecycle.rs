@@ -92,7 +92,7 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
             deep_padding(DEPTH, Widget::text("environment leaf")),
         ))
         .expect("environment root must mount");
-    tree.try_layout(constraints)
+    tree.layout(constraints)
         .expect("deep environment child must materialize and layout");
     tree.verify_invariants()
         .expect("generated child invariants must hold after initial materialization");
@@ -104,7 +104,7 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
         Widget::environment_scope(2_u64, deep_padding(DEPTH, Widget::text("environment leaf"))),
     )
     .expect("environment update must propagate without recursive bookkeeping");
-    tree.try_layout(constraints)
+    tree.layout(constraints)
         .expect("updated environment child must remain layoutable");
     tree.verify_invariants()
         .expect("generated child invariants must hold after replacement");

@@ -14,7 +14,8 @@ fn gallery_sliver_list_receives_a_bounded_nonempty_viewport() {
 
     let mut tree = incular_widgets::internal::WidgetTree::new();
     tree.mount(hundred_thousand_widgets()).unwrap();
-    tree.layout(Constraints::tight(Size::new(760., 640.)));
+    tree.layout(Constraints::tight(Size::new(760., 640.)))
+        .expect("layout");
 
     let diagnostics = tree.sliver_viewport_diagnostics().unwrap();
     assert_eq!(diagnostics.logical_item_count, 100_000);
@@ -24,7 +25,8 @@ fn gallery_sliver_list_receives_a_bounded_nonempty_viewport() {
     assert!(diagnostics.materialized_item_count < 100);
 
     tree.mount(million_variable_list()).unwrap();
-    tree.layout(Constraints::tight(Size::new(760., 640.)));
+    tree.layout(Constraints::tight(Size::new(760., 640.)))
+        .expect("layout");
     let variable = tree.sliver_viewport_diagnostics().unwrap();
     assert_eq!(variable.logical_item_count, 1_000_000);
     assert!(variable.viewport_extent > 0.);

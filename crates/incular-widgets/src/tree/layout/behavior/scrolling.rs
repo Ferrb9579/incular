@@ -7,8 +7,8 @@ impl WidgetTree {
         kind: RenderKind,
         children: &[RenderObjectId],
         constraints: Constraints,
-    ) -> (Size, Vec<Offset>) {
-        match kind {
+    ) -> Result<(Size, Vec<Offset>), TreeError> {
+        Ok(match kind {
             RenderKind::Scroll {
                 controller,
                 axis,
@@ -16,7 +16,7 @@ impl WidgetTree {
                 physics,
             } => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, scroll_constraints(axis, constraints));
+                    self.layout_render(child, scroll_constraints(axis, constraints))?;
                     let content = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -33,7 +33,7 @@ impl WidgetTree {
             }
             RenderKind::RawScrollbar { controller, style } => {
                 let (size, offsets) = if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints.loosen());
+                    self.layout_render(child, constraints.loosen())?;
                     let size = constraints.constrain(
                         self.render_live(child, "retained render must remain live")
                             .size,
@@ -91,7 +91,7 @@ impl WidgetTree {
                     .unwrap_or_else(|| (advanced_viewport_size(constraints), Vec::new()));
                 let mut offsets = Vec::with_capacity(children.len());
                 for (child, (child_constraints, offset)) in children.iter().zip(placements) {
-                    self.layout_render(*child, child_constraints);
+                    self.layout_render(*child, child_constraints)?;
                     offsets.push(offset);
                 }
                 (constraints.constrain(layout_size), offsets)
@@ -115,7 +115,7 @@ impl WidgetTree {
                     let child_constraints =
                         Constraints::new(0.0, size.width, child_height, child_height);
                     let offsets = if let Some(&child) = children.first() {
-                        self.layout_render(child, child_constraints);
+                        self.layout_render(child, child_constraints)?;
                         vec![Offset::new(0.0, (size.height - child_height).max(0.0))]
                     } else {
                         Vec::new()
@@ -127,7 +127,7 @@ impl WidgetTree {
             }
             RenderKind::DraggableScrollableActuator { .. } => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints.loosen());
+                    self.layout_render(child, constraints.loosen())?;
                     let size = constraints.constrain(
                         self.render_live(child, "retained render must remain live")
                             .size,
@@ -158,12 +158,12 @@ impl WidgetTree {
                     .unwrap_or_else(|| (advanced_viewport_size(constraints), Vec::new()));
                 let mut offsets = Vec::with_capacity(children.len());
                 for (child, (child_constraints, offset)) in children.iter().zip(placements) {
-                    self.layout_render(*child, child_constraints);
+                    self.layout_render(*child, child_constraints)?;
                     offsets.push(offset);
                 }
                 (constraints.constrain(layout_size), offsets)
             }
             _ => unreachable!("scrolling layout received a non-scrolling render kind"),
-        }
+        })
     }
 }

@@ -142,7 +142,8 @@ fn retained_back_listener_unregisters_when_its_element_is_replaced() {
         });
     let mut tree = WidgetTree::new();
     let root = tree.mount(listener.into()).expect("mount listener");
-    tree.layout(Constraints::tight(Size::new(40., 40.)));
+    tree.layout(Constraints::tight(Size::new(40., 40.)))
+        .expect("layout");
     assert_eq!(dispatcher.handler_count(), 1);
     assert!(dispatcher.dispatch_back().handled);
     assert_eq!(calls.get(), 1);
@@ -184,7 +185,8 @@ fn page_storage_uses_ordered_key_chains_and_exposes_the_ambient_bucket() {
     let root = tree
         .mount(PageStorage::with_bucket(bucket.clone(), child).into())
         .expect("mount page storage");
-    tree.layout(Constraints::tight(Size::new(40., 40.)));
+    tree.layout(Constraints::tight(Size::new(40., 40.)))
+        .expect("layout");
     assert_eq!(*seen.borrow(), Some(bucket));
     assert!(tree.element_exists(root));
 }
@@ -201,7 +203,8 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
     let mut tree = WidgetTree::new();
     tree.mount(RootRestorationScope::with_scope(root_scope.clone(), "application", child).into())
         .expect("mount root restoration scope");
-    tree.layout(Constraints::tight(Size::new(40., 40.)));
+    tree.layout(Constraints::tight(Size::new(40., 40.)))
+        .expect("layout");
     let claimed = seen.borrow().clone().expect("claimed restoration scope");
     assert_eq!(
         claimed
@@ -221,7 +224,8 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
     let mut tree = WidgetTree::new();
     tree.mount(UnmanagedRestorationScope::with_optional_scope(None, child).into())
         .expect("mount disabled restoration scope");
-    tree.layout(Constraints::tight(Size::new(40., 40.)));
+    tree.layout(Constraints::tight(Size::new(40., 40.)))
+        .expect("layout");
     assert!(seen_disabled.borrow().is_none());
 }
 
@@ -251,7 +255,8 @@ fn animated_barrier_samples_animation_and_dismisses_from_the_configured_bridge()
 
     let mut tree = WidgetTree::new();
     let root = tree.mount(barrier.into()).expect("mount barrier");
-    tree.layout(Constraints::tight(Size::new(160., 90.)));
+    tree.layout(Constraints::tight(Size::new(160., 90.)))
+        .expect("layout");
     assert_eq!(
         tree.render_size(tree.render_id(root).expect("barrier render")),
         Some(Size::new(160., 90.))

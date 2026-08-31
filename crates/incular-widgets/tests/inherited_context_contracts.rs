@@ -29,7 +29,7 @@ fn nearest_scope_shadows_outer_value_and_keeps_other_types_visible() {
 
     let mut tree = WidgetTree::new();
     tree.mount(widget).expect("mount inherited scopes");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
 
     assert_eq!(*seen.borrow(), Some((Some(2), Some(String::from("outer")))));
 }
@@ -46,7 +46,7 @@ fn lookup_boundary_stops_inherited_lookup() {
 
     let mut tree = WidgetTree::new();
     tree.mount(widget).expect("mount lookup boundary");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
 
     assert_eq!(*seen.borrow(), None);
 }
@@ -75,12 +75,12 @@ fn inherited_value_change_rebuilds_only_subscribers() {
     let root = tree
         .mount(Widget::environment_scope(1_u32, stable_child.clone()))
         .expect("mount inherited scope");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!((dependent_builds.get(), independent_builds.get()), (1, 1));
 
     tree.update(root, Widget::environment_scope(2_u32, stable_child))
         .expect("update inherited value");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
 
     assert_eq!(dependent_builds.get(), 2);
     assert_eq!(independent_builds.get(), 1);
@@ -103,12 +103,12 @@ fn non_subscribing_find_does_not_schedule_rebuilds() {
     let root = tree
         .mount(Widget::environment_scope(1_u32, child.clone()))
         .expect("mount inherited scope");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!((builds.get(), observed.get()), (1, 1));
 
     tree.update(root, Widget::environment_scope(2_u32, child))
         .expect("update inherited value");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
 
     assert_eq!(builds.get(), 1);
     assert_eq!(observed.get(), 1);
@@ -134,17 +134,17 @@ fn rebuild_replaces_stale_inherited_dependencies() {
     let root = tree
         .mount(Widget::environment_scope(1_u32, child.clone()))
         .expect("mount inherited scope");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 1);
 
     should_depend.set(false);
     revision.set(1);
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 2);
 
     tree.update(root, Widget::environment_scope(2_u32, child))
         .expect("update inherited value after dependency removal");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 2);
 }
 
@@ -163,16 +163,16 @@ fn unmounted_consumers_leave_no_stale_invalidation_edge() {
     let root = tree
         .mount(Widget::environment_scope(1_u32, dependent))
         .expect("mount inherited scope");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 1);
 
     let replacement: Widget = SizedBox::shrink().into();
     tree.update(root, Widget::environment_scope(1_u32, replacement.clone()))
         .expect("unmount inherited consumer");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
 
     tree.update(root, Widget::environment_scope(2_u32, replacement))
         .expect("update scope after consumer unmount");
-    tree.layout(constraints());
+    tree.layout(constraints()).expect("layout");
     assert_eq!(builds.get(), 1);
 }

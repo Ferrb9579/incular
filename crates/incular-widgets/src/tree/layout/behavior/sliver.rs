@@ -7,8 +7,8 @@ impl WidgetTree {
         kind: RenderKind,
         _children: &[RenderObjectId],
         constraints: Constraints,
-    ) -> (Size, Vec<Offset>) {
-        match kind {
+    ) -> Result<(Size, Vec<Offset>), TreeError> {
+        Ok(match kind {
             RenderKind::SliverViewport { config } => {
                 config
                     .controller
@@ -88,17 +88,14 @@ impl WidgetTree {
                     let physical_before =
                         physical_scroll_offset(&config.controller, config.reverse);
                     let anchor_before = sliver_anchor(&sliver_layout, physical_before);
-                    let result = self.reconcile_sliver_children(id, &config, &sliver_layout);
-                    if !self.record_tree_result(result) {
-                        return (size, Vec::new());
-                    }
+                    self.reconcile_sliver_children(id, &config, &sliver_layout)?;
                     let materialized = self
                         .render_live(id, "sliver viewport render must remain live")
                         .children
                         .clone();
                     let mut pass_changed = false;
                     for (child, layout) in materialized.into_iter().zip(&sliver_layout.children) {
-                        self.layout_render(child, layout.constraints);
+                        self.layout_render(child, layout.constraints)?;
                         let measured = config.axis.main_extent(
                             self.render_live(child, "sliver child render must remain live")
                                 .size,
@@ -191,6 +188,6 @@ impl WidgetTree {
                 (size, Vec::new())
             }
             _ => unreachable!("sliver layout received a non-sliver render kind"),
-        }
+        })
     }
 }

@@ -67,7 +67,8 @@ fn button_suite_build_and_mount() {
     let icon = IconButton::new("★");
 
     let root = tree.mount(btn.into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+    tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert!(size.width > 0.0);
@@ -88,7 +89,8 @@ fn input_suite_build_and_mount() {
     let text_area = TextArea::new(controller).placeholder("Multiline");
 
     let root = tree.mount(text_field.into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+    tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert!(size.width > 0.0);
@@ -104,7 +106,8 @@ fn selection_suite_build_and_mount() {
     let switch = Switch::new(true);
 
     let root = tree.mount(checkbox.into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+    tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert!(size.width > 0.0);
@@ -120,7 +123,8 @@ fn containers_suite_build_and_mount() {
     let divider = Divider::new();
 
     let root = tree.mount(card.into()).unwrap();
-    tree.layout(Constraints::loose(Size::new(400.0, 300.0)));
+    tree.layout(Constraints::loose(Size::new(400.0, 300.0)))
+        .expect("layout");
     let render_id = tree.render_id(root).unwrap();
     let size = tree.render_size(render_id).unwrap();
     assert!(size.width > 0.0);
@@ -134,7 +138,8 @@ fn theme_scope_is_deferred_and_nested() {
     let dark = ControlThemeScope::new(ControlTheme::dark(), light);
     let mut tree = WidgetTree::new();
     let root = tree.mount(dark.into()).expect("mount scoped controls");
-    tree.layout(Constraints::loose(Size::new(320.0, 120.0)));
+    tree.layout(Constraints::loose(Size::new(320.0, 120.0)))
+        .expect("layout");
     assert!(
         tree.render_size(tree.render_id(root).unwrap())
             .unwrap()
@@ -150,7 +155,8 @@ fn theme_scope_changes_materialized_button_surface() {
         let root = tree
             .mount(ControlThemeScope::new(theme, Button::new("Scoped")).into())
             .expect("mount scoped button");
-        tree.layout(Constraints::loose(Size::new(240.0, 80.0)));
+        tree.layout(Constraints::loose(Size::new(240.0, 80.0)))
+            .expect("layout");
         tree.paint()
             .commands()
             .iter()
@@ -191,7 +197,8 @@ fn retained_button_interaction_keeps_hover_press_and_focus_independent() {
             ActionId(1),
         ))
         .expect("mount button");
-    tree.layout(Constraints::loose(Size::new(160.0, 80.0)));
+    tree.layout(Constraints::loose(Size::new(160.0, 80.0)))
+        .expect("layout");
 
     tree.set_button_interaction(root, Some(true), None, Some(true))
         .expect("set hover/focus");
@@ -218,7 +225,8 @@ fn compound_parts_mount_without_visual_wrapper_requirements() {
     let mut tree = WidgetTree::new();
     tree.mount(incular_widgets::Column::new([Widget::from(root), Widget::from(tabs)]).into())
         .expect("mount parts");
-    tree.layout(Constraints::loose(Size::new(320.0, 120.0)));
+    tree.layout(Constraints::loose(Size::new(320.0, 120.0)))
+        .expect("layout");
 }
 
 #[test]
@@ -248,7 +256,8 @@ fn extended_control_inventory_has_retained_visuals() {
     ]);
     let mut tree = WidgetTree::new();
     let root = tree.mount(content.into()).expect("mount extended controls");
-    tree.layout(Constraints::loose(Size::new(640.0, 480.0)));
+    tree.layout(Constraints::loose(Size::new(640.0, 480.0)))
+        .expect("layout");
     assert!(
         tree.render_size(tree.render_id(root).unwrap())
             .unwrap()

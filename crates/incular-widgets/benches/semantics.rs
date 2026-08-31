@@ -23,7 +23,8 @@ fn bench(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("collect", size), &size, |b, &size| {
             let mut tree = WidgetTree::default();
             tree.mount(semantic_tree(size)).expect("mount");
-            tree.layout(Constraints::tight(Size::new(600., 6000.)));
+            tree.layout(Constraints::tight(Size::new(600., 6000.)))
+                .expect("layout");
             b.iter(|| tree.update_semantics());
         });
     }

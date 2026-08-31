@@ -13,46 +13,17 @@ impl WidgetTree {
         self.mark_render_dirty(render, DirtyFlags::PAINT, false);
         Ok(())
     }
-    /// Compatibility layout entry point. Recoverable application-authored
-    /// errors are recorded in [`Self::last_tree_error`] instead of panicking.
-    /// Runtime/frame code should prefer [`Self::try_layout`].
-    pub fn layout(&mut self, constraints: Constraints) {
-        let _ = self.try_layout(constraints);
-    }
-
-    pub fn try_layout(&mut self, constraints: Constraints) -> Result<(), TreeError> {
-        self.pending_tree_error = None;
-        self.last_tree_error = None;
+    pub fn layout(&mut self, constraints: Constraints) -> Result<(), TreeError> {
         let _phase_guard = self.guard_phase_root(FramePhase::Layout);
         self.refresh_text_fields();
         self.refresh_sliver_ranges();
         self.refresh_stateful_layout_builders();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
-            self.layout_render(root, constraints);
+            self.layout_render(root, constraints)?;
         }
         self.refresh_selection_states();
         self.refresh_notification_listeners();
-        if let Some(error) = self.pending_tree_error.take() {
-            self.last_tree_error = Some(error.clone());
-            return Err(error);
-        }
         Ok(())
-    }
-
-    pub(super) fn record_tree_error(&mut self, error: TreeError) {
-        if self.pending_tree_error.is_none() {
-            self.pending_tree_error = Some(error);
-        }
-    }
-
-    pub(super) fn record_tree_result(&mut self, result: Result<(), TreeError>) -> bool {
-        match result {
-            Ok(()) => true,
-            Err(error) => {
-                self.record_tree_error(error);
-                false
-            }
-        }
     }
 
     /// Marks local-state layout builders dirty before the normal retained
@@ -103,9 +74,13 @@ impl WidgetTree {
 
     /// Materializes the child window owned by an advanced scrolling model
     /// before the normal retained layout pass snapshots its children.
-    fn prepare_advanced_children(&mut self, id: RenderObjectId, constraints: Constraints) -> bool {
+    fn prepare_advanced_children(
+        &mut self,
+        id: RenderObjectId,
+        constraints: Constraints,
+    ) -> Result<(), TreeError> {
         let Some(element_id) = self.element_for_render(id) else {
-            return true;
+            return Ok(());
         };
         let kind = self
             .render_live(id, "advanced scrolling render must remain live")
@@ -115,9 +90,7 @@ impl WidgetTree {
         let viewport_size = advanced_viewport_size(constraints);
         match kind {
             RenderKind::ListWheelScrollView { .. } | RenderKind::ListWheelViewport { .. } => {
-                if !self.prepare_wheel_children(id, element_id, viewport_size) {
-                    return false;
-                }
+                self.prepare_wheel_children(id, element_id, viewport_size)?;
             }
             RenderKind::DraggableScrollableSheet { config } => {
                 let retained = self
@@ -131,26 +104,20 @@ impl WidgetTree {
                         .is_none_or(|mounted| !mounted.builder_ptr_eq(&config));
                     if builder_changed {
                         let child = config.build_child(&state);
-                        let result = self.reconcile_advanced_children(
+                        self.reconcile_advanced_children(
                             element_id,
                             vec![(AdvancedChildKey::Sheet, child)],
-                        );
-                        if !self.record_tree_result(result) {
-                            return false;
-                        }
+                        )?;
                     }
                     config.update_mounted_state(&state, mounted_config.as_deref());
                     self.draggable_sheet_state_live_mut(id).mounted_config = Some(config.clone());
                     state
                 } else {
                     let (state, child) = config.mount();
-                    let result = self.reconcile_advanced_children(
+                    self.reconcile_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::Sheet, child)],
-                    );
-                    if !self.record_tree_result(result) {
-                        return false;
-                    }
+                    )?;
                     let retained = self.draggable_sheet_state_live_mut(id);
                     retained.state = Some(state.clone());
                     retained.mounted_config = Some(config.clone());
@@ -163,14 +130,12 @@ impl WidgetTree {
                 }
             }
             RenderKind::TwoDimensionalScrollView { .. }
-            | RenderKind::TwoDimensionalViewport { .. }
-                if !self.prepare_two_dimensional_children(id, element_id, viewport_size) =>
-            {
-                return false;
+            | RenderKind::TwoDimensionalViewport { .. } => {
+                self.prepare_two_dimensional_children(id, element_id, viewport_size)?;
             }
             _ => {}
         }
-        true
+        Ok(())
     }
 
     fn prepare_wheel_children(
@@ -178,7 +143,7 @@ impl WidgetTree {
         id: RenderObjectId,
         element_id: ElementId,
         viewport_size: Size,
-    ) -> bool {
+    ) -> Result<(), TreeError> {
         let layout = self
             .wheel_state_live_mut(id)
             .viewport
@@ -192,12 +157,9 @@ impl WidgetTree {
             .iter()
             .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
             .collect();
-        let result = self.reconcile_advanced_children(element_id, desired);
-        if !self.record_tree_result(result) {
-            return false;
-        }
+        self.reconcile_advanced_children(element_id, desired)?;
         self.wheel_state_live_mut(id).layout = Some(layout);
-        true
+        Ok(())
     }
 
     fn prepare_two_dimensional_children(
@@ -205,7 +167,7 @@ impl WidgetTree {
         id: RenderObjectId,
         element_id: ElementId,
         viewport_size: Size,
-    ) -> bool {
+    ) -> Result<(), TreeError> {
         let layout = self
             .two_dimensional_state_live_mut(id)
             .viewport
@@ -224,12 +186,9 @@ impl WidgetTree {
                 )
             })
             .collect();
-        let result = self.reconcile_advanced_children(element_id, desired);
-        if !self.record_tree_result(result) {
-            return false;
-        }
+        self.reconcile_advanced_children(element_id, desired)?;
         self.two_dimensional_state_live_mut(id).layout = Some(layout);
-        true
+        Ok(())
     }
 
     fn ancestor_scroll_controllers(&self, element_id: ElementId) -> Vec<ScrollController> {
@@ -591,13 +550,19 @@ impl WidgetTree {
             };
         }
     }
-    pub(super) fn layout_render(&mut self, id: RenderObjectId, constraints: Constraints) {
-        with_recursive_tree_stack(|| {
-            self.layout_render_inner(id, constraints);
-        });
+    pub(super) fn layout_render(
+        &mut self,
+        id: RenderObjectId,
+        constraints: Constraints,
+    ) -> Result<(), TreeError> {
+        with_recursive_tree_stack(|| self.layout_render_inner(id, constraints))
     }
 
-    pub(super) fn layout_render_inner(&mut self, id: RenderObjectId, constraints: Constraints) {
+    pub(super) fn layout_render_inner(
+        &mut self,
+        id: RenderObjectId,
+        constraints: Constraints,
+    ) -> Result<(), TreeError> {
         let _node_guard = self.guard_render(FramePhase::Layout, id, Some(constraints));
         let needs = self
             .render_live(id, "layout render must remain live")
@@ -609,7 +574,7 @@ impl WidgetTree {
                 != Some(constraints);
         if !needs {
             self.diagnostics.layout_cache_hits += 1;
-            return;
+            return Ok(());
         }
         #[cfg(feature = "devtools")]
         let trace = self
@@ -626,10 +591,7 @@ impl WidgetTree {
                 .kind,
             RenderKind::LayoutBuilder
         ) {
-            let result = self.materialize_layout_builder(id, constraints);
-            if !self.record_tree_result(result) {
-                return;
-            }
+            self.materialize_layout_builder(id, constraints)?;
         }
         if self.renders.get(id.0).is_some_and(|render| {
             matches!(
@@ -640,15 +602,14 @@ impl WidgetTree {
                     | RenderKind::TwoDimensionalScrollView { .. }
                     | RenderKind::TwoDimensionalViewport { .. }
             )
-        }) && !self.prepare_advanced_children(id, constraints)
-        {
-            return;
+        }) {
+            self.prepare_advanced_children(id, constraints)?;
         }
         let (kind, children) = {
             let n = self.render_live(id, "retained render must remain live");
             (n.object.kind.clone(), n.children.clone())
         };
-        let (size, offsets) = self.layout_kind(id, kind, &children, constraints);
+        let (size, offsets) = self.layout_kind(id, kind, &children, constraints)?;
         for (child, offset) in children.into_iter().zip(offsets) {
             // The parent computes this placement after the child has completed
             // its own layout. Update the retained placement layer here rather
@@ -722,6 +683,7 @@ impl WidgetTree {
         }
         #[cfg(feature = "devtools")]
         self.devtools_trace_end(trace);
+        Ok(())
     }
 }
 

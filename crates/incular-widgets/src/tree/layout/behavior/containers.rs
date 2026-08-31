@@ -7,15 +7,15 @@ impl WidgetTree {
         kind: RenderKind,
         children: &[RenderObjectId],
         constraints: Constraints,
-    ) -> (Size, Vec<Offset>) {
-        match kind {
+    ) -> Result<(Size, Vec<Offset>), TreeError> {
+        Ok(match kind {
             RenderKind::Align {
                 alignment,
                 width_factor,
                 height_factor,
             } => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints.loosen());
+                    self.layout_render(child, constraints.loosen())?;
                     let child_size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -65,7 +65,7 @@ impl WidgetTree {
                 let mut occupied_non_flex = 0.0;
                 for (child, (f, fit)) in children.iter().zip(&flex_meta) {
                     if *f == 0 || !main_max.is_finite() {
-                        self.layout_render(*child, loose);
+                        self.layout_render(*child, loose)?;
                         let size = self
                             .render_live(child, "retained render must remain live")
                             .size;
@@ -109,7 +109,7 @@ impl WidgetTree {
                                     allocation,
                                 ),
                             };
-                            self.layout_render(*child, child_constraints);
+                            self.layout_render(*child, child_constraints)?;
                             let size = self
                                 .render_live(child, "retained render must remain live")
                                 .size;
@@ -126,7 +126,7 @@ impl WidgetTree {
             }
             RenderKind::Flexible { .. } | RenderKind::Positioned { .. } => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints);
+                    self.layout_render(child, constraints)?;
                     let size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -138,7 +138,7 @@ impl WidgetTree {
             RenderKind::Wrap { wrap } => {
                 let child_constraints = constraints.loosen();
                 for child in children {
-                    self.layout_render(*child, child_constraints);
+                    self.layout_render(*child, child_constraints)?;
                 }
                 let wrap_children = children
                     .iter()
@@ -162,7 +162,7 @@ impl WidgetTree {
                 row_spacing,
             } => {
                 for child in children {
-                    self.layout_render(*child, constraints.loosen());
+                    self.layout_render(*child, constraints.loosen())?;
                 }
                 let cells = children
                     .iter()
@@ -200,7 +200,7 @@ impl WidgetTree {
                 for child in children {
                     let render_node = self.render_live(child, "retained render must remain live");
                     if !matches!(render_node.object.kind, RenderKind::Positioned { .. }) {
-                        self.layout_render(*child, non_positioned_constraints);
+                        self.layout_render(*child, non_positioned_constraints)?;
                         let size = self
                             .render_live(child, "retained render must remain live")
                             .size;
@@ -248,7 +248,7 @@ impl WidgetTree {
                             0.0,
                             child_h.unwrap_or(stack_size.height),
                         );
-                        self.layout_render(*child, child_constraints);
+                        self.layout_render(*child, child_constraints)?;
                         let size = self
                             .render_live(child, "retained render must remain live")
                             .size;
@@ -270,7 +270,7 @@ impl WidgetTree {
             RenderKind::IndexedStack { alignment, .. } => {
                 let mut natural = Size::ZERO;
                 for child in children {
-                    self.layout_render(*child, constraints.loosen());
+                    self.layout_render(*child, constraints.loosen())?;
                     let child_size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -325,7 +325,7 @@ impl WidgetTree {
                 );
                 let child_constraints = constraints.deflate(insets.horizontal(), insets.vertical());
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, child_constraints);
+                    self.layout_render(child, child_constraints)?;
                     let child_size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -345,7 +345,7 @@ impl WidgetTree {
             | RenderKind::ClipOval { .. }
             | RenderKind::ClipPath { .. } => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints);
+                    self.layout_render(child, constraints)?;
                     let size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -356,7 +356,7 @@ impl WidgetTree {
             }
             RenderKind::LayoutBuilder => {
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, constraints);
+                    self.layout_render(child, constraints)?;
                     let size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -368,7 +368,7 @@ impl WidgetTree {
             RenderKind::Visibility { visible } => {
                 if visible {
                     if let Some(&child) = children.first() {
-                        self.layout_render(child, constraints.loosen());
+                        self.layout_render(child, constraints.loosen())?;
                         let size = constraints.constrain(
                             self.render_live(child, "retained render must remain live")
                                 .size,
@@ -394,13 +394,13 @@ impl WidgetTree {
                 }
                 size = constraints.constrain(size);
                 if let Some(&child) = children.first() {
-                    self.layout_render(child, Constraints::tight(size));
+                    self.layout_render(child, Constraints::tight(size))?;
                     (size, vec![Offset::ZERO])
                 } else {
                     (size, Vec::new())
                 }
             }
             _ => unreachable!("container layout received a non-container render kind"),
-        }
+        })
     }
 }
