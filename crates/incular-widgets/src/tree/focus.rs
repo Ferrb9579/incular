@@ -203,12 +203,8 @@ impl WidgetTree {
             }
             let excluded_focus = excluded_focus || element.widget.semantics.exclude_focus;
             let focusable = match &element.widget.kind {
-                WidgetKind::Button {
-                    enabled,
-                    focusable_when_disabled,
-                    ..
-                } => *enabled || *focusable_when_disabled,
-                WidgetKind::TextField { enabled, .. } => *enabled,
+                WidgetKind::Button(spec) => spec.enabled || spec.focusable_when_disabled,
+                WidgetKind::TextField(spec) => spec.enabled,
                 WidgetKind::SelectableText { .. } => true,
                 WidgetKind::Gesture { callbacks, .. } => callbacks
                     .focus_node

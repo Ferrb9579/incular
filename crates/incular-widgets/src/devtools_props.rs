@@ -63,11 +63,9 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             });
             out.push(prop("overflow", DebugValue::Enum(format!("{overflow:?}"))));
         }
-        WidgetKind::Button {
-            callback, child, ..
-        } => {
-            out.push(prop("enabled", DebugValue::Bool(callback.is_some())));
-            if let Some(child) = child.as_ref()
+        WidgetKind::Button(spec) => {
+            out.push(prop("enabled", DebugValue::Bool(spec.callback.is_some())));
+            if let Some(child) = spec.child.as_ref()
                 && let Some(label) = child.text_if_any()
             {
                 out.push(prop("label", DebugValue::Str(truncate(&label, 48))));
@@ -389,85 +387,13 @@ fn truncate(text: &str, limit: usize) -> String {
 
 /// Display name for any widget kind (single source used by tree + props).
 pub fn kind_display_name(kind: &WidgetKind) -> String {
-    let name = match kind {
-        WidgetKind::Box { .. } => "Box",
-        WidgetKind::Shape { .. } => "Shape",
-        WidgetKind::CustomPaint { .. } => "CustomPaint",
-        WidgetKind::Decorated { .. } => "DecoratedBox",
-        WidgetKind::Banner { .. } => "Banner",
-        WidgetKind::Image { .. } => "Image",
-        WidgetKind::Button { .. } => "Button",
-        WidgetKind::Text { .. } => "Text",
-        WidgetKind::SelectableText { .. } => "SelectableText",
-        WidgetKind::SelectionArea { .. } => "SelectionArea",
-        WidgetKind::SelectionContainer { .. } => "SelectionContainer",
-        WidgetKind::SelectionListener { .. } => "SelectionListener",
-        WidgetKind::IndexedSemantics { .. } => "IndexedSemantics",
-        WidgetKind::SemanticsDebugger { .. } => "SemanticsDebugger",
-        WidgetKind::TextField { .. } => "TextField",
-        WidgetKind::Padding { .. } => "Padding",
-        WidgetKind::Constrained { .. } => "ConstrainedBox",
-        WidgetKind::Limited { .. } => "LimitedBox",
-        WidgetKind::Overflow { .. } => "OverflowBox",
-        WidgetKind::Unconstrained { .. } => "UnconstrainedBox",
-        WidgetKind::Fractional { .. } => "FractionallySizedBox",
-        WidgetKind::Baseline { .. } => "Baseline",
-        WidgetKind::RepaintBoundary { .. } => "RepaintBoundary",
-        WidgetKind::Gesture { .. } => "GestureDetector",
-        WidgetKind::RawInput { kind, .. } => kind.type_().name(),
-        WidgetKind::Draggable { .. } => "Draggable",
-        WidgetKind::DragTarget { .. } => "DragTarget",
-        WidgetKind::IgnorePointer { .. } => "IgnorePointer",
-        WidgetKind::AbsorbPointer { .. } => "AbsorbPointer",
-        WidgetKind::Align { .. } => "Align",
-        WidgetKind::Flexible { .. } => "Flexible",
-        WidgetKind::Positioned { .. } => "Positioned",
-        WidgetKind::Visibility { .. } => "Visibility",
-        WidgetKind::AspectRatio { .. } => "AspectRatio",
-        WidgetKind::Scroll { .. } => "ScrollView",
-        WidgetKind::PersistentHeader { .. } => "PersistentHeader",
-        WidgetKind::NotificationListener { .. } => "NotificationListener",
-        WidgetKind::Translate { .. } => "Translate",
-        WidgetKind::Transform { .. } => "Transform",
-        WidgetKind::Scale { .. } => "Scale",
-        WidgetKind::Rotation { .. } => "Rotation",
-        WidgetKind::FittedBox { .. } => "FittedBox",
-        WidgetKind::Flex { axis, .. } => {
-            return match axis {
-                incular_config::Axis::Vertical => "Column".to_owned(),
-                incular_config::Axis::Horizontal => "Row".to_owned(),
-            };
-        }
-        WidgetKind::Wrap { .. } => "Wrap",
-        WidgetKind::Table { .. } => "Table",
-        WidgetKind::Stack { .. } => "Stack",
-        WidgetKind::IndexedStack { .. } => "IndexedStack",
-        WidgetKind::SliverViewport { .. } => "SliverViewport",
-        WidgetKind::LayoutBuilder { .. } => "LayoutBuilder",
-        WidgetKind::Opacity { .. } => "Opacity",
-        WidgetKind::Blur { .. } => "Blur",
-        WidgetKind::DropShadow { .. } => "DropShadow",
-        WidgetKind::ColorFiltered { .. } => "ColorFiltered",
-        WidgetKind::Blend { .. } => "Blend",
-        WidgetKind::SafeArea { .. } => "SafeArea",
-        WidgetKind::ClipRect { .. } => "ClipRect",
-        WidgetKind::ClipRRect { .. } => "ClipRRect",
-        WidgetKind::ClipOval { .. } => "ClipOval",
-        WidgetKind::ClipPath { .. } => "ClipPath",
-        WidgetKind::ShaderMask { .. } => "ShaderMask",
-        WidgetKind::BackdropFilter { .. } => "BackdropFilter",
-        WidgetKind::AnnotatedRegion { .. } => "AnnotatedRegion",
-        WidgetKind::CompositedTransformTarget { .. } => "CompositedTransformTarget",
-        WidgetKind::CompositedTransformFollower { .. } => "CompositedTransformFollower",
-        WidgetKind::RawScrollbar { .. } => "RawScrollbar",
-        WidgetKind::ListWheelScrollView { .. } => "ListWheelScrollView",
-        WidgetKind::ListWheelViewport { .. } => "ListWheelViewport",
-        WidgetKind::DraggableScrollableSheet { .. } => "DraggableScrollableSheet",
-        WidgetKind::DraggableScrollableActuator { .. } => "DraggableScrollableActuator",
-        WidgetKind::TwoDimensionalScrollView { .. } => "TwoDimensionalScrollView",
-        WidgetKind::TwoDimensionalViewport { .. } => "TwoDimensionalViewport",
-    };
-    name.to_owned()
+    match kind {
+        WidgetKind::Flex { axis, .. } => match axis {
+            incular_config::Axis::Vertical => "Column".to_owned(),
+            incular_config::Axis::Horizontal => "Row".to_owned(),
+        },
+        _ => kind.structure().widget_type.name().to_owned(),
+    }
 }
 
 /// Render-kind display names for the render-tree tab.

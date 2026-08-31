@@ -61,7 +61,7 @@ impl WidgetTree {
     pub fn is_text_field(&self, id: ElementId) -> bool {
         self.elements
             .get(id.0)
-            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::TextField { .. }))
+            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::TextField(_)))
     }
 
     /// Returns whether the field is currently allowed to mutate its
@@ -71,41 +71,21 @@ impl WidgetTree {
     #[must_use]
     pub fn text_field_is_editable(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(|element| {
-            matches!(
-                element.widget.kind,
-                WidgetKind::TextField {
-                    enabled: true,
-                    read_only: false,
-                    ..
-                }
-            )
+            matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.enabled && !spec.read_only)
         })
     }
 
     #[must_use]
     pub fn text_field_is_read_only(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(|element| {
-            matches!(
-                element.widget.kind,
-                WidgetKind::TextField {
-                    enabled: true,
-                    read_only: true,
-                    ..
-                }
-            )
+            matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.enabled && spec.read_only)
         })
     }
     #[must_use]
     pub fn is_multiline_text_field(&self, id: ElementId) -> bool {
-        self.elements.get(id.0).is_some_and(|element| {
-            matches!(
-                element.widget.kind,
-                WidgetKind::TextField {
-                    multiline: true,
-                    ..
-                }
-            )
-        })
+        self.elements.get(id.0).is_some_and(
+            |element| matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.multiline),
+        )
     }
     pub fn text_field_move_vertical(&mut self, id: ElementId, down: bool, extend: bool) -> bool {
         let Some(render) = self.render_id(id) else {
@@ -768,15 +748,7 @@ impl WidgetTree {
     #[must_use]
     pub fn text_field_input_snapshot(&self, id: ElementId) -> Option<TextFieldInputSnapshot> {
         let element = self.elements.get(id.0)?;
-        let WidgetKind::TextField {
-            controller,
-            multiline,
-            enabled,
-            read_only,
-            obscure_text,
-            ..
-        } = &element.widget.kind
-        else {
+        let WidgetKind::TextField(spec) = &element.widget.kind else {
             return None;
         };
         let bounds = self.element_bounds(id).unwrap_or_default();
@@ -787,10 +759,10 @@ impl WidgetTree {
                 let layout = node.text_layout()?.as_ref();
                 let (x, y, height) = caret_geometry(
                     layout,
-                    controller.selection().extent,
-                    controller.caret_affinity(),
+                    spec.controller.selection().extent,
+                    spec.controller.caret_affinity(),
                 );
-                let top = if *multiline {
+                let top = if spec.multiline {
                     8.0
                 } else {
                     ((node.size.height - height) / 2.0).max(0.0)
@@ -818,13 +790,13 @@ impl WidgetTree {
             .unwrap_or(bounds);
         Some(TextFieldInputSnapshot {
             client_id: (u64::from(id.0.generation()) << 32) | u64::from(id.0.index()),
-            text: controller.text(),
-            selection: controller.selection(),
-            composing: controller.composing(),
-            multiline: *multiline,
-            enabled: *enabled,
-            read_only: *read_only,
-            obscure_text: *obscure_text,
+            text: spec.controller.text(),
+            selection: spec.controller.selection(),
+            composing: spec.controller.composing(),
+            multiline: spec.multiline,
+            enabled: spec.enabled,
+            read_only: spec.read_only,
+            obscure_text: spec.obscure_text,
             input_type: element.widget.semantics.text_input_type.unwrap_or_default(),
             input_action: element
                 .widget
@@ -839,16 +811,11 @@ impl WidgetTree {
         let Some(element) = self.elements.get(id.0) else {
             return false;
         };
-        let WidgetKind::TextField {
-            controller,
-            on_submit,
-            ..
-        } = &element.widget.kind
-        else {
+        let WidgetKind::TextField(spec) = &element.widget.kind else {
             return false;
         };
-        if let Some(callback) = on_submit {
-            callback(controller.text());
+        if let Some(callback) = &spec.on_submit {
+            callback(spec.controller.text());
         }
         true
     }

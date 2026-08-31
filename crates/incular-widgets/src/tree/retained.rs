@@ -565,7 +565,7 @@ impl WidgetTree {
     #[must_use]
     pub fn action_for_element(&self, id: ElementId) -> Option<ActionId> {
         match &self.elements.get(id.0)?.widget.kind {
-            WidgetKind::Button { action, .. } => Some(*action),
+            WidgetKind::Button(spec) => Some(spec.action),
             _ => None,
         }
     }
@@ -587,13 +587,8 @@ impl WidgetTree {
     pub fn action_ids(&self) -> HashSet<ActionId> {
         self.elements
             .iter()
-            .flat_map(|(_, element)| match element.widget.kind {
-                WidgetKind::Button {
-                    action,
-                    hover_action,
-                    exit_action,
-                    ..
-                } => [action, hover_action, exit_action]
+            .flat_map(|(_, element)| match &element.widget.kind {
+                WidgetKind::Button(spec) => [spec.action, spec.hover_action, spec.exit_action]
                     .map(|action| (action.0 != 0).then_some(action)),
                 _ => [None; 3],
             })
@@ -603,13 +598,9 @@ impl WidgetTree {
     #[must_use]
     pub fn hover_actions_for_element(&self, id: ElementId) -> (Option<ActionId>, Option<ActionId>) {
         match &self.elements.get(id.0).map(|element| &element.widget.kind) {
-            Some(WidgetKind::Button {
-                hover_action,
-                exit_action,
-                ..
-            }) => (
-                (hover_action.0 != 0).then_some(*hover_action),
-                (exit_action.0 != 0).then_some(*exit_action),
+            Some(WidgetKind::Button(spec)) => (
+                (spec.hover_action.0 != 0).then_some(spec.hover_action),
+                (spec.exit_action.0 != 0).then_some(spec.exit_action),
             ),
             _ => (None, None),
         }

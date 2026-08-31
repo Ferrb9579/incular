@@ -229,8 +229,8 @@ impl WidgetTree {
             .filter(|(_, element)| {
                 matches!(
                     element.widget.kind,
-                    WidgetKind::Button { .. }
-                        | WidgetKind::TextField { .. }
+                    WidgetKind::Button(_)
+                        | WidgetKind::TextField(_)
                         | WidgetKind::SelectableText { .. }
                         | WidgetKind::SelectionArea { .. }
                         | WidgetKind::SelectionContainer { .. }
@@ -434,7 +434,7 @@ impl WidgetTree {
         content_transform: incular_core::Transform,
     ) -> LayoutDetails {
         match &element.widget.kind {
-            WidgetKind::Box { .. } | WidgetKind::Decorated { .. } | WidgetKind::Button { .. } => {
+            WidgetKind::Box { .. } | WidgetKind::Decorated { .. } | WidgetKind::Button(_) => {
                 LayoutDetails::Box
             }
             WidgetKind::Flex { axis, .. } => {
@@ -906,7 +906,8 @@ fn leaf_label(kind: &WidgetKind) -> Option<String> {
         WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
             Some(truncate(text, 48))
         }
-        WidgetKind::Button { child, .. } => child
+        WidgetKind::Button(spec) => spec
+            .child
             .as_ref()
             .and_then(|child| child.text_if_any().map(|text| truncate(&text, 32))),
         WidgetKind::SelectionArea { child, .. }
@@ -916,20 +917,16 @@ fn leaf_label(kind: &WidgetKind) -> Option<String> {
         | WidgetKind::SemanticsDebugger { child, .. } => {
             child.text_if_any().map(|text| truncate(&text, 48))
         }
-        WidgetKind::TextField {
-            placeholder,
-            multiline,
-            ..
-        } => {
-            let kind_word = if *multiline {
+        WidgetKind::TextField(spec) => {
+            let kind_word = if spec.multiline {
                 "multiline field"
             } else {
                 "field"
             };
-            Some(if placeholder.is_empty() {
+            Some(if spec.placeholder.is_empty() {
                 kind_word.to_owned()
             } else {
-                format!("{} ({})", kind_word, truncate(placeholder, 24))
+                format!("{} ({})", kind_word, truncate(&spec.placeholder, 24))
             })
         }
         _ => None,

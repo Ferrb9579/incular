@@ -152,25 +152,20 @@ impl WidgetTree {
         }
         let (mut role, mut default_label, mut value, mut state, mut actions) =
             match &entry.widget.kind {
-                WidgetKind::Button {
-                    has_callback,
-                    enabled,
-                    focusable_when_disabled,
-                    ..
-                } => (
+                WidgetKind::Button(spec) => (
                     Some(SemanticRole::Button),
                     widget_text(&entry.widget),
                     None,
                     SemanticState {
-                        enabled: *enabled,
+                        enabled: spec.enabled,
                         focused: render
                             .button_state()
                             .expect("button render must own button state")
                             .focused,
-                        focusable: *enabled || *focusable_when_disabled,
+                        focusable: spec.enabled || spec.focusable_when_disabled,
                         ..SemanticState::default()
                     },
-                    if *has_callback && *enabled {
+                    if spec.has_callback && spec.enabled {
                         vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
                     } else {
                         vec![SemanticActionKind::Focus]
@@ -204,22 +199,15 @@ impl WidgetTree {
                     SemanticState::default(),
                     vec![],
                 ),
-                WidgetKind::TextField {
-                    controller,
-                    multiline,
-                    enabled,
-                    read_only,
-                    obscure_text,
-                    ..
-                } => {
-                    let value = controller.value();
+                WidgetKind::TextField(spec) => {
+                    let value = spec.controller.value();
                     let mut actions =
                         vec![SemanticActionKind::Focus, SemanticActionKind::SetSelection];
-                    if *enabled && !*read_only {
+                    if spec.enabled && !spec.read_only {
                         actions.push(SemanticActionKind::SetText);
                     }
                     (
-                        Some(if *multiline {
+                        Some(if spec.multiline {
                             SemanticRole::TextArea
                         } else {
                             SemanticRole::TextField
@@ -227,16 +215,16 @@ impl WidgetTree {
                         None,
                         Some(value.text),
                         SemanticState {
-                            enabled: *enabled,
+                            enabled: spec.enabled,
                             focused: render
                                 .text_field_state()
                                 .expect("text-field render must own text-field state")
                                 .focused,
-                            focusable: *enabled,
-                            editable: *enabled && !*read_only,
-                            multiline: *multiline,
-                            obscured: *obscure_text,
-                            read_only: *read_only,
+                            focusable: spec.enabled,
+                            editable: spec.enabled && !spec.read_only,
+                            multiline: spec.multiline,
+                            obscured: spec.obscure_text,
+                            read_only: spec.read_only,
                             selection: Some(SemanticTextSelection {
                                 base: value.selection.base,
                                 extent: value.selection.extent,
@@ -350,7 +338,7 @@ impl WidgetTree {
         };
         // A Button deliberately merges its visual label/icon subtree into the
         // one control node. Other containers preserve logical child order.
-        if !matches!(entry.widget.kind, WidgetKind::Button { .. })
+        if !matches!(entry.widget.kind, WidgetKind::Button(_))
             && !entry.widget.semantics.merge_descendants
         {
             let first_visible_child = entry
@@ -389,17 +377,10 @@ pub(super) fn semantic_action_is_executable(
     match action {
         SemanticActionKind::Focus => true,
         SemanticActionKind::Activate => {
-            matches!(
-                kind,
-                WidgetKind::Button {
-                    has_callback: true,
-                    enabled: true,
-                    ..
-                }
-            )
+            matches!(kind, WidgetKind::Button(spec) if spec.has_callback && spec.enabled)
         }
         SemanticActionKind::SetText | SemanticActionKind::SetSelection => {
-            matches!(kind, WidgetKind::TextField { .. })
+            matches!(kind, WidgetKind::TextField(_))
         }
         SemanticActionKind::ScrollForward | SemanticActionKind::ScrollBackward => {
             matches!(
@@ -424,60 +405,10 @@ pub(super) fn widget_text(widget: &Widget) -> Option<String> {
             WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
                 fragments.push(text.clone());
             }
-            WidgetKind::Button { child, .. } | WidgetKind::Banner { child, .. } => {
-                work.extend(child.iter().map(|child| child.as_ref()));
+            _ => {
+                let children = current.children_refs().into_iter().collect::<Vec<_>>();
+                work.extend(children.into_iter().rev());
             }
-            WidgetKind::Decorated { child, .. }
-            | WidgetKind::Padding { child, .. }
-            | WidgetKind::Constrained { child, .. }
-            | WidgetKind::Limited { child, .. }
-            | WidgetKind::Overflow { child, .. }
-            | WidgetKind::Unconstrained { child, .. }
-            | WidgetKind::Fractional { child, .. }
-            | WidgetKind::Baseline { child, .. }
-            | WidgetKind::RepaintBoundary { child }
-            | WidgetKind::Gesture { child, .. }
-            | WidgetKind::Draggable { child, .. }
-            | WidgetKind::DragTarget { child, .. }
-            | WidgetKind::IgnorePointer { child, .. }
-            | WidgetKind::AbsorbPointer { child, .. }
-            | WidgetKind::Align { child, .. }
-            | WidgetKind::Flexible { child, .. }
-            | WidgetKind::Positioned { child, .. }
-            | WidgetKind::SafeArea { child, .. }
-            | WidgetKind::ClipRect { child, .. }
-            | WidgetKind::ClipRRect { child, .. }
-            | WidgetKind::ClipOval { child, .. }
-            | WidgetKind::ClipPath { child, .. }
-            | WidgetKind::Visibility { child, .. }
-            | WidgetKind::AspectRatio { child, .. }
-            | WidgetKind::Scroll { child, .. }
-            | WidgetKind::PersistentHeader { child, .. }
-            | WidgetKind::NotificationListener { child, .. }
-            | WidgetKind::Translate { child, .. }
-            | WidgetKind::Transform { child, .. }
-            | WidgetKind::Scale { child, .. }
-            | WidgetKind::Rotation { child, .. }
-            | WidgetKind::FittedBox { child, .. }
-            | WidgetKind::Opacity { child, .. }
-            | WidgetKind::Blur { child, .. }
-            | WidgetKind::DropShadow { child, .. }
-            | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. }
-            | WidgetKind::SelectionArea { child, .. }
-            | WidgetKind::SelectionContainer { child, .. }
-            | WidgetKind::SelectionListener { child, .. }
-            | WidgetKind::IndexedSemantics { child, .. }
-            | WidgetKind::SemanticsDebugger { child, .. } => work.push(child),
-            WidgetKind::RawInput {
-                child: Some(child), ..
-            } => work.push(child),
-            WidgetKind::Flex { children, .. }
-            | WidgetKind::Stack { children, .. }
-            | WidgetKind::IndexedStack { children, .. } => {
-                work.extend(children.iter().rev().map(Rc::as_ref));
-            }
-            _ => {}
         }
     }
     (!fragments.is_empty()).then(|| fragments.join(" "))

@@ -455,6 +455,51 @@ impl SemanticCallbacks {
         self.callback(action).is_some()
     }
 }
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct ButtonSpec {
+    pub(crate) size: Size,
+    pub(crate) color: Color,
+    pub(crate) hover_color: Option<Color>,
+    pub(crate) pressed_color: Option<Color>,
+    pub(crate) focused_color: Option<Color>,
+    pub(crate) disabled_color: Option<Color>,
+    pub(crate) enabled: bool,
+    pub(crate) focusable_when_disabled: bool,
+    pub(crate) action: ActionId,
+    pub(crate) callback: Option<Rc<dyn Fn()>>,
+    pub(crate) hover_action: ActionId,
+    pub(crate) hover_callback: Option<Rc<dyn Fn()>>,
+    pub(crate) exit_action: ActionId,
+    pub(crate) exit_callback: Option<Rc<dyn Fn()>>,
+    pub(crate) has_callback: bool,
+    pub(crate) child: Option<Rc<Widget>>,
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct TextFieldSpec {
+    pub(crate) controller: TextEditingController,
+    pub(crate) size: Size,
+    pub(crate) style: TextStyle,
+    pub(crate) placeholder: String,
+    pub(crate) on_submit: Option<Rc<dyn Fn(String)>>,
+    pub(crate) multiline: bool,
+    pub(crate) min_lines: Option<usize>,
+    pub(crate) max_lines: Option<usize>,
+    pub(crate) expands: bool,
+    pub(crate) text_align: TextAlign,
+    pub(crate) enabled: bool,
+    pub(crate) read_only: bool,
+    pub(crate) obscure_text: bool,
+    pub(crate) cursor_width: f32,
+    pub(crate) cursor_height: Option<f32>,
+    pub(crate) cursor_radius: f32,
+    pub(crate) show_cursor: bool,
+    pub(crate) cursor_color: Color,
+    pub(crate) selection_color: Color,
+}
+
 #[derive(Clone)]
 pub enum WidgetKind {
     Box {
@@ -488,24 +533,7 @@ pub enum WidgetKind {
         shadow: BoxShadow,
         child: Option<Rc<Widget>>,
     },
-    Button {
-        size: Size,
-        color: Color,
-        hover_color: Option<Color>,
-        pressed_color: Option<Color>,
-        focused_color: Option<Color>,
-        disabled_color: Option<Color>,
-        enabled: bool,
-        focusable_when_disabled: bool,
-        action: ActionId,
-        callback: Option<Rc<dyn Fn()>>,
-        hover_action: ActionId,
-        hover_callback: Option<Rc<dyn Fn()>>,
-        exit_action: ActionId,
-        exit_callback: Option<Rc<dyn Fn()>>,
-        has_callback: bool,
-        child: Option<Rc<Widget>>,
-    },
+    Button(ButtonSpec),
     Text {
         text: String,
         style: TextStyle,
@@ -550,27 +578,7 @@ pub enum WidgetKind {
         alignment: Alignment,
         sampling: ImageSampling,
     },
-    TextField {
-        controller: TextEditingController,
-        size: Size,
-        style: TextStyle,
-        placeholder: String,
-        on_submit: Option<Rc<dyn Fn(String)>>,
-        multiline: bool,
-        min_lines: Option<usize>,
-        max_lines: Option<usize>,
-        expands: bool,
-        text_align: TextAlign,
-        enabled: bool,
-        read_only: bool,
-        obscure_text: bool,
-        cursor_width: f32,
-        cursor_height: Option<f32>,
-        cursor_radius: f32,
-        show_cursor: bool,
-        cursor_color: Color,
-        selection_color: Color,
-    },
+    TextField(TextFieldSpec),
     Padding {
         padding: EdgeInsets,
         child: Rc<Widget>,

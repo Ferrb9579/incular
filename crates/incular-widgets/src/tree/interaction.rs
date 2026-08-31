@@ -27,14 +27,13 @@ impl WidgetTree {
     #[must_use]
     pub fn button_ancestor(&self, mut id: ElementId) -> Option<(ElementId, Option<ActionId>)> {
         loop {
-            if let Some(WidgetKind::Button {
-                action, enabled, ..
-            }) = self.elements.get(id.0).map(|element| &element.widget.kind)
+            if let Some(WidgetKind::Button(spec)) =
+                self.elements.get(id.0).map(|element| &element.widget.kind)
             {
-                if !*enabled {
+                if !spec.enabled {
                     return None;
                 }
-                return Some((id, (action.0 != 0).then_some(*action)));
+                return Some((id, (spec.action.0 != 0).then_some(spec.action)));
             }
             id = self.parent(id)?;
         }

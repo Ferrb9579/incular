@@ -439,7 +439,7 @@ impl WidgetTree {
             return Ok(());
         }
         let previous = self.elements.get(id.0).expect("present").children.clone();
-        let desired = widget.children_refs();
+        let desired = widget.children_refs().into_iter().collect::<Vec<_>>();
         let reconciled = self.reconcile_children(id, previous.clone(), &desired)?;
         if reconciled != previous {
             self.elements.get_mut(id.0).expect("present").children = reconciled;
@@ -1125,7 +1125,7 @@ impl WidgetTree {
     ) -> Result<(), TreeError> {
         let mut stack = vec![(widget, parent)];
         while let Some((current, owner)) = stack.pop() {
-            let children = current.children_refs();
+            let children = current.children_refs().into_iter().collect::<Vec<_>>();
             self.check_keys_borrowed(owner, children.iter().copied())?;
             // Descendants do not have retained IDs yet. Their duplicate-key
             // error remains structured; the generated-child wrapper supplies

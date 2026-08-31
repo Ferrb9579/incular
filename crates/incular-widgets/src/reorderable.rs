@@ -95,7 +95,11 @@ pub(crate) fn install_listener(
     }
 
     match &mut widget.kind {
-        WidgetKind::Banner { child, .. } | WidgetKind::Button { child, .. } => child
+        WidgetKind::Banner { child, .. } => child
+            .as_mut()
+            .and_then(|child| install_listener(Rc::make_mut(child), wrap)),
+        WidgetKind::Button(spec) => spec
+            .child
             .as_mut()
             .and_then(|child| install_listener(Rc::make_mut(child), wrap)),
         WidgetKind::RawInput { child, .. } => child
@@ -165,7 +169,7 @@ pub(crate) fn install_listener(
         | WidgetKind::Text { .. }
         | WidgetKind::SelectableText { .. }
         | WidgetKind::Image { .. }
-        | WidgetKind::TextField { .. }
+        | WidgetKind::TextField(_)
         | WidgetKind::ListWheelScrollView { .. }
         | WidgetKind::ListWheelViewport { .. }
         | WidgetKind::DraggableScrollableSheet { .. }

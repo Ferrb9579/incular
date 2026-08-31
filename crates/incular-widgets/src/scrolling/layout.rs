@@ -1240,14 +1240,14 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
         WidgetKind::Banner { child, .. } => child
             .as_deref()
             .and_then(|child| widget_main_extent_hint(child, axis)),
-        WidgetKind::Button { size, child, .. } => dimension(*size, axis)
+        WidgetKind::Button(spec) => dimension(spec.size, axis)
             .filter(|extent| *extent > 0.)
             .or_else(|| {
-                child
+                spec.child
                     .as_deref()
                     .and_then(|child| widget_main_extent_hint(child, axis))
             })
-            .or_else(|| dimension(*size, axis)),
+            .or_else(|| dimension(spec.size, axis)),
         WidgetKind::Text { style, .. } | WidgetKind::SelectableText { style, .. } => {
             let font_size = style.size.max(1.);
             let line_height = style
@@ -1266,7 +1266,7 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
             Axis::Vertical => height.unwrap_or(0.),
         })
         .filter(|extent| *extent > 0.),
-        WidgetKind::TextField { size, .. } => dimension(*size, axis),
+        WidgetKind::TextField(spec) => dimension(spec.size, axis),
         WidgetKind::Padding { padding, child } => {
             widget_main_extent_hint(child, axis).map(|extent| {
                 extent

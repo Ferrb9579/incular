@@ -19,14 +19,18 @@ impl Drop for Widget {
         // descriptor chain through Rc's drop glue. Detach uniquely owned edges
         // level by level so descriptor destruction is memory-bounded rather
         // than native-stack-bounded.
-        let mut pending = std::mem::replace(
+        let mut pending = self.kind.structure().children.shared_handles();
+        let old_kind = std::mem::replace(
             &mut self.kind,
             WidgetKind::Box {
                 size: Size::ZERO,
                 color: Color::TRANSPARENT,
             },
-        )
-        .into_owned_children();
+        );
+        // Every child edge has a temporary shared owner in `pending`, so
+        // dropping the descriptor payload itself cannot recursively destroy a
+        // descendant chain.
+        drop(old_kind);
         while let Some(child) = pending.pop() {
             let Ok(mut child) = Rc::try_unwrap(child) else {
                 // Another declarative or retained owner still holds this
@@ -34,14 +38,15 @@ impl Drop for Widget {
                 // cannot recursively destroy the descendant chain here.
                 continue;
             };
-            let grandchildren = std::mem::replace(
+            let grandchildren = child.kind.structure().children.shared_handles();
+            let old_kind = std::mem::replace(
                 &mut child.kind,
                 WidgetKind::Box {
                     size: Size::ZERO,
                     color: Color::TRANSPARENT,
                 },
-            )
-            .into_owned_children();
+            );
+            drop(old_kind);
             pending.extend(grandchildren);
             // `child` now owns no Widget descendants, so its normal Drop is
             // constant-stack even when it came from a pathological chain.
@@ -273,16 +278,11 @@ impl std::fmt::Debug for WidgetKind {
                 .field("shadow", shadow)
                 .field("child", child)
                 .finish(),
-            Self::Button {
-                size,
-                color,
-                action,
-                ..
-            } => f
+            Self::Button(spec) => f
                 .debug_struct("Button")
-                .field("size", size)
-                .field("color", color)
-                .field("action", action)
+                .field("size", &spec.size)
+                .field("color", &spec.color)
+                .field("action", &spec.action)
                 .finish(),
             Self::Text {
                 text,
@@ -317,9 +317,9 @@ impl std::fmt::Debug for WidgetKind {
                 .field("repeat", repeat)
                 .field("alignment", alignment)
                 .finish(),
-            Self::TextField { placeholder, .. } => f
+            Self::TextField(spec) => f
                 .debug_struct("TextField")
-                .field("placeholder", placeholder)
+                .field("placeholder", &spec.placeholder)
                 .finish(),
             Self::Padding { padding, child } => f
                 .debug_struct("Padding")
@@ -774,6 +774,59 @@ impl std::fmt::Debug for WidgetKind {
         }
     }
 }
+fn same_optional_callback<T: ?Sized>(left: &Option<Rc<T>>, right: &Option<Rc<T>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+impl PartialEq for ButtonSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size
+            && self.color == other.color
+            && self.hover_color == other.hover_color
+            && self.pressed_color == other.pressed_color
+            && self.focused_color == other.focused_color
+            && self.disabled_color == other.disabled_color
+            && self.enabled == other.enabled
+            && self.focusable_when_disabled == other.focusable_when_disabled
+            && self.action == other.action
+            && self.hover_action == other.hover_action
+            && self.exit_action == other.exit_action
+            && self.has_callback == other.has_callback
+            && self.child == other.child
+            && same_optional_callback(&self.callback, &other.callback)
+            && same_optional_callback(&self.hover_callback, &other.hover_callback)
+            && same_optional_callback(&self.exit_callback, &other.exit_callback)
+    }
+}
+
+impl PartialEq for TextFieldSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.controller == other.controller
+            && self.size == other.size
+            && self.style == other.style
+            && self.placeholder == other.placeholder
+            && self.multiline == other.multiline
+            && self.min_lines == other.min_lines
+            && self.max_lines == other.max_lines
+            && self.expands == other.expands
+            && self.text_align == other.text_align
+            && self.enabled == other.enabled
+            && self.read_only == other.read_only
+            && self.obscure_text == other.obscure_text
+            && self.cursor_width == other.cursor_width
+            && self.cursor_height == other.cursor_height
+            && self.cursor_radius == other.cursor_radius
+            && self.show_cursor == other.show_cursor
+            && self.cursor_color == other.cursor_color
+            && self.selection_color == other.selection_color
+            && same_optional_callback(&self.on_submit, &other.on_submit)
+    }
+}
+
 impl PartialEq for WidgetKind {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1005,73 +1058,7 @@ impl PartialEq for WidgetKind {
                     child: p,
                 },
             ) => a == i && b == j && c == k && d == l && e == m && f == n && g == o && h == p,
-            (
-                Self::Button {
-                    size: a,
-                    color: b,
-                    hover_color: c0,
-                    pressed_color: d0,
-                    focused_color: e0,
-                    disabled_color: f0,
-                    enabled: g0,
-                    focusable_when_disabled: h0,
-                    action: c,
-                    callback: d,
-                    hover_action: i,
-                    hover_callback: j,
-                    exit_action: k,
-                    exit_callback: l,
-                    has_callback: m,
-                    child: n,
-                },
-                Self::Button {
-                    size: e,
-                    color: f,
-                    hover_color: c1,
-                    pressed_color: d1,
-                    focused_color: e1,
-                    disabled_color: f1,
-                    enabled: g1,
-                    focusable_when_disabled: h1,
-                    action: g,
-                    callback: h,
-                    hover_action: o,
-                    hover_callback: p,
-                    exit_action: q,
-                    exit_callback: r,
-                    has_callback: s,
-                    child: t,
-                },
-            ) => {
-                a == e
-                    && b == f
-                    && c0 == c1
-                    && d0 == d1
-                    && e0 == e1
-                    && f0 == f1
-                    && g0 == g1
-                    && h0 == h1
-                    && c == g
-                    && i == o
-                    && k == q
-                    && m == s
-                    && n == t
-                    && match (d, h) {
-                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
-                        (None, None) => true,
-                        _ => false,
-                    }
-                    && match (j, p) {
-                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
-                        (None, None) => true,
-                        _ => false,
-                    }
-                    && match (l, r) {
-                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
-                        (None, None) => true,
-                        _ => false,
-                    }
-            }
+            (Self::Button(left), Self::Button(right)) => left == right,
             (
                 Self::Text {
                     text: a,
@@ -1120,74 +1107,7 @@ impl PartialEq for WidgetKind {
                     sampling: n,
                 },
             ) => a == f && b == g && c == h && d == i && e == j && k == l && m == n,
-            (
-                Self::TextField {
-                    controller: a,
-                    size: b,
-                    style: c,
-                    placeholder: d,
-                    on_submit: e,
-                    multiline: k,
-                    min_lines: l,
-                    max_lines: m,
-                    expands: n,
-                    text_align: o,
-                    enabled: p,
-                    read_only: q,
-                    obscure_text: r,
-                    cursor_width: s,
-                    cursor_height: t,
-                    cursor_radius: u,
-                    show_cursor: v,
-                    cursor_color: w,
-                    selection_color: x,
-                },
-                Self::TextField {
-                    controller: f,
-                    size: g,
-                    style: h,
-                    placeholder: i,
-                    on_submit: j,
-                    multiline: l2,
-                    min_lines: l3,
-                    max_lines: m2,
-                    expands: n2,
-                    text_align: o2,
-                    enabled: y,
-                    read_only: z,
-                    obscure_text: aa,
-                    cursor_width: ab,
-                    cursor_height: ac,
-                    cursor_radius: ad,
-                    show_cursor: ae,
-                    cursor_color: af,
-                    selection_color: ag,
-                },
-            ) => {
-                a == f
-                    && b == g
-                    && c == h
-                    && d == i
-                    && k == l2
-                    && l == l3
-                    && m == m2
-                    && n == n2
-                    && o == o2
-                    && p == y
-                    && q == z
-                    && r == aa
-                    && s == ab
-                    && t == ac
-                    && u == ad
-                    && v == ae
-                    && w == af
-                    && x == ag
-                    && match (e, j) {
-                        (Some(left), Some(right)) => Rc::ptr_eq(left, right),
-                        (None, None) => true,
-                        _ => false,
-                    }
-            }
+            (Self::TextField(left), Self::TextField(right)) => left == right,
             (
                 Self::Padding {
                     padding: a,
@@ -1743,80 +1663,72 @@ impl PartialEq for WidgetKind {
 }
 
 fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bool {
-    fn same_callback<T: ?Sized>(left: &Option<Rc<T>>, right: &Option<Rc<T>>) -> bool {
-        match (left, right) {
-            (Some(left), Some(right)) => Rc::ptr_eq(left, right),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-
-    same_callback(&left.on_tap, &right.on_tap)
-        && same_callback(&left.on_tap_down, &right.on_tap_down)
-        && same_callback(&left.on_tap_up, &right.on_tap_up)
-        && same_callback(&left.on_tap_cancel, &right.on_tap_cancel)
-        && same_callback(&left.on_double_tap, &right.on_double_tap)
-        && same_callback(&left.on_double_tap_down, &right.on_double_tap_down)
-        && same_callback(&left.on_double_tap_cancel, &right.on_double_tap_cancel)
-        && same_callback(&left.on_long_press, &right.on_long_press)
-        && same_callback(&left.on_long_press_start, &right.on_long_press_start)
-        && same_callback(
+    same_optional_callback(&left.on_tap, &right.on_tap)
+        && same_optional_callback(&left.on_tap_down, &right.on_tap_down)
+        && same_optional_callback(&left.on_tap_up, &right.on_tap_up)
+        && same_optional_callback(&left.on_tap_cancel, &right.on_tap_cancel)
+        && same_optional_callback(&left.on_double_tap, &right.on_double_tap)
+        && same_optional_callback(&left.on_double_tap_down, &right.on_double_tap_down)
+        && same_optional_callback(&left.on_double_tap_cancel, &right.on_double_tap_cancel)
+        && same_optional_callback(&left.on_long_press, &right.on_long_press)
+        && same_optional_callback(&left.on_long_press_start, &right.on_long_press_start)
+        && same_optional_callback(
             &left.on_long_press_move_update,
             &right.on_long_press_move_update,
         )
-        && same_callback(&left.on_long_press_up, &right.on_long_press_up)
-        && same_callback(&left.on_long_press_end, &right.on_long_press_end)
-        && same_callback(&left.on_pan_down, &right.on_pan_down)
-        && same_callback(&left.on_pan_start, &right.on_pan_start)
-        && same_callback(&left.on_pan_update, &right.on_pan_update)
-        && same_callback(&left.on_pan_end, &right.on_pan_end)
-        && same_callback(&left.on_pan_cancel, &right.on_pan_cancel)
-        && same_callback(
+        && same_optional_callback(&left.on_long_press_up, &right.on_long_press_up)
+        && same_optional_callback(&left.on_long_press_end, &right.on_long_press_end)
+        && same_optional_callback(&left.on_pan_down, &right.on_pan_down)
+        && same_optional_callback(&left.on_pan_start, &right.on_pan_start)
+        && same_optional_callback(&left.on_pan_update, &right.on_pan_update)
+        && same_optional_callback(&left.on_pan_end, &right.on_pan_end)
+        && same_optional_callback(&left.on_pan_cancel, &right.on_pan_cancel)
+        && same_optional_callback(
             &left.on_horizontal_drag_down,
             &right.on_horizontal_drag_down,
         )
-        && same_callback(
+        && same_optional_callback(
             &left.on_horizontal_drag_start,
             &right.on_horizontal_drag_start,
         )
-        && same_callback(
+        && same_optional_callback(
             &left.on_horizontal_drag_update,
             &right.on_horizontal_drag_update,
         )
-        && same_callback(&left.on_horizontal_drag_end, &right.on_horizontal_drag_end)
-        && same_callback(
+        && same_optional_callback(&left.on_horizontal_drag_end, &right.on_horizontal_drag_end)
+        && same_optional_callback(
             &left.on_horizontal_drag_cancel,
             &right.on_horizontal_drag_cancel,
         )
-        && same_callback(&left.on_vertical_drag_down, &right.on_vertical_drag_down)
-        && same_callback(&left.on_vertical_drag_start, &right.on_vertical_drag_start)
-        && same_callback(
+        && same_optional_callback(&left.on_vertical_drag_down, &right.on_vertical_drag_down)
+        && same_optional_callback(&left.on_vertical_drag_start, &right.on_vertical_drag_start)
+        && same_optional_callback(
             &left.on_vertical_drag_update,
             &right.on_vertical_drag_update,
         )
-        && same_callback(&left.on_vertical_drag_end, &right.on_vertical_drag_end)
-        && same_callback(
+        && same_optional_callback(&left.on_vertical_drag_end, &right.on_vertical_drag_end)
+        && same_optional_callback(
             &left.on_vertical_drag_cancel,
             &right.on_vertical_drag_cancel,
         )
-        && same_callback(&left.on_scale_start, &right.on_scale_start)
-        && same_callback(&left.on_scale_update, &right.on_scale_update)
-        && same_callback(&left.on_scale_end, &right.on_scale_end)
-        && same_callback(&left.on_cancel, &right.on_cancel)
-        && same_callback(&left.on_key, &right.on_key)
-        && same_callback(&left.on_key_down, &right.on_key_down)
-        && same_callback(&left.on_key_repeat, &right.on_key_repeat)
-        && same_callback(&left.on_key_up, &right.on_key_up)
-        && same_callback(&left.on_shortcut, &right.on_shortcut)
-        && same_callback(&left.shortcut_scope, &right.shortcut_scope)
-        && same_callback(&left.action_scope, &right.action_scope)
-        && same_callback(&left.action_listener, &right.action_listener)
-        && same_callback(
+        && same_optional_callback(&left.on_scale_start, &right.on_scale_start)
+        && same_optional_callback(&left.on_scale_update, &right.on_scale_update)
+        && same_optional_callback(&left.on_scale_end, &right.on_scale_end)
+        && same_optional_callback(&left.on_cancel, &right.on_cancel)
+        && same_optional_callback(&left.on_key, &right.on_key)
+        && same_optional_callback(&left.on_key_down, &right.on_key_down)
+        && same_optional_callback(&left.on_key_repeat, &right.on_key_repeat)
+        && same_optional_callback(&left.on_key_up, &right.on_key_up)
+        && same_optional_callback(&left.on_shortcut, &right.on_shortcut)
+        && same_optional_callback(&left.shortcut_scope, &right.shortcut_scope)
+        && same_optional_callback(&left.action_scope, &right.action_scope)
+        && same_optional_callback(&left.action_listener, &right.action_listener)
+        && same_optional_callback(
             &left.action_invocation_listener,
             &right.action_invocation_listener,
         )
         && left.focus_node == right.focus_node
-        && same_callback(&left.focus_behavior, &right.focus_behavior)
+        && same_optional_callback(&left.focus_behavior, &right.focus_behavior)
         && left.autofocus == right.autofocus
         && left.include_semantics == right.include_semantics
         && left.mouse_cursor == right.mouse_cursor
@@ -1983,81 +1895,524 @@ impl WidgetType {
         }
     }
 }
-impl WidgetKind {
-    fn into_owned_children(self) -> Vec<Rc<Widget>> {
+
+/// Coarse lowering family used to route a declarative descriptor to one
+/// focused lowering module. This classification is structural metadata: it is
+/// defined alongside child topology and widget type so adding a built-in
+/// widget has one authoritative classification point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoweringFamily {
+    Visual,
+    Layout,
+    Scrolling,
+    Effects,
+}
+
+/// Declarative child topology. Dynamic children are materialized by retained
+/// protocols (layout builders, slivers and advanced viewports) rather than
+/// appearing as ordinary descriptor children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChildShape {
+    None,
+    Optional,
+    Single,
+    Many,
+    Dynamic,
+}
+
+/// Allocation-free borrowed view of the ordinary declarative child edges of a
+/// widget descriptor.
+pub(crate) enum WidgetChildren<'a> {
+    None,
+    Optional(Option<&'a Rc<Widget>>),
+    Single(&'a Rc<Widget>),
+    Many(&'a [Rc<Widget>]),
+    Dynamic,
+}
+
+impl WidgetChildren<'_> {
+    pub(crate) fn shape(&self) -> ChildShape {
         match self {
-            WidgetKind::Box { .. }
-            | WidgetKind::Shape { .. }
-            | WidgetKind::CustomPaint { .. }
-            | WidgetKind::Text { .. }
-            | WidgetKind::SelectableText { .. }
-            | WidgetKind::TextField { .. }
-            | WidgetKind::Image { .. }
-            | WidgetKind::ListWheelScrollView { .. }
-            | WidgetKind::ListWheelViewport { .. }
-            | WidgetKind::DraggableScrollableSheet { .. }
-            | WidgetKind::TwoDimensionalScrollView { .. }
-            | WidgetKind::TwoDimensionalViewport { .. }
-            | WidgetKind::SliverViewport { .. }
-            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
-            WidgetKind::Button { child, .. } | WidgetKind::Banner { child, .. } => {
-                child.into_iter().collect()
+            Self::None => ChildShape::None,
+            Self::Optional(_) => ChildShape::Optional,
+            Self::Single(_) => ChildShape::Single,
+            Self::Many(_) => ChildShape::Many,
+            Self::Dynamic => ChildShape::Dynamic,
+        }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Self::None | Self::Dynamic => 0,
+            Self::Optional(child) => usize::from(child.is_some()),
+            Self::Single(_) => 1,
+            Self::Many(children) => children.len(),
+        }
+    }
+
+    /// Clones only direct `Rc` edges. This is intentionally used by the
+    /// stack-safe descriptor destructor: holding these temporary references
+    /// prevents normal `Rc` drop glue from recursively destroying descendants.
+    fn shared_handles(&self) -> Vec<Rc<Widget>> {
+        match self {
+            Self::None | Self::Dynamic => Vec::new(),
+            Self::Optional(child) => child.iter().map(|child| Rc::clone(child)).collect(),
+            Self::Single(child) => vec![Rc::clone(child)],
+            Self::Many(children) => children.to_vec(),
+        }
+    }
+}
+
+pub(crate) enum WidgetChildrenIter<'a> {
+    None,
+    One(Option<&'a Rc<Widget>>),
+    Many(std::slice::Iter<'a, Rc<Widget>>),
+}
+
+impl<'a> Iterator for WidgetChildrenIter<'a> {
+    type Item = &'a Widget;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::None => None,
+            Self::One(child) => child.take().map(Rc::as_ref),
+            Self::Many(children) => children.next().map(Rc::as_ref),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = match self {
+            Self::None => 0,
+            Self::One(child) => usize::from(child.is_some()),
+            Self::Many(children) => children.len(),
+        };
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for WidgetChildrenIter<'_> {}
+
+impl<'a> IntoIterator for WidgetChildren<'a> {
+    type Item = &'a Widget;
+    type IntoIter = WidgetChildrenIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Self::None | Self::Dynamic => WidgetChildrenIter::None,
+            Self::Optional(child) => WidgetChildrenIter::One(child),
+            Self::Single(child) => WidgetChildrenIter::One(Some(child)),
+            Self::Many(children) => WidgetChildrenIter::Many(children.iter()),
+        }
+    }
+}
+
+pub(crate) struct WidgetStructure<'a> {
+    pub(crate) widget_type: WidgetType,
+    pub(crate) lowering_family: LoweringFamily,
+    pub(crate) children: WidgetChildren<'a>,
+}
+
+impl WidgetKind {
+    pub(crate) fn structure(&self) -> WidgetStructure<'_> {
+        use ChildShape::{Dynamic, Many, None, Optional, Single};
+        use LoweringFamily::{Effects, Layout, Scrolling, Visual};
+        use WidgetChildren::{
+            Dynamic as DynamicChildren, Many as ManyChildren, None as NoChildren,
+        };
+
+        let (widget_type, lowering_family, child_shape, children) = match self {
+            WidgetKind::Box { .. } => (WidgetType::Box, Visual, None, NoChildren),
+            WidgetKind::Shape { .. } => (WidgetType::Shape, Visual, None, NoChildren),
+            WidgetKind::CustomPaint { .. } => (WidgetType::CustomPaint, Visual, None, NoChildren),
+            WidgetKind::Decorated { child, .. } => (
+                WidgetType::Decorated,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Banner { child, .. } => (
+                WidgetType::Banner,
+                Visual,
+                Optional,
+                WidgetChildren::Optional(child.as_ref()),
+            ),
+            WidgetKind::Button(spec) => (
+                WidgetType::Button,
+                Visual,
+                Optional,
+                WidgetChildren::Optional(spec.child.as_ref()),
+            ),
+            WidgetKind::Text { .. } => (WidgetType::Text, Visual, None, NoChildren),
+            WidgetKind::SelectableText { .. } => {
+                (WidgetType::SelectableText, Visual, None, NoChildren)
             }
-            WidgetKind::RawInput { child, .. } => child.into_iter().collect(),
-            WidgetKind::Decorated { child, .. }
-            | WidgetKind::Padding { child, .. }
-            | WidgetKind::Constrained { child, .. }
-            | WidgetKind::Limited { child, .. }
-            | WidgetKind::Overflow { child, .. }
-            | WidgetKind::Unconstrained { child, .. }
-            | WidgetKind::Fractional { child, .. }
-            | WidgetKind::Baseline { child, .. }
-            | WidgetKind::RepaintBoundary { child }
-            | WidgetKind::Gesture { child, .. }
-            | WidgetKind::Draggable { child, .. }
-            | WidgetKind::DragTarget { child, .. }
-            | WidgetKind::IgnorePointer { child, .. }
-            | WidgetKind::AbsorbPointer { child, .. }
-            | WidgetKind::Align { child, .. }
-            | WidgetKind::Flexible { child, .. }
-            | WidgetKind::Positioned { child, .. }
-            | WidgetKind::SafeArea { child, .. }
-            | WidgetKind::ClipRect { child, .. }
-            | WidgetKind::ClipRRect { child, .. }
-            | WidgetKind::ClipOval { child, .. }
-            | WidgetKind::ClipPath { child, .. }
-            | WidgetKind::Visibility { child, .. }
-            | WidgetKind::AspectRatio { child, .. }
-            | WidgetKind::Scroll { child, .. }
-            | WidgetKind::RawScrollbar { child, .. }
-            | WidgetKind::DraggableScrollableActuator { child, .. }
-            | WidgetKind::PersistentHeader { child, .. }
-            | WidgetKind::NotificationListener { child, .. }
-            | WidgetKind::Translate { child, .. }
-            | WidgetKind::Transform { child, .. }
-            | WidgetKind::Scale { child, .. }
-            | WidgetKind::Rotation { child, .. }
-            | WidgetKind::FittedBox { child, .. }
-            | WidgetKind::Opacity { child, .. }
-            | WidgetKind::Blur { child, .. }
-            | WidgetKind::DropShadow { child, .. }
-            | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. }
-            | WidgetKind::ShaderMask { child, .. }
-            | WidgetKind::BackdropFilter { child, .. }
-            | WidgetKind::AnnotatedRegion { child, .. }
-            | WidgetKind::CompositedTransformTarget { child, .. }
-            | WidgetKind::CompositedTransformFollower { child, .. }
-            | WidgetKind::SelectionArea { child, .. }
-            | WidgetKind::SelectionContainer { child, .. }
-            | WidgetKind::SelectionListener { child, .. }
-            | WidgetKind::IndexedSemantics { child, .. }
-            | WidgetKind::SemanticsDebugger { child, .. } => vec![child],
-            WidgetKind::Flex { children, .. }
-            | WidgetKind::Wrap { children, .. }
-            | WidgetKind::Table { children, .. }
-            | WidgetKind::Stack { children, .. }
-            | WidgetKind::IndexedStack { children, .. } => children,
+            WidgetKind::SelectionArea { child, .. } => (
+                WidgetType::SelectionArea,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::SelectionContainer { child, .. } => (
+                WidgetType::SelectionContainer,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::SelectionListener { child, .. } => (
+                WidgetType::SelectionListener,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::IndexedSemantics { child, .. } => (
+                WidgetType::IndexedSemantics,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::SemanticsDebugger { child, .. } => (
+                WidgetType::SemanticsDebugger,
+                Visual,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Image { .. } => (WidgetType::Image, Visual, None, NoChildren),
+            WidgetKind::TextField(_) => (WidgetType::TextField, Visual, None, NoChildren),
+
+            WidgetKind::Padding { child, .. } => (
+                WidgetType::Padding,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Constrained { child, .. } => (
+                WidgetType::Constrained,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Limited { child, .. } => (
+                WidgetType::Limited,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Overflow { child, .. } => (
+                WidgetType::Overflow,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Unconstrained { child, .. } => (
+                WidgetType::Unconstrained,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Fractional { child, .. } => (
+                WidgetType::Fractional,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Baseline { child, .. } => (
+                WidgetType::Baseline,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::RepaintBoundary { child } => (
+                WidgetType::RepaintBoundary,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Gesture { child, .. } => (
+                WidgetType::Gesture,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::RawInput { kind, child } => (
+                kind.type_(),
+                Layout,
+                Optional,
+                WidgetChildren::Optional(child.as_ref()),
+            ),
+            WidgetKind::Draggable { child, .. } => (
+                WidgetType::Draggable,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::DragTarget { child, .. } => (
+                WidgetType::DragTarget,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::IgnorePointer { child, .. } => (
+                WidgetType::IgnorePointer,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::AbsorbPointer { child, .. } => (
+                WidgetType::AbsorbPointer,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Align { child, .. } => (
+                WidgetType::Align,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Flex { children, .. } => {
+                (WidgetType::Flex, Layout, Many, ManyChildren(children))
+            }
+            WidgetKind::Flexible { child, .. } => (
+                WidgetType::Flexible,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Wrap { children, .. } => {
+                (WidgetType::Wrap, Layout, Many, ManyChildren(children))
+            }
+            WidgetKind::Table { children, .. } => {
+                (WidgetType::Table, Layout, Many, ManyChildren(children))
+            }
+            WidgetKind::Stack { children, .. } => {
+                (WidgetType::Stack, Layout, Many, ManyChildren(children))
+            }
+            WidgetKind::Positioned { child, .. } => (
+                WidgetType::Positioned,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::IndexedStack { children, .. } => (
+                WidgetType::IndexedStack,
+                Layout,
+                Many,
+                ManyChildren(children),
+            ),
+            WidgetKind::SafeArea { child, .. } => (
+                WidgetType::SafeArea,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ClipRect { child, .. } => (
+                WidgetType::ClipRect,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ClipRRect { child, .. } => (
+                WidgetType::ClipRRect,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ClipOval { child, .. } => (
+                WidgetType::ClipOval,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ClipPath { child, .. } => (
+                WidgetType::ClipPath,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::LayoutBuilder { .. } => {
+                (WidgetType::LayoutBuilder, Layout, Dynamic, DynamicChildren)
+            }
+            WidgetKind::Visibility { child, .. } => (
+                WidgetType::Visibility,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::AspectRatio { child, .. } => (
+                WidgetType::AspectRatio,
+                Layout,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+
+            WidgetKind::Scroll { child, .. } => (
+                WidgetType::Scroll,
+                Scrolling,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::RawScrollbar { child, .. } => (
+                WidgetType::RawScrollbar,
+                Scrolling,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ListWheelScrollView { .. } => (
+                WidgetType::ListWheelScrollView,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+            WidgetKind::ListWheelViewport { .. } => (
+                WidgetType::ListWheelViewport,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+            WidgetKind::DraggableScrollableSheet { .. } => (
+                WidgetType::DraggableScrollableSheet,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+            WidgetKind::DraggableScrollableActuator { child, .. } => (
+                WidgetType::DraggableScrollableActuator,
+                Scrolling,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::TwoDimensionalScrollView { .. } => (
+                WidgetType::TwoDimensionalScrollView,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+            WidgetKind::TwoDimensionalViewport { .. } => (
+                WidgetType::TwoDimensionalViewport,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+            WidgetKind::PersistentHeader { child, .. } => (
+                WidgetType::PersistentHeader,
+                Scrolling,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::NotificationListener { child, .. } => (
+                WidgetType::NotificationListener,
+                Scrolling,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::SliverViewport { .. } => (
+                WidgetType::SliverViewport,
+                Scrolling,
+                Dynamic,
+                DynamicChildren,
+            ),
+
+            WidgetKind::Translate { child, .. } => (
+                WidgetType::Translate,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Transform { child, .. } => (
+                WidgetType::Transform,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Scale { child, .. } => (
+                WidgetType::Scale,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Rotation { child, .. } => (
+                WidgetType::Rotation,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::FittedBox { child, .. } => (
+                WidgetType::FittedBox,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Opacity { child, .. } => (
+                WidgetType::Opacity,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Blur { child, .. } => (
+                WidgetType::Blur,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::DropShadow { child, .. } => (
+                WidgetType::DropShadow,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ColorFiltered { child, .. } => (
+                WidgetType::ColorFiltered,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::Blend { child, .. } => (
+                WidgetType::Blend,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::ShaderMask { child, .. } => (
+                WidgetType::ShaderMask,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::BackdropFilter { child, .. } => (
+                WidgetType::BackdropFilter,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::AnnotatedRegion { child, .. } => (
+                WidgetType::AnnotatedRegion,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::CompositedTransformTarget { child, .. } => (
+                WidgetType::CompositedTransformTarget,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+            WidgetKind::CompositedTransformFollower { child, .. } => (
+                WidgetType::CompositedTransformFollower,
+                Effects,
+                Single,
+                WidgetChildren::Single(child),
+            ),
+        };
+
+        debug_assert_eq!(children.shape(), child_shape);
+        WidgetStructure {
+            widget_type,
+            lowering_family,
+            children,
         }
     }
 }
@@ -2260,7 +2615,7 @@ impl Widget {
     pub(crate) fn button(size: Size, color: Color, action: ActionId) -> Self {
         Self {
             key: None,
-            kind: WidgetKind::Button {
+            kind: WidgetKind::Button(ButtonSpec {
                 size,
                 color,
                 hover_color: None,
@@ -2277,7 +2632,7 @@ impl Widget {
                 exit_callback: None,
                 has_callback: false,
                 child: None,
-            },
+            }),
             semantics: SemanticProperties::default(),
         }
     }
@@ -2301,7 +2656,7 @@ impl Widget {
         });
         Self {
             key: None,
-            kind: WidgetKind::Button {
+            kind: WidgetKind::Button(ButtonSpec {
                 size: surface.size,
                 color: surface.color,
                 hover_color: surface.hover_color,
@@ -2318,7 +2673,7 @@ impl Widget {
                 exit_callback: surface.exit_callback,
                 has_callback: false,
                 child: Some(std::rc::Rc::new(label)),
-            },
+            }),
             semantics: SemanticProperties {
                 // Custom content is inspected for a text or explicit semantic
                 // label so low-level controls retain a useful accessible name.
@@ -2328,26 +2683,16 @@ impl Widget {
         }
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
-        if let WidgetKind::Button {
-            action,
-            callback,
-            hover_action,
-            hover_callback,
-            exit_action,
-            exit_callback,
-            has_callback,
-            ..
-        } = &mut self.kind
-        {
-            if let Some(callback) = callback.take() {
-                *action = allocate(callback);
-                *has_callback = true;
+        if let WidgetKind::Button(spec) = &mut self.kind {
+            if let Some(callback) = spec.callback.take() {
+                spec.action = allocate(callback);
+                spec.has_callback = true;
             }
-            if let Some(callback) = hover_callback.take() {
-                *hover_action = allocate(callback);
+            if let Some(callback) = spec.hover_callback.take() {
+                spec.hover_action = allocate(callback);
             }
-            if let Some(callback) = exit_callback.take() {
-                *exit_action = allocate(callback);
+            if let Some(callback) = spec.exit_callback.take() {
+                spec.exit_action = allocate(callback);
             }
         }
     }
@@ -2615,7 +2960,7 @@ impl Widget {
     ) -> Self {
         Self {
             key: None,
-            kind: WidgetKind::TextField {
+            kind: WidgetKind::TextField(TextFieldSpec {
                 controller,
                 size,
                 style,
@@ -2635,7 +2980,7 @@ impl Widget {
                 show_cursor,
                 cursor_color,
                 selection_color,
-            },
+            }),
             semantics: SemanticProperties::default(),
         }
     }
@@ -3519,165 +3864,13 @@ impl Widget {
         self.key.as_ref()
     }
     pub(super) fn type_(&self) -> WidgetType {
-        match &self.kind {
-            WidgetKind::Box { .. } => WidgetType::Box,
-            WidgetKind::Shape { .. } => WidgetType::Shape,
-            WidgetKind::CustomPaint { .. } => WidgetType::CustomPaint,
-            WidgetKind::Decorated { .. } => WidgetType::Decorated,
-            WidgetKind::Banner { .. } => WidgetType::Banner,
-            WidgetKind::Image { .. } => WidgetType::Image,
-            WidgetKind::Button { .. } => WidgetType::Button,
-            WidgetKind::Text { .. } => WidgetType::Text,
-            WidgetKind::SelectableText { .. } => WidgetType::SelectableText,
-            WidgetKind::SelectionArea { .. } => WidgetType::SelectionArea,
-            WidgetKind::SelectionContainer { .. } => WidgetType::SelectionContainer,
-            WidgetKind::SelectionListener { .. } => WidgetType::SelectionListener,
-            WidgetKind::IndexedSemantics { .. } => WidgetType::IndexedSemantics,
-            WidgetKind::SemanticsDebugger { .. } => WidgetType::SemanticsDebugger,
-            WidgetKind::TextField { .. } => WidgetType::TextField,
-            WidgetKind::Padding { .. } => WidgetType::Padding,
-            WidgetKind::Constrained { .. } => WidgetType::Constrained,
-            WidgetKind::Limited { .. } => WidgetType::Limited,
-            WidgetKind::Overflow { .. } => WidgetType::Overflow,
-            WidgetKind::Unconstrained { .. } => WidgetType::Unconstrained,
-            WidgetKind::Fractional { .. } => WidgetType::Fractional,
-            WidgetKind::Baseline { .. } => WidgetType::Baseline,
-            WidgetKind::RepaintBoundary { .. } => WidgetType::RepaintBoundary,
-            WidgetKind::Gesture { .. } => WidgetType::Gesture,
-            WidgetKind::RawInput { kind, .. } => kind.type_(),
-            WidgetKind::Draggable { .. } => WidgetType::Draggable,
-            WidgetKind::DragTarget { .. } => WidgetType::DragTarget,
-            WidgetKind::IgnorePointer { .. } => WidgetType::IgnorePointer,
-            WidgetKind::AbsorbPointer { .. } => WidgetType::AbsorbPointer,
-            WidgetKind::Align { .. } => WidgetType::Align,
-            WidgetKind::Flex { .. } => WidgetType::Flex,
-            WidgetKind::Flexible { .. } => WidgetType::Flexible,
-            WidgetKind::Wrap { .. } => WidgetType::Wrap,
-            WidgetKind::Table { .. } => WidgetType::Table,
-            WidgetKind::Stack { .. } => WidgetType::Stack,
-            WidgetKind::Positioned { .. } => WidgetType::Positioned,
-            WidgetKind::IndexedStack { .. } => WidgetType::IndexedStack,
-            WidgetKind::SafeArea { .. } => WidgetType::SafeArea,
-            WidgetKind::ClipRect { .. } => WidgetType::ClipRect,
-            WidgetKind::ClipRRect { .. } => WidgetType::ClipRRect,
-            WidgetKind::ClipOval { .. } => WidgetType::ClipOval,
-            WidgetKind::ClipPath { .. } => WidgetType::ClipPath,
-            WidgetKind::LayoutBuilder { .. } => WidgetType::LayoutBuilder,
-            WidgetKind::Visibility { .. } => WidgetType::Visibility,
-            WidgetKind::AspectRatio { .. } => WidgetType::AspectRatio,
-            WidgetKind::Scroll { .. } => WidgetType::Scroll,
-            WidgetKind::RawScrollbar { .. } => WidgetType::RawScrollbar,
-            WidgetKind::ListWheelScrollView { .. } => WidgetType::ListWheelScrollView,
-            WidgetKind::ListWheelViewport { .. } => WidgetType::ListWheelViewport,
-            WidgetKind::DraggableScrollableSheet { .. } => WidgetType::DraggableScrollableSheet,
-            WidgetKind::DraggableScrollableActuator { .. } => {
-                WidgetType::DraggableScrollableActuator
-            }
-            WidgetKind::TwoDimensionalScrollView { .. } => WidgetType::TwoDimensionalScrollView,
-            WidgetKind::TwoDimensionalViewport { .. } => WidgetType::TwoDimensionalViewport,
-            WidgetKind::PersistentHeader { .. } => WidgetType::PersistentHeader,
-            WidgetKind::NotificationListener { .. } => WidgetType::NotificationListener,
-            WidgetKind::SliverViewport { .. } => WidgetType::SliverViewport,
-            WidgetKind::Translate { .. } => WidgetType::Translate,
-            WidgetKind::Transform { .. } => WidgetType::Transform,
-            WidgetKind::Scale { .. } => WidgetType::Scale,
-            WidgetKind::Rotation { .. } => WidgetType::Rotation,
-            WidgetKind::FittedBox { .. } => WidgetType::FittedBox,
-            WidgetKind::Opacity { .. } => WidgetType::Opacity,
-            WidgetKind::Blur { .. } => WidgetType::Blur,
-            WidgetKind::DropShadow { .. } => WidgetType::DropShadow,
-            WidgetKind::ColorFiltered { .. } => WidgetType::ColorFiltered,
-            WidgetKind::Blend { .. } => WidgetType::Blend,
-            WidgetKind::ShaderMask { .. } => WidgetType::ShaderMask,
-            WidgetKind::BackdropFilter { .. } => WidgetType::BackdropFilter,
-            WidgetKind::AnnotatedRegion { .. } => WidgetType::AnnotatedRegion,
-            WidgetKind::CompositedTransformTarget { .. } => WidgetType::CompositedTransformTarget,
-            WidgetKind::CompositedTransformFollower { .. } => {
-                WidgetType::CompositedTransformFollower
-            }
-        }
+        self.kind.structure().widget_type
     }
     /// Shallow child view for reconciliation. Deep per-child clones were the
     /// measured allocation fire on wide trees (Task 15); reconciliation only
     /// needs references because cloning happens once per *created* element.
-    pub(super) fn children_refs(&self) -> Vec<&Widget> {
-        match &self.kind {
-            WidgetKind::Box { .. }
-            | WidgetKind::Shape { .. }
-            | WidgetKind::CustomPaint { .. }
-            | WidgetKind::Text { .. }
-            | WidgetKind::SelectableText { .. }
-            | WidgetKind::TextField { .. }
-            | WidgetKind::Image { .. } => Vec::new(),
-            WidgetKind::Button { child, .. } => child.iter().map(|c| c.as_ref()).collect(),
-            WidgetKind::Banner { child, .. } => child.iter().map(|c| c.as_ref()).collect(),
-            WidgetKind::Padding { child, .. }
-            | WidgetKind::Constrained { child, .. }
-            | WidgetKind::Limited { child, .. }
-            | WidgetKind::Overflow { child, .. }
-            | WidgetKind::Unconstrained { child, .. }
-            | WidgetKind::Fractional { child, .. }
-            | WidgetKind::Baseline { child, .. }
-            | WidgetKind::RepaintBoundary { child, .. }
-            | WidgetKind::Gesture { child, .. }
-            | WidgetKind::Draggable { child, .. }
-            | WidgetKind::DragTarget { child, .. }
-            | WidgetKind::IgnorePointer { child, .. }
-            | WidgetKind::AbsorbPointer { child, .. }
-            | WidgetKind::Align { child, .. }
-            | WidgetKind::Flexible { child, .. }
-            | WidgetKind::Positioned { child, .. }
-            | WidgetKind::SafeArea { child, .. }
-            | WidgetKind::ClipRect { child, .. }
-            | WidgetKind::ClipRRect { child, .. }
-            | WidgetKind::ClipOval { child, .. }
-            | WidgetKind::ClipPath { child, .. }
-            | WidgetKind::Visibility { child, .. }
-            | WidgetKind::AspectRatio { child, .. }
-            | WidgetKind::Scroll { child, .. }
-            | WidgetKind::RawScrollbar { child, .. }
-            | WidgetKind::DraggableScrollableActuator { child, .. }
-            | WidgetKind::PersistentHeader { child, .. }
-            | WidgetKind::NotificationListener { child, .. }
-            | WidgetKind::Translate { child, .. }
-            | WidgetKind::Transform { child, .. }
-            | WidgetKind::Scale { child, .. }
-            | WidgetKind::Rotation { child, .. }
-            | WidgetKind::FittedBox { child, .. }
-            | WidgetKind::Decorated { child, .. }
-            | WidgetKind::Opacity { child, .. }
-            | WidgetKind::Blur { child, .. }
-            | WidgetKind::DropShadow { child, .. }
-            | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. }
-            | WidgetKind::ShaderMask { child, .. }
-            | WidgetKind::BackdropFilter { child, .. }
-            | WidgetKind::AnnotatedRegion { child, .. }
-            | WidgetKind::CompositedTransformTarget { child, .. }
-            | WidgetKind::CompositedTransformFollower { child, .. } => vec![child.as_ref()],
-            WidgetKind::RawInput { child, .. } => {
-                child.iter().map(|child| child.as_ref()).collect()
-            }
-            WidgetKind::SelectionArea { child, .. }
-            | WidgetKind::SelectionContainer { child, .. }
-            | WidgetKind::SelectionListener { child, .. }
-            | WidgetKind::IndexedSemantics { child, .. }
-            | WidgetKind::SemanticsDebugger { child, .. } => vec![child.as_ref()],
-            WidgetKind::Flex { children, .. }
-            | WidgetKind::Wrap { children, .. }
-            | WidgetKind::Table { children, .. }
-            | WidgetKind::Stack { children, .. }
-            | WidgetKind::IndexedStack { children, .. } => {
-                children.iter().map(Rc::as_ref).collect()
-            }
-            WidgetKind::ListWheelScrollView { .. }
-            | WidgetKind::ListWheelViewport { .. }
-            | WidgetKind::DraggableScrollableSheet { .. }
-            | WidgetKind::TwoDimensionalScrollView { .. }
-            | WidgetKind::TwoDimensionalViewport { .. }
-            | WidgetKind::SliverViewport { .. }
-            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
-        }
+    pub(super) fn children_refs(&self) -> WidgetChildren<'_> {
+        self.kind.structure().children
     }
 }
 

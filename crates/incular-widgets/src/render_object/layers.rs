@@ -31,11 +31,7 @@ impl LayerSpec {
     fn for_widget(widget: &WidgetKind) -> Self {
         let focus_picture = matches!(
             widget,
-            WidgetKind::Button {
-                color,
-                focused_color: Some(_),
-                ..
-            } if color.alpha == 0
+            WidgetKind::Button(spec) if spec.color.alpha == 0 && spec.focused_color.is_some()
         );
         let attachment = match widget {
             WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. } => AttachmentSpec::Clip,
@@ -596,10 +592,10 @@ fn needs_picture(widget: &WidgetKind) -> bool {
             | WidgetKind::RepaintBoundary { .. }
             | WidgetKind::Decorated { .. }
             | WidgetKind::Banner { .. }
-            | WidgetKind::Button { .. }
+            | WidgetKind::Button(_)
             | WidgetKind::Text { .. }
             | WidgetKind::SelectableText { .. }
-            | WidgetKind::TextField { .. }
+            | WidgetKind::TextField(_)
             | WidgetKind::Image { .. }
             | WidgetKind::Scroll { .. }
             | WidgetKind::SliverViewport { .. }
