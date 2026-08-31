@@ -32,7 +32,7 @@ fn wrap_builder_preserves_normalization_and_lowering() {
         text_direction,
         vertical_direction,
         children,
-    } = Widget::from(wrap).kind
+    } = Widget::from(wrap).into_kind()
     else {
         panic!("expected Wrap widget kind")
     };
@@ -51,7 +51,7 @@ fn wrap_builder_preserves_normalization_and_lowering() {
 #[test]
 fn constructor_accepts_arbitrary_widget_descriptors() {
     let wrap = Wrap::new([incular_widgets::Text::new("child")]);
-    let WidgetKind::Wrap { children, .. } = Widget::from(wrap).kind else {
+    let WidgetKind::Wrap { children, .. } = Widget::from(wrap).into_kind() else {
         panic!("expected Wrap widget kind")
     };
 

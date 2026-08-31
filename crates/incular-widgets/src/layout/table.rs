@@ -60,7 +60,7 @@ impl From<Table> for Widget {
             columns: value.columns,
             column_spacing: value.column_spacing,
             row_spacing: value.row_spacing,
-            children: value.children,
+            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
         })
     }
 }

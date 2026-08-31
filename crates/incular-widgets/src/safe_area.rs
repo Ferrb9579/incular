@@ -130,7 +130,7 @@ impl From<SafeArea> for Widget {
             right: value.right,
             bottom: value.bottom,
             maintain_bottom_view_padding: value.maintain_bottom_view_padding,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }

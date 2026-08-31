@@ -102,7 +102,7 @@ impl From<Stack> for Widget {
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             fit: value.fit,
             clip_behavior: value.clip_behavior,
-            children: value.children,
+            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
         })
     }
 }
@@ -197,7 +197,7 @@ impl From<Positioned> for Widget {
             bottom: value.bottom,
             width: value.width,
             height: value.height,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -278,7 +278,7 @@ impl From<IndexedStack> for Widget {
         Widget::from_kind(WidgetKind::IndexedStack {
             alignment: value.alignment,
             index: value.index,
-            children: value.children,
+            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
         })
     }
 }

@@ -287,7 +287,7 @@ impl From<Banner> for Widget {
             color: value.color,
             text_style: value.text_style,
             shadow: value.shadow,
-            child: value.child.map(Box::new),
+            child: value.child.map(std::rc::Rc::new),
         })
     }
 }

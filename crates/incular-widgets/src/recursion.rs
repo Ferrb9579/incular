@@ -11,9 +11,13 @@ use incular_config::Constraints;
 
 use crate::tree::{ElementId, RenderObjectId};
 
-const DEFAULT_RECURSION_LIMIT: usize = 256;
+// Same-node re-entry is the precise recursion/cycle detector in debug and
+// devtools builds. This numeric limit is only an emergency runaway ceiling for
+// release builds where retaining the full active path would be too expensive;
+// it must not reject a finite, valid deep widget tree.
+const DEFAULT_RECURSION_LIMIT: usize = 16_384;
 const MIN_RECURSION_LIMIT: usize = 16;
-const MAX_RECURSION_LIMIT: usize = 4_096;
+const MAX_RECURSION_LIMIT: usize = 1_048_576;
 
 /// A retained frame-pipeline phase protected by Incular's recursion guard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -69,7 +69,7 @@ fn builder_preserves_flex_lowering() {
         .spacing(12.0)
         .build();
 
-    match Widget::from(row).kind {
+    match Widget::from(row).into_kind() {
         WidgetKind::Flex {
             axis,
             main_axis_alignment,
@@ -96,7 +96,7 @@ fn builder_preserves_flex_lowering() {
         .direction(Axis::Vertical)
         .children([Widget::text("child")])
         .build();
-    match Widget::from(flex).kind {
+    match Widget::from(flex).into_kind() {
         WidgetKind::Flex { axis, children, .. } => {
             assert_eq!(axis, Axis::Vertical);
             assert_eq!(children.len(), 1);
@@ -112,7 +112,7 @@ fn flexible_and_expanded_preserve_lowering() {
         .flex(3)
         .fit(FlexFit::Loose)
         .build();
-    match Widget::from(flexible).kind {
+    match Widget::from(flexible).into_kind() {
         WidgetKind::Flexible { flex, fit, .. } => {
             assert_eq!(flex, 3);
             assert_eq!(fit, FlexFit::Loose);
@@ -124,7 +124,7 @@ fn flexible_and_expanded_preserve_lowering() {
         .child(Widget::text("expanded"))
         .flex(2)
         .build();
-    match Widget::from(expanded).kind {
+    match Widget::from(expanded).into_kind() {
         WidgetKind::Flexible { flex, fit, .. } => {
             assert_eq!(flex, 2);
             assert_eq!(fit, FlexFit::Tight);

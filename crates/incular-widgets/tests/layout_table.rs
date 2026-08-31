@@ -21,7 +21,7 @@ fn table_builder_preserves_normalization_and_lowering() {
         column_spacing,
         row_spacing,
         children,
-    } = Widget::from(table).kind
+    } = Widget::from(table).into_kind()
     else {
         panic!("expected Table widget kind")
     };
@@ -37,7 +37,7 @@ fn constructor_accepts_arbitrary_widget_descriptors() {
     let table = Table::new(2, [Text::new("cell")]);
     let WidgetKind::Table {
         columns, children, ..
-    } = Widget::from(table).kind
+    } = Widget::from(table).into_kind()
     else {
         panic!("expected Table widget kind")
     };

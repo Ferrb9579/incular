@@ -652,7 +652,7 @@ impl WidgetTree {
         }
     }
     pub(super) fn layout_render(&mut self, id: RenderObjectId, constraints: Constraints) {
-        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+        with_recursive_tree_stack(|| {
             self.layout_render_inner(id, constraints);
         });
     }

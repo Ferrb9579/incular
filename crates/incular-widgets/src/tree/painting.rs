@@ -200,7 +200,7 @@ impl WidgetTree {
         result
     }
     pub(super) fn paint_render(&mut self, id: RenderObjectId, output: &mut DisplayList) {
-        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
+        with_recursive_tree_stack(|| {
             self.paint_render_inner(id, output);
         });
     }

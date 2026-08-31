@@ -73,7 +73,7 @@ impl From<Visibility> for Widget {
         } else {
             Widget::from_kind(WidgetKind::Visibility {
                 visible: value.visible,
-                child: Box::new(value.child),
+                child: std::rc::Rc::new(value.child),
             })
         }
     }

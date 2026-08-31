@@ -359,7 +359,7 @@ impl From<ActionListener> for Widget {
         Widget::from_kind(WidgetKind::Gesture {
             behavior: crate::gestures::HitTestBehavior::DeferToChild,
             callbacks: Box::new(callbacks),
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -461,7 +461,7 @@ impl From<CallbackShortcuts> for Widget {
         Widget::from_kind(WidgetKind::Gesture {
             behavior: crate::gestures::HitTestBehavior::DeferToChild,
             callbacks: Box::new(callbacks),
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -588,7 +588,7 @@ impl From<FocusableActionDetector> for Widget {
         Widget::from_kind(WidgetKind::Gesture {
             behavior: crate::gestures::HitTestBehavior::DeferToChild,
             callbacks: Box::new(callbacks),
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -602,7 +602,7 @@ impl From<KeyboardListener> for Widget {
         Widget::from_kind(WidgetKind::Gesture {
             behavior: crate::gestures::HitTestBehavior::DeferToChild,
             callbacks: Box::new(callbacks),
-            child: Box::new(child),
+            child: std::rc::Rc::new(child),
         })
     }
 }

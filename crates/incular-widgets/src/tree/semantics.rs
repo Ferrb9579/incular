@@ -87,9 +87,11 @@ impl WidgetTree {
         collection: Option<SemanticCollectionContext>,
         out: &mut Vec<SemanticBuild>,
     ) {
-        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
-            self.collect_semantics_inner(element, semantic_parent, collection, out);
-        });
+        let mut work = vec![(element, semantic_parent, collection)];
+        while let Some((element, semantic_parent, collection)) = work.pop() {
+            let children = self.collect_semantics_inner(element, semantic_parent, collection, out);
+            work.extend(children.into_iter().rev());
+        }
     }
 
     pub(super) fn collect_semantics_inner(
@@ -98,10 +100,14 @@ impl WidgetTree {
         semantic_parent: Option<ElementId>,
         collection: Option<SemanticCollectionContext>,
         out: &mut Vec<SemanticBuild>,
-    ) {
+    ) -> Vec<(
+        ElementId,
+        Option<ElementId>,
+        Option<SemanticCollectionContext>,
+    )> {
         let _node_guard = self.guard_element(FramePhase::Semantics, element);
         let Some(entry) = self.elements.get(element.0) else {
-            return;
+            return Vec::new();
         };
         if entry.widget.semantics.hidden
             || matches!(
@@ -109,11 +115,11 @@ impl WidgetTree {
                 WidgetKind::Visibility { visible: false, .. }
             )
         {
-            return;
+            return Vec::new();
         }
         let render = match self.renders.get(entry.render.0) {
             Some(render) => render,
-            None => return,
+            None => return Vec::new(),
         };
         // IndexedSemantics is a transparent render object. Its explicit index
         // wins over an automatically supplied sliver index and is carried
@@ -362,15 +368,13 @@ impl WidgetTree {
                 }
                 _ => entry.children[first_visible_child..].to_vec(),
             };
-            for child in semantic_children {
-                self.collect_semantics(
-                    child,
-                    this_parent,
-                    role.is_none().then_some(collection).flatten(),
-                    out,
-                );
-            }
+            let child_collection = role.is_none().then_some(collection).flatten();
+            return semantic_children
+                .into_iter()
+                .map(|child| (child, this_parent, child_collection))
+                .collect();
         }
+        Vec::new()
     }
 }
 
@@ -413,67 +417,68 @@ pub(super) fn semantic_action_is_executable(
 }
 
 pub(super) fn widget_text(widget: &Widget) -> Option<String> {
-    match &widget.kind {
-        WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
-            Some(text.clone())
+    let mut work = vec![widget];
+    let mut fragments = Vec::new();
+    while let Some(current) = work.pop() {
+        match &current.kind {
+            WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
+                fragments.push(text.clone());
+            }
+            WidgetKind::Button { child, .. } | WidgetKind::Banner { child, .. } => {
+                work.extend(child.iter().map(|child| child.as_ref()));
+            }
+            WidgetKind::Decorated { child, .. }
+            | WidgetKind::Padding { child, .. }
+            | WidgetKind::Constrained { child, .. }
+            | WidgetKind::Limited { child, .. }
+            | WidgetKind::Overflow { child, .. }
+            | WidgetKind::Unconstrained { child, .. }
+            | WidgetKind::Fractional { child, .. }
+            | WidgetKind::Baseline { child, .. }
+            | WidgetKind::RepaintBoundary { child }
+            | WidgetKind::Gesture { child, .. }
+            | WidgetKind::Draggable { child, .. }
+            | WidgetKind::DragTarget { child, .. }
+            | WidgetKind::IgnorePointer { child, .. }
+            | WidgetKind::AbsorbPointer { child, .. }
+            | WidgetKind::Align { child, .. }
+            | WidgetKind::Flexible { child, .. }
+            | WidgetKind::Positioned { child, .. }
+            | WidgetKind::SafeArea { child, .. }
+            | WidgetKind::ClipRect { child, .. }
+            | WidgetKind::ClipRRect { child, .. }
+            | WidgetKind::ClipOval { child, .. }
+            | WidgetKind::ClipPath { child, .. }
+            | WidgetKind::Visibility { child, .. }
+            | WidgetKind::AspectRatio { child, .. }
+            | WidgetKind::Scroll { child, .. }
+            | WidgetKind::PersistentHeader { child, .. }
+            | WidgetKind::NotificationListener { child, .. }
+            | WidgetKind::Translate { child, .. }
+            | WidgetKind::Transform { child, .. }
+            | WidgetKind::Scale { child, .. }
+            | WidgetKind::Rotation { child, .. }
+            | WidgetKind::FittedBox { child, .. }
+            | WidgetKind::Opacity { child, .. }
+            | WidgetKind::Blur { child, .. }
+            | WidgetKind::DropShadow { child, .. }
+            | WidgetKind::ColorFiltered { child, .. }
+            | WidgetKind::Blend { child, .. }
+            | WidgetKind::SelectionArea { child, .. }
+            | WidgetKind::SelectionContainer { child, .. }
+            | WidgetKind::SelectionListener { child, .. }
+            | WidgetKind::IndexedSemantics { child, .. }
+            | WidgetKind::SemanticsDebugger { child, .. } => work.push(child),
+            WidgetKind::RawInput {
+                child: Some(child), ..
+            } => work.push(child),
+            WidgetKind::Flex { children, .. }
+            | WidgetKind::Stack { children, .. }
+            | WidgetKind::IndexedStack { children, .. } => {
+                work.extend(children.iter().rev().map(Rc::as_ref));
+            }
+            _ => {}
         }
-        WidgetKind::Button { child, .. } => child.as_deref().and_then(widget_text),
-        WidgetKind::Banner { child, .. } => child.as_deref().and_then(widget_text),
-        WidgetKind::Decorated { child, .. }
-        | WidgetKind::Padding { child, .. }
-        | WidgetKind::Constrained { child, .. }
-        | WidgetKind::Limited { child, .. }
-        | WidgetKind::Overflow { child, .. }
-        | WidgetKind::Unconstrained { child, .. }
-        | WidgetKind::Fractional { child, .. }
-        | WidgetKind::Baseline { child, .. }
-        | WidgetKind::RepaintBoundary { child }
-        | WidgetKind::Gesture { child, .. }
-        | WidgetKind::Draggable { child, .. }
-        | WidgetKind::DragTarget { child, .. }
-        | WidgetKind::IgnorePointer { child, .. }
-        | WidgetKind::AbsorbPointer { child, .. }
-        | WidgetKind::Align { child, .. }
-        | WidgetKind::Flexible { child, .. }
-        | WidgetKind::Positioned { child, .. }
-        | WidgetKind::SafeArea { child, .. }
-        | WidgetKind::ClipRect { child, .. }
-        | WidgetKind::ClipRRect { child, .. }
-        | WidgetKind::ClipOval { child, .. }
-        | WidgetKind::ClipPath { child, .. }
-        | WidgetKind::Visibility { child, .. }
-        | WidgetKind::AspectRatio { child, .. }
-        | WidgetKind::Scroll { child, .. }
-        | WidgetKind::PersistentHeader { child, .. }
-        | WidgetKind::NotificationListener { child, .. }
-        | WidgetKind::Translate { child, .. }
-        | WidgetKind::Transform { child, .. }
-        | WidgetKind::Scale { child, .. }
-        | WidgetKind::Rotation { child, .. }
-        | WidgetKind::FittedBox { child, .. }
-        | WidgetKind::Opacity { child, .. }
-        | WidgetKind::Blur { child, .. }
-        | WidgetKind::DropShadow { child, .. }
-        | WidgetKind::ColorFiltered { child, .. }
-        | WidgetKind::Blend { child, .. } => widget_text(child),
-        WidgetKind::RawInput {
-            child: Some(child), ..
-        } => widget_text(child),
-        WidgetKind::SelectionArea { child, .. }
-        | WidgetKind::SelectionContainer { child, .. }
-        | WidgetKind::SelectionListener { child, .. }
-        | WidgetKind::IndexedSemantics { child, .. }
-        | WidgetKind::SemanticsDebugger { child, .. } => widget_text(child),
-        WidgetKind::Flex { children, .. }
-        | WidgetKind::Stack { children, .. }
-        | WidgetKind::IndexedStack { children, .. } => {
-            let text: String = children
-                .iter()
-                .filter_map(widget_text)
-                .collect::<Vec<_>>()
-                .join(" ");
-            (!text.is_empty()).then_some(text)
-        }
-        _ => None,
     }
+    (!fragments.is_empty()).then(|| fragments.join(" "))
 }

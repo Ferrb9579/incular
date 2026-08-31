@@ -12,6 +12,43 @@ pub struct Widget {
     pub(super) semantics: SemanticProperties,
 }
 
+impl Drop for Widget {
+    fn drop(&mut self) {
+        // WidgetKind holds declarative child edges in Rc. The final strong
+        // reference can still recursively destroy a deep, perfectly valid
+        // descriptor chain through Rc's drop glue. Detach uniquely owned edges
+        // level by level so descriptor destruction is memory-bounded rather
+        // than native-stack-bounded.
+        let mut pending = std::mem::replace(
+            &mut self.kind,
+            WidgetKind::Box {
+                size: Size::ZERO,
+                color: Color::TRANSPARENT,
+            },
+        )
+        .into_owned_children();
+        while let Some(child) = pending.pop() {
+            let Ok(mut child) = Rc::try_unwrap(child) else {
+                // Another declarative or retained owner still holds this
+                // descriptor. Dropping this edge only decrements the count and
+                // cannot recursively destroy the descendant chain here.
+                continue;
+            };
+            let grandchildren = std::mem::replace(
+                &mut child.kind,
+                WidgetKind::Box {
+                    size: Size::ZERO,
+                    color: Color::TRANSPARENT,
+                },
+            )
+            .into_owned_children();
+            pending.extend(grandchildren);
+            // `child` now owns no Widget descendants, so its normal Drop is
+            // constant-stack even when it came from a pathological chain.
+        }
+    }
+}
+
 /// Converts the controller's logical offset into the physical content offset
 /// used by a viewport transform.  A reversed viewport keeps the controller's
 /// public range in the same `0..max` coordinate system, while its leading edge
@@ -1946,7 +1983,97 @@ impl WidgetType {
         }
     }
 }
+impl WidgetKind {
+    fn into_owned_children(self) -> Vec<Rc<Widget>> {
+        match self {
+            WidgetKind::Box { .. }
+            | WidgetKind::Shape { .. }
+            | WidgetKind::CustomPaint { .. }
+            | WidgetKind::Text { .. }
+            | WidgetKind::SelectableText { .. }
+            | WidgetKind::TextField { .. }
+            | WidgetKind::Image { .. }
+            | WidgetKind::ListWheelScrollView { .. }
+            | WidgetKind::ListWheelViewport { .. }
+            | WidgetKind::DraggableScrollableSheet { .. }
+            | WidgetKind::TwoDimensionalScrollView { .. }
+            | WidgetKind::TwoDimensionalViewport { .. }
+            | WidgetKind::SliverViewport { .. }
+            | WidgetKind::LayoutBuilder { .. } => Vec::new(),
+            WidgetKind::Button { child, .. } | WidgetKind::Banner { child, .. } => {
+                child.into_iter().collect()
+            }
+            WidgetKind::RawInput { child, .. } => child.into_iter().collect(),
+            WidgetKind::Decorated { child, .. }
+            | WidgetKind::Padding { child, .. }
+            | WidgetKind::Constrained { child, .. }
+            | WidgetKind::Limited { child, .. }
+            | WidgetKind::Overflow { child, .. }
+            | WidgetKind::Unconstrained { child, .. }
+            | WidgetKind::Fractional { child, .. }
+            | WidgetKind::Baseline { child, .. }
+            | WidgetKind::RepaintBoundary { child }
+            | WidgetKind::Gesture { child, .. }
+            | WidgetKind::Draggable { child, .. }
+            | WidgetKind::DragTarget { child, .. }
+            | WidgetKind::IgnorePointer { child, .. }
+            | WidgetKind::AbsorbPointer { child, .. }
+            | WidgetKind::Align { child, .. }
+            | WidgetKind::Flexible { child, .. }
+            | WidgetKind::Positioned { child, .. }
+            | WidgetKind::SafeArea { child, .. }
+            | WidgetKind::ClipRect { child, .. }
+            | WidgetKind::ClipRRect { child, .. }
+            | WidgetKind::ClipOval { child, .. }
+            | WidgetKind::ClipPath { child, .. }
+            | WidgetKind::Visibility { child, .. }
+            | WidgetKind::AspectRatio { child, .. }
+            | WidgetKind::Scroll { child, .. }
+            | WidgetKind::RawScrollbar { child, .. }
+            | WidgetKind::DraggableScrollableActuator { child, .. }
+            | WidgetKind::PersistentHeader { child, .. }
+            | WidgetKind::NotificationListener { child, .. }
+            | WidgetKind::Translate { child, .. }
+            | WidgetKind::Transform { child, .. }
+            | WidgetKind::Scale { child, .. }
+            | WidgetKind::Rotation { child, .. }
+            | WidgetKind::FittedBox { child, .. }
+            | WidgetKind::Opacity { child, .. }
+            | WidgetKind::Blur { child, .. }
+            | WidgetKind::DropShadow { child, .. }
+            | WidgetKind::ColorFiltered { child, .. }
+            | WidgetKind::Blend { child, .. }
+            | WidgetKind::ShaderMask { child, .. }
+            | WidgetKind::BackdropFilter { child, .. }
+            | WidgetKind::AnnotatedRegion { child, .. }
+            | WidgetKind::CompositedTransformTarget { child, .. }
+            | WidgetKind::CompositedTransformFollower { child, .. }
+            | WidgetKind::SelectionArea { child, .. }
+            | WidgetKind::SelectionContainer { child, .. }
+            | WidgetKind::SelectionListener { child, .. }
+            | WidgetKind::IndexedSemantics { child, .. }
+            | WidgetKind::SemanticsDebugger { child, .. } => vec![child],
+            WidgetKind::Flex { children, .. }
+            | WidgetKind::Wrap { children, .. }
+            | WidgetKind::Table { children, .. }
+            | WidgetKind::Stack { children, .. }
+            | WidgetKind::IndexedStack { children, .. } => children,
+        }
+    }
+}
+
 impl Widget {
+    #[must_use]
+    pub fn into_kind(mut self) -> WidgetKind {
+        std::mem::replace(
+            &mut self.kind,
+            WidgetKind::Box {
+                size: Size::ZERO,
+                color: Color::TRANSPARENT,
+            },
+        )
+    }
+
     /// Creates a widget from a internal kind descriptor.
     #[must_use]
     pub fn from_kind(kind: WidgetKind) -> Self {
@@ -2124,7 +2251,7 @@ impl Widget {
                 background,
                 border,
                 radius,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2190,7 +2317,7 @@ impl Widget {
                 exit_action: ActionId(0),
                 exit_callback: surface.exit_callback,
                 has_callback: false,
-                child: Some(Box::new(label)),
+                child: Some(std::rc::Rc::new(label)),
             },
             semantics: SemanticProperties {
                 // Custom content is inspected for a text or explicit semantic
@@ -2201,117 +2328,30 @@ impl Widget {
         }
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
-        match &mut self.kind {
-            WidgetKind::Button {
-                action,
-                callback,
-                hover_action,
-                hover_callback,
-                exit_action,
-                exit_callback,
-                has_callback,
-                child,
-                ..
-            } => {
-                if let Some(callback) = callback.take() {
-                    *action = allocate(callback);
-                    *has_callback = true;
-                }
-                if let Some(callback) = hover_callback.take() {
-                    *hover_action = allocate(callback);
-                }
-                if let Some(callback) = exit_callback.take() {
-                    *exit_action = allocate(callback);
-                }
-                if let Some(child) = child {
-                    child.bind_callbacks(allocate);
-                }
+        if let WidgetKind::Button {
+            action,
+            callback,
+            hover_action,
+            hover_callback,
+            exit_action,
+            exit_callback,
+            has_callback,
+            ..
+        } = &mut self.kind
+        {
+            if let Some(callback) = callback.take() {
+                *action = allocate(callback);
+                *has_callback = true;
             }
-            WidgetKind::Banner { child, .. } => {
-                if let Some(child) = child {
-                    child.bind_callbacks(allocate);
-                }
+            if let Some(callback) = hover_callback.take() {
+                *hover_action = allocate(callback);
             }
-            WidgetKind::Padding { child, .. }
-            | WidgetKind::Decorated { child, .. }
-            | WidgetKind::Constrained { child, .. }
-            | WidgetKind::Limited { child, .. }
-            | WidgetKind::Overflow { child, .. }
-            | WidgetKind::Unconstrained { child, .. }
-            | WidgetKind::Fractional { child, .. }
-            | WidgetKind::Baseline { child, .. }
-            | WidgetKind::RepaintBoundary { child, .. }
-            | WidgetKind::Gesture { child, .. }
-            | WidgetKind::Draggable { child, .. }
-            | WidgetKind::DragTarget { child, .. }
-            | WidgetKind::IgnorePointer { child, .. }
-            | WidgetKind::AbsorbPointer { child, .. }
-            | WidgetKind::Align { child, .. }
-            | WidgetKind::Flexible { child, .. }
-            | WidgetKind::Positioned { child, .. }
-            | WidgetKind::SafeArea { child, .. }
-            | WidgetKind::ClipRect { child, .. }
-            | WidgetKind::ClipRRect { child, .. }
-            | WidgetKind::ClipOval { child, .. }
-            | WidgetKind::ClipPath { child, .. }
-            | WidgetKind::Visibility { child, .. }
-            | WidgetKind::AspectRatio { child, .. }
-            | WidgetKind::Scroll { child, .. }
-            | WidgetKind::RawScrollbar { child, .. }
-            | WidgetKind::DraggableScrollableActuator { child, .. }
-            | WidgetKind::PersistentHeader { child, .. }
-            | WidgetKind::NotificationListener { child, .. }
-            | WidgetKind::Translate { child, .. }
-            | WidgetKind::Transform { child, .. }
-            | WidgetKind::Scale { child, .. }
-            | WidgetKind::Rotation { child, .. }
-            | WidgetKind::FittedBox { child, .. }
-            | WidgetKind::Opacity { child, .. }
-            | WidgetKind::Blur { child, .. }
-            | WidgetKind::DropShadow { child, .. }
-            | WidgetKind::ColorFiltered { child, .. }
-            | WidgetKind::Blend { child, .. }
-            | WidgetKind::ShaderMask { child, .. }
-            | WidgetKind::BackdropFilter { child, .. }
-            | WidgetKind::AnnotatedRegion { child, .. }
-            | WidgetKind::CompositedTransformTarget { child, .. }
-            | WidgetKind::CompositedTransformFollower { child, .. } => {
-                child.bind_callbacks(allocate)
+            if let Some(callback) = exit_callback.take() {
+                *exit_action = allocate(callback);
             }
-            WidgetKind::RawInput { child, .. } => {
-                if let Some(child) = child {
-                    child.bind_callbacks(allocate);
-                }
-            }
-            WidgetKind::SelectionArea { child, .. }
-            | WidgetKind::SelectionContainer { child, .. }
-            | WidgetKind::SelectionListener { child, .. }
-            | WidgetKind::IndexedSemantics { child, .. }
-            | WidgetKind::SemanticsDebugger { child, .. } => child.bind_callbacks(allocate),
-            WidgetKind::SliverViewport { .. } | WidgetKind::LayoutBuilder { .. } => {}
-            WidgetKind::Flex { children, .. }
-            | WidgetKind::Wrap { children, .. }
-            | WidgetKind::Table { children, .. }
-            | WidgetKind::Stack { children, .. }
-            | WidgetKind::IndexedStack { children, .. } => {
-                for child in children {
-                    child.bind_callbacks(allocate);
-                }
-            }
-            WidgetKind::Box { .. }
-            | WidgetKind::Shape { .. }
-            | WidgetKind::CustomPaint { .. }
-            | WidgetKind::Text { .. }
-            | WidgetKind::SelectableText { .. }
-            | WidgetKind::TextField { .. }
-            | WidgetKind::Image { .. }
-            | WidgetKind::ListWheelScrollView { .. }
-            | WidgetKind::ListWheelViewport { .. }
-            | WidgetKind::DraggableScrollableSheet { .. }
-            | WidgetKind::TwoDimensionalScrollView { .. }
-            | WidgetKind::TwoDimensionalViewport { .. } => {}
         }
     }
+
     #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
         Self {
@@ -2386,7 +2426,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::SelectionArea {
                 controller,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2397,7 +2437,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::SelectionContainer {
                 delegate,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2409,7 +2449,7 @@ impl Widget {
             kind: WidgetKind::SelectionListener {
                 delegate: SelectionContainerDelegate::with_controller(notifier.controller()),
                 notifier,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2420,7 +2460,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::IndexedSemantics {
                 index,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2436,7 +2476,7 @@ impl Widget {
             kind: WidgetKind::SemanticsDebugger {
                 label_style,
                 max_nodes,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2605,7 +2645,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Padding {
                 padding,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2617,7 +2657,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Constrained {
                 constraints,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2629,7 +2669,7 @@ impl Widget {
             kind: WidgetKind::Limited {
                 max_width: finite_non_negative(max_width),
                 max_height: finite_non_negative(max_height),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2649,7 +2689,7 @@ impl Widget {
                 max_width: max_width.map(finite_non_negative),
                 min_height: min_height.map(finite_non_negative),
                 max_height: max_height.map(finite_non_negative),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2662,7 +2702,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Unconstrained {
                 constrained_axis,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2686,7 +2726,7 @@ impl Widget {
             kind: WidgetKind::Fractional {
                 width_factor,
                 height_factor,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2702,7 +2742,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Baseline {
                 baseline,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2716,7 +2756,7 @@ impl Widget {
         Self {
             key: None,
             kind: WidgetKind::RepaintBoundary {
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2730,7 +2770,7 @@ impl Widget {
             kind: WidgetKind::Gesture {
                 behavior: crate::gestures::HitTestBehavior::DeferToChild,
                 callbacks: Box::new(callbacks),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2740,7 +2780,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Draggable {
                 source,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2750,7 +2790,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::DragTarget {
                 target,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2763,7 +2803,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::IgnorePointer {
                 ignoring,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2777,7 +2817,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::AbsorbPointer {
                 absorbing,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2811,7 +2851,7 @@ impl Widget {
             kind: WidgetKind::Flexible {
                 flex: flex.max(1),
                 fit,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2871,7 +2911,7 @@ impl Widget {
                 bottom: bottom.map(finite_non_negative),
                 width: width.map(finite_non_negative),
                 height: height.map(finite_non_negative),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2887,7 +2927,7 @@ impl Widget {
             kind: WidgetKind::IndexedStack {
                 alignment,
                 index,
-                children: children.into(),
+                children: children.into().into_iter().map(std::rc::Rc::new).collect(),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2967,7 +3007,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Visibility {
                 visible,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -2982,7 +3022,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::AspectRatio {
                 ratio,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3017,7 +3057,7 @@ impl Widget {
                 axis,
                 reverse,
                 physics,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3044,7 +3084,7 @@ impl Widget {
             kind: WidgetKind::RawScrollbar {
                 controller,
                 style,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3096,7 +3136,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::DraggableScrollableActuator {
                 actuator: RetainedActuator(Rc::new(actuator)),
-                child: Box::new(child.into()),
+                child: std::rc::Rc::new(child.into()),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3150,7 +3190,7 @@ impl Widget {
                 axis,
                 reverse,
                 pinned,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3167,7 +3207,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::NotificationListener {
                 callback,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3210,7 +3250,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Translate {
                 controller,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3224,7 +3264,7 @@ impl Widget {
             kind: WidgetKind::Transform {
                 transform,
                 origin: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3236,7 +3276,7 @@ impl Widget {
             kind: WidgetKind::Transform {
                 transform,
                 origin: Some(finite_offset(origin)),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3256,7 +3296,7 @@ impl Widget {
             kind: WidgetKind::FittedBox {
                 fit,
                 alignment,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3268,7 +3308,7 @@ impl Widget {
             kind: WidgetKind::Scale {
                 controller,
                 origin: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3289,7 +3329,7 @@ impl Widget {
                 controller,
                 origin: None,
                 alignment,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3301,7 +3341,7 @@ impl Widget {
             kind: WidgetKind::Opacity {
                 alpha: normalize_opacity(alpha),
                 controller: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3313,7 +3353,7 @@ impl Widget {
             kind: WidgetKind::Opacity {
                 alpha: controller.opacity(),
                 controller: Some(controller),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3326,7 +3366,7 @@ impl Widget {
                 sigma_x: normalize_sigma(sigma),
                 sigma_y: normalize_sigma(sigma),
                 controller: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3339,7 +3379,7 @@ impl Widget {
                 sigma_x: normalize_sigma(sigma_x),
                 sigma_y: normalize_sigma(sigma_y),
                 controller: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3352,7 +3392,7 @@ impl Widget {
                 sigma_x: controller.sigma(),
                 sigma_y: controller.sigma(),
                 controller: Some(controller),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3367,7 +3407,7 @@ impl Widget {
                 sigma_y: normalize_sigma(sigma),
                 color,
                 controller: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3382,7 +3422,7 @@ impl Widget {
                 sigma_y: controller.sigma(),
                 color: controller.color(),
                 controller: Some(controller),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3394,7 +3434,7 @@ impl Widget {
             kind: WidgetKind::ColorFiltered {
                 filter,
                 controller: None,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3410,7 +3450,7 @@ impl Widget {
             kind: WidgetKind::ColorFiltered {
                 filter: controller.filter(),
                 controller: Some(controller),
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3421,7 +3461,7 @@ impl Widget {
             key: None,
             kind: WidgetKind::Blend {
                 mode,
-                child: Box::new(child),
+                child: std::rc::Rc::new(child),
             },
             semantics: SemanticProperties::default(),
         }
@@ -3627,7 +3667,9 @@ impl Widget {
             | WidgetKind::Wrap { children, .. }
             | WidgetKind::Table { children, .. }
             | WidgetKind::Stack { children, .. }
-            | WidgetKind::IndexedStack { children, .. } => children.iter().collect(),
+            | WidgetKind::IndexedStack { children, .. } => {
+                children.iter().map(Rc::as_ref).collect()
+            }
             WidgetKind::ListWheelScrollView { .. }
             | WidgetKind::ListWheelViewport { .. }
             | WidgetKind::DraggableScrollableSheet { .. }

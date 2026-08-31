@@ -81,11 +81,11 @@ impl Scrollbar {
             return child;
         }
 
-        let (controller, child) = match child.kind {
+        let (controller, child) = match &child.kind {
             // Reusing an existing viewport should not create nested scroll
             // positions. Rebuild it with the chosen controller so the style
             // and interaction contract stay attached to the visible viewport.
-            WidgetKind::Scroll { child, .. } => (controller.unwrap(), *child),
+            WidgetKind::Scroll { child, .. } => (controller.unwrap(), (**child).clone()),
             // For ordinary content, retain the complete descriptor (including
             // its key/semantics) as the scroll viewport's child.
             _ => (controller.unwrap_or_default(), child),

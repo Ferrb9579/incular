@@ -20,7 +20,7 @@ fn optional_child_builders_accept_widgets() {
         .color(Color::BLACK)
         .child(child.clone())
         .build();
-    let WidgetKind::Decorated { child: lowered, .. } = Widget::from(colored_box).kind else {
+    let WidgetKind::Decorated { child: lowered, .. } = Widget::from(colored_box).into_kind() else {
         panic!("expected ColoredBox to lower to a decorated widget");
     };
     assert_eq!(*lowered, child);
@@ -36,14 +36,12 @@ fn multiple_children_use_vec_widget_storage() {
         .spacing(4.0)
         .build();
 
-    let WidgetKind::Wrap { children, .. } = Widget::from(overflow_bar).kind else {
+    let WidgetKind::Wrap { children, .. } = Widget::from(overflow_bar).into_kind() else {
         panic!("expected OverflowBar to lower to Wrap");
     };
-    assert_eq!(
-        children,
-        vec![Widget::text("first"), Widget::text("second")]
-    );
-    let WidgetKind::Wrap { children, .. } = Widget::from(OverflowBar::default()).kind else {
+    assert_eq!(children[0].text_if_any().as_deref(), Some("first"));
+    assert_eq!(children[1].text_if_any().as_deref(), Some("second"));
+    let WidgetKind::Wrap { children, .. } = Widget::from(OverflowBar::default()).into_kind() else {
         panic!("expected default OverflowBar to lower to Wrap");
     };
     assert!(children.is_empty());
@@ -91,7 +89,7 @@ fn split_view_builder_keeps_callback_private_and_children_generic() {
         .second(child)
         .build();
 
-    let WidgetKind::Flex { children, .. } = Widget::from(split).kind else {
+    let WidgetKind::Flex { children, .. } = Widget::from(split).into_kind() else {
         panic!("expected SplitView to lower to a flex row");
     };
     assert_eq!(children.len(), 3);

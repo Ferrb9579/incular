@@ -92,8 +92,16 @@ impl WidgetTree {
     pub(super) fn mount_element_node(
         &mut self,
         parent: Option<ElementId>,
-        widget: Widget,
+        mut widget: Widget,
     ) -> Result<ElementId, TreeError> {
+        let handlers = &mut self.pending_handlers;
+        let next = &mut self.next_action;
+        widget.bind_callbacks(&mut |callback| {
+            let action = ActionId(*next);
+            *next += 1;
+            handlers.push((action, callback));
+            action
+        });
         let inherited_environment = parent
             .and_then(|id| self.elements.get(id.0))
             .and_then(|element| element.environment.clone());
@@ -159,7 +167,12 @@ impl WidgetTree {
             let element = self.elements.get(id.0).expect("live environment element");
             (element.environment.clone(), element.children.clone())
         };
-        for child in children {
+        let mut work = children
+            .into_iter()
+            .rev()
+            .map(|child| (child, inherited.clone()))
+            .collect::<Vec<_>>();
+        while let Some((child, inherited)) = work.pop() {
             let (override_value, boundary, previous, widget, render) = {
                 let element = self.elements.get(child.0).expect("live child");
                 (
@@ -200,7 +213,16 @@ impl WidgetTree {
                     self.mark_render_dirty(render, DirtyFlags::PAINT, false);
                 }
             }
-            self.propagate_environment(child);
+            let (next_inherited, children) = {
+                let element = self.elements.get(child.0).expect("live child");
+                (element.environment.clone(), element.children.clone())
+            };
+            work.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .map(|descendant| (descendant, next_inherited.clone())),
+            );
         }
     }
 
@@ -209,9 +231,16 @@ impl WidgetTree {
         id: ElementId,
         widget: &Widget,
     ) -> Result<(), TreeError> {
-        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
-            self.update_existing_inner(id, widget)
-        })
+        let mut widget = widget.clone();
+        let handlers = &mut self.pending_handlers;
+        let next = &mut self.next_action;
+        widget.bind_callbacks(&mut |callback| {
+            let action = ActionId(*next);
+            *next += 1;
+            handlers.push((action, callback));
+            action
+        });
+        with_recursive_tree_stack(|| self.update_existing_inner(id, &widget))
     }
 
     pub(super) fn update_existing_inner(
@@ -220,15 +249,20 @@ impl WidgetTree {
         widget: &Widget,
     ) -> Result<(), TreeError> {
         let _node_guard = self.guard_element(FramePhase::Build, id);
-        // Borrow-compare first: the unchanged-subtree bailout must not clone
-        // either widget. This is the dominant hot path for wide static trees
-        // under a rebuilding parent (Task 15 measured bottleneck).
-        if self
+        // Keep the unchanged-descriptor bailout only where equality cannot
+        // recurse through declarative child edges. Full Widget equality is a
+        // structural operation and a pathological but valid unary tree can be
+        // thousands of nodes deep; using it here would turn reconciliation
+        // into native-stack recursion before the retained traversal policy can
+        // take effect. Wide/static trees still retain the important leaf fast
+        // path, while non-leaf widgets reconcile their direct children.
+        let current = self
             .elements
             .get(id.0)
-            .ok_or(TreeError::MissingElement(id))?
-            .widget
-            == *widget
+            .ok_or(TreeError::MissingElement(id))?;
+        if current.widget.children_refs().is_empty()
+            && widget.children_refs().is_empty()
+            && current.widget == *widget
         {
             self.diagnostics.identical_child_bailouts += 1;
             return Ok(());
@@ -586,15 +620,7 @@ impl WidgetTree {
                 // identity is only reusable across compatible widget types;
                 // leave incompatible old children for the cleanup pass below
                 // and mount a fresh element for the same sliver slot.
-                let mut widget = child.widget.clone();
-                let handlers = &mut self.pending_handlers;
-                let next = &mut self.next_action;
-                widget.bind_callbacks(&mut |callback| {
-                    let action = ActionId(*next);
-                    *next += 1;
-                    handlers.push((action, callback));
-                    action
-                });
+                let widget = child.widget.clone();
                 self.diagnostics.items_built += 1;
                 let child = self
                     .mount_element(Some(element_id), widget)
@@ -676,7 +702,7 @@ impl WidgetTree {
         let mut next_keys = Vec::with_capacity(desired.len());
         let mut next_children = Vec::with_capacity(desired.len());
 
-        for (key, mut widget) in desired {
+        for (key, widget) in desired {
             let child = if let Some(existing) = existing
                 .get(&key)
                 .copied()
@@ -691,14 +717,6 @@ impl WidgetTree {
                 })?;
                 existing
             } else {
-                let handlers = &mut self.pending_handlers;
-                let next = &mut self.next_action;
-                widget.bind_callbacks(&mut |callback| {
-                    let action = ActionId(*next);
-                    *next += 1;
-                    handlers.push((action, callback));
-                    action
-                });
                 self.diagnostics.items_built += 1;
                 let child = self
                     .mount_element(Some(element_id), widget)
@@ -742,9 +760,7 @@ impl WidgetTree {
         id: RenderObjectId,
         constraints: Constraints,
     ) -> Result<(), TreeError> {
-        stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
-            self.materialize_layout_builder_inner(id, constraints)
-        })
+        with_recursive_tree_stack(|| self.materialize_layout_builder_inner(id, constraints))
     }
 
     pub(super) fn materialize_layout_builder_inner(
@@ -795,19 +811,11 @@ impl WidgetTree {
             .elements
             .get(element_id.0)
             .and_then(|element| element.environment.clone());
-        let mut child = if environment_boundary {
+        let child = if environment_boundary {
             with_build_environment_boundary(|| builder(constraints))
         } else {
             with_build_environment(environment, || builder(constraints))
         };
-        let handlers = &mut self.pending_handlers;
-        let next = &mut self.next_action;
-        child.bind_callbacks(&mut |callback| {
-            let action = ActionId(*next);
-            *next += 1;
-            handlers.push((action, callback));
-            action
-        });
         self.validate_widget_subtree(&child, Some(element_id))
             .map_err(|source| TreeError::InvalidGeneratedChild {
                 owner: element_id,
@@ -994,19 +1002,27 @@ impl WidgetTree {
         viewport_depth: usize,
         out: &mut Vec<(ScrollController, usize)>,
     ) {
-        let Some(element) = self.elements.get(id.0) else {
-            return;
-        };
-        let next_depth = if let Some(controller) = self.scroll_controller_for_element(id) {
-            if !out.iter().any(|(existing, _)| *existing == controller) {
-                out.push((controller, viewport_depth));
-            }
-            viewport_depth + 1
-        } else {
-            viewport_depth
-        };
-        for child in &element.children {
-            self.collect_scroll_sources(*child, next_depth, out);
+        let mut work = vec![(id, viewport_depth)];
+        while let Some((current, depth)) = work.pop() {
+            let Some(element) = self.elements.get(current.0) else {
+                continue;
+            };
+            let next_depth = if let Some(controller) = self.scroll_controller_for_element(current) {
+                if !out.iter().any(|(existing, _)| *existing == controller) {
+                    out.push((controller, depth));
+                }
+                depth + 1
+            } else {
+                depth
+            };
+            work.extend(
+                element
+                    .children
+                    .iter()
+                    .rev()
+                    .copied()
+                    .map(|child| (child, next_depth)),
+            );
         }
     }
 
@@ -1022,49 +1038,65 @@ impl WidgetTree {
         Ok(())
     }
     pub(super) fn unmount_element(&mut self, id: ElementId) {
-        self.raw_input_unmounted(id);
-        let Some(element) = self.elements.remove(id.0) else {
-            return;
-        };
-        match &element.widget.kind {
-            WidgetKind::SelectionListener {
-                notifier, delegate, ..
-            } => {
-                notifier.unregister();
-                self.static_selections.remove(&id);
-                let controller = delegate.controller();
-                controller.set_registered_child_count(0);
-                controller.clear_selection();
-            }
-            WidgetKind::SelectionArea { controller, .. } => {
-                self.static_selections.remove(&id);
-                controller.set_registered_child_count(0);
-                controller.clear_selection();
-            }
-            WidgetKind::SelectionContainer { delegate, .. } => {
-                self.static_selections.remove(&id);
-                let controller = delegate.controller();
-                controller.set_registered_child_count(0);
-                controller.clear_selection();
-            }
-            _ => {}
+        enum UnmountWork {
+            Enter(ElementId),
+            Exit(ElementId, RenderObjectId),
         }
-        self.active_gestures.retain(|_, active| {
-            active
-                .members
-                .iter()
-                .all(|candidate| candidate.element != id)
-        });
-        self.pointer_captures.retain(|_, target| *target != id);
-        self.scale_gestures.remove(&id);
-        for child in element.children {
-            self.unmount_element(child);
+
+        let mut work = vec![UnmountWork::Enter(id)];
+        while let Some(next) = work.pop() {
+            match next {
+                UnmountWork::Enter(id) => {
+                    self.raw_input_unmounted(id);
+                    let Some(element) = self.elements.remove(id.0) else {
+                        continue;
+                    };
+                    match &element.widget.kind {
+                        WidgetKind::SelectionListener {
+                            notifier, delegate, ..
+                        } => {
+                            notifier.unregister();
+                            self.static_selections.remove(&id);
+                            let controller = delegate.controller();
+                            controller.set_registered_child_count(0);
+                            controller.clear_selection();
+                        }
+                        WidgetKind::SelectionArea { controller, .. } => {
+                            self.static_selections.remove(&id);
+                            controller.set_registered_child_count(0);
+                            controller.clear_selection();
+                        }
+                        WidgetKind::SelectionContainer { delegate, .. } => {
+                            self.static_selections.remove(&id);
+                            let controller = delegate.controller();
+                            controller.set_registered_child_count(0);
+                            controller.clear_selection();
+                        }
+                        _ => {}
+                    }
+                    self.active_gestures.retain(|_, active| {
+                        active
+                            .members
+                            .iter()
+                            .all(|candidate| candidate.element != id)
+                    });
+                    self.pointer_captures.retain(|_, target| *target != id);
+                    self.scale_gestures.remove(&id);
+
+                    let render = element.render;
+                    let children = element.children.clone();
+                    work.push(UnmountWork::Exit(id, render));
+                    work.extend(children.into_iter().rev().map(UnmountWork::Enter));
+                }
+                UnmountWork::Exit(id, render_id) => {
+                    if let Some(render) = self.renders.remove(render_id.0) {
+                        render.object.layers.remove(&mut self.compositor);
+                    }
+                    self.unmounted.push(id);
+                    self.diagnostics.unmounts += 1;
+                }
+            }
         }
-        if let Some(render) = self.renders.remove(element.render.0) {
-            render.object.layers.remove(&mut self.compositor);
-        }
-        self.unmounted.push(id);
-        self.diagnostics.unmounts += 1;
     }
     pub(super) fn check_keys_borrowed<'a>(
         &self,

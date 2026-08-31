@@ -75,11 +75,11 @@ pub(crate) fn install_listener(
 ) -> Option<ReorderableListenerSpec> {
     if let Some(spec) = marker_spec(widget) {
         let mut marked = std::mem::replace(widget, empty_widget());
-        let kind = std::mem::replace(&mut marked.kind, empty_widget().kind);
+        let kind = std::mem::replace(&mut marked.kind, empty_widget().kind.clone());
         let child = match kind {
             WidgetKind::RawInput {
                 child: Some(child), ..
-            } => *child,
+            } => Rc::try_unwrap(child).unwrap_or_else(|child| child.as_ref().clone()),
             other => {
                 marked.kind = other;
                 marked.key = None;
@@ -96,11 +96,11 @@ pub(crate) fn install_listener(
 
     match &mut widget.kind {
         WidgetKind::Banner { child, .. } | WidgetKind::Button { child, .. } => child
-            .as_deref_mut()
-            .and_then(|child| install_listener(child, wrap)),
+            .as_mut()
+            .and_then(|child| install_listener(Rc::make_mut(child), wrap)),
         WidgetKind::RawInput { child, .. } => child
-            .as_deref_mut()
-            .and_then(|child| install_listener(child, wrap)),
+            .as_mut()
+            .and_then(|child| install_listener(Rc::make_mut(child), wrap)),
         WidgetKind::SelectionArea { child, .. }
         | WidgetKind::SelectionContainer { child, .. }
         | WidgetKind::SelectionListener { child, .. }
@@ -149,14 +149,16 @@ pub(crate) fn install_listener(
         | WidgetKind::BackdropFilter { child, .. }
         | WidgetKind::AnnotatedRegion { child, .. }
         | WidgetKind::CompositedTransformTarget { child, .. }
-        | WidgetKind::CompositedTransformFollower { child, .. } => install_listener(child, wrap),
+        | WidgetKind::CompositedTransformFollower { child, .. } => {
+            install_listener(Rc::make_mut(child), wrap)
+        }
         WidgetKind::Flex { children, .. }
         | WidgetKind::Wrap { children, .. }
         | WidgetKind::Table { children, .. }
         | WidgetKind::Stack { children, .. }
         | WidgetKind::IndexedStack { children, .. } => children
             .iter_mut()
-            .find_map(|child| install_listener(child, wrap)),
+            .find_map(|child| install_listener(Rc::make_mut(child), wrap)),
         WidgetKind::Box { .. }
         | WidgetKind::Shape { .. }
         | WidgetKind::CustomPaint { .. }

@@ -567,21 +567,22 @@ impl WidgetTree {
         entries
     }
     pub(super) fn collect_selectable_texts(&self, id: ElementId, entries: &mut Vec<ElementId>) {
-        let Some(element) = self.elements.get(id.0) else {
-            return;
-        };
-        if matches!(element.widget.kind, WidgetKind::SelectableText { .. }) {
-            entries.push(id);
-            return;
-        }
-        // A nested selection boundary owns its registrar subtree. Its leaves
-        // must not be harvested by an ancestor container, even when the
-        // nested boundary is disabled.
-        if self.selection_boundary_policy(id).is_some() {
-            return;
-        }
-        for child in &element.children {
-            self.collect_selectable_texts(*child, entries);
+        let mut work = vec![id];
+        while let Some(current) = work.pop() {
+            let Some(element) = self.elements.get(current.0) else {
+                continue;
+            };
+            if matches!(element.widget.kind, WidgetKind::SelectableText { .. }) {
+                entries.push(current);
+                continue;
+            }
+            // A nested selection boundary owns its registrar subtree. Its
+            // leaves must not be harvested by an ancestor container, even
+            // when the nested boundary is disabled.
+            if self.selection_boundary_policy(current).is_some() {
+                continue;
+            }
+            work.extend(element.children.iter().rev().copied());
         }
     }
     pub(super) fn sync_static_selection(&mut self, area: ElementId) {

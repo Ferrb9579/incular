@@ -138,7 +138,7 @@ impl From<Wrap> for Widget {
             cross_axis_alignment: value.cross_axis_alignment,
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
-            children: value.children,
+            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
         })
     }
 }

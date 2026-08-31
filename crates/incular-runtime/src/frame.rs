@@ -203,6 +203,9 @@ impl Runtime {
             action
         });
         tree.mount(root)?;
+        for (action, handler) in tree.take_pending_handlers() {
+            handlers.insert(action, handler);
+        }
         let mut runtime = Self {
             pending_event_processing_us: 0,
             tree,

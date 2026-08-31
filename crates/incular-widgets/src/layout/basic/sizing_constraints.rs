@@ -188,7 +188,7 @@ impl From<ConstrainedBox> for Widget {
     fn from(value: ConstrainedBox) -> Self {
         Widget::from_kind(WidgetKind::Constrained {
             constraints: value.constraints,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -241,7 +241,7 @@ impl From<LimitedBox> for Widget {
         Widget::from_kind(WidgetKind::Limited {
             max_width: value.max_width,
             max_height: value.max_height,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -306,7 +306,7 @@ impl From<OverflowBox> for Widget {
             max_width: value.max_width,
             min_height: value.min_height,
             max_height: value.max_height,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }
@@ -342,7 +342,7 @@ impl From<UnconstrainedBox> for Widget {
     fn from(value: UnconstrainedBox) -> Self {
         Widget::from_kind(WidgetKind::Unconstrained {
             constrained_axis: value.constrained_axis,
-            child: Box::new(value.child),
+            child: std::rc::Rc::new(value.child),
         })
     }
 }

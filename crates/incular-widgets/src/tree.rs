@@ -88,6 +88,17 @@ mod text;
 mod values;
 mod widget;
 
+/// Central stack policy for the small set of tree algorithms whose shape is
+/// naturally recursive (layout, paint, semantic grouping, and compatible
+/// subtree reconciliation). Bookkeeping traversals must use explicit work
+/// stacks instead of calling this helper.
+#[inline]
+pub(super) fn with_recursive_tree_stack<R>(f: impl FnOnce() -> R) -> R {
+    const RED_ZONE_BYTES: usize = 128 * 1024;
+    const STACK_SEGMENT_BYTES: usize = 2 * 1024 * 1024;
+    stacker::maybe_grow(RED_ZONE_BYTES, STACK_SEGMENT_BYTES, f)
+}
+
 use semantics::widget_text;
 use values::{finite_non_negative, finite_offset};
 pub(crate) use widget::WidgetType;
@@ -465,7 +476,7 @@ pub enum WidgetKind {
         background: Option<Brush>,
         border: Option<Border>,
         radius: CornerRadii,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Banner {
         message: String,
@@ -475,7 +486,7 @@ pub enum WidgetKind {
         color: Color,
         text_style: TextStyle,
         shadow: BoxShadow,
-        child: Option<Box<Widget>>,
+        child: Option<Rc<Widget>>,
     },
     Button {
         size: Size,
@@ -493,7 +504,7 @@ pub enum WidgetKind {
         exit_action: ActionId,
         exit_callback: Option<Rc<dyn Fn()>>,
         has_callback: bool,
-        child: Option<Box<Widget>>,
+        child: Option<Rc<Widget>>,
     },
     Text {
         text: String,
@@ -510,25 +521,25 @@ pub enum WidgetKind {
     },
     SelectionArea {
         controller: SelectionAreaController,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     SelectionContainer {
         delegate: SelectionContainerDelegate,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     SelectionListener {
         notifier: SelectionListenerNotifier,
         delegate: SelectionContainerDelegate,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     IndexedSemantics {
         index: usize,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     SemanticsDebugger {
         label_style: TextStyle,
         max_nodes: usize,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Image {
         image: ImageHandle,
@@ -562,70 +573,70 @@ pub enum WidgetKind {
     },
     Padding {
         padding: EdgeInsets,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Constrained {
         constraints: Constraints,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Limited {
         max_width: f32,
         max_height: f32,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Overflow {
         min_width: Option<f32>,
         max_width: Option<f32>,
         min_height: Option<f32>,
         max_height: Option<f32>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Unconstrained {
         constrained_axis: Option<Axis>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Fractional {
         width_factor: Option<f32>,
         height_factor: Option<f32>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Baseline {
         baseline: f32,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     RepaintBoundary {
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Gesture {
         behavior: crate::gestures::HitTestBehavior,
         callbacks: Box<GestureCallbacks>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     RawInput {
         kind: RawInputKind,
-        child: Option<Box<Widget>>,
+        child: Option<Rc<Widget>>,
     },
     Draggable {
         source: Rc<dyn RetainedDragSource>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     DragTarget {
         target: Rc<dyn RetainedDragTarget>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     IgnorePointer {
         ignoring: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     AbsorbPointer {
         absorbing: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Align {
         alignment: Alignment,
         width_factor: Option<f32>,
         height_factor: Option<f32>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Flex {
         axis: Axis,
@@ -635,12 +646,12 @@ pub enum WidgetKind {
         text_direction: TextDirection,
         vertical_direction: VerticalDirection,
         spacing: f32,
-        children: Vec<Widget>,
+        children: Vec<Rc<Widget>>,
     },
     Flexible {
         flex: u32,
         fit: incular_config::FlexFit,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Wrap {
         axis: Axis,
@@ -651,20 +662,20 @@ pub enum WidgetKind {
         cross_axis_alignment: WrapCrossAlignment,
         text_direction: TextDirection,
         vertical_direction: VerticalDirection,
-        children: Vec<Widget>,
+        children: Vec<Rc<Widget>>,
     },
     Table {
         columns: usize,
         column_spacing: f32,
         row_spacing: f32,
-        children: Vec<Widget>,
+        children: Vec<Rc<Widget>>,
     },
     Stack {
         alignment: Alignment,
         text_direction: TextDirection,
         fit: StackFit,
         clip_behavior: Clip,
-        children: Vec<Widget>,
+        children: Vec<Rc<Widget>>,
     },
     Positioned {
         left: Option<f32>,
@@ -673,12 +684,12 @@ pub enum WidgetKind {
         bottom: Option<f32>,
         width: Option<f32>,
         height: Option<f32>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     IndexedStack {
         alignment: Alignment,
         index: usize,
-        children: Vec<Widget>,
+        children: Vec<Rc<Widget>>,
     },
     SafeArea {
         minimum: EdgeInsets,
@@ -687,25 +698,25 @@ pub enum WidgetKind {
         right: bool,
         bottom: bool,
         maintain_bottom_view_padding: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ClipRect {
         clip_behavior: Clip,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ClipRRect {
         radius: CornerRadii,
         clip_behavior: Clip,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ClipOval {
         clip_behavior: Clip,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ClipPath {
         path: Arc<Path>,
         clip_behavior: Clip,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     LayoutBuilder {
         builder: Rc<dyn Fn(Constraints) -> Widget>,
@@ -719,23 +730,23 @@ pub enum WidgetKind {
     },
     Visibility {
         visible: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     AspectRatio {
         ratio: f32,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Scroll {
         controller: ScrollController,
         axis: Axis,
         reverse: bool,
         physics: ScrollPhysics,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     RawScrollbar {
         controller: ScrollController,
         style: RawScrollbarStyle,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ListWheelScrollView {
         view: RetainedWheelScrollView,
@@ -748,7 +759,7 @@ pub enum WidgetKind {
     },
     DraggableScrollableActuator {
         actuator: RetainedActuator,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     TwoDimensionalScrollView {
         view: RetainedTwoDimensionalScrollView,
@@ -763,50 +774,50 @@ pub enum WidgetKind {
         axis: Axis,
         reverse: bool,
         pinned: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     NotificationListener {
         callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     SliverViewport {
         config: Rc<SliverViewportConfig>,
     },
     Translate {
         controller: TranslationController,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Transform {
         transform: CoreTransform,
         origin: Option<Offset>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Scale {
         controller: ScaleController,
         origin: Option<Offset>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Rotation {
         controller: RotationController,
         origin: Option<Offset>,
         alignment: Option<Alignment>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     FittedBox {
         fit: ImageFit,
         alignment: Alignment,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Opacity {
         alpha: f32,
         controller: Option<OpacityController>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Blur {
         sigma_x: f32,
         sigma_y: f32,
         controller: Option<BlurController>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     DropShadow {
         offset: Offset,
@@ -814,36 +825,36 @@ pub enum WidgetKind {
         sigma_y: f32,
         color: Color,
         controller: Option<DropShadowController>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ColorFiltered {
         filter: ColorFilter,
         controller: Option<ColorFilterController>,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     Blend {
         mode: BlendMode,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     ShaderMask {
         shader: ShaderCallback,
         blend_mode: BlendMode,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     BackdropFilter {
         blur: GaussianBlur,
         blend_mode: BlendMode,
         enabled: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     AnnotatedRegion {
         annotation: Annotation,
         sized: bool,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     CompositedTransformTarget {
         link: LayerLink,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
     CompositedTransformFollower {
         link: LayerLink,
@@ -851,7 +862,7 @@ pub enum WidgetKind {
         offset: Offset,
         target_anchor: LayerAnchor,
         follower_anchor: LayerAnchor,
-        child: Box<Widget>,
+        child: Rc<Widget>,
     },
 }
 
@@ -2913,10 +2924,14 @@ struct FocusTraversalGroupMembers {
 
 impl FocusTraversalMember {
     fn first_candidate(&self) -> Option<&FocusCandidate> {
-        match self {
-            Self::Candidate(candidate) => Some(candidate),
-            Self::Group(group) => group.members.iter().find_map(Self::first_candidate),
+        let mut work = vec![self];
+        while let Some(member) = work.pop() {
+            match member {
+                Self::Candidate(candidate) => return Some(candidate),
+                Self::Group(group) => work.extend(group.members.iter().rev()),
+            }
         }
+        None
     }
 
     fn representative_bounds(&self) -> Rect {
@@ -2972,10 +2987,15 @@ fn sort_focus_members(policy: FocusTraversalPolicyKind, members: &mut [FocusTrav
 fn flatten_focus_group(group: FocusTraversalGroupMembers, out: &mut Vec<ElementId>) {
     let mut members = group.members;
     sort_focus_members(group.policy, &mut members);
-    for member in members {
+    let mut work = members.into_iter().rev().collect::<Vec<_>>();
+    while let Some(member) = work.pop() {
         match member {
             FocusTraversalMember::Candidate(candidate) => out.push(candidate.id),
-            FocusTraversalMember::Group(group) => flatten_focus_group(group, out),
+            FocusTraversalMember::Group(group) => {
+                let mut members = group.members;
+                sort_focus_members(group.policy, &mut members);
+                work.extend(members.into_iter().rev());
+            }
         }
     }
 }

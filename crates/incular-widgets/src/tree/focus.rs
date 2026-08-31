@@ -5,6 +5,10 @@ use super::*;
 impl WidgetTree {
     #[must_use]
     pub fn focusable_elements(&self) -> Vec<ElementId> {
+        with_recursive_tree_stack(|| self.focusable_elements_recursive())
+    }
+
+    fn focusable_elements_recursive(&self) -> Vec<ElementId> {
         let mut members = Vec::new();
         let mut sequence = 0;
         if let Some(root) = self.root {
@@ -177,74 +181,91 @@ impl WidgetTree {
         out: &mut Vec<FocusTraversalMember>,
         sequence: &mut usize,
     ) {
-        let Some(element) = self.elements.get(id.0) else {
-            return;
-        };
-        if element.widget.semantics.exclude_focus_traversal {
-            return;
+        enum FocusWork {
+            Node(ElementId, FocusTraversalPolicyKind, bool),
+            Group(ElementId, FocusTraversalPolicyKind, bool),
         }
-        let excluded_focus = excluded_focus || element.widget.semantics.exclude_focus;
-        let focusable = match &element.widget.kind {
-            WidgetKind::Button {
-                enabled,
-                focusable_when_disabled,
-                ..
-            } => *enabled || *focusable_when_disabled,
-            WidgetKind::TextField { enabled, .. } => *enabled,
-            WidgetKind::SelectableText { .. } => true,
-            WidgetKind::Gesture { callbacks, .. } => callbacks
-                .focus_node
-                .as_ref()
-                .is_some_and(|node| node.can_request_focus()),
-            _ => false,
-        };
-        if focusable && !excluded_focus {
-            let bounds = self.element_bounds(id).unwrap_or_default();
-            let order = element.widget.semantics.focus_traversal_order;
-            if let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind
-                && let Some(node) = callbacks.focus_node.as_ref()
-            {
-                node.set_rect(bounds);
-                node.set_traversal_order(order);
+
+        let mut work = vec![FocusWork::Node(id, policy, excluded_focus)];
+        while let Some(next) = work.pop() {
+            let FocusWork::Node(id, policy, excluded_focus) = next else {
+                let FocusWork::Group(id, inherited_policy, excluded_focus) = next else {
+                    unreachable!();
+                };
+                self.collect_focus_group(id, inherited_policy, excluded_focus, out, sequence);
+                continue;
+            };
+            let Some(element) = self.elements.get(id.0) else {
+                continue;
+            };
+            if element.widget.semantics.exclude_focus_traversal {
+                continue;
             }
-            out.push(FocusTraversalMember::Candidate(FocusCandidate {
-                id,
-                bounds,
-                order,
-                sequence: *sequence,
-            }));
-            *sequence = sequence.saturating_add(1);
-        }
-        let (descendants_are_focusable, descendants_are_traversable) = match &element.widget.kind {
-            WidgetKind::Gesture { callbacks, .. } => {
-                callbacks.focus_node.as_ref().map_or((true, true), |node| {
-                    (
-                        node.descendants_are_focusable(),
-                        node.descendants_are_traversable(),
-                    )
-                })
+            let excluded_focus = excluded_focus || element.widget.semantics.exclude_focus;
+            let focusable = match &element.widget.kind {
+                WidgetKind::Button {
+                    enabled,
+                    focusable_when_disabled,
+                    ..
+                } => *enabled || *focusable_when_disabled,
+                WidgetKind::TextField { enabled, .. } => *enabled,
+                WidgetKind::SelectableText { .. } => true,
+                WidgetKind::Gesture { callbacks, .. } => callbacks
+                    .focus_node
+                    .as_ref()
+                    .is_some_and(|node| node.can_request_focus()),
+                _ => false,
+            };
+            if focusable && !excluded_focus {
+                let bounds = self.element_bounds(id).unwrap_or_default();
+                let order = element.widget.semantics.focus_traversal_order;
+                if let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind
+                    && let Some(node) = callbacks.focus_node.as_ref()
+                {
+                    node.set_rect(bounds);
+                    node.set_traversal_order(order);
+                }
+                out.push(FocusTraversalMember::Candidate(FocusCandidate {
+                    id,
+                    bounds,
+                    order,
+                    sequence: *sequence,
+                }));
+                *sequence = sequence.saturating_add(1);
             }
-            _ => (true, true),
-        };
-        if !descendants_are_traversable {
-            return;
-        }
-        let excluded_focus = excluded_focus || !descendants_are_focusable;
-        let focus_children: Vec<_> = match element.widget.kind {
-            WidgetKind::IndexedStack { index, .. } => {
-                element.children.get(index).copied().into_iter().collect()
+            let (descendants_are_focusable, descendants_are_traversable) =
+                match &element.widget.kind {
+                    WidgetKind::Gesture { callbacks, .. } => {
+                        callbacks.focus_node.as_ref().map_or((true, true), |node| {
+                            (
+                                node.descendants_are_focusable(),
+                                node.descendants_are_traversable(),
+                            )
+                        })
+                    }
+                    _ => (true, true),
+                };
+            if !descendants_are_traversable {
+                continue;
             }
-            _ => element.children.clone(),
-        };
-        for child in focus_children {
-            let child_has_policy = self
-                .elements
-                .get(child.0)
-                .is_some_and(|child| child.widget.semantics.focus_traversal_policy.is_some());
-            if child_has_policy {
-                self.collect_focus_group(child, policy, excluded_focus, out, sequence);
-            } else {
-                self.append_focus_members(child, policy, excluded_focus, out, sequence);
+            let excluded_focus = excluded_focus || !descendants_are_focusable;
+            let focus_children: Vec<_> = match element.widget.kind {
+                WidgetKind::IndexedStack { index, .. } => {
+                    element.children.get(index).copied().into_iter().collect()
+                }
+                _ => element.children.clone(),
+            };
+
+            for child in focus_children.into_iter().rev() {
+                let child_policy = self
+                    .elements
+                    .get(child.0)
+                    .and_then(|child| child.widget.semantics.focus_traversal_policy);
+                if child_policy.is_some() {
+                    work.push(FocusWork::Group(child, policy, excluded_focus));
+                } else {
+                    work.push(FocusWork::Node(child, policy, excluded_focus));
+                }
             }
         }
     }
