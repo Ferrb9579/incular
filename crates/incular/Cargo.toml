@@ -130,6 +130,9 @@ path = "../../examples/text_quality/tests/example_tests.rs"
 name = "example_text_selection"
 path = "../../examples/text_selection/tests/example_tests.rs"
 [[test]]
+name = "example_undecorated_window"
+path = "../../examples/undecorated_window/tests/example_tests.rs"
+[[test]]
 name = "example_widget_basics"
 path = "../../examples/widget_basics/tests/example_tests.rs"
 [[test]]
@@ -226,6 +229,9 @@ path = "../../examples/text_selection/main.rs"
 [[example]]
 name = "text_quality"
 path = "../../examples/text_quality/main.rs"
+[[example]]
+name = "undecorated_window"
+path = "../../examples/undecorated_window/main.rs"
 [[example]]
 name = "core_defaults"
 path = "../../examples/core_defaults/main.rs"

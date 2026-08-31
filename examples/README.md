@@ -67,6 +67,8 @@ Additional visual feature demos:
   `Effect`, and explicitly dispatched `Action` primitives.
 - `cargo run -p incular --example environment` — typed logical viewport/DPI,
   scale, locale/direction, and runtime-resolved SafeArea padding.
+- `cargo run -p incular --example undecorated_window` — a borderless native
+  window created by setting `WindowOptions::decorations` to `false`.
 - `cargo run -p incular --example localization` — ICU4X parent-locale
   fallback, catalog selection, script directionality, and localized number/date
   formatting.
