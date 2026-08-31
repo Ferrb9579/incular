@@ -5,7 +5,7 @@ use incular::widgets::internal::{OpacityController, TranslationController};
 use std::time::{Duration, Instant};
 
 fn page(title: &str, color: Color) -> Widget {
-    DecoratedBox::new(Widget::column(vec![
+    DecoratedBox::new(Widget::from(Column::new(Vec::<Widget>::from([
         Text::new(title)
             .style(TextStyle {
                 size: 32.,
@@ -16,7 +16,7 @@ fn page(title: &str, color: Color) -> Widget {
         Text::new("This screen is held by Navigator and presented through a retained transition.")
             .color(Color::rgba(230, 236, 255, 255))
             .into(),
-    ]))
+    ]))))
     .size(Size::new(520., 230.))
     .background(color)
     .radius(18.)
@@ -55,7 +55,7 @@ fn main() {
         let close = app_overlay.clone();
         let rerender_after_pop = app_revision.clone();
 
-        let mut layers = vec![Widget::column(vec![
+        let mut layers = vec![Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Navigation & overlays")
                 .style(TextStyle {
                     size: 30.,
@@ -71,7 +71,7 @@ fn main() {
             .color(Color::rgba(225, 232, 248, 255))
             .into(),
             current.presented_child(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 RawMaterialButton::new("Push fade + slide")
                     .on_press(move || {
                         let opacity = OpacityController::new();
@@ -127,8 +127,8 @@ fn main() {
                         rerender_after_pop.update(|value| *value += 1);
                     })
                     .into(),
-            ]),
-        ])];
+            ]))),
+        ])))];
 
         for entry in app_overlay.entries() {
             if let Some(barrier) = entry.barrier {
@@ -136,7 +136,7 @@ fn main() {
             }
             layers.push(entry.child);
         }
-        Widget::stack(Alignment::CENTER, layers)
+        Widget::from(Stack::aligned(Alignment::CENTER, layers))
     })
     .expect("valid navigation showcase application");
 

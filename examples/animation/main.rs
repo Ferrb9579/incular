@@ -14,7 +14,7 @@ fn main() {
     let moving = translation.clone();
     let app = Application::new(move |_| {
         let trigger = moving.clone();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             RawMaterialButton::new("Move")
                 .on_press(move || {
                     trigger.animate_to(
@@ -26,14 +26,14 @@ fn main() {
                 .into(),
             Widget::translate(
                 moving.clone(),
-                Widget::column(vec![
+                Widget::from(Column::new(vec![
                     Widget::box_(Size::new(180., 70.), Color::rgba(130, 70, 200, 255)),
                     Text::new("Cached text moves with the card")
                         .color(Color::WHITE)
                         .into(),
-                ]),
+                ])),
             ),
-        ])
+        ])))
     })
     .expect("valid animation application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

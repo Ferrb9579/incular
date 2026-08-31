@@ -235,7 +235,7 @@ impl WidgetTree {
                         .and_then(|element| self.elements.get(element.0))
                         .is_some_and(|element| {
                             matches!(
-                                element.widget.kind,
+                                element.widget.kind(),
                                 WidgetKind::RawInput { child: None, .. }
                             )
                         });

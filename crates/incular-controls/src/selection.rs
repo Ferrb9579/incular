@@ -508,10 +508,10 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
 impl<T: PartialEq + Clone + 'static> From<Radio<T>> for Widget {
     fn from(value: Radio<T>) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
-        })
+        }))
     }
 }
 

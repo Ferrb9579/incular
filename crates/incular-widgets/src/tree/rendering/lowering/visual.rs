@@ -1,7 +1,7 @@
 use super::super::super::*;
 use super::super::resolve_text_style;
 pub(super) fn lower_visual(widget: &Widget, context: &DependencyContext) -> RenderKind {
-    match &widget.kind {
+    match widget.kind() {
         WidgetKind::Box { size, color } => RenderKind::Box {
             desired: *size,
             color: *color,

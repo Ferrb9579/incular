@@ -138,9 +138,9 @@ impl LinearProgressIndicator {
 impl From<LinearProgressIndicator> for Widget {
     fn from(value: LinearProgressIndicator) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(context, &current_control_theme(context))
-        })
+        }))
     }
 }
 
@@ -340,8 +340,8 @@ fn circle_arc(center: Offset, radius: f32, start: f32, end: f32) -> Path {
 impl From<CircularProgressIndicator> for Widget {
     fn from(value: CircularProgressIndicator) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(context, &current_control_theme(context))
-        })
+        }))
     }
 }

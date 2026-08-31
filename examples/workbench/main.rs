@@ -195,19 +195,19 @@ fn main() {
         let increment = app_count.clone();
         let route = app_navigator.current().expect("home route");
 
-        let home = Widget::column(vec![
+        let home = Widget::from(Column::new(Vec::<Widget>::from([
             text("Incular Workbench", 28., Color::rgba(220, 232, 255, 255)),
             text(
                 "A deployable base-Widgets smoke test — no Material or controls.",
                 14.,
                 Color::rgba(170, 185, 210, 255),
             ),
-            card(Widget::column(vec![
+            card(Widget::from(Column::new(vec![
                 text(format!("Signal counter: {value}"), 18., Color::WHITE),
                 action("Increment", move || increment.update(|value| *value += 1)),
                 text(format!("Async state: {loading}"), 14., Color::WHITE),
-            ])),
-            card(Widget::column(vec![
+            ]))),
+            card(Widget::from(Column::new(vec![
                 text("Typed commands and focus", 18., Color::WHITE),
                 text(
                     format!("Ctrl+S saves: {save_count_value} · focus: {focus_status}"),
@@ -219,7 +219,7 @@ fn main() {
                     .autofocus(true)
                     .with_shortcuts(app_shortcuts.clone(), app_actions.clone())
                     .into(),
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     action("Focus first", {
                         let scope = app_focus_scope.clone();
                         let node = app_first_focus.clone();
@@ -245,15 +245,15 @@ fn main() {
                             let _ = shortcuts.handle_actions(event, &actions);
                         }
                     }),
-                ]),
-            ])),
-            card(Widget::column(vec![
+                ]))),
+            ]))),
+            card(Widget::from(Column::new(vec![
                 text("Retained editing", 18., Color::WHITE),
                 EditableText::new(app_editor.clone())
                     .size(Size::new(620., 42.))
                     .placeholder("Text")
                     .into(),
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     action("Undo", {
                         let undo = app_undo.clone();
                         move || {
@@ -271,9 +271,9 @@ fn main() {
                         13.,
                         Color::WHITE,
                     ),
-                ]),
-            ])),
-            card(Widget::column(vec![
+                ]))),
+            ]))),
+            card(Widget::from(Column::new(vec![
                 text("Form validate / reset", 18., Color::WHITE),
                 EditableText::new(app_form_editor.clone())
                     .size(Size::new(620., 42.))
@@ -284,7 +284,7 @@ fn main() {
                     13.,
                     Color::WHITE,
                 ),
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     action("Validate", {
                         let form = app_form.clone();
                         move || {
@@ -297,9 +297,9 @@ fn main() {
                             form.reset();
                         }
                     }),
-                ]),
-            ])),
-            card(Widget::column(vec![
+                ]))),
+            ]))),
+            card(Widget::from(Column::new(vec![
                 text("Virtualized list (100,000 rows)", 18., Color::WHITE),
                 SizedBox::new()
                     .width(620.)
@@ -308,8 +308,8 @@ fn main() {
                         Text::new(format!("row {index:06}"))
                     }))
                     .into(),
-            ])),
-            card(Widget::row(vec![
+            ]))),
+            card(Widget::from(Row::new(Vec::<Widget>::from([
                 Image::new(app_image.clone()).width(96.).height(96.).into(),
                 text(
                     format!("IconData glyph: {}", icon.glyph_text().unwrap_or_default()),
@@ -363,8 +363,8 @@ fn main() {
                         revision.update(|value| *value = value.saturating_add(1));
                     }
                 }),
-            ])),
-            card(Widget::column(vec![
+            ])))),
+            card(Widget::from(Column::new(vec![
                 text("PageView and pinned header", 18., Color::WHITE),
                 CustomScrollView::new(vec![
                     Box::new(PinnedHeaderSliver::new(Text::new("Pinned header")))
@@ -383,8 +383,8 @@ fn main() {
                 RotationTransition::from_turns(0.25, Text::new("RotationTransition (compositor)"))
                     .alignment(Alignment::CENTER)
                     .into(),
-            ])),
-            card(Widget::column(vec![
+            ]))),
+            card(Widget::from(Column::new(vec![
                 text("Typed environment and locale", 18., Color::WHITE),
                 text(
                     format!(
@@ -397,7 +397,7 @@ fn main() {
                     Color::WHITE,
                 ),
                 localized.into(),
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     action("English", {
                         let locale = app_locale.clone();
                         move || {
@@ -410,20 +410,20 @@ fn main() {
                             locale.set("fr".parse().expect("locale"));
                         }
                     }),
-                ]),
-            ])),
+                ]))),
+            ]))),
             Opacity::new(
                 0.92,
                 text("Animated compositor property", 14., Color::WHITE),
             )
             .into(),
-        ]);
+        ])));
 
-        SafeArea::new(Widget::column(vec![
+        SafeArea::new(Widget::from(Column::new(Vec::<Widget>::from([
             text(format!("active route: {}", route.name), 13., Color::WHITE),
             route.presented_child(),
             home,
-        ]))
+        ]))))
         .into()
     })
     .expect("valid workbench application");

@@ -264,7 +264,9 @@ impl Card {
 impl From<Card> for Widget {
     fn from(value: Card) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -335,7 +337,9 @@ impl Default for Divider {
 impl From<Divider> for Widget {
     fn from(value: Divider) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -406,6 +410,8 @@ impl Default for VerticalDivider {
 impl From<VerticalDivider> for Widget {
     fn from(value: VerticalDivider) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }

@@ -23,7 +23,7 @@ fn panel(child: impl Into<Widget>) -> Widget {
 }
 
 fn tile(size: Size, color: Color) -> Widget {
-    DecoratedBox::new(Widget::fixed_box(size, Color::TRANSPARENT))
+    DecoratedBox::new(Widget::box_(size, Color::TRANSPARENT))
         .background(color)
         .radius(7.)
         .into()

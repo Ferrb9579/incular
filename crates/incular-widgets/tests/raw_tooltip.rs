@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 pub use incular_widgets::{
     CompositedTransformFollower, CompositedTransformTarget, FocusNode, FocusableActionDetector,
-    HitTestBehavior, Listener, MouseRegion, OverlayPortal, RawGestureDetector, RawPointerEvent,
-    Semantics, SizedBox, TapRegion, Text, Widget,
+    HitTestBehavior, IgnorePointer, Listener, MouseRegion, OverlayPortal, RawGestureDetector,
+    RawPointerEvent, Semantics, SizedBox, TapRegion, Text, Widget,
 };
 
 #[path = "../src/raw_tooltip.rs"]

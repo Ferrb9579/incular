@@ -1,7 +1,7 @@
 use super::super::super::*;
 
 pub(super) fn lower_effects(widget: &Widget) -> RenderKind {
-    match &widget.kind {
+    match widget.kind() {
         WidgetKind::Translate { controller, .. } => RenderKind::Translate {
             controller: controller.clone(),
         },

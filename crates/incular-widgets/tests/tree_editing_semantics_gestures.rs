@@ -25,7 +25,7 @@ fn selectable_text_drag_uses_cached_parley_layout_and_copies_across_widgets() {
     let area = tree
         .mount(Widget::selection_area(
             controller.clone(),
-            Widget::column(vec![
+            incular_widgets::Column::new(vec![
                 Widget::selectable_text_styled(
                     "Latin café",
                     TextStyle::default(),
@@ -36,7 +36,8 @@ fn selectable_text_drag_uses_cached_parley_layout_and_copies_across_widgets() {
                     TextStyle::default(),
                     TextAlign::Start,
                 ),
-            ]),
+            ])
+            .into(),
         ))
         .expect("mount selection area");
     tree.layout(Constraints::tight(Size::new(180., 80.)))
@@ -223,7 +224,7 @@ fn transparent_button_focus_is_an_outline_not_a_surface_fill() {
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(
-            ActionSurface::with_child(Widget::fixed_box(Size::new(96., 32.), Color::WHITE))
+            ActionSurface::with_child(Widget::box_(Size::new(96., 32.), Color::WHITE))
                 .color(Color::TRANSPARENT)
                 .focused_color(Color::rgba(85, 150, 255, 200))
                 .into(),
@@ -314,12 +315,13 @@ fn gesture_region_captures_a_hit_tested_pointer_sequence() {
     let observed = taps.clone();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::gesture(
-            GestureCallbacks {
-                on_tap: Some(Rc::new(move || observed.set(observed.get() + 1))),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(40., 40.), Color::WHITE),
+        .mount(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(40., 40.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_tap: Some(Rc::new(move || observed.set(observed.get() + 1))),
+                    ..GestureCallbacks::default()
+                },
+            ),
         ))
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -352,12 +354,13 @@ fn gesture_region_combines_identified_contacts_for_scale_updates() {
     let observed = scale.clone();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::gesture(
-            GestureCallbacks {
-                on_scale_update: Some(Rc::new(move |details| observed.set(details.scale))),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
+        .mount(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_scale_update: Some(Rc::new(move |details| observed.set(details.scale))),
+                    ..GestureCallbacks::default()
+                },
+            ),
         ))
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -401,28 +404,29 @@ fn retained_arena_allows_drag_to_defeat_nested_tap_before_callbacks() {
     let pans = Rc::new(Cell::new(0));
     let cancelled = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::gesture(
-        GestureCallbacks {
+    tree.mount(Widget::from(
+        GestureDetector::new(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_tap: Some({
+                        let taps = taps.clone();
+                        Rc::new(move || taps.set(taps.get() + 1))
+                    }),
+                    on_cancel: Some({
+                        let cancelled = cancelled.clone();
+                        Rc::new(move || cancelled.set(cancelled.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+            ),
+        ))
+        .callbacks(GestureCallbacks {
             on_pan_update: Some({
                 let pans = pans.clone();
                 Rc::new(move |_| pans.set(pans.get() + 1))
             }),
             ..GestureCallbacks::default()
-        },
-        Widget::gesture(
-            GestureCallbacks {
-                on_tap: Some({
-                    let taps = taps.clone();
-                    Rc::new(move || taps.set(taps.get() + 1))
-                }),
-                on_cancel: Some({
-                    let cancelled = cancelled.clone();
-                    Rc::new(move || cancelled.set(cancelled.get() + 1))
-                }),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
-        ),
+        }),
     ))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -453,24 +457,25 @@ fn retained_arena_arbitrates_horizontal_against_vertical_drag() {
     let horizontal = Rc::new(Cell::new(0));
     let vertical = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::gesture(
-        GestureCallbacks {
+    tree.mount(Widget::from(
+        GestureDetector::new(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_horizontal_drag_update: Some({
+                        let horizontal = horizontal.clone();
+                        Rc::new(move |_| horizontal.set(horizontal.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+            ),
+        ))
+        .callbacks(GestureCallbacks {
             on_vertical_drag_update: Some({
                 let vertical = vertical.clone();
                 Rc::new(move |_| vertical.set(vertical.get() + 1))
             }),
             ..GestureCallbacks::default()
-        },
-        Widget::gesture(
-            GestureCallbacks {
-                on_horizontal_drag_update: Some({
-                    let horizontal = horizontal.clone();
-                    Rc::new(move |_| horizontal.set(horizontal.get() + 1))
-                }),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
-        ),
+        }),
     ))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -498,28 +503,29 @@ fn retained_arena_cancels_long_press_when_drag_claims_stream() {
     let cancellations = Rc::new(Cell::new(0));
     let pans = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::gesture(
-        GestureCallbacks {
+    tree.mount(Widget::from(
+        GestureDetector::new(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_long_press: Some({
+                        let long_presses = long_presses.clone();
+                        Rc::new(move || long_presses.set(long_presses.get() + 1))
+                    }),
+                    on_cancel: Some({
+                        let cancellations = cancellations.clone();
+                        Rc::new(move || cancellations.set(cancellations.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+            ),
+        ))
+        .callbacks(GestureCallbacks {
             on_pan_update: Some({
                 let pans = pans.clone();
                 Rc::new(move |_| pans.set(pans.get() + 1))
             }),
             ..GestureCallbacks::default()
-        },
-        Widget::gesture(
-            GestureCallbacks {
-                on_long_press: Some({
-                    let long_presses = long_presses.clone();
-                    Rc::new(move || long_presses.set(long_presses.get() + 1))
-                }),
-                on_cancel: Some({
-                    let cancellations = cancellations.clone();
-                    Rc::new(move || cancellations.set(cancellations.get() + 1))
-                }),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
-        ),
+        }),
     ))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -553,24 +559,25 @@ fn retained_arena_allows_scale_to_defeat_pan_and_share_two_contacts() {
     let pans = Rc::new(Cell::new(0));
     let scales = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::gesture(
-        GestureCallbacks {
+    tree.mount(Widget::from(
+        GestureDetector::new(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_scale_update: Some({
+                        let scales = scales.clone();
+                        Rc::new(move |_| scales.set(scales.get() + 1))
+                    }),
+                    ..GestureCallbacks::default()
+                },
+            ),
+        ))
+        .callbacks(GestureCallbacks {
             on_pan_update: Some({
                 let pans = pans.clone();
                 Rc::new(move |_| pans.set(pans.get() + 1))
             }),
             ..GestureCallbacks::default()
-        },
-        Widget::gesture(
-            GestureCallbacks {
-                on_scale_update: Some({
-                    let scales = scales.clone();
-                    Rc::new(move |_| scales.set(scales.get() + 1))
-                }),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
-        ),
+        }),
     ))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -599,32 +606,35 @@ fn ignore_pointer_skips_its_subtree_and_reveals_a_stacked_target() {
     let behind = Rc::new(Cell::new(0));
     let ignored = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::stack(
-        Alignment::CENTER,
-        vec![
-            Widget::gesture(
-                GestureCallbacks {
-                    on_tap: Some({
-                        let behind = behind.clone();
-                        Rc::new(move || behind.set(behind.get() + 1))
-                    }),
-                    ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(100., 100.), Color::WHITE),
-            ),
-            IgnorePointer::new(Widget::gesture(
-                GestureCallbacks {
-                    on_tap: Some({
-                        let ignored = ignored.clone();
-                        Rc::new(move || ignored.set(ignored.get() + 1))
-                    }),
-                    ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(100., 100.), Color::BLACK),
-            ))
-            .into(),
-        ],
-    ))
+    tree.mount(
+        incular_widgets::Stack::aligned(
+            Alignment::CENTER,
+            vec![
+                Widget::from(
+                    GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE))
+                        .callbacks(GestureCallbacks {
+                            on_tap: Some({
+                                let behind = behind.clone();
+                                Rc::new(move || behind.set(behind.get() + 1))
+                            }),
+                            ..GestureCallbacks::default()
+                        }),
+                ),
+                IgnorePointer::new(Widget::from(
+                    GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::BLACK))
+                        .callbacks(GestureCallbacks {
+                            on_tap: Some({
+                                let ignored = ignored.clone();
+                                Rc::new(move || ignored.set(ignored.get() + 1))
+                            }),
+                            ..GestureCallbacks::default()
+                        }),
+                ))
+                .into(),
+            ],
+        )
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -649,32 +659,35 @@ fn absorb_pointer_blocks_descendant_and_stacked_gesture_targets() {
     let behind = Rc::new(Cell::new(0));
     let absorbed_child = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::stack(
-        Alignment::CENTER,
-        vec![
-            Widget::gesture(
-                GestureCallbacks {
-                    on_tap: Some({
-                        let behind = behind.clone();
-                        Rc::new(move || behind.set(behind.get() + 1))
-                    }),
-                    ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(100., 100.), Color::WHITE),
-            ),
-            AbsorbPointer::new(Widget::gesture(
-                GestureCallbacks {
-                    on_tap: Some({
-                        let absorbed_child = absorbed_child.clone();
-                        Rc::new(move || absorbed_child.set(absorbed_child.get() + 1))
-                    }),
-                    ..GestureCallbacks::default()
-                },
-                Widget::box_(Size::new(100., 100.), Color::BLACK),
-            ))
-            .into(),
-        ],
-    ))
+    tree.mount(
+        incular_widgets::Stack::aligned(
+            Alignment::CENTER,
+            vec![
+                Widget::from(
+                    GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE))
+                        .callbacks(GestureCallbacks {
+                            on_tap: Some({
+                                let behind = behind.clone();
+                                Rc::new(move || behind.set(behind.get() + 1))
+                            }),
+                            ..GestureCallbacks::default()
+                        }),
+                ),
+                AbsorbPointer::new(Widget::from(
+                    GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::BLACK))
+                        .callbacks(GestureCallbacks {
+                            on_tap: Some({
+                                let absorbed_child = absorbed_child.clone();
+                                Rc::new(move || absorbed_child.set(absorbed_child.get() + 1))
+                            }),
+                            ..GestureCallbacks::default()
+                        }),
+                ))
+                .into(),
+            ],
+        )
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -701,12 +714,13 @@ fn absorb_pointer_blocks_descendant_and_stacked_gesture_targets() {
 fn retained_pointer_capture_is_window_local_and_released_with_the_stream() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::gesture(
-            GestureCallbacks {
-                on_tap: Some(Rc::new(|| {})),
-                ..GestureCallbacks::default()
-            },
-            Widget::box_(Size::new(100., 100.), Color::WHITE),
+        .mount(Widget::from(
+            GestureDetector::new(Widget::box_(Size::new(100., 100.), Color::WHITE)).callbacks(
+                GestureCallbacks {
+                    on_tap: Some(Rc::new(|| {})),
+                    ..GestureCallbacks::default()
+                },
+            ),
         ))
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -748,39 +762,44 @@ fn typed_local_drag_drop_enters_updates_and_drops_through_the_arena() {
     let dropped = Rc::new(Cell::new(0));
     let ended = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::row(vec![
-        Draggable::new(
-            context.clone(),
-            String::from("card"),
-            Widget::box_(Size::new(100., 80.), Color::WHITE),
-        )
-        .feedback(|payload| Text::new(payload).into())
-        .on_end({
-            let ended = ended.clone();
-            move |_| ended.set(ended.get() + 1)
-        })
+    tree.mount(
+        incular_widgets::Row::new(vec![
+            Widget::from(
+                Draggable::new(
+                    context.clone(),
+                    String::from("card"),
+                    Widget::box_(Size::new(100., 80.), Color::WHITE),
+                )
+                .feedback(|payload| Text::new(payload).into())
+                .on_end({
+                    let ended = ended.clone();
+                    move |_| ended.set(ended.get() + 1)
+                }),
+            ),
+            Widget::from(
+                DragTarget::new(
+                    context.clone(),
+                    Widget::box_(Size::new(100., 80.), Color::BLACK),
+                )
+                .on_enter({
+                    let entered = entered.clone();
+                    move |_| entered.set(entered.get() + 1)
+                })
+                .on_update({
+                    let updates = updates.clone();
+                    move |_, _| updates.set(updates.get() + 1)
+                })
+                .on_drop({
+                    let dropped = dropped.clone();
+                    move |payload| {
+                        assert_eq!(payload, "card");
+                        dropped.set(dropped.get() + 1);
+                    }
+                }),
+            ),
+        ])
         .into(),
-        DragTarget::new(
-            context.clone(),
-            Widget::box_(Size::new(100., 80.), Color::BLACK),
-        )
-        .on_enter({
-            let entered = entered.clone();
-            move |_| entered.set(entered.get() + 1)
-        })
-        .on_update({
-            let updates = updates.clone();
-            move |_, _| updates.set(updates.get() + 1)
-        })
-        .on_drop({
-            let dropped = dropped.clone();
-            move |payload| {
-                assert_eq!(payload, "card");
-                dropped.set(dropped.get() + 1);
-            }
-        })
-        .into(),
-    ]))
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(200., 80.)))
         .expect("layout");
@@ -813,28 +832,33 @@ fn typed_local_drag_drop_leaves_and_cancels_without_drop() {
     let cancelled = Rc::new(Cell::new(0));
     let dropped = Rc::new(Cell::new(0));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::row(vec![
-        Draggable::new(
-            context.clone(),
-            7_u32,
-            Widget::box_(Size::new(100., 80.), Color::WHITE),
-        )
-        .on_cancel({
-            let cancelled = cancelled.clone();
-            move |_| cancelled.set(cancelled.get() + 1)
-        })
+    tree.mount(
+        incular_widgets::Row::new(vec![
+            Widget::from(
+                Draggable::new(
+                    context.clone(),
+                    7_u32,
+                    Widget::box_(Size::new(100., 80.), Color::WHITE),
+                )
+                .on_cancel({
+                    let cancelled = cancelled.clone();
+                    move |_| cancelled.set(cancelled.get() + 1)
+                }),
+            ),
+            Widget::from(
+                DragTarget::new(context, Widget::box_(Size::new(100., 80.), Color::BLACK))
+                    .on_leave({
+                        let left = left.clone();
+                        move |_| left.set(left.get() + 1)
+                    })
+                    .on_drop({
+                        let dropped = dropped.clone();
+                        move |_| dropped.set(dropped.get() + 1)
+                    }),
+            ),
+        ])
         .into(),
-        DragTarget::new(context, Widget::box_(Size::new(100., 80.), Color::BLACK))
-            .on_leave({
-                let left = left.clone();
-                move |_| left.set(left.get() + 1)
-            })
-            .on_drop({
-                let dropped = dropped.clone();
-                move |_| dropped.set(dropped.get() + 1)
-            })
-            .into(),
-    ]))
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(200., 80.)))
         .expect("layout");
@@ -907,10 +931,10 @@ fn explicit_merge_exclude_and_block_semantics_transform_the_retained_tree() {
     let decorative: Widget = Text::new("sparkle").into();
     let decorative = decorative.exclude_semantics();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::stack(
-        Alignment::CENTER,
-        vec![background, decorative, dialog],
-    ))
+    tree.mount(
+        incular_widgets::Stack::aligned(Alignment::CENTER, vec![background, decorative, dialog])
+            .into(),
+    )
     .expect("mount modal semantics");
     tree.layout(Constraints::tight(Size::new(160., 100.)))
         .expect("layout");
@@ -926,10 +950,13 @@ fn explicit_merge_exclude_and_block_semantics_transform_the_retained_tree() {
 fn meaningful_images_are_semantic_but_unlabelled_images_are_decorative() {
     let image = ImageHandle::from_rgba8(1, 1, vec![255, 255, 255, 255]).unwrap();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::row(vec![
-        Image::new(image.clone()).into(),
-        Widget::from(Image::new(image)).accessibility_label("Incular logo"),
-    ]))
+    tree.mount(
+        incular_widgets::Row::new(vec![
+            Image::new(image.clone()).into(),
+            Widget::from(Image::new(image)).accessibility_label("Incular logo"),
+        ])
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(80., 40.)))
         .expect("layout");

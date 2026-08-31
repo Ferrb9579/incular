@@ -2,13 +2,13 @@
 
 //! Public DevTools observation and editing behavior tests.
 
-use incular_config::{Constraints, FlexFit};
+use incular_config::{Constraints, CrossAxisAlignment, FlexFit, MainAxisSize};
 use incular_core::{Color, Offset, Size};
 use incular_devtools_protocol::{
     DebugValue, DevWidgetId, DevWindowId, InvalidationReason, LayoutDetails, TracePhase,
 };
 use incular_widgets::{
-    Widget,
+    Flexible, Widget,
     internal::{ActionSurface, InvalidationCause, WidgetTree},
 };
 use std::time::{Duration, Instant};
@@ -21,10 +21,13 @@ fn dev_id(tree: &WidgetTree, id: incular_widgets::internal::ElementId) -> DevWid
 fn snapshots_keep_arena_ids_stable_between_polls() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::column(vec![
-            Widget::text("first"),
-            Widget::text("second"),
-        ]))
+        .mount(
+            incular_widgets::Column::new([
+                incular_widgets::Text::new("first"),
+                incular_widgets::Text::new("second"),
+            ])
+            .into(),
+        )
         .expect("mount");
     let (first, _) = tree.devtools_snapshot(root, false);
     let (second, _) = tree.devtools_snapshot(root, false);
@@ -42,10 +45,10 @@ fn snapshots_keep_arena_ids_stable_between_polls() {
 fn editable_opacity_override_is_typed_and_visible_in_details() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::opacity(
-            0.75,
-            Widget::box_(Size::new(10., 10.), Color::WHITE),
-        ))
+        .mount(
+            incular_widgets::Opacity::new(0.75, Widget::box_(Size::new(10., 10.), Color::WHITE))
+                .into(),
+        )
         .expect("mount");
     tree.layout(Constraints::tight(Size::new(10., 10.)))
         .expect("layout");
@@ -70,10 +73,13 @@ fn editable_opacity_override_is_typed_and_visible_in_details() {
 #[test]
 fn compatible_updates_report_curated_property_changes_through_details() {
     let mut tree = WidgetTree::new();
-    let root = tree.mount(Widget::text("Count: 7")).expect("mount");
+    let root = tree
+        .mount(incular_widgets::Text::new("Count: 7").into())
+        .expect("mount");
     tree.layout(Constraints::tight(Size::new(100., 30.)))
         .expect("layout");
-    tree.update(root, Widget::text("Count: 8")).expect("update");
+    tree.update(root, incular_widgets::Text::new("Count: 8").into())
+        .expect("update");
     let details = tree
         .devtools_node_details(root, dev_id(&tree, root), DevWindowId::new(1, 0))
         .expect("details");
@@ -94,14 +100,18 @@ fn compatible_updates_report_curated_property_changes_through_details() {
 fn flex_inspection_uses_retained_child_constraints_and_offsets() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::row(vec![
-            Widget::box_(Size::new(20., 10.), Color::WHITE),
-            Widget::flexible(
-                1,
-                FlexFit::Tight,
-                Widget::box_(Size::new(4., 10.), Color::WHITE),
-            ),
-        ]))
+        .mount(
+            incular_widgets::Row::new(vec![
+                Widget::box_(Size::new(20., 10.), Color::WHITE),
+                Flexible::new(Widget::box_(Size::new(4., 10.), Color::WHITE))
+                    .flex(1)
+                    .fit(FlexFit::Tight)
+                    .into(),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .into(),
+        )
         .expect("mount");
     tree.layout(Constraints::tight(Size::new(100., 30.)))
         .expect("layout");
@@ -129,11 +139,14 @@ fn flex_inspection_uses_retained_child_constraints_and_offsets() {
 fn whole_tree_overlay_snapshot_has_a_hard_bound() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::column(
-            (0..32)
-                .map(|_| Widget::box_(Size::new(1., 1.), Color::WHITE))
-                .collect::<Vec<_>>(),
-        ))
+        .mount(
+            incular_widgets::Column::new(
+                (0..32)
+                    .map(|_| Widget::box_(Size::new(1., 1.), Color::WHITE))
+                    .collect::<Vec<_>>(),
+            )
+            .into(),
+        )
         .expect("mount");
     tree.layout(Constraints::tight(Size::new(10., 40.)))
         .expect("layout");
@@ -144,7 +157,9 @@ fn whole_tree_overlay_snapshot_has_a_hard_bound() {
 #[test]
 fn coalesced_invalidation_snapshot_keeps_multiple_real_causes_bounded() {
     let mut tree = WidgetTree::new();
-    let root = tree.mount(Widget::text("cause")).expect("mount");
+    let root = tree
+        .mount(incular_widgets::Text::new("cause").into())
+        .expect("mount");
     for _ in 0..10 {
         tree.note_invalidation(root, InvalidationCause::Manual);
     }
@@ -186,7 +201,9 @@ fn animation_time_scale_changes_only_retained_animation_progression() {
 #[test]
 fn phase_snapshot_uses_existing_work_counters_and_respects_limit() {
     let mut tree = WidgetTree::new();
-    let root = tree.mount(Widget::text("phase")).expect("mount");
+    let root = tree
+        .mount(incular_widgets::Text::new("phase").into())
+        .expect("mount");
     tree.layout(Constraints::tight(Size::new(50., 20.)))
         .expect("layout");
     let _ = tree.paint();
@@ -200,10 +217,9 @@ fn phase_snapshot_uses_existing_work_counters_and_respects_limit() {
 #[test]
 fn deep_trace_is_opt_in_and_layout_events_preserve_parentage() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::column(vec![Widget::box_(
-        Size::new(10., 10.),
-        Color::WHITE,
-    )]))
+    tree.mount(
+        incular_widgets::Column::new(vec![Widget::box_(Size::new(10., 10.), Color::WHITE)]).into(),
+    )
     .expect("mount");
     tree.layout(Constraints::tight(Size::new(20., 20.)))
         .expect("layout");
@@ -231,11 +247,14 @@ fn deep_trace_is_opt_in_and_layout_events_preserve_parentage() {
 #[test]
 fn deep_trace_event_buffer_reports_truncation_inputs() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::column(
-        (0..8)
-            .map(|_| Widget::box_(Size::new(1., 1.), Color::WHITE))
-            .collect::<Vec<_>>(),
-    ))
+    tree.mount(
+        incular_widgets::Column::new(
+            (0..8)
+                .map(|_| Widget::box_(Size::new(1., 1.), Color::WHITE))
+                .collect::<Vec<_>>(),
+        )
+        .into(),
+    )
     .expect("mount");
     tree.begin_deep_trace(2);
     tree.layout(Constraints::tight(Size::new(10., 20.)))
@@ -248,10 +267,11 @@ fn deep_trace_event_buffer_reports_truncation_inputs() {
 #[test]
 fn auxiliary_overlays_read_retained_subsystems_and_stay_bounded() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        incular_widgets::internal::ScrollController::new(),
-        ActionSurface::new("Still active").into(),
-    ))
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(ActionSurface::new("Still active"))
+            .controller(incular_widgets::internal::ScrollController::new())
+            .into(),
+    )
     .expect("mount");
     tree.layout(Constraints::tight(Size::new(40., 30.)))
         .expect("layout");

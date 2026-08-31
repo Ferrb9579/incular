@@ -70,22 +70,22 @@ fn dashboard() -> Widget {
         .merge_semantics()
         .block_semantics();
 
-    let modal_demo = Widget::stack(
+    let modal_demo = Widget::from(Stack::aligned(
         Alignment::CENTER,
-        vec![
+        Vec::<Widget>::from([
             Widget::box_(Size::new(460., 160.), Color::rgba(10, 15, 25, 255)),
             modal_banner,
-        ],
-    );
+        ]),
+    ));
 
-    Widget::column(vec![
+    Widget::from(Column::new(Vec::<Widget>::from([
         title
             .semantics(ExplicitSemantics::new(SemanticRole::Heading).label("Accessibility gallery"))
             .accessibility_description("Live retained semantics and AccessKit projection example"),
         Text::new("Every native accessibility update starts from this Incular tree.")
             .color(Color::rgba(215, 225, 245, 255))
             .into(),
-        Widget::row(vec![
+        Widget::from(Row::new(Vec::<Widget>::from([
             meaningful_logo,
             decorative.exclude_semantics(),
             Widget::box_(Size::new(180., 44.), Color::rgba(48, 187, 147, 255)).semantics(
@@ -99,7 +99,7 @@ fn dashboard() -> Widget {
                     .label("Experimental uploads")
                     .state(state(Some(false), false)),
             ),
-        ]),
+        ]))),
         Widget::from(TextField::new(name).placeholder("Your display name"))
             .accessibility_label("Display name")
             .accessibility_description("Editable single-line name"),
@@ -113,7 +113,7 @@ fn dashboard() -> Widget {
         .accessibility_description("Editable multi-line text"),
         list,
         modal_demo,
-        Widget::row(vec![
+        Widget::from(Row::new(Vec::<Widget>::from([
             RawMaterialButton::new("Save")
                 .on_press(|| println!("save activated"))
                 .into(),
@@ -121,8 +121,8 @@ fn dashboard() -> Widget {
                 .color(Color::rgba(112, 76, 156, 255))
                 .on_press(|| println!("dismiss activated"))
                 .into(),
-        ]),
-    ])
+        ]))),
+    ])))
 }
 
 #[path = "../tests/support/mod.rs"]

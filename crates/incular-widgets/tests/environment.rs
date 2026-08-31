@@ -23,7 +23,7 @@ fn localizations_use_icu_fallback_and_direction() {
     let localizations = Localizations::new(
         "en-GB".parse().expect("valid locale"),
         Catalog,
-        Widget::column(Vec::<Widget>::new()),
+        incular_widgets::Column::new(Vec::<Widget>::new()),
     );
     assert_eq!(localizations.text("greeting").as_deref(), Some("Hello"));
     assert_eq!(localizations.text_direction(), TextDirection::Ltr);
@@ -45,7 +45,7 @@ fn media_query_data_is_the_normalized_runtime_environment() {
         brightness: incular_config::Brightness::Dark,
         ..RuntimeEnvironment::default()
     };
-    let query = MediaQuery::new(data, Widget::column(Vec::<Widget>::new()));
+    let query = MediaQuery::new(data, incular_widgets::Column::new(Vec::<Widget>::new()));
     assert_eq!(query.data().viewport, incular_core::Size::new(640., 480.));
     assert_eq!(query.data().scale_factor, 1.);
     assert_eq!(query.data().brightness, incular_config::Brightness::Dark);
@@ -53,7 +53,7 @@ fn media_query_data_is_the_normalized_runtime_environment() {
 
 #[test]
 fn media_query_resize_updates_consumers() {
-    let child = Widget::column(Vec::<Widget>::new());
+    let child: Widget = incular_widgets::Column::new(Vec::<Widget>::new()).into();
     let first = MediaQuery::new(
         RuntimeEnvironment {
             viewport: incular_core::Size::new(320., 240.),
@@ -73,7 +73,7 @@ fn media_query_resize_updates_consumers() {
 
 #[test]
 fn media_query_brightness_update() {
-    let child = Widget::column(Vec::<Widget>::new());
+    let child: Widget = incular_widgets::Column::new(Vec::<Widget>::new()).into();
     let light = MediaQuery::new(RuntimeEnvironment::default(), child.clone());
     let dark = MediaQuery::new(
         RuntimeEnvironment {
@@ -90,7 +90,7 @@ fn locale_change_rebuilds_only_consumers() {
     let localizations = Localizations::new(
         "en".parse().expect("valid locale"),
         Catalog,
-        Widget::column(Vec::<Widget>::new()),
+        incular_widgets::Column::new(Vec::<Widget>::new()),
     );
     let changed = localizations
         .clone()

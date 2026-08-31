@@ -3,7 +3,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use incular_config::RuntimeEnvironment;
 use incular_core::{Color, Rect, RestorationBackend, RestorationKey, RestorationScope, Size};
 use incular_widgets::{
-    CheckedModeBanner, Directionality, ErrorWidget, Localizations, MediaQuery, SizedBox, Widget,
+    CheckedModeBanner, Directionality, ErrorWidget, Localizations, MediaQuery, SizedBox,
+    Visibility, Widget,
 };
 
 #[path = "../src/app_shell/app.rs"]

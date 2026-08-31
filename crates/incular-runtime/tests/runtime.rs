@@ -84,10 +84,10 @@ fn key_down(code: Code) -> KeyboardEvent {
 #[test]
 fn runtime_frame_propagates_layout_builder_configuration_error() {
     let invalid = || {
-        Widget::column(vec![
+        Widget::from(incular_widgets::Column::new(vec![
             Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(11_u64),
             Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(11_u64),
-        ])
+        ]))
     };
     let mut runtime = Runtime::new(LayoutBuilder::new(move |_, _| invalid()).into())
         .expect("layout builder root mounts before generated output exists");
@@ -243,29 +243,25 @@ fn semantic_actions_share_logical_button_and_editing_state() {
     };
     let hits = Rc::new(Cell::new(0));
     let controller = TextEditingController::with_text("Ada");
-    let mut runtime = Runtime::new(Widget::column(vec![
-        ActionSurface::new("Increment")
-            .on_press({
-                let hits = hits.clone();
-                move || hits.set(hits.get() + 1)
-            })
-            .into(),
-        EditableText::new(controller.clone()).into(),
-    ]))
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Column::new(vec![
+        Widget::from(ActionSurface::new("Increment").on_press({
+            let hits = hits.clone();
+            move || hits.set(hits.get() + 1)
+        })),
+        Widget::from(EditableText::new(controller.clone())),
+    ])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     runtime
         .schedule_update(
             root,
-            Widget::column(vec![
-                ActionSurface::new("Increment")
-                    .on_press({
-                        let hits = hits.clone();
-                        move || hits.set(hits.get() + 1)
-                    })
-                    .into(),
-                EditableText::new(controller.clone()).into(),
-            ]),
+            Widget::from(incular_widgets::Column::new(vec![
+                Widget::from(ActionSurface::new("Increment").on_press({
+                    let hits = hits.clone();
+                    move || hits.set(hits.get() + 1)
+                })),
+                Widget::from(EditableText::new(controller.clone())),
+            ])),
         )
         .unwrap();
     runtime
@@ -445,7 +441,7 @@ fn semantic_scroll_uses_existing_controller() {
     let controller = incular_widgets::ScrollController::new();
     let mut runtime = Runtime::new(incular_widgets::internal::ScrollView::vertical(
         controller.clone(),
-        Widget::fixed_box(Size::new(100., 2000.), Color::WHITE),
+        Widget::box_(Size::new(100., 2000.), Color::WHITE),
     ))
     .unwrap();
     runtime
@@ -501,10 +497,10 @@ fn picture_origins(list: &DisplayList) -> (Offset, Offset) {
 }
 #[test]
 fn signals_schedule_only_subscribed_element_once() {
-    let mut runtime = Runtime::new(Widget::row(vec![
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![
         Widget::box_(Size::new(1., 1.), Color::WHITE),
         Widget::box_(Size::new(2., 2.), Color::WHITE),
-    ]))
+    ])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let children = runtime.tree().children(root).unwrap().to_vec();
@@ -554,7 +550,7 @@ fn memo_tracks_sources_without_a_build_context_and_rebuilds_its_consumers() {
         let builds = builds.clone();
         move |_| {
             builds.set(builds.get() + 1);
-            Widget::text(memo.with(ToString::to_string))
+            Widget::from(incular_widgets::Text::new(memo.with(ToString::to_string)))
         }
     })
     .unwrap()
@@ -591,7 +587,7 @@ fn memo_filters_unchanged_results_before_invalidating_widgets() {
         let builds = builds.clone();
         move |_| {
             builds.set(builds.get() + 1);
-            Widget::text(memo.get().to_string())
+            Widget::from(incular_widgets::Text::new(memo.get().to_string()))
         }
     })
     .unwrap()
@@ -630,7 +626,7 @@ fn shared_memo_tracks_each_window_without_losing_a_root_subscription() {
         let builds_a = builds_a.clone();
         move |_| {
             builds_a.set(builds_a.get() + 1);
-            Widget::text(memo.get().to_string())
+            Widget::from(incular_widgets::Text::new(memo.get().to_string()))
         }
     })
     .unwrap();
@@ -641,7 +637,7 @@ fn shared_memo_tracks_each_window_without_losing_a_root_subscription() {
             let builds_b = builds_b.clone();
             move |_| {
                 builds_b.set(builds_b.get() + 1);
-                Widget::text(memo.get().to_string())
+                Widget::from(incular_widgets::Text::new(memo.get().to_string()))
             }
         })
         .unwrap()
@@ -691,7 +687,7 @@ fn memo_replaces_dynamic_branch_dependencies_after_a_switch() {
         let builds = builds.clone();
         move |_| {
             builds.set(builds.get() + 1);
-            Widget::text(memo.get().to_string())
+            Widget::from(incular_widgets::Text::new(memo.get().to_string()))
         }
     })
     .unwrap()
@@ -737,7 +733,7 @@ fn mounted_effect_runs_once_then_retracks_signal_dependencies() {
         move |_| {
             assert!(effect.mount());
             let _ = trigger.get();
-            Widget::text("effect")
+            Widget::from(incular_widgets::Text::new("effect"))
         }
     })
     .unwrap()
@@ -769,7 +765,7 @@ fn action_is_lazy_tracks_state_and_ignores_stale_completions() {
         );
     let mut runtime = Application::new({
         let action = action.clone();
-        move |_| Widget::text(format!("{:?}", action.state()))
+        move |_| Widget::from(incular_widgets::Text::new(format!("{:?}", action.state())))
     })
     .unwrap()
     .into_runtime();
@@ -790,10 +786,10 @@ fn action_is_lazy_tracks_state_and_ignores_stale_completions() {
 #[cfg(feature = "devtools")]
 #[test]
 fn named_signal_write_reaches_dependent_rebuild_cause() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
@@ -833,10 +829,10 @@ fn named_signal_write_reaches_dependent_rebuild_cause() {
 #[cfg(feature = "devtools")]
 #[test]
 fn tracked_task_completion_is_coalesced_with_its_signal_cause() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
@@ -905,10 +901,10 @@ fn tokio_sleep_completion_wakes_the_ui_bridge() {
 }
 #[test]
 fn async_signal_completion_invalidates_only_its_dependent_build() {
-    let mut runtime = Runtime::new(Widget::row(vec![
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![
         Widget::box_(Size::new(1., 1.), Color::WHITE),
         Widget::box_(Size::new(1., 1.), Color::WHITE),
-    ]))
+    ])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[1];
@@ -961,10 +957,10 @@ fn cancelled_scope_never_runs_its_ready_task() {
 }
 #[test]
 fn cancelled_scoped_completion_is_discarded_after_unmount() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let child = runtime.tree().children(root).unwrap()[0];
@@ -985,7 +981,10 @@ fn cancelled_scoped_completion_is_discarded_after_unmount() {
     // it was associated with has been removed.
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     assert!(!runtime.tree().element_exists(child));
     scope.cancel();
@@ -995,10 +994,10 @@ fn cancelled_scoped_completion_is_discarded_after_unmount() {
 }
 #[test]
 fn application_task_survives_an_unrelated_component_unmount() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let wake = Arc::new(TestWake::default());
@@ -1011,17 +1010,20 @@ fn application_task_survives_an_unrelated_component_unmount() {
     wait_for_wake(&wake);
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     runtime.process_runtime_work();
     assert!(hit.load(Ordering::Acquire));
 }
 #[test]
 fn blocking_result_after_owner_unmount_is_discarded() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let wake = Arc::new(TestWake::default());
@@ -1039,7 +1041,10 @@ fn blocking_result_after_owner_unmount_is_discarded() {
     wait_for_wake(&wake);
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     scope.cancel();
     runtime.process_runtime_work();
@@ -1391,12 +1396,15 @@ fn button_hover_callbacks_fire_once_on_enter_and_exit() {
 #[test]
 fn wheel_updates_only_retained_scroll_transform() {
     let controller = incular_widgets::ScrollController::new();
-    let child = Widget::column(
+    let child = Widget::from(incular_widgets::Column::new(
         (0..8)
             .map(|_| Widget::box_(Size::new(80., 40.), Color::WHITE))
             .collect::<Vec<_>>(),
-    );
-    let mut runtime = Runtime::new(Widget::scroll_view(controller.clone(), child)).unwrap();
+    ));
+    let mut runtime = Runtime::new(Widget::from(
+        incular_widgets::SingleChildScrollView::new(child).controller(controller.clone()),
+    ))
+    .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
     let (_, initial) = runtime.run_frame(constraints).unwrap();
     assert!(
@@ -1451,11 +1459,18 @@ fn translated_button_hit_tests_at_its_visible_position_without_repaint() {
 #[test]
 fn scrolled_button_hits_at_visible_not_old_location() {
     let controller = incular_widgets::ScrollController::new();
-    let content = Widget::column(vec![
-        Widget::box_(Size::new(80., 160.), Color::WHITE),
-        incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(12)),
-    ]);
-    let mut runtime = Runtime::new(Widget::scroll_view(controller.clone(), content)).unwrap();
+    let content = Widget::from(
+        incular_widgets::Column::new(vec![
+            Widget::box_(Size::new(80., 160.), Color::WHITE),
+            incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(12)),
+        ])
+        .main_axis_size(incular_config::MainAxisSize::Min)
+        .cross_axis_alignment(incular_config::CrossAxisAlignment::Start),
+    );
+    let mut runtime = Runtime::new(Widget::from(
+        incular_widgets::SingleChildScrollView::new(content).controller(controller.clone()),
+    ))
+    .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
     let _ = runtime.run_frame(constraints).unwrap();
     assert!(controller.jump_to(80.));
@@ -1485,7 +1500,7 @@ fn animation_ticks_request_frames_without_rebuild_or_paint() {
     let controller = incular_widgets::internal::TranslationController::new();
     let mut runtime = Runtime::new(Widget::translate(
         controller.clone(),
-        Widget::text("warm text"),
+        Widget::from(incular_widgets::Text::new("warm text")),
     ))
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
@@ -1505,7 +1520,7 @@ fn animation_ticks_request_frames_without_rebuild_or_paint() {
 #[test]
 fn retained_card_text_and_background_move_together_without_repaint() {
     let controller = incular_widgets::internal::TranslationController::new();
-    let mut runtime = Runtime::new(Widget::padding(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Padding::new(
         incular_config::EdgeInsets {
             left: 20.,
             top: 10.,
@@ -1514,12 +1529,12 @@ fn retained_card_text_and_background_move_together_without_repaint() {
         },
         Widget::translate(
             controller.clone(),
-            Widget::column(vec![
+            Widget::from(incular_widgets::Column::new(vec![
                 Widget::box_(Size::new(80., 20.), Color::WHITE),
-                Widget::text("cached card text"),
-            ]),
+                Widget::from(incular_widgets::Text::new("cached card text")),
+            ])),
         ),
-    ))
+    )))
     .unwrap();
     let constraints = Constraints::tight(Size::new(200., 100.));
     let (before, _) = runtime.run_frame(constraints).unwrap();
@@ -1538,10 +1553,10 @@ fn retained_card_text_and_background_move_together_without_repaint() {
 }
 #[test]
 fn unmount_removes_signal_subscription() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(2., 2.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let child = runtime.tree().children(root).unwrap()[0];
@@ -1553,7 +1568,10 @@ fn unmount_removes_signal_subscription() {
         })
         .unwrap();
     runtime
-        .schedule_update(root, Widget::row(Vec::new()))
+        .schedule_update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     runtime
         .run_frame(Constraints::tight(Size::new(20., 20.)))
@@ -1634,7 +1652,7 @@ fn sliver_list_keeps_small_scrolls_compositor_only_and_direct_jumps_bounded() {
         controller.clone(),
         move |index| {
             observed.set(observed.get() + 1);
-            Widget::text(format!("Item {index}"))
+            Widget::from(incular_widgets::Text::new(format!("Item {index}")))
         },
     ))
     .unwrap();
@@ -1790,14 +1808,14 @@ fn focus_routes_text_shortcuts_and_ime_without_rebuilding_tree() {
     use incular_widgets::{EditableText, internal::TextEditingController};
     let first = TextEditingController::new();
     let second = TextEditingController::new();
-    let mut runtime = Runtime::new(Widget::column(vec![
-        EditableText::new(first.clone())
-            .size(Size::new(120., 40.))
-            .into(),
-        EditableText::new(second.clone())
-            .size(Size::new(120., 40.))
-            .into(),
-    ]))
+    let mut runtime = Runtime::new(Widget::from(
+        incular_widgets::Column::new(vec![
+            Widget::from(EditableText::new(first.clone()).size(Size::new(120., 40.))),
+            Widget::from(EditableText::new(second.clone()).size(Size::new(120., 40.))),
+        ])
+        .main_axis_size(incular_config::MainAxisSize::Min)
+        .cross_axis_alignment(incular_config::CrossAxisAlignment::Start),
+    ))
     .unwrap();
     let constraints = Constraints::tight(Size::new(160., 100.));
     runtime.run_frame(constraints).unwrap();
@@ -1875,7 +1893,7 @@ fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
     let controller = SelectionAreaController::new();
     let mut runtime = Runtime::new(Widget::selection_area(
         controller.clone(),
-        Widget::column(vec![
+        Widget::from(incular_widgets::Column::new(vec![
             Widget::selectable_text_styled(
                 "first",
                 incular_text::TextStyle::default(),
@@ -1886,7 +1904,7 @@ fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
                 incular_text::TextStyle::default(),
                 incular_text::TextAlign::Start,
             ),
-        ]),
+        ])),
     ))
     .unwrap();
     let constraints = Constraints::tight(Size::new(180., 80.));
@@ -1946,15 +1964,16 @@ fn multiline_enter_replaces_selection_while_single_line_submits() {
     let multi = TextEditingController::with_text("ab cdef");
     let submitted = Rc::new(RefCell::new(0));
     let observed = submitted.clone();
-    let mut runtime = Runtime::new(Widget::column(vec![
-        EditableText::new(single.clone())
-            .on_submit(move |_| *observed.borrow_mut() += 1)
-            .into(),
-        EditableText::new(multi.clone())
-            .multiline(true)
-            .height(100.)
-            .into(),
-    ]))
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Column::new(vec![
+        Widget::from(
+            EditableText::new(single.clone()).on_submit(move |_| *observed.borrow_mut() += 1),
+        ),
+        Widget::from(
+            EditableText::new(multi.clone())
+                .multiline(true)
+                .height(100.),
+        ),
+    ])))
     .unwrap();
     runtime
         .run_frame(Constraints::tight(Size::new(300., 200.)))
@@ -2178,9 +2197,13 @@ fn devtools_overlays_and_deep_trace_are_routed_to_one_window() {
 #[cfg(feature = "devtools")]
 #[test]
 fn devtools_property_edit_routes_to_the_live_window_and_requests_a_frame() {
-    let mut application =
-        Application::new(|_| Widget::opacity(0.8, Widget::box_(Size::new(20., 20.), Color::WHITE)))
-            .unwrap();
+    let mut application = Application::new(|_| {
+        Widget::from(incular_widgets::Opacity::new(
+            0.8,
+            Widget::box_(Size::new(20., 20.), Color::WHITE),
+        ))
+    })
+    .unwrap();
     let window = application.primary_window();
     application
         .run_window_frame_at(
@@ -2385,12 +2408,12 @@ fn close_cancels_only_its_window_scope_and_rejects_stale_handle_commands() {
     let saved_scope = Rc::new(RefCell::new(None));
     let capture = saved_scope.clone();
     let mut application =
-        Application::new(|_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE)).unwrap();
+        Application::new(|_| Widget::box_(Size::new(1., 1.), Color::WHITE)).unwrap();
     let application_task = application.spawn(async { 7_u32 });
     let stale = application
         .open_window_with(test_window_options("Old", 100., 100.), move |cx| {
             *capture.borrow_mut() = Some(cx.task_scope());
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE)
+            Widget::box_(Size::new(1., 1.), Color::WHITE)
         })
         .unwrap();
     let stale_id = stale.id();
@@ -2400,7 +2423,7 @@ fn close_cancels_only_its_window_scope_and_rejects_stale_handle_commands() {
     let replacement = application
         .open_window(
             test_window_options("Replacement", 100., 100.),
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert_eq!(replacement.id().index(), stale_id.index());
@@ -2420,12 +2443,12 @@ fn close_cancels_only_its_window_scope_and_rejects_stale_handle_commands() {
 #[test]
 fn closing_one_window_and_stress_open_close_leave_other_roots_alive() {
     let mut application =
-        Application::new(|_| Widget::fixed_box(Size::new(2., 2.), Color::WHITE)).unwrap();
+        Application::new(|_| Widget::box_(Size::new(2., 2.), Color::WHITE)).unwrap();
     let primary = application.primary_window();
     let other = application
         .open_window(
             test_window_options("Other", 100., 100.),
-            Widget::fixed_box(Size::new(2., 2.), Color::WHITE),
+            Widget::box_(Size::new(2., 2.), Color::WHITE),
         )
         .unwrap()
         .id();
@@ -2435,7 +2458,7 @@ fn closing_one_window_and_stress_open_close_leave_other_roots_alive() {
         let handle = application
             .open_window(
                 test_window_options(&format!("Transient {index}"), 80., 60.),
-                Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+                Widget::box_(Size::new(1., 1.), Color::WHITE),
             )
             .unwrap();
         assert!(application.close_window(handle.id()));
@@ -2447,12 +2470,12 @@ fn closing_one_window_and_stress_open_close_leave_other_roots_alive() {
 #[test]
 fn final_window_policy_and_simultaneous_virtual_roots_are_explicit() {
     let mut application =
-        Application::new(|_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE)).unwrap();
+        Application::new(|_| Widget::box_(Size::new(1., 1.), Color::WHITE)).unwrap();
     for index in 0..31 {
         application
             .open_window(
                 test_window_options(&format!("Window {index}"), 80., 60.),
-                Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+                Widget::box_(Size::new(1., 1.), Color::WHITE),
             )
             .unwrap();
     }
@@ -2464,14 +2487,14 @@ fn final_window_policy_and_simultaneous_virtual_roots_are_explicit() {
     assert!(!application.should_exit());
 
     let mut default_policy =
-        Application::new(|_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE)).unwrap();
+        Application::new(|_| Widget::box_(Size::new(1., 1.), Color::WHITE)).unwrap();
     default_policy
         .open_window(
             WindowOptions {
                 visible: false,
                 ..test_window_options("Hidden helper", 80., 60.)
             },
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert!(default_policy.close_window(default_policy.primary_window()));
@@ -2523,7 +2546,7 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
         "main",
         test_window_options("Main", 320., 200.),
         config,
-        |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
     )
     .unwrap();
     let inspector = first
@@ -2531,7 +2554,7 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
             WindowRestorationId::new("inspector").unwrap(),
             "inspector",
             test_window_options("Inspector", 480., 260.),
-            |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert_eq!(first.active_window_ids().len(), 2);
@@ -2544,14 +2567,14 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
         "main",
         test_window_options("Main default", 100., 100.),
         config,
-        |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
     )
     .unwrap();
     second
         .register_restorable_window_factory(
             "inspector",
             test_window_options("Inspector default", 100., 100.),
-            |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert_eq!(second.restore_restorable_windows().unwrap(), 1);

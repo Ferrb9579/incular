@@ -42,8 +42,8 @@ use incular_text::RichText;
 
 use crate::{
     CompositedTransformFollower, CompositedTransformTarget, FocusNode, FocusableActionDetector,
-    HitTestBehavior, Listener, MouseRegion, OverlayPortal, RawGestureDetector, Semantics,
-    TapRegion, Text, Widget,
+    HitTestBehavior, IgnorePointer, Listener, MouseRegion, OverlayPortal, RawGestureDetector,
+    Semantics, TapRegion, Text, Widget,
 };
 
 thread_local! {
@@ -1367,7 +1367,9 @@ impl RawTooltip {
                 let _ = popup_exit_controller.mouse_exit_at(event.device, event.time);
             })
             .into();
-        popup = Widget::ignore_pointer(self.ignore_pointer, popup);
+        popup = IgnorePointer::new(popup)
+            .ignoring(self.ignore_pointer)
+            .into();
 
         let target_anchor = self.target_anchor.unwrap_or(if self.prefer_below {
             Alignment::BOTTOM_CENTER

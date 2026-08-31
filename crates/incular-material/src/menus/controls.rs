@@ -165,7 +165,7 @@ impl MenuBar {
 impl From<MenuBar> for Widget {
     fn from(value: MenuBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = current_control_theme(context);
             let children = if let Some(style) = value.item_style.clone() {
                 value
@@ -211,7 +211,7 @@ impl From<MenuBar> for Widget {
                     ..SemanticState::default()
                 }),
             )
-        })
+        }))
     }
 }
 
@@ -446,7 +446,9 @@ impl MenuItemButton {
 impl From<MenuItemButton> for Widget {
     fn from(value: MenuItemButton) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build_with_close(context, None))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build_with_close(context, None)
+        }))
     }
 }
 

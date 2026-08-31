@@ -1626,16 +1626,21 @@ fn overlay_widget(snapshot: &PerformanceSnapshot) -> incular_widgets::Widget {
     // visual mounted in the tree while allowing the widgets underneath it to
     // receive pointer events, just like Flutter's non-interactive performance
     // overlay.
-    Widget::ignore_pointer(
-        true,
-        Widget::repaint_boundary(Widget::from(
-            DecoratedBox::new(Padding::all(6., Widget::column(rows)))
+    Widget::from(
+        incular_widgets::IgnorePointer::new(Widget::from(incular_widgets::RepaintBoundary::new(
+            Widget::from(
+                DecoratedBox::new(Padding::all(
+                    6.,
+                    Widget::from(incular_widgets::Column::new(rows)),
+                ))
                 .background(incular_core::Color::rgba(12, 14, 18, 216))
                 .radius(4.)
                 .border(incular_rendering::Border {
                     color: incular_core::Color::rgba(120, 170, 245, 90),
                     width: 1.,
                 }),
-        )),
+            ),
+        )))
+        .ignoring(true),
     )
 }

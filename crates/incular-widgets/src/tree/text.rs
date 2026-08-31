@@ -61,7 +61,7 @@ impl WidgetTree {
     pub fn is_text_field(&self, id: ElementId) -> bool {
         self.elements
             .get(id.0)
-            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::TextField(_)))
+            .is_some_and(|element| matches!(element.widget.kind(), WidgetKind::TextField(_)))
     }
 
     /// Returns whether the field is currently allowed to mutate its
@@ -71,20 +71,20 @@ impl WidgetTree {
     #[must_use]
     pub fn text_field_is_editable(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(|element| {
-            matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.enabled && !spec.read_only)
+            matches!(element.widget.kind(), WidgetKind::TextField(spec) if spec.enabled && !spec.read_only)
         })
     }
 
     #[must_use]
     pub fn text_field_is_read_only(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(|element| {
-            matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.enabled && spec.read_only)
+            matches!(element.widget.kind(), WidgetKind::TextField(spec) if spec.enabled && spec.read_only)
         })
     }
     #[must_use]
     pub fn is_multiline_text_field(&self, id: ElementId) -> bool {
         self.elements.get(id.0).is_some_and(
-            |element| matches!(&element.widget.kind, WidgetKind::TextField(spec) if spec.multiline),
+            |element| matches!(element.widget.kind(), WidgetKind::TextField(spec) if spec.multiline),
         )
     }
     pub fn text_field_move_vertical(&mut self, id: ElementId, down: bool, extend: bool) -> bool {
@@ -275,9 +275,9 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn is_selectable_text(&self, id: ElementId) -> bool {
-        self.elements
-            .get(id.0)
-            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
+        self.elements.get(id.0).is_some_and(|element| {
+            matches!(element.widget.kind(), WidgetKind::SelectableText { .. })
+        })
     }
     /// Starts or extends read-only selection from a pointer position. The
     /// caret index is recovered from the cached Parley-backed layout; changing
@@ -456,7 +456,7 @@ impl WidgetTree {
     pub(super) fn selectable_text_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
         loop {
             if self.elements.get(id.0).is_some_and(|element| {
-                matches!(element.widget.kind, WidgetKind::SelectableText { .. })
+                matches!(element.widget.kind(), WidgetKind::SelectableText { .. })
             }) {
                 return Some(id);
             }
@@ -465,11 +465,9 @@ impl WidgetTree {
     }
     pub(super) fn selection_area_ancestor(&self, mut id: ElementId) -> Option<ElementId> {
         let selectable = id;
-        if !self
-            .elements
-            .get(id.0)
-            .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
-        {
+        if !self.elements.get(id.0).is_some_and(|element| {
+            matches!(element.widget.kind(), WidgetKind::SelectableText { .. })
+        }) {
             return None;
         }
         loop {
@@ -484,7 +482,7 @@ impl WidgetTree {
         }
     }
     fn selection_boundary_policy(&self, id: ElementId) -> Option<SelectableChildPolicy> {
-        match &self.elements.get(id.0)?.widget.kind {
+        match self.elements.get(id.0)?.widget.kind() {
             WidgetKind::SelectionArea { .. } => Some(SelectableChildPolicy::All),
             WidgetKind::SelectionContainer { delegate, .. }
             | WidgetKind::SelectionListener { delegate, .. } => Some(delegate.policy()),
@@ -495,7 +493,7 @@ impl WidgetTree {
         &self,
         id: ElementId,
     ) -> Option<SelectionAreaController> {
-        match &self.elements.get(id.0)?.widget.kind {
+        match self.elements.get(id.0)?.widget.kind() {
             WidgetKind::SelectionArea { controller, .. } => Some(controller.clone()),
             WidgetKind::SelectionContainer { delegate, .. }
             | WidgetKind::SelectionListener { delegate, .. } => Some(delegate.controller()),
@@ -503,7 +501,7 @@ impl WidgetTree {
         }
     }
     pub(super) fn selectable_text_value(&self, id: ElementId) -> Option<String> {
-        let WidgetKind::SelectableText { text, .. } = &self.elements.get(id.0)?.widget.kind else {
+        let WidgetKind::SelectableText { text, .. } = self.elements.get(id.0)?.widget.kind() else {
             return None;
         };
         Some(text.clone())
@@ -517,7 +515,7 @@ impl WidgetTree {
                 .elements
                 .get(area.0)
                 .is_some_and(|element| {
-                    matches!(element.widget.kind, WidgetKind::SelectableText { .. })
+                    matches!(element.widget.kind(), WidgetKind::SelectableText { .. })
                 })
                 .then_some(vec![area])
                 .unwrap_or_default();
@@ -539,7 +537,7 @@ impl WidgetTree {
             let Some(element) = self.elements.get(current.0) else {
                 continue;
             };
-            if matches!(element.widget.kind, WidgetKind::SelectableText { .. }) {
+            if matches!(element.widget.kind(), WidgetKind::SelectableText { .. }) {
                 entries.push(current);
                 continue;
             }
@@ -722,7 +720,11 @@ impl WidgetTree {
     pub fn text_field_history_max_entries(&self, mut id: ElementId) -> Option<usize> {
         loop {
             let element = self.elements.get(id.0)?;
-            if let Some(max_entries) = element.widget.semantics.undo_history_max_entries {
+            if let Some(max_entries) = element
+                .widget
+                .semantic_properties()
+                .undo_history_max_entries
+            {
                 return Some(max_entries);
             }
             id = element.parent?;
@@ -735,7 +737,7 @@ impl WidgetTree {
     #[must_use]
     pub fn text_field_input_snapshot(&self, id: ElementId) -> Option<TextFieldInputSnapshot> {
         let element = self.elements.get(id.0)?;
-        let WidgetKind::TextField(spec) = &element.widget.kind else {
+        let WidgetKind::TextField(spec) = element.widget.kind() else {
             return None;
         };
         let bounds = self.element_bounds(id).unwrap_or_default();
@@ -772,10 +774,14 @@ impl WidgetTree {
             enabled: spec.enabled,
             read_only: spec.read_only,
             obscure_text: spec.obscure_text,
-            input_type: element.widget.semantics.text_input_type.unwrap_or_default(),
+            input_type: element
+                .widget
+                .semantic_properties()
+                .text_input_type
+                .unwrap_or_default(),
             input_action: element
                 .widget
-                .semantics
+                .semantic_properties()
                 .text_input_action
                 .unwrap_or_default(),
             bounds,
@@ -786,7 +792,7 @@ impl WidgetTree {
         let Some(element) = self.elements.get(id.0) else {
             return false;
         };
-        let WidgetKind::TextField(spec) = &element.widget.kind else {
+        let WidgetKind::TextField(spec) = element.widget.kind() else {
             return false;
         };
         if let Some(callback) = &spec.on_submit {

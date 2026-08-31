@@ -23,7 +23,7 @@ fn keyed_row(items: usize, generation: u64) -> Widget {
         };
         children.push(Widget::from(Text::new(label)).with_key(Key::Value(index as u64)));
     }
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 /// Mounts `root`, lays it out once, and returns the tree with its root id.
@@ -87,7 +87,7 @@ fn bench(c: &mut Criterion) {
                             .with_key(Key::Value(index as u64)),
                     );
                 }
-                let next = Widget::column(children);
+                let next = incular_widgets::Column::new(children).into();
                 tree.update(root, next).expect("update");
                 tree.layout(frame_constraints()).expect("layout");
             });
@@ -103,7 +103,7 @@ fn unkeyed_row(items: usize, generation: u64) -> Widget {
             "gen {generation} row {index}"
         ))));
     }
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 /// Alternating keyed/unkeyed siblings.
@@ -121,7 +121,7 @@ fn mixed_row(items: usize, generation: u64) -> Widget {
             widget
         });
     }
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 fn extended_bench(c: &mut Criterion) {
@@ -171,7 +171,7 @@ fn extended_bench(c: &mut Criterion) {
                         .with_key(Key::Value(index as u64))
                     })
                     .collect();
-                let next = Widget::column(children);
+                let next = incular_widgets::Column::new(children).into();
                 tree.update(root, next).expect("update");
                 tree.layout(frame_constraints()).expect("layout");
             });
@@ -192,7 +192,7 @@ fn extended_bench(c: &mut Criterion) {
                 5_000,
                 Widget::from(Text::new("inserted")).with_key(Key::Value(u64::MAX)),
             );
-            let next = Widget::column(children);
+            let next = incular_widgets::Column::new(children).into();
             tree.update(root, next).expect("update");
             tree.layout(frame_constraints()).expect("layout");
         });
@@ -207,7 +207,7 @@ fn extended_bench(c: &mut Criterion) {
                         .with_key(Key::Value(index as u64))
                 })
                 .collect();
-            let next = Widget::column(children);
+            let next = incular_widgets::Column::new(children).into();
             tree.update(root, next).expect("update");
             tree.layout(frame_constraints()).expect("layout");
         });
@@ -224,7 +224,7 @@ fn extended_bench(c: &mut Criterion) {
                         .with_key(Key::Value(index as u64))
                 })
                 .collect();
-            let next = Widget::column(children);
+            let next = incular_widgets::Column::new(children).into();
             tree.update(root, next).expect("update");
             tree.layout(frame_constraints()).expect("layout");
         });
@@ -239,7 +239,7 @@ fn extended_bench(c: &mut Criterion) {
                         .with_key(Key::Value(index as u64))
                 })
                 .collect();
-            let next = Widget::column(children);
+            let next = incular_widgets::Column::new(children).into();
             tree.update(root, next).expect("update");
             tree.layout(frame_constraints()).expect("layout");
         });

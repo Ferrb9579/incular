@@ -2,7 +2,7 @@
 
 use incular_config::{Clip, EdgeInsets};
 use incular_core::{Color, Size, Transform};
-use incular_widgets::{Container, DecoratedBox, Text, Widget, internal::WidgetKind};
+use incular_widgets::{Container, DecoratedBox, Text, Widget};
 
 #[test]
 fn constructors_and_empty_builder_share_the_same_defaults() {
@@ -84,10 +84,7 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(
-        decorated.kind().clone(),
-        WidgetKind::Decorated { .. }
-    ));
+    assert_eq!(decorated.debug_type_name(), "DecoratedBox");
 
     let constrained: Widget = Container::builder()
         .child(Text::new("child"))
@@ -96,10 +93,7 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(
-        constrained.kind().clone(),
-        WidgetKind::Constrained { .. }
-    ));
+    assert_eq!(constrained.debug_type_name(), "ConstrainedBox");
 
     let margin: Widget = Container::builder()
         .child(Text::new("child"))
@@ -108,7 +102,7 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(margin.kind().clone(), WidgetKind::Padding { .. }));
+    assert_eq!(margin.debug_type_name(), "Padding");
 
     let transformed: Widget = Container::builder()
         .child(Text::new("child"))
@@ -117,20 +111,14 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(
-        transformed.kind().clone(),
-        WidgetKind::Transform { .. }
-    ));
+    assert_eq!(transformed.debug_type_name(), "Transform");
 
     let clipped: Widget = Container::builder()
         .child(Text::new("child"))
         .clip_behavior(Clip::AntiAlias)
         .build()
         .into();
-    assert!(matches!(
-        clipped.kind().clone(),
-        WidgetKind::ClipRect { .. }
-    ));
+    assert_eq!(clipped.debug_type_name(), "ClipRect");
 
     let rounded: Widget = Container::builder()
         .child(Text::new("child"))
@@ -138,10 +126,7 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::AntiAlias)
         .build()
         .into();
-    assert!(matches!(
-        rounded.kind().clone(),
-        WidgetKind::ClipRRect { .. }
-    ));
+    assert_eq!(rounded.debug_type_name(), "ClipRRect");
 }
 
 #[test]
@@ -152,7 +137,7 @@ fn lowering_without_clipping_keeps_content_sized_child_path() {
         .build()
         .into();
 
-    assert!(matches!(widget.kind().clone(), WidgetKind::Text { .. }));
+    assert_eq!(widget.debug_type_name(), "Text");
 }
 
 #[test]
@@ -162,5 +147,5 @@ fn empty_container_lowering_keeps_fallback_alignment_behavior() {
         .build()
         .into();
 
-    assert!(matches!(widget.kind().clone(), WidgetKind::Align { .. }));
+    assert_eq!(widget.debug_type_name(), "Align");
 }

@@ -15,10 +15,11 @@ fn constraints() -> Constraints {
 fn nearest_scope_shadows_outer_value_and_keeps_other_types_visible() {
     let seen = Rc::new(RefCell::new(None));
     let observed = seen.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child = incular_widgets::LayoutBuilder::new(move |context, _| {
         *observed.borrow_mut() = Some((context.depend_on::<u32>(), context.depend_on::<String>()));
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let widget = Widget::environment_scope(
         1_u32,
         Widget::environment_scope(
@@ -38,10 +39,11 @@ fn nearest_scope_shadows_outer_value_and_keeps_other_types_visible() {
 fn lookup_boundary_stops_inherited_lookup() {
     let seen = Rc::new(RefCell::new(Some(0_u32)));
     let observed = seen.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child = incular_widgets::LayoutBuilder::new(move |context, _| {
         *observed.borrow_mut() = context.depend_on::<u32>();
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let widget = Widget::environment_scope(7_u32, Widget::environment_boundary(child));
 
     let mut tree = WidgetTree::new();
@@ -55,22 +57,24 @@ fn lookup_boundary_stops_inherited_lookup() {
 fn inherited_value_change_rebuilds_only_subscribers() {
     let dependent_builds = Rc::new(Cell::new(0));
     let independent_builds = Rc::new(Cell::new(0));
-    let dependent = {
+    let dependent: Widget = {
         let builds = dependent_builds.clone();
-        Widget::layout_builder(move |context, _| {
+        incular_widgets::LayoutBuilder::new(move |context, _| {
             builds.set(builds.get() + 1);
             let _ = context.depend_on::<u32>();
             SizedBox::shrink().into()
         })
+        .into()
     };
-    let independent = {
+    let independent: Widget = {
         let builds = independent_builds.clone();
-        Widget::layout_builder(move |_, _| {
+        incular_widgets::LayoutBuilder::new(move |_, _| {
             builds.set(builds.get() + 1);
             SizedBox::shrink().into()
         })
+        .into()
     };
-    let stable_child = Widget::row([dependent, independent]);
+    let stable_child: Widget = incular_widgets::Row::new([dependent, independent]).into();
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(Widget::environment_scope(1_u32, stable_child.clone()))
@@ -90,14 +94,15 @@ fn inherited_value_change_rebuilds_only_subscribers() {
 fn non_subscribing_find_does_not_schedule_rebuilds() {
     let builds = Rc::new(Cell::new(0));
     let observed = Rc::new(Cell::new(0_u32));
-    let child = {
+    let child: Widget = {
         let builds = builds.clone();
         let observed = observed.clone();
-        Widget::layout_builder(move |context, _| {
+        incular_widgets::LayoutBuilder::new(move |context, _| {
             builds.set(builds.get() + 1);
             observed.set(context.find::<u32>().unwrap_or_default());
             SizedBox::shrink().into()
         })
+        .into()
     };
     let mut tree = WidgetTree::new();
     let root = tree
@@ -153,11 +158,12 @@ fn unmounted_consumers_leave_no_stale_invalidation_edge() {
     let builds = Rc::new(Cell::new(0));
     let dependent = {
         let builds = builds.clone();
-        Widget::layout_builder(move |context, _| {
+        incular_widgets::LayoutBuilder::new(move |context, _| {
             builds.set(builds.get() + 1);
             let _ = context.depend_on::<u32>();
             SizedBox::shrink().into()
         })
+        .into()
     };
     let mut tree = WidgetTree::new();
     let root = tree

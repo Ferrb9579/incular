@@ -26,26 +26,26 @@ fn wide_tree(width: usize) -> Widget {
             ))
         })
         .collect::<Vec<_>>();
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 fn flex_tree(width: usize) -> Widget {
     let children = (0..width)
         .map(|index| incular_widgets::Widget::from(Text::new(format!("f{index}"))))
         .collect::<Vec<_>>();
-    Widget::row(children)
+    incular_widgets::Row::new(children).into()
 }
 
 fn stack_tree(depth: usize) -> Widget {
-    let children = (0..depth)
+    let children: Vec<Widget> = (0..depth)
         .map(|index| {
-            Widget::align(
+            Widget::from(incular_widgets::Align::new(
                 Alignment::new(0.25 * (index % 4) as f32, 0.75),
                 Widget::from(Text::new(format!("s{index}"))),
-            )
+            ))
         })
         .collect::<Vec<_>>();
-    Widget::stack(Alignment::CENTER, children)
+    incular_widgets::Stack::aligned(Alignment::CENTER, children).into()
 }
 
 fn prepared(root: Widget) -> (WidgetTree, ElementId) {

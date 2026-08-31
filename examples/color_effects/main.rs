@@ -61,7 +61,7 @@ fn main() {
     let app = Application::new(move |_| {
         let saturation_for_button = saturation.clone();
         let animate_target_for_button = animate_target.clone();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Color Effects")
                 .style(TextStyle {
                     size: 28.,
@@ -72,7 +72,7 @@ fn main() {
             Text::new("Straight-RGBA color matrices over premultiplied retained textures")
                 .color(Color::rgba(220, 225, 240, 255))
                 .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 card("Original", Color::rgba(70, 125, 230, 255)),
                 ColorFiltered::new(
                     ColorFilter::grayscale(1.),
@@ -84,8 +84,8 @@ fn main() {
                     card("Sepia", Color::rgba(230, 120, 80, 255)),
                 )
                 .into(),
-            ]),
-            Widget::row(vec![
+            ]))),
+            Widget::from(Row::new(Vec::<Widget>::from([
                 ColorFiltered::controlled(
                     saturation.clone(),
                     card("Animated saturation", Color::rgba(220, 90, 170, 255)),
@@ -96,11 +96,11 @@ fn main() {
                     card("High contrast", Color::rgba(100, 170, 230, 255)),
                 )
                 .into(),
-            ]),
+            ]))),
             Text::new("Blend modes: overlapping transparent groups")
                 .color(Color::rgba(220, 225, 240, 255))
                 .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 card("Destination", Color::rgba(240, 80, 80, 230)),
                 Widget::translate(
                     overlap.clone(),
@@ -118,8 +118,8 @@ fn main() {
                     )
                     .into(),
                 ),
-            ]),
-            Widget::row(vec![
+            ]))),
+            Widget::from(Row::new(Vec::<Widget>::from([
                 Image::new(image.clone()).width(70.).height(70.).into(),
                 Blend::new(
                     BlendMode::Overlay,
@@ -131,11 +131,11 @@ fn main() {
                     card("Difference", Color::rgba(90, 220, 240, 180)),
                 )
                 .into(),
-            ]),
+            ]))),
             Text::new("Effect ordering: blur → grayscale versus grayscale → blur")
                 .color(Color::rgba(220, 225, 240, 255))
                 .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 Effects::new(card("blur then grayscale", gradient()))
                     .blur(5.)
                     .color_filter(ColorFilter::grayscale(1.))
@@ -144,7 +144,7 @@ fn main() {
                     .color_filter(ColorFilter::grayscale(1.))
                     .blur(5.)
                     .build(),
-            ]),
+            ]))),
             RawMaterialButton::new("Animate saturation")
                 .on_press(move || {
                     let target = if animate_target_for_button.get() {
@@ -160,7 +160,7 @@ fn main() {
                     );
                 })
                 .into(),
-        ])
+        ])))
     })
     .expect("valid color effects application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

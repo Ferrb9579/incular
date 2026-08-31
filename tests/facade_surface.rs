@@ -5,17 +5,14 @@ use incular::prelude::*;
 #[test]
 fn public_facade_composes_scroll_gesture_and_navigation_features() {
     let controller = ScrollController::new();
-    let view = SingleChildScrollView::new(Widget::fixed_box(Size::new(120., 32.), Color::WHITE))
+    let view = SingleChildScrollView::new(Widget::box_(Size::new(120., 32.), Color::WHITE))
         .controller(controller);
-    let gestures = GestureDetector::new(Widget::fixed_box(Size::new(120., 80.), Color::BLACK));
+    let gestures = GestureDetector::new(Widget::box_(Size::new(120., 80.), Color::BLACK));
     let _: Widget = Column::new([Widget::from(view), Widget::from(gestures)]).into();
 
     let registry = RouteRegistry::new();
     registry.register("settings/", || {
-        Page::new(
-            "settings",
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
-        )
+        Page::new("settings", Widget::box_(Size::new(1., 1.), Color::WHITE))
     });
     let navigator = Navigator::new();
     assert!(registry.navigate(&navigator, "/settings").is_some());
@@ -55,7 +52,7 @@ fn facade_exposes_material_components_at_the_material_boundary() {
 #[test]
 fn facade_exposes_variable_extent_lazy_lists() {
     let controller = ScrollController::new();
-    let _: Widget = ListView::builder(10, |_| Widget::fixed_box(Size::new(20., 32.), Color::WHITE))
+    let _: Widget = ListView::builder(10, |_| Widget::box_(Size::new(20., 32.), Color::WHITE))
         .item_extent_builder(|_| 32.)
         .controller(controller)
         .into();
@@ -103,7 +100,7 @@ fn facade_exposes_icu_localization_catalog_boundary() {
 
 #[test]
 fn facade_exposes_colored_box_and_gesture_detector() {
-    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let child = Widget::box_(Size::new(8., 8.), Color::WHITE);
     let _: Widget = ColoredBox::new(Color::BLACK, child.clone()).into();
     let _: Widget = GestureDetector::new(child).into();
 }
@@ -111,7 +108,7 @@ fn facade_exposes_colored_box_and_gesture_detector() {
 #[test]
 fn facade_exposes_retained_affine_widgets() {
     use incular::widgets::internal::ScaleController;
-    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let child = Widget::box_(Size::new(8., 8.), Color::WHITE);
     let _: Widget = Transform::rotation(0.25, child.clone()).into();
     let _: Widget = FittedBox::new(child.clone()).fit(BoxFit::Contain).into();
     let _: Widget = ScaleTransition::new(ScaleController::new(), child.clone()).into();
@@ -121,7 +118,7 @@ fn facade_exposes_retained_affine_widgets() {
 
 #[test]
 fn facade_exposes_retained_layout_closure_widgets() {
-    let child = Widget::fixed_box(Size::new(8., 8.), Color::WHITE);
+    let child = Widget::box_(Size::new(8., 8.), Color::WHITE);
     let _: Widget = LimitedBox::new(child.clone())
         .max_width(20.)
         .max_height(20.)
@@ -165,20 +162,20 @@ fn facade_exposes_nested_navigation_contracts() {
     let root_navigation = Navigator::new();
     root_navigation.push_page(Page::new(
         "home",
-        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        Widget::box_(Size::new(1., 1.), Color::WHITE),
     ));
     root_navigation.push_page(Page::new(
         "settings",
-        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        Widget::box_(Size::new(1., 1.), Color::WHITE),
     ));
     let child_navigation = Navigator::new();
     child_navigation.push_page(Page::new(
         "overview",
-        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        Widget::box_(Size::new(1., 1.), Color::WHITE),
     ));
     child_navigation.push_page(Page::new(
         "details",
-        Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        Widget::box_(Size::new(1., 1.), Color::WHITE),
     ));
     let root = BackDispatcher::new(root_navigation);
     let child = BackDispatcher::new(child_navigation);

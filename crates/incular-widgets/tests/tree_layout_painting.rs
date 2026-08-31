@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
+use incular_config::{Alignment, Axis, Constraints, CrossAxisAlignment, EdgeInsets, MainAxisSize};
 use incular_core::{Color, Offset, Rect, Size, Transform as CoreTransform};
 use incular_rendering::{DisplayList, PaintCommand};
 use incular_semantics::SemanticRole;
@@ -22,13 +22,14 @@ fn nested_environment_scopes_keep_all_typed_values() {
     let inner = TextStyle::new().font_size(24.0);
     let seen = Rc::new(RefCell::new(None));
     let observed = seen.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child = incular_widgets::LayoutBuilder::new(move |context, _| {
         *observed.borrow_mut() = Some((
             context.depend_on::<TextStyle>(),
             context.depend_on::<Color>(),
         ));
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let widget = Widget::environment_scope(outer, Widget::environment_scope(inner.clone(), child));
     let mut tree = WidgetTree::new();
     tree.mount(widget).expect("mount nested scopes");
@@ -63,11 +64,12 @@ fn default_text_style_is_resolved_for_descendant_text() {
 fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
     let mut limited = WidgetTree::new();
     let root = limited
-        .mount(Widget::limited_box(
-            20.,
-            30.,
-            Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
-        ))
+        .mount(
+            LimitedBox::new(Widget::box_(Size::new(80., 80.), Color::WHITE))
+                .max_width(20.)
+                .max_height(30.)
+                .into(),
+        )
         .unwrap();
     limited
         .layout(Constraints::new(0., f32::INFINITY, 0., f32::INFINITY))
@@ -86,13 +88,12 @@ fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
 
     let mut overflow = WidgetTree::new();
     let root = overflow
-        .mount(Widget::overflow_box(
-            None,
-            Some(80.),
-            None,
-            Some(80.),
-            Widget::fixed_box(Size::new(80., 80.), Color::WHITE),
-        ))
+        .mount(
+            OverflowBox::new(Widget::box_(Size::new(80., 80.), Color::WHITE))
+                .max_width(80.)
+                .max_height(80.)
+                .into(),
+        )
         .unwrap();
     overflow
         .layout(Constraints::tight(Size::new(20., 20.)))
@@ -112,16 +113,19 @@ fn limited_and_overflow_boxes_apply_their_distinct_constraint_policies() {
 fn flexible_expanded_and_spacer_allocate_bounded_main_axis_space() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::row(vec![
-            Widget::fixed_box(Size::new(10., 10.), Color::WHITE),
-            Expanded::new(Widget::fixed_box(Size::new(1., 10.), Color::WHITE))
-                .flex(2)
-                .into(),
-            Flexible::new(Widget::fixed_box(Size::new(15., 10.), Color::WHITE))
-                .flex(1)
-                .into(),
-            Spacer::new().flex(1).into(),
-        ]))
+        .mount(
+            incular_widgets::Row::new(vec![
+                Widget::box_(Size::new(10., 10.), Color::WHITE),
+                Expanded::new(Widget::box_(Size::new(1., 10.), Color::WHITE))
+                    .flex(2)
+                    .into(),
+                Flexible::new(Widget::box_(Size::new(15., 10.), Color::WHITE))
+                    .flex(1)
+                    .into(),
+                Spacer::new().flex(1).into(),
+            ])
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 20.)))
         .expect("layout");
@@ -142,14 +146,14 @@ fn flexible_expanded_and_spacer_allocate_bounded_main_axis_space() {
 
 #[test]
 fn positioned_and_indexed_stacks_keep_only_the_selected_branch_interactive_and_semantic() {
-    let positioned = Positioned::new(Widget::fixed_box(Size::new(100., 100.), Color::WHITE))
+    let positioned = Positioned::new(Widget::box_(Size::new(100., 100.), Color::WHITE))
         .left(10.)
         .right(20.)
         .top(5.)
         .bottom(15.);
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::stack(Alignment::TOP_LEFT, vec![positioned.into()]))
+        .mount(incular_widgets::Stack::aligned(Alignment::TOP_LEFT, [positioned]).into())
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -166,9 +170,12 @@ fn positioned_and_indexed_stacks_keep_only_the_selected_branch_interactive_and_s
     let mut indexed = WidgetTree::new();
     let _root = indexed
         .mount(
-            IndexedStack::new([Widget::text("hidden"), Widget::text("shown")])
-                .index(1)
-                .into(),
+            IndexedStack::new([
+                incular_widgets::Text::new("hidden"),
+                incular_widgets::Text::new("shown"),
+            ])
+            .index(1)
+            .into(),
         )
         .unwrap();
     indexed
@@ -186,10 +193,13 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
     let observed = builds.clone();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::layout_builder(move |_, constraints| {
-            observed.set(observed.get() + 1);
-            Widget::fixed_box(Size::new(constraints.max_width, 10.), Color::WHITE)
-        }))
+        .mount(
+            incular_widgets::LayoutBuilder::new(move |_, constraints| {
+                observed.set(observed.get() + 1);
+                Widget::box_(Size::new(constraints.max_width, 10.), Color::WHITE)
+            })
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::new(0., 30., 0., 20.))
         .expect("layout");
@@ -210,7 +220,12 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
 fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::layout_builder(|_, _| Widget::text("old child")))
+        .mount(
+            incular_widgets::LayoutBuilder::new(|_, _| {
+                incular_widgets::Text::new("old child").into()
+            })
+            .into(),
+        )
         .unwrap();
     let constraints = Constraints::tight(Size::new(200., 40.));
 
@@ -220,7 +235,8 @@ fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
 
     tree.update(
         root,
-        Widget::layout_builder(|_, _| Widget::text("new child")),
+        incular_widgets::LayoutBuilder::new(|_, _| incular_widgets::Text::new("new child").into())
+            .into(),
     )
     .unwrap();
     tree.layout(constraints).expect("layout");
@@ -270,7 +286,7 @@ fn stateful_layout_builder_rebuilds_when_local_revision_changes() {
     let root = tree
         .mount(Widget::stateful_layout_builder(revision, move |_, _| {
             observed.set(observed.get() + 1);
-            Widget::fixed_box(
+            Widget::box_(
                 Size::new(10. + builder_state.get() as f32, 10.),
                 Color::WHITE,
             )
@@ -296,10 +312,13 @@ fn stateful_layout_builder_rebuilds_when_local_revision_changes() {
 fn affine_transform_uses_inverse_hit_testing_and_transformed_semantics() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::transform(
-            CoreTransform::translation(Offset::new(20., 10.)),
-            action(Size::new(10., 10.), Color::WHITE, ActionId(1)),
-        ))
+        .mount(
+            incular_widgets::Transform::new(
+                CoreTransform::translation(Offset::new(20., 10.)),
+                action(Size::new(10., 10.), Color::WHITE, ActionId(1)),
+            )
+            .into(),
+        )
         .unwrap();
     let button = tree.children(root).unwrap()[0];
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -326,11 +345,12 @@ fn affine_transform_uses_inverse_hit_testing_and_transformed_semantics() {
 fn fitted_box_scales_hits_into_the_child_coordinate_space() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::fitted_box(
-            ImageFit::Contain,
-            Alignment::CENTER,
-            Widget::box_(Size::new(10., 20.), Color::WHITE),
-        ))
+        .mount(
+            FittedBox::new(Widget::box_(Size::new(10., 20.), Color::WHITE))
+                .fit(ImageFit::Contain)
+                .alignment(Alignment::CENTER)
+                .into(),
+        )
         .unwrap();
     let child = tree.children(root).unwrap()[0];
     tree.layout(Constraints::tight(Size::new(100., 100.)))
@@ -440,12 +460,22 @@ fn rotation_transition_alignment_changes_pivot_and_hit_testing_follows_it() {
     top_left.set_turns(0.25);
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::row(vec![
-            RotationTransition::new(center, Widget::box_(Size::new(20., 10.), Color::WHITE)).into(),
-            RotationTransition::new(top_left, Widget::box_(Size::new(20., 10.), Color::WHITE))
-                .alignment(Alignment::TOP_LEFT)
-                .into(),
-        ]))
+        .mount(
+            incular_widgets::Row::new([
+                Widget::from(RotationTransition::new(
+                    center,
+                    Widget::box_(Size::new(20., 10.), Color::WHITE),
+                )),
+                Widget::from(
+                    RotationTransition::new(
+                        top_left,
+                        Widget::box_(Size::new(20., 10.), Color::WHITE),
+                    )
+                    .alignment(Alignment::TOP_LEFT),
+                ),
+            ])
+            .into(),
+        )
         .unwrap();
     let rotations = tree.children(root).expect("row children");
     let centered = rotations[0];
@@ -515,10 +545,13 @@ fn replacement_opacity_controller_keeps_a_controlled_transition_alive() {
 fn nested_layout_and_paint_cache_are_incremental() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::padding(
-            EdgeInsets::all(2.),
-            Widget::box_(Size::new(10., 5.), Color::WHITE),
-        ))
+        .mount(
+            incular_widgets::Padding::new(
+                EdgeInsets::all(2.),
+                Widget::box_(Size::new(10., 5.), Color::WHITE),
+            )
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(20., 20.)))
         .expect("layout");
@@ -537,10 +570,13 @@ fn nested_layout_and_paint_cache_are_incremental() {
 fn constrained_box_tightens_child_bounds_without_escaping_the_parent() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::constrained(
-            Constraints::new(10., 15., 6., 12.),
-            Widget::fixed_box(Size::new(5., 20.), Color::WHITE),
-        ))
+        .mount(
+            incular_widgets::ConstrainedBox::new(
+                Constraints::new(10., 15., 6., 12.),
+                Widget::box_(Size::new(5., 20.), Color::WHITE),
+            )
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::loose(Size::new(20., 20.)))
         .expect("layout");
@@ -561,10 +597,7 @@ fn constrained_box_tightens_child_bounds_without_escaping_the_parent() {
 fn unconstrained_box_uses_natural_child_size_but_stays_parent_bounded() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::unconstrained(
-            None,
-            Widget::fixed_box(Size::new(30., 5.), Color::WHITE),
-        ))
+        .mount(UnconstrainedBox::new(Widget::box_(Size::new(30., 5.), Color::WHITE)).into())
         .unwrap();
     tree.layout(Constraints::loose(Size::new(20., 20.)))
         .expect("layout");
@@ -583,15 +616,16 @@ fn unconstrained_box_uses_natural_child_size_but_stays_parent_bounded() {
 fn wrap_starts_a_new_run_when_a_child_exceeds_the_remaining_main_axis() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::wrap(
-            Axis::Horizontal,
-            2.,
-            3.,
-            vec![
-                Widget::fixed_box(Size::new(8., 4.), Color::WHITE),
-                Widget::fixed_box(Size::new(8., 6.), Color::WHITE),
-            ],
-        ))
+        .mount(
+            Wrap::new(vec![
+                Widget::box_(Size::new(8., 4.), Color::WHITE),
+                Widget::box_(Size::new(8., 6.), Color::WHITE),
+            ])
+            .direction(Axis::Horizontal)
+            .spacing(2.)
+            .run_spacing(3.)
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::loose(Size::new(17., 20.)))
         .expect("layout");
@@ -614,11 +648,12 @@ fn wrap_starts_a_new_run_when_a_child_exceeds_the_remaining_main_axis() {
 fn fractional_box_tightens_requested_axes_to_parent_factors() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::fractionally_sized(
-            Some(0.5),
-            Some(0.25),
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
-        ))
+        .mount(
+            FractionallySizedBox::new(Widget::box_(Size::new(1., 1.), Color::WHITE))
+                .width_factor(0.5)
+                .height_factor(0.25)
+                .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(40., 20.)))
         .expect("layout");
@@ -637,16 +672,19 @@ fn fractional_box_tightens_requested_axes_to_parent_factors() {
 fn table_uses_max_content_cell_sizes_and_row_major_offsets() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::table(
-            2,
-            2.,
-            3.,
-            vec![
-                Widget::fixed_box(Size::new(10., 4.), Color::WHITE),
-                Widget::fixed_box(Size::new(5., 8.), Color::WHITE),
-                Widget::fixed_box(Size::new(7., 6.), Color::WHITE),
-            ],
-        ))
+        .mount(
+            Table::new(
+                2,
+                vec![
+                    Widget::box_(Size::new(10., 4.), Color::WHITE),
+                    Widget::box_(Size::new(5., 8.), Color::WHITE),
+                    Widget::box_(Size::new(7., 6.), Color::WHITE),
+                ],
+            )
+            .column_spacing(2.)
+            .row_spacing(3.)
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::loose(Size::new(40., 40.)))
         .expect("layout");
@@ -669,10 +707,10 @@ fn table_uses_max_content_cell_sizes_and_row_major_offsets() {
 fn baseline_offsets_a_child_using_its_bottom_as_the_default_baseline() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::baseline(
-            10.,
-            Widget::fixed_box(Size::new(8., 5.), Color::WHITE),
-        ))
+        .mount(
+            incular_widgets::Baseline::new(10., Widget::box_(Size::new(8., 5.), Color::WHITE))
+                .into(),
+        )
         .unwrap();
     tree.layout(Constraints::loose(Size::new(20., 20.)))
         .expect("layout");
@@ -691,7 +729,7 @@ fn baseline_offsets_a_child_using_its_bottom_as_the_default_baseline() {
 fn merged_transition_composes_retained_fade_and_slide_layers() {
     let opacity = OpacityController::new();
     let translation = TranslationController::new();
-    let _: Widget = Transition::new(Widget::fixed_box(Size::new(1., 1.), Color::WHITE))
+    let _: Widget = Transition::new(Widget::box_(Size::new(1., 1.), Color::WHITE))
         .fade(opacity)
         .slide(translation)
         .into();
@@ -705,7 +743,7 @@ fn custom_paint_replays_its_display_list_in_the_retained_picture() {
         color: Color::WHITE,
     });
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::custom_paint(Size::new(10., 8.), display_list))
+    tree.mount(incular_widgets::CustomPaint::new(Size::new(10., 8.), display_list).into())
         .unwrap();
     tree.layout(Constraints::tight(Size::new(10., 8.)))
         .expect("layout");
@@ -726,10 +764,13 @@ fn repaint_boundary_keeps_its_picture_when_child_custom_paint_changes() {
     };
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::repaint_boundary(Widget::custom_paint(
-            Size::new(10., 8.),
-            list(Color::WHITE),
-        )))
+        .mount(
+            incular_widgets::RepaintBoundary::new(incular_widgets::CustomPaint::new(
+                Size::new(10., 8.),
+                list(Color::WHITE),
+            ))
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(10., 8.)))
         .expect("layout");
@@ -737,7 +778,11 @@ fn repaint_boundary_keeps_its_picture_when_child_custom_paint_changes() {
     let before = tree.diagnostics().paints;
     tree.update(
         root,
-        Widget::repaint_boundary(Widget::custom_paint(Size::new(10., 8.), list(Color::BLACK))),
+        incular_widgets::RepaintBoundary::new(incular_widgets::CustomPaint::new(
+            Size::new(10., 8.),
+            list(Color::BLACK),
+        ))
+        .into(),
     )
     .unwrap();
     let _ = tree.paint();
@@ -748,13 +793,16 @@ fn repaint_boundary_keeps_its_picture_when_child_custom_paint_changes() {
 fn stack_aligns_children_and_hits_the_frontmost_child() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::stack(
-            Alignment::CENTER,
-            vec![
-                Widget::fixed_box(Size::new(20., 20.), Color::BLACK),
-                action(Size::new(10., 10.), Color::WHITE, ActionId(1)),
-            ],
-        ))
+        .mount(
+            incular_widgets::Stack::aligned(
+                Alignment::CENTER,
+                vec![
+                    Widget::box_(Size::new(20., 20.), Color::BLACK),
+                    action(Size::new(10., 10.), Color::WHITE, ActionId(1)),
+                ],
+            )
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(20., 20.)))
         .expect("layout");
@@ -774,10 +822,16 @@ fn stack_aligns_children_and_hits_the_frontmost_child() {
 fn invisible_widgets_skip_child_layout_hit_testing_and_semantics() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::visibility(
-            false,
-            action(Size::new(20., 20.), Color::WHITE, ActionId(1)),
-        ))
+        .mount(
+            incular_widgets::Visibility::new(action(
+                Size::new(20., 20.),
+                Color::WHITE,
+                ActionId(1),
+            ))
+            .visible(false)
+            .maintain_state(true)
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(20., 20.)))
         .expect("layout");
@@ -794,10 +848,10 @@ fn invisible_widgets_skip_child_layout_hit_testing_and_semantics() {
 fn aspect_ratio_uses_the_largest_fitting_box() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::aspect_ratio(
-            2.,
-            Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
-        ))
+        .mount(
+            incular_widgets::AspectRatio::new(2., Widget::box_(Size::new(1., 1.), Color::WHITE))
+                .into(),
+        )
         .unwrap();
     tree.layout(Constraints::loose(Size::new(100., 80.)))
         .expect("layout");
@@ -811,13 +865,16 @@ fn aspect_ratio_uses_the_largest_fitting_box() {
 fn hit_test_uses_reverse_paint_order_and_nested_offsets() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::padding(
-            EdgeInsets::all(2.),
-            Widget::row(vec![
-                Widget::box_(Size::new(10., 10.), Color::WHITE),
-                Widget::box_(Size::new(10., 10.), Color::BLACK),
-            ]),
-        ))
+        .mount(
+            incular_widgets::Padding::new(
+                EdgeInsets::all(2.),
+                incular_widgets::Row::new(vec![
+                    Widget::box_(Size::new(10., 10.), Color::WHITE),
+                    Widget::box_(Size::new(10., 10.), Color::BLACK),
+                ]),
+            )
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(30., 20.)))
         .expect("layout");
@@ -830,22 +887,31 @@ fn hit_test_uses_reverse_paint_order_and_nested_offsets() {
 #[test]
 fn retained_pictures_apply_column_row_and_padding_offsets_once() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::padding(
-        EdgeInsets {
-            left: 20.,
-            top: 10.,
-            right: 0.,
-            bottom: 0.,
-        },
-        Widget::column(vec![
-            Widget::box_(Size::new(100., 20.), Color::WHITE),
-            Widget::row(vec![
-                Widget::box_(Size::new(30., 30.), Color::WHITE),
-                Widget::box_(Size::new(40., 30.), Color::WHITE),
-            ]),
-            Widget::box_(Size::new(100., 40.), Color::WHITE),
-        ]),
-    ))
+    tree.mount(
+        incular_widgets::Padding::new(
+            EdgeInsets {
+                left: 20.,
+                top: 10.,
+                right: 0.,
+                bottom: 0.,
+            },
+            incular_widgets::Column::new(vec![
+                Widget::box_(Size::new(100., 20.), Color::WHITE),
+                Widget::from(
+                    incular_widgets::Row::new(vec![
+                        Widget::box_(Size::new(30., 30.), Color::WHITE),
+                        Widget::box_(Size::new(40., 30.), Color::WHITE),
+                    ])
+                    .main_axis_size(MainAxisSize::Min)
+                    .cross_axis_alignment(CrossAxisAlignment::Start),
+                ),
+                Widget::box_(Size::new(100., 40.), Color::WHITE),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start),
+        )
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(200., 200.)))
         .expect("layout");
@@ -872,11 +938,26 @@ fn retained_text_pictures_keep_independent_column_origins() {
     };
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::column(vec![
-            Widget::text_styled("A", style.clone(), TextAlign::Start),
-            Widget::text_styled("B", style.clone(), TextAlign::Start),
-            Widget::text_styled("C", style, TextAlign::Start),
-        ]))
+        .mount(
+            incular_widgets::Column::new(vec![
+                Widget::from(
+                    incular_widgets::Text::new("A")
+                        .style(style.clone())
+                        .align(TextAlign::Start),
+                ),
+                Widget::from(
+                    incular_widgets::Text::new("B")
+                        .style(style.clone())
+                        .align(TextAlign::Start),
+                ),
+                Widget::from(
+                    incular_widgets::Text::new("C")
+                        .style(style)
+                        .align(TextAlign::Start),
+                ),
+            ])
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(200., 200.)))
         .expect("layout");
@@ -899,12 +980,15 @@ fn retained_text_pictures_keep_independent_column_origins() {
 #[test]
 fn button_label_receives_the_button_parent_placement() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::column(vec![
-        Widget::box_(Size::new(100., 30.), Color::BLACK),
-        ActionSurface::new("Placed label")
-            .color(Color::rgba(70, 120, 220, 255))
-            .into(),
-    ]))
+    tree.mount(
+        incular_widgets::Column::new(vec![
+            Widget::box_(Size::new(100., 30.), Color::BLACK),
+            ActionSurface::new("Placed label")
+                .color(Color::rgba(70, 120, 220, 255))
+                .into(),
+        ])
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(200., 120.)))
         .expect("layout");
@@ -922,10 +1006,14 @@ fn compositional_button_keeps_configured_size_and_content_semantics() {
         .mount(
             ActionSurface::new("Inspector row")
                 .size(Size::new(180., 34.))
-                .content(Widget::row([
-                    Widget::text("Inspector"),
-                    Widget::text("row"),
-                ]))
+                .content(
+                    incular_widgets::Row::new([
+                        incular_widgets::Text::new("Inspector"),
+                        incular_widgets::Text::new("row"),
+                    ])
+                    .main_axis_size(MainAxisSize::Min)
+                    .cross_axis_alignment(CrossAxisAlignment::Start),
+                )
                 .into(),
         )
         .unwrap();
@@ -952,24 +1040,26 @@ fn scroll_and_animation_compose_with_static_layout_placement() {
     let translation = TranslationController::new();
     translation.set_offset(Offset::new(15., 0.));
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::padding(
-        EdgeInsets {
-            left: 0.,
-            top: 10.,
-            right: 0.,
-            bottom: 0.,
-        },
-        Widget::scroll_view(
-            scroll.clone(),
-            Widget::translate(
+    tree.mount(
+        incular_widgets::Padding::new(
+            EdgeInsets {
+                left: 0.,
+                top: 10.,
+                right: 0.,
+                bottom: 0.,
+            },
+            incular_widgets::SingleChildScrollView::new(Widget::translate(
                 translation.clone(),
-                Widget::column(vec![
+                incular_widgets::Column::new(vec![
                     Widget::box_(Size::new(40., 20.), Color::WHITE),
                     Widget::box_(Size::new(40., 30.), Color::WHITE),
-                ]),
-            ),
-        ),
-    ))
+                ])
+                .into(),
+            ))
+            .controller(scroll.clone()),
+        )
+        .into(),
+    )
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 40.));
     tree.layout(constraints).expect("layout");
@@ -997,11 +1087,8 @@ fn scroll_and_animation_compose_with_static_layout_placement() {
 #[test]
 fn transparent_opacity_keeps_hit_testing_and_semantics() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::opacity(
-        0.,
-        ActionSurface::new("Still active").into(),
-    ))
-    .unwrap();
+    tree.mount(incular_widgets::Opacity::new(0., ActionSurface::new("Still active")).into())
+        .unwrap();
     tree.layout(Constraints::tight(Size::new(140., 60.)))
         .expect("layout");
     tree.update_semantics();
@@ -1047,17 +1134,21 @@ fn effect_parameter_animation_is_compositor_only_and_keeps_semantics() {
 #[test]
 fn text_picture_replacement_and_root_unmount_do_not_leak_layers() {
     let mut tree = WidgetTree::new();
-    let root = tree.mount(Widget::text("Count: 0")).unwrap();
+    let root = tree
+        .mount(incular_widgets::Text::new("Count: 0").into())
+        .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 40.)))
         .expect("layout");
     let _ = tree.paint();
     let before = tree.compositor_diagnostics().layers;
-    tree.update(root, Widget::text("Count: 1")).unwrap();
+    tree.update(root, incular_widgets::Text::new("Count: 1").into())
+        .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 40.)))
         .expect("layout");
     let _ = tree.paint();
     assert_eq!(tree.compositor_diagnostics().layers, before);
-    tree.update(root, Widget::text("Count: 2")).unwrap();
+    tree.update(root, incular_widgets::Text::new("Count: 2").into())
+        .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 40.)))
         .expect("layout");
     let _ = tree.paint();
@@ -1101,17 +1192,22 @@ fn replacing_effect_families_releases_the_old_attachment_subtree() {
     fn effect(index: usize) -> Widget {
         let child = Widget::box_(Size::new(20., 20.), Color::WHITE);
         match index % 5 {
-            0 => Widget::opacity(0.5, child),
-            1 => Widget::blur(4., child),
-            2 => Widget::drop_shadow(Offset::new(2., 3.), 5., Color::rgba(0, 0, 0, 120), child),
-            3 => Widget::color_filtered(ColorFilter::sepia(0.75), child),
-            _ => Widget::blend(BlendMode::Multiply, child),
+            0 => Widget::from(incular_widgets::Opacity::new(0.5, child)),
+            1 => Widget::from(Blur::new(4., child)),
+            2 => Widget::from(DropShadow::new(
+                Offset::new(2., 3.),
+                5.,
+                Color::rgba(0, 0, 0, 120),
+                child,
+            )),
+            3 => Widget::from(ColorFiltered::new(ColorFilter::sepia(0.75), child)),
+            _ => Widget::from(Blend::new(BlendMode::Multiply, child)),
         }
         .with_key(incular_widgets::internal::Key::Value(7))
     }
 
     fn root(index: usize) -> Widget {
-        Widget::column(vec![effect(index)])
+        incular_widgets::Column::new(vec![effect(index)]).into()
     }
 
     let mut tree = WidgetTree::new();

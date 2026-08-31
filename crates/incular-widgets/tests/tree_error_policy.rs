@@ -65,10 +65,11 @@ impl RenderSliver for DuplicateKeyRenderSliver {
 }
 
 fn invalid_generated_widget() -> Widget {
-    Widget::column(vec![
+    incular_widgets::Column::new(vec![
         Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(7_u64),
         Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(7_u64),
     ])
+    .into()
 }
 
 fn assert_duplicate_generated(error: TreeError, expected: GeneratedChildIdentity) {
@@ -197,7 +198,7 @@ fn two_dimensional_builder_returns_contextual_error_without_leaking_child_state(
         24.,
     );
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::two_dimensional_viewport(viewport))
+    tree.mount(Widget::from(viewport))
         .expect("two-dimensional root mount");
     let before_elements = tree.element_count();
     let before_renders = tree.render_object_count();

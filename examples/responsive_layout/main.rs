@@ -36,7 +36,7 @@ fn main() {
             Constraints::new(0., 560., 0., 760.),
             Padding::new(
                 EdgeInsets::symmetric(24., 20.),
-                Widget::column(vec![
+                Widget::from(Column::new(Vec::<Widget>::from([
                     Text::new("Responsive configuration gallery")
                         .style(TextStyle {
                             size: 26.,
@@ -89,7 +89,7 @@ fn main() {
                         .row_spacing(8.),
                     )
                     .into(),
-                ]),
+                ]))),
             ),
         )
         .into()

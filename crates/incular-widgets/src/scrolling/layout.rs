@@ -1225,7 +1225,7 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
         }
     }
 
-    let result = match &widget.kind {
+    let result = match widget.kind() {
         WidgetKind::Box { size, .. } => dimension(*size, axis),
         WidgetKind::Shape { size, path, .. } => {
             size.and_then(|size| dimension(size, axis)).or_else(|| {

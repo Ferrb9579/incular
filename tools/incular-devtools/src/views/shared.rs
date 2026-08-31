@@ -24,7 +24,7 @@ pub fn ui_text(value: impl Into<String>, size: f32, color: Color) -> Widget {
 }
 
 pub fn gap(width: f32, height: f32) -> Widget {
-    Widget::fixed_box(Size::new(width, height), Color::TRANSPARENT)
+    Widget::box_(Size::new(width, height), Color::TRANSPARENT)
 }
 
 pub fn compact_button(

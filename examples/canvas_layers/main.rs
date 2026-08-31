@@ -137,7 +137,7 @@ pub(crate) mod simulations;
 fn main() {
     let display_list = artwork();
     let app = Application::new(move |_| {
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Canvas layers")
                 .style(TextStyle {
                     size: 28.,
@@ -150,7 +150,7 @@ fn main() {
                 .into(),
             RepaintBoundary::new(CustomPaint::new(Size::new(520., 310.), display_list.clone()))
                 .into(),
-        ])
+        ])))
     })
     .expect("valid canvas application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

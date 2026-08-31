@@ -86,7 +86,7 @@ impl From<Root> for Widget {
                 })
                 .actions([incular_semantics::SemanticActionKind::Focus]),
         );
-        Widget::visibility(value.open, dialog)
+        Widget::from(incular_widgets::Visibility::new(dialog).visible(value.open))
     }
 }
 

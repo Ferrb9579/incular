@@ -13,7 +13,7 @@ fn sample(size: f32, text: &str, color: Color) -> Widget {
 }
 
 fn fractional_position_sample(position: f32, color: Color) -> Widget {
-    Widget::padding(
+    Widget::from(Padding::new(
         EdgeInsets {
             left: position,
             top: 0.,
@@ -25,7 +25,7 @@ fn fractional_position_sample(position: f32, color: Color) -> Widget {
             &format!("fractional x {position:.2}: Settings  Cancel  1234567890"),
             color,
         ),
-    )
+    ))
 }
 
 #[path = "../tests/support/mod.rs"]
@@ -86,7 +86,7 @@ fn main() {
         }
         rows.push(sample(32., "Huge type", cyan));
         rows.push(sample(384., "H O A V", Color::WHITE));
-        ScrollView::vertical(controller.clone(), Widget::column(rows))
+        ScrollView::vertical(controller.clone(), Widget::from(Column::new(rows)))
     })
     .expect("valid text-quality application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

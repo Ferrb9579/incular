@@ -55,7 +55,7 @@ fn row(items: usize) -> Widget {
             Widget::from(Text::new(format!("row {index}"))).with_key(Key::Value(index as u64))
         })
         .collect::<Vec<_>>();
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 fn main() {

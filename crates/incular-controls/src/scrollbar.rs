@@ -2,19 +2,19 @@
 //!
 //! A scrollbar is a viewport contract, not a decorative wrapper. The control
 //! therefore shares a [`ScrollController`] with the retained
-//! `Widget::scroll_view` implementation. Wheel input, thumb dragging, track
+//! [`SingleChildScrollView`] implementation. Wheel input, thumb dragging, track
 //! paging, geometry, and painting all continue to be owned by `WidgetTree`.
 
 use crate::theme::ControlTheme;
 use incular_scroll::{ScrollController, ScrollbarStyle as RawScrollbarStyle};
-use incular_widgets::Widget;
-use incular_widgets::internal::WidgetKind;
+use incular_widgets::internal::scroll_view_parts;
+use incular_widgets::{SingleChildScrollView, Widget};
 use typed_builder::TypedBuilder;
 
 /// Themed vertical scrollbar/scroll-area wrapper.
 ///
 /// `child` is normally the scrollable content. Passing an existing
-/// `Widget::scroll_view` is also supported; its controller is preserved unless
+/// An existing [`SingleChildScrollView`] is also supported; its controller is preserved unless
 /// [`Self::controller`] is explicitly supplied. The resulting widget is
 /// always a retained scroll viewport, so it participates in the existing
 /// wheel, track-click, and thumb-drag input paths.
@@ -74,26 +74,28 @@ impl Scrollbar {
         // requested. This preserves keys and explicit semantics on an already
         // constructed viewport instead of needlessly erasing its metadata.
         if controller.is_none()
-            && let WidgetKind::Scroll { controller, .. } = child.kind()
+            && let Some((existing_controller, _)) = scroll_view_parts(&child)
         {
-            controller.set_scrollbar_style(style);
-            controller.set_scrollbar_thumb_visibility(thumb_visibility);
+            existing_controller.set_scrollbar_style(style);
+            existing_controller.set_scrollbar_thumb_visibility(thumb_visibility);
             return child;
         }
 
-        let (controller, child) = match child.kind() {
+        let (controller, child) = match scroll_view_parts(&child) {
             // Reusing an existing viewport should not create nested scroll
             // positions. Rebuild it with the chosen controller so the style
             // and interaction contract stay attached to the visible viewport.
-            WidgetKind::Scroll { child, .. } => (controller.unwrap(), child.clone()),
+            Some((_, child)) => (controller.unwrap(), child),
             // For ordinary content, retain the complete descriptor (including
             // its key/semantics) as the scroll viewport's child.
-            _ => (controller.unwrap_or_default(), child),
+            None => (controller.unwrap_or_default(), child),
         };
 
         controller.set_scrollbar_style(style);
         controller.set_scrollbar_thumb_visibility(thumb_visibility);
-        Widget::scroll_view(controller, child)
+        SingleChildScrollView::new(child)
+            .controller(controller)
+            .into()
     }
 
     /// Converts ControlTheme colors and metrics into the renderer-independent
@@ -112,9 +114,9 @@ impl Scrollbar {
 impl From<Scrollbar> for Widget {
     fn from(value: Scrollbar) -> Self {
         let value = std::rc::Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
-        })
+        }))
     }
 }

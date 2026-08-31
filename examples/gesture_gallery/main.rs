@@ -53,7 +53,7 @@ fn main() {
         let reset_pan = app_pan.clone();
         let reset_scale = app_scale.clone();
         let reset_translation = app_translation.clone();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Gesture gallery")
                 .style(TextStyle {
                     size: 30.,
@@ -67,9 +67,9 @@ fn main() {
                 pan_value.x, pan_value.y
             )),
             GestureDetector::new(
-                DecoratedBox::new(Widget::stack(
+                DecoratedBox::new(Widget::from(Stack::aligned(
                     Alignment::CENTER,
-                    vec![
+                    Vec::<Widget>::from([
                         Widget::box_(Size::new(460., 280.), Color::rgba(27, 42, 72, 255)),
                         Widget::translate(
                             app_translation.clone(),
@@ -86,8 +86,8 @@ fn main() {
                             .radius(16.)
                             .into(),
                         ),
-                    ],
-                ))
+                    ]),
+                )))
                 .size(Size::new(460., 280.))
                 .background(Color::rgba(27, 42, 72, 255))
                 .radius(18.),
@@ -101,7 +101,7 @@ fn main() {
                     reset_translation.set_offset(Offset::ZERO);
                 })
                 .into(),
-        ])
+        ])))
     })
     .expect("valid gesture gallery application");
 

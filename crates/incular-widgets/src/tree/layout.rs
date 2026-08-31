@@ -38,7 +38,7 @@ impl WidgetTree {
                 let WidgetKind::LayoutBuilder {
                     revision: Some(revision),
                     ..
-                } = &element.widget.kind
+                } = &element.widget.kind()
                 else {
                     return None;
                 };
@@ -221,7 +221,8 @@ impl WidgetTree {
             .and_then(|element| element.parent);
         while let Some(candidate) = parent {
             let element = self.elements.get(candidate.0)?;
-            if let WidgetKind::DraggableScrollableActuator { actuator, .. } = &element.widget.kind {
+            if let WidgetKind::DraggableScrollableActuator { actuator, .. } = &element.widget.kind()
+            {
                 return Some(actuator.clone());
             }
             parent = element.parent;

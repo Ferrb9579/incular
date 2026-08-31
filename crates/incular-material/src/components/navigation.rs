@@ -170,7 +170,9 @@ impl BottomNavigationBar {
 impl From<BottomNavigationBar> for Widget {
     fn from(value: BottomNavigationBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -333,6 +335,8 @@ impl NavigationBar {
 impl From<NavigationBar> for Widget {
     fn from(value: NavigationBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(context))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(context)
+        }))
     }
 }

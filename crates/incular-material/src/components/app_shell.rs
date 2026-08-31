@@ -240,7 +240,9 @@ impl AppBar {
 impl From<AppBar> for Widget {
     fn from(value: AppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -359,7 +361,9 @@ impl Default for SliverAppBar {
 impl From<SliverAppBar> for Widget {
     fn from(value: SliverAppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -554,8 +558,8 @@ impl Scaffold {
 impl From<Scaffold> for Widget {
     fn from(value: Scaffold) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(context, &current_control_theme(context))
-        })
+        }))
     }
 }

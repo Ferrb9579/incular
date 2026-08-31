@@ -824,10 +824,7 @@ mod scrollbar_tests {
     use incular_core::{Color, Offset, PointerPhase, Size};
     use incular_rendering::{Brush, PaintCommand};
     use incular_scroll::ScrollbarStyle as RawScrollbarStyle;
-    use incular_widgets::{
-        Text, Widget,
-        internal::{WidgetKind, WidgetTree},
-    };
+    use incular_widgets::{SingleChildScrollView, Text, Widget, internal::WidgetTree};
 
     #[test]
     fn builder_keeps_controller_private_and_uses_explicit_defaults() {
@@ -835,7 +832,7 @@ mod scrollbar_tests {
             .child(Text::new("content"))
             .build()
             .into();
-        assert!(matches!(default.kind(), WidgetKind::LayoutBuilder { .. }));
+        assert_eq!(default.debug_type_name(), "LayoutBuilder");
 
         let style = RawScrollbarStyle {
             width: 10.,
@@ -849,21 +846,18 @@ mod scrollbar_tests {
             .thumb_visibility(true)
             .build()
             .into();
-        assert!(matches!(
-            configured.kind(),
-            WidgetKind::LayoutBuilder { .. }
-        ));
+        assert_eq!(configured.debug_type_name(), "LayoutBuilder");
     }
 
     #[test]
     fn plain_content_becomes_a_retained_scroll_view() {
         let controller = incular_scroll::ScrollController::new();
-        let widget = Scrollbar::new(Widget::fixed_box(Size::new(120., 1_000.), Color::WHITE))
+        let widget = Scrollbar::new(Widget::box_(Size::new(120., 1_000.), Color::WHITE))
             .controller(controller.clone())
             .thumb_visibility(true)
             .build(&ControlTheme::dark());
 
-        assert!(matches!(widget.kind(), WidgetKind::Scroll { .. }));
+        assert_eq!(widget.debug_type_name(), "ScrollView");
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");
@@ -892,7 +886,7 @@ mod scrollbar_tests {
             track_color: Color::rgba(10, 20, 30, 120),
             thumb_color: Color::rgba(200, 210, 220, 230),
         };
-        let widget = Scrollbar::new(Widget::fixed_box(Size::new(100., 800.), Color::WHITE))
+        let widget = Scrollbar::new(Widget::box_(Size::new(100., 800.), Color::WHITE))
             .controller(controller)
             .style(style)
             .thumb_visibility(true);
@@ -913,12 +907,12 @@ mod scrollbar_tests {
     #[test]
     fn existing_scroll_view_reuses_its_controller_without_nesting() {
         let controller = incular_scroll::ScrollController::new();
-        let existing = Widget::scroll_view(
-            controller.clone(),
-            Widget::fixed_box(Size::new(100., 800.), Color::WHITE),
-        );
+        let existing: Widget =
+            SingleChildScrollView::new(Widget::box_(Size::new(100., 800.), Color::WHITE))
+                .controller(controller.clone())
+                .into();
         let widget = Scrollbar::new(existing).build(&ControlTheme::light());
-        assert!(matches!(widget.kind(), WidgetKind::Scroll { .. }));
+        assert_eq!(widget.debug_type_name(), "ScrollView");
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");

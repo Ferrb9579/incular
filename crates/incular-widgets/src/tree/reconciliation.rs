@@ -106,7 +106,7 @@ impl WidgetTree {
                 element.layout_builder_constraints = None;
                 element.layout_builder_revision = 0;
             }
-            if matches!(widget.kind, WidgetKind::LayoutBuilder { .. })
+            if matches!(widget.kind(), WidgetKind::LayoutBuilder { .. })
                 || invalidation.contains(RenderInvalidation::LAYOUT)
             {
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
@@ -210,7 +210,7 @@ impl WidgetTree {
             handlers.push((action, callback));
             action
         });
-        let (environment_override, environment_boundary) = match &widget.kind {
+        let (environment_override, environment_boundary) = match widget.kind() {
             WidgetKind::LayoutBuilder {
                 environment,
                 environment_boundary,
@@ -224,7 +224,7 @@ impl WidgetTree {
             environment_override.as_ref(),
         );
         self.check_keys_borrowed(None, widget.children_refs())?;
-        let layers = RenderLayers::create(&mut self.compositor, &widget.kind);
+        let layers = RenderLayers::create(&mut self.compositor, widget.kind());
         let kind = render_context.build(|context| render_kind(&widget, context));
         let render = self.renders.insert(RenderNode {
             parent: None,
@@ -268,7 +268,7 @@ impl WidgetTree {
             render_context.consumer_id(),
             (id, InheritedDependencyKind::Render),
         );
-        if let WidgetKind::SelectionListener { notifier, .. } = &widget.kind {
+        if let WidgetKind::SelectionListener { notifier, .. } = widget.kind() {
             notifier.register();
         }
         self.diagnostics.mounts += 1;
@@ -373,11 +373,11 @@ impl WidgetTree {
         if let WidgetKind::SelectionListener {
             notifier: old_notifier,
             ..
-        } = &old.kind
+        } = old.kind()
             && let WidgetKind::SelectionListener {
                 notifier: new_notifier,
                 ..
-            } = &widget.kind
+            } = widget.kind()
             && old_notifier != new_notifier
         {
             old_notifier.unregister();
@@ -391,7 +391,7 @@ impl WidgetTree {
                 element.render_context.clone(),
             )
         };
-        let (new_override, new_boundary) = match &widget.kind {
+        let (new_override, new_boundary) = match widget.kind() {
             WidgetKind::LayoutBuilder {
                 environment,
                 environment_boundary,
@@ -409,7 +409,7 @@ impl WidgetTree {
                 _ => false,
             };
         #[cfg(feature = "devtools")]
-        let property_changes = crate::devtools_props::diff_properties(&old.kind, &widget.kind);
+        let property_changes = crate::devtools_props::diff_properties(old.kind(), widget.kind());
         debug_assert_eq!(
             old.type_(),
             widget.type_(),
@@ -436,7 +436,7 @@ impl WidgetTree {
                 .layers
                 .clone();
             layer_structure_changed =
-                layers.reconcile_structure(&mut self.compositor, &widget.kind);
+                layers.reconcile_structure(&mut self.compositor, widget.kind());
             self.render_live_mut(render, "updated render must remain live")
                 .object
                 .layers = layers;
@@ -511,7 +511,7 @@ impl WidgetTree {
             render_context.set_erased(scope.type_id, scope.value);
             self.apply_inherited_invalidations();
         }
-        if matches!(widget.kind, WidgetKind::LayoutBuilder { .. }) {
+        if matches!(widget.kind(), WidgetKind::LayoutBuilder { .. }) {
             // A new descriptor may carry a different builder closure while
             // retaining the same constraints/revision value. Force one
             // materialization so updates cannot leave the old child mounted.
@@ -543,7 +543,7 @@ impl WidgetTree {
         // materialization validates and commits the replacement set
         // transactionally. This applies uniformly to slivers, advanced
         // scrolling families and LayoutBuilder.
-        if matches!(widget.kind.structure().children, WidgetChildren::Dynamic) {
+        if matches!(widget.kind().structure().children, WidgetChildren::Dynamic) {
             #[cfg(feature = "devtools")]
             self.devtools_trace_end(trace);
             return Ok(());
@@ -570,7 +570,7 @@ impl WidgetTree {
                 self.diagnostics.widget_type_comparisons += 1;
                 element.widget.type_() == widget.type_() && {
                     self.diagnostics.key_comparisons += 1;
-                    element.widget.key == widget.key
+                    element.widget.key() == widget.key()
                 }
             }
             None => false,
@@ -614,12 +614,16 @@ impl WidgetTree {
         let any_keys = old_middle.iter().any(|id| {
             self.elements
                 .get(id.0)
-                .is_some_and(|e| e.widget.key.is_some())
-        }) || desired_middle.iter().any(|w| w.key.is_some());
+                .is_some_and(|e| e.widget.key().is_some())
+        }) || desired_middle.iter().any(|w| w.key().is_some());
         if any_keys {
             self.diagnostics.key_maps_built += 1;
             for (position, id) in old_middle.iter().enumerate() {
-                if let Some(key) = self.elements.get(id.0).and_then(|e| e.widget.key.clone()) {
+                if let Some(key) = self
+                    .elements
+                    .get(id.0)
+                    .and_then(|e| e.widget.key().cloned())
+                {
                     keyed.insert(key, (*id, position));
                     self.diagnostics.key_map_entries += 1;
                 } else {
@@ -901,7 +905,7 @@ impl WidgetTree {
             let element = self.element_live(element_id, "layout-builder element must remain live");
             let WidgetKind::LayoutBuilder {
                 builder, revision, ..
-            } = &element.widget.kind
+            } = element.widget.kind()
             else {
                 return Ok(());
             };
@@ -1044,7 +1048,7 @@ impl WidgetTree {
                 let WidgetKind::NotificationListener {
                     callback: Some(callback),
                     ..
-                } = &element.widget.kind
+                } = element.widget.kind()
                 else {
                     return None;
                 };
@@ -1164,7 +1168,7 @@ impl WidgetTree {
                     element.render_context.clear_dependencies();
                     self.inherited_consumers.remove(&build_consumer);
                     self.inherited_consumers.remove(&render_consumer);
-                    match &element.widget.kind {
+                    match element.widget.kind() {
                         WidgetKind::SelectionListener {
                             notifier, delegate, ..
                         } => {

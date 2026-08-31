@@ -81,8 +81,8 @@ impl Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(&crate::theme::current_control_theme(context))
-        })
+        }))
     }
 }

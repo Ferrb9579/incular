@@ -20,7 +20,7 @@ fn main() {
         let inspector_opener = counter_opener.clone();
         let value = primary_count.get();
 
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Multi Window")
                 .color(Color::rgba(215, 232, 255, 255))
                 .into(),
@@ -42,7 +42,7 @@ fn main() {
                         },
                         move |_cx| {
                             let value = count.get();
-                            Widget::column(vec![
+                            Widget::from(Column::new(Vec::<Widget>::from([
                                 Text::new("Counter Window").into(),
                                 Text::new(format!("Shared count: {value}")).into(),
                                 RawMaterialButton::new("Increment")
@@ -51,7 +51,7 @@ fn main() {
                                         move || count.update(|value| *value += 1)
                                     })
                                     .into(),
-                            ])
+                            ])))
                         },
                     );
                 })
@@ -71,7 +71,7 @@ fn main() {
                                 let value = count.get();
                                 let viewport = cx.viewport();
                                 let scale = cx.scale_factor();
-                                Widget::column(vec![
+                                Widget::from(Column::new(Vec::<Widget>::from([
                                     Text::new("Independent window environment").into(),
                                     Text::new(format!(
                                         "logical: {:.0} × {:.0}; scale: {scale:.2}",
@@ -79,13 +79,13 @@ fn main() {
                                     ))
                                     .into(),
                                     Text::new(format!("shared count: {value}")).into(),
-                                ])
+                                ])))
                             },
                         );
                     }
                 })
                 .into(),
-        ])
+        ])))
     })
     .expect("valid multi-window application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

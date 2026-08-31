@@ -94,12 +94,15 @@ fn button_hover_callbacks_fire_once_on_enter_and_exit() {
 #[test]
 fn wheel_updates_only_retained_scroll_transform() {
     let controller = incular_widgets::ScrollController::new();
-    let child = Widget::column(
+    let child = Widget::from(incular_widgets::Column::new(
         (0..8)
             .map(|_| Widget::box_(Size::new(80., 40.), Color::WHITE))
             .collect::<Vec<_>>(),
-    );
-    let mut runtime = Runtime::new(Widget::scroll_view(controller.clone(), child)).unwrap();
+    ));
+    let mut runtime = Runtime::new(Widget::from(
+        incular_widgets::SingleChildScrollView::new(child).controller(controller.clone()),
+    ))
+    .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
     let (_, initial) = runtime.run_frame(constraints).unwrap();
     assert!(
@@ -156,11 +159,18 @@ fn translated_button_hit_tests_at_its_visible_position_without_repaint() {
 #[test]
 fn scrolled_button_hits_at_visible_not_old_location() {
     let controller = incular_widgets::ScrollController::new();
-    let content = Widget::column(vec![
-        Widget::box_(Size::new(80., 160.), Color::WHITE),
-        incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(12)),
-    ]);
-    let mut runtime = Runtime::new(Widget::scroll_view(controller.clone(), content)).unwrap();
+    let content = Widget::from(
+        incular_widgets::Column::new(vec![
+            Widget::box_(Size::new(80., 160.), Color::WHITE),
+            incular_widgets::internal::action(Size::new(20., 20.), Color::WHITE, ActionId(12)),
+        ])
+        .main_axis_size(incular_config::MainAxisSize::Min)
+        .cross_axis_alignment(incular_config::CrossAxisAlignment::Start),
+    );
+    let mut runtime = Runtime::new(Widget::from(
+        incular_widgets::SingleChildScrollView::new(content).controller(controller.clone()),
+    ))
+    .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
     let _ = runtime.run_frame(constraints).unwrap();
     assert!(controller.jump_to(80.));
@@ -191,7 +201,7 @@ fn animation_ticks_request_frames_without_rebuild_or_paint() {
     let controller = incular_widgets::internal::TranslationController::new();
     let mut runtime = Runtime::new(Widget::translate(
         controller.clone(),
-        Widget::text("warm text"),
+        Widget::from(incular_widgets::Text::new("warm text")),
     ))
     .unwrap();
     let constraints = Constraints::tight(Size::new(100., 100.));
@@ -212,7 +222,7 @@ fn animation_ticks_request_frames_without_rebuild_or_paint() {
 #[test]
 fn retained_card_text_and_background_move_together_without_repaint() {
     let controller = incular_widgets::internal::TranslationController::new();
-    let mut runtime = Runtime::new(Widget::padding(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Padding::new(
         incular_config::EdgeInsets {
             left: 20.,
             top: 10.,
@@ -221,12 +231,12 @@ fn retained_card_text_and_background_move_together_without_repaint() {
         },
         Widget::translate(
             controller.clone(),
-            Widget::column(vec![
+            Widget::from(incular_widgets::Column::new(vec![
                 Widget::box_(Size::new(80., 20.), Color::WHITE),
-                Widget::text("cached card text"),
-            ]),
+                Widget::from(incular_widgets::Text::new("cached card text")),
+            ])),
         ),
-    ))
+    )))
     .unwrap();
     let constraints = Constraints::tight(Size::new(200., 100.));
     let (before, _) = runtime.run_frame(constraints).unwrap();
@@ -318,7 +328,7 @@ fn sliver_list_keeps_small_scrolls_compositor_only_and_direct_jumps_bounded() {
         controller.clone(),
         move |index| {
             observed.set(observed.get() + 1);
-            Widget::text(format!("Item {index}"))
+            Widget::from(incular_widgets::Text::new(format!("Item {index}")))
         },
     ))
     .unwrap();

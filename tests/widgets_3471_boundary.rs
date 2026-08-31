@@ -19,6 +19,44 @@ fn widgets_root_has_no_globbed_retained_or_layout_surface() {
 }
 
 #[test]
+fn widget_transport_keeps_retained_taxonomy_private() {
+    let tree = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/tree.rs"),
+    )
+    .unwrap();
+    let widget = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/tree/widget.rs"),
+    )
+    .unwrap();
+    let internal = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/internal.rs"),
+    )
+    .unwrap();
+
+    assert!(tree.contains("pub(crate) enum WidgetKind"));
+    assert!(!tree.contains("pub enum WidgetKind"));
+    assert!(!internal.contains("pub use crate::tree::*"));
+    assert!(!widget.contains("impl Deref for Widget"));
+    assert!(!widget.contains("impl DerefMut for Widget"));
+
+    for removed in [
+        "pub fn row(",
+        "pub fn column(",
+        "pub fn stack(",
+        "pub fn padding(",
+        "pub fn text(",
+        "pub fn visibility(",
+        "pub fn aspect_ratio(",
+        "pub fn fixed_box(",
+    ] {
+        assert!(
+            !widget.contains(removed),
+            "legacy Widget constructor leaked: {removed}"
+        );
+    }
+}
+
+#[test]
 fn widgets_crate_does_not_depend_on_material() {
     let manifest = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/Cargo.toml"),

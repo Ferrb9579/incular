@@ -105,7 +105,7 @@ pub(super) fn with_recursive_tree_stack<R>(f: impl FnOnce() -> R) -> R {
 }
 
 use semantics::widget_text;
-use values::{finite_non_negative, finite_offset};
+use values::finite_offset;
 pub(crate) use widget::WidgetType;
 use widget::{
     enforced_constraints, fractional_constraints, physical_scroll_offset, scroll_constraints,
@@ -363,7 +363,7 @@ pub struct TextFieldSpec {
 }
 
 #[derive(Clone)]
-pub enum WidgetKind {
+pub(crate) enum WidgetKind {
     Box {
         size: Size,
         color: Color,

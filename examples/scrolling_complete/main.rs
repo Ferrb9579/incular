@@ -23,7 +23,7 @@ fn main() {
             2_000,
             |item| if item % 3 == 0 { 56. } else { 32. },
             |item| {
-                Widget::fixed_box(
+                Widget::box_(
                     Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                     Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
                 )
@@ -36,11 +36,11 @@ fn main() {
             .into();
         ScrollView::vertical(
             outer.clone(),
-            Widget::column(vec![
-                Widget::fixed_box(Size::new(360., 120.), Color::rgba(35, 45, 70, 255)),
+            Widget::from(Column::new(Vec::<Widget>::from([
+                Widget::box_(Size::new(360., 120.), Color::rgba(35, 45, 70, 255)),
                 inner_view,
-                Widget::fixed_box(Size::new(360., 700.), Color::rgba(30, 38, 55, 255)),
-            ]),
+                Widget::box_(Size::new(360., 700.), Color::rgba(30, 38, 55, 255)),
+            ]))),
         )
     })
     .expect("valid scrolling application");

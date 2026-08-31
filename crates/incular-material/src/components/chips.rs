@@ -301,12 +301,12 @@ impl RawChip {
             .child(content)
             .into();
         let decorated = if self.elevation > 0.0 {
-            Widget::drop_shadow(
+            Widget::from(incular_widgets::internal::DropShadow::new(
                 Offset::new(0.0, (self.elevation * 0.2).min(8.0)),
                 (self.elevation * 0.45).clamp(1.0, 16.0),
                 Color::rgba(0, 0, 0, 64),
                 decorated,
-            )
+            ))
         } else {
             decorated
         };
@@ -348,7 +348,9 @@ impl RawChip {
 impl From<RawChip> for Widget {
     fn from(value: RawChip) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 

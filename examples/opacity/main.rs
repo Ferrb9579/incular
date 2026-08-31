@@ -54,7 +54,7 @@ fn main() {
         let fade_controller = fade.clone();
         let fade_button_controller = fade_button_controller.clone();
         let fade_target_button = fade_target_button.clone();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Group Opacity")
                 .style(TextStyle {
                     size: 28.,
@@ -67,13 +67,13 @@ fn main() {
                 .into(),
             Opacity::new(
                 0.5,
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     Widget::box_(Size::new(170., 90.), Color::rgba(235, 65, 70, 255)),
                     Widget::translate(
                         overlap_translation.clone(),
                         Widget::box_(Size::new(170., 90.), Color::rgba(55, 100, 235, 255)),
                     ),
-                ]),
+                ]))),
             )
             .into(),
             Text::new("Nested opacity: outer 0.6 × inner 0.5")
@@ -81,7 +81,7 @@ fn main() {
                 .into(),
             Opacity::new(
                 0.6,
-                Widget::column(vec![
+                Widget::from(Column::new(Vec::<Widget>::from([
                     DecoratedBox::new(Widget::box_(
                         Size::new(330., 42.),
                         Color::rgba(240, 170, 60, 255),
@@ -97,7 +97,7 @@ fn main() {
                         .radius(8.),
                     )
                     .into(),
-                ]),
+                ]))),
             )
             .into(),
             Text::new("Cached content fade: text, image, gradient, and path")
@@ -105,7 +105,7 @@ fn main() {
                 .into(),
             Opacity::controlled(
                 fade_controller,
-                DecoratedBox::new(Widget::row(vec![
+                DecoratedBox::new(Widget::from(Row::new(Vec::<Widget>::from([
                     Image::new(image.clone())
                         .width(56.)
                         .height(56.)
@@ -122,7 +122,7 @@ fn main() {
                         .size(42.)
                         .brush(Color::rgba(255, 235, 130, 255))
                         .into(),
-                ]))
+                ]))))
                 .size(Size::new(330., 70.))
                 .background(rainbow.clone())
                 .radius(12.),
@@ -139,7 +139,7 @@ fn main() {
                     );
                 })
                 .into(),
-        ])
+        ])))
     })
     .expect("valid opacity application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

@@ -296,7 +296,9 @@ impl Default for BottomAppBar {
 impl From<BottomAppBar> for Widget {
     fn from(value: BottomAppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 

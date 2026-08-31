@@ -1,7 +1,7 @@
 use super::super::super::*;
 
 pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
-    match &widget.kind {
+    match widget.kind() {
         WidgetKind::Padding { padding, .. } => RenderKind::Padding { padding: *padding },
         WidgetKind::Constrained { constraints, .. } => RenderKind::Constrained {
             constraints: *constraints,

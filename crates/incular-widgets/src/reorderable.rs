@@ -35,7 +35,7 @@ fn marker_key(spec: ReorderableListenerSpec) -> Key {
 }
 
 fn marker_spec(widget: &Widget) -> Option<ReorderableListenerSpec> {
-    let Key::String(value) = widget.key.as_ref()? else {
+    let Key::String(value) = widget.key()? else {
         return None;
     };
     let value = value.strip_prefix(LISTENER_MARKER_PREFIX)?;
@@ -75,14 +75,15 @@ pub(crate) fn install_listener(
 ) -> Option<ReorderableListenerSpec> {
     if let Some(spec) = marker_spec(widget) {
         let mut marked = std::mem::replace(widget, empty_widget());
-        let kind = std::mem::replace(&mut marked.kind, empty_widget().kind.clone());
+        let replacement = empty_widget().kind().clone();
+        let kind = std::mem::replace(marked.kind_mut(), replacement);
         let child = match kind {
             WidgetKind::RawInput {
                 child: Some(child), ..
             } => child,
             other => {
-                marked.kind = other;
-                marked.key = None;
+                *marked.kind_mut() = other;
+                marked.set_key(None);
                 marked
             }
         };
@@ -94,7 +95,7 @@ pub(crate) fn install_listener(
         return Some(spec);
     }
 
-    match &mut widget.kind {
+    match widget.kind_mut() {
         WidgetKind::Banner { child, .. } => child
             .as_mut()
             .and_then(|child| install_listener(child, wrap)),
@@ -180,7 +181,7 @@ pub(crate) fn install_listener(
 
 fn listener_widget(child: Widget, spec: ReorderableListenerSpec) -> Widget {
     let mut listener: Widget = Listener::new(child).into();
-    listener.key = Some(marker_key(spec));
+    listener.set_key(Some(marker_key(spec)));
     listener
 }
 

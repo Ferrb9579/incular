@@ -45,3 +45,10 @@ fn canonical_widget_defaults_are_explicit() {
     );
     let _ = FittedBox::new(Text::new("x")).fit(BoxFit::Contain);
 }
+
+#[test]
+fn widget_is_only_the_opaque_composition_transport() {
+    let root: Widget = Padding::all(12.0, Text::new("opaque")).into();
+    assert_eq!(root.debug_type_name(), "Padding");
+    assert!(root.key().is_none());
+}

@@ -883,10 +883,10 @@ impl From<TextField> for Widget {
             });
         }
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = context.depend_on::<ControlTheme>().unwrap_or_default();
             value.build(context, &theme)
-        })
+        }))
     }
 }
 

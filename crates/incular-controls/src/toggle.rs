@@ -102,26 +102,26 @@ impl Toggle {
         // surfaces.  The transparent action surface below remains the sole hit
         // target and semantic node, so the transition never duplicates input
         // or accessibility actions.
-        let selected_visual = Widget::ignore_pointer(
-            true,
-            Widget::controlled_opacity(
+        let selected_visual = Widget::from(
+            incular_widgets::IgnorePointer::new(Widget::controlled_opacity(
                 self.selected_opacity.clone(),
                 Button::with_child(content.clone())
                     .variant(ButtonVariant::Primary)
                     .enabled(true)
                     .build(theme),
-            ),
+            ))
+            .ignoring(true),
         )
         .exclude_semantics();
-        let unselected_visual = Widget::ignore_pointer(
-            true,
-            Widget::controlled_opacity(
+        let unselected_visual = Widget::from(
+            incular_widgets::IgnorePointer::new(Widget::controlled_opacity(
                 self.unselected_opacity.clone(),
                 Button::with_child(content)
                     .variant(ButtonVariant::Ghost)
                     .enabled(true)
                     .build(theme),
-            ),
+            ))
+            .ignoring(true),
         )
         .exclude_semantics();
         let visual = Stack::aligned(Alignment::CENTER, [selected_visual, unselected_visual]);

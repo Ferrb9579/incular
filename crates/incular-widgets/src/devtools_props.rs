@@ -354,12 +354,12 @@ pub fn diff_properties(old: &WidgetKind, new: &WidgetKind) -> Vec<PropertyChange
 }
 
 fn summarize_child(out: &mut Vec<DebugProperty>, child: &crate::tree::Widget) {
-    if let WidgetKind::Text { text, .. } = &child.kind {
+    if let WidgetKind::Text { text, .. } = child.kind() {
         out.push(prop("child", DebugValue::Str(truncate(text, 24))));
     } else {
         out.push(prop(
             "child",
-            DebugValue::Str(type_display_pub(&child.kind)),
+            DebugValue::Str(type_display_pub(child.kind())),
         ));
     }
 }

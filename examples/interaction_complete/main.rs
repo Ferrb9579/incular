@@ -86,9 +86,9 @@ fn main() {
             });
 
         let behind_signal = app_behind_ignore.clone();
-        let ignore_demo = Widget::stack(
+        let ignore_demo = Widget::from(Stack::aligned(
             Alignment::CENTER,
-            vec![
+            Vec::<Widget>::from([
                 GestureDetector::new(card(
                     Color::rgba(55, 138, 100, 255),
                     Padding::all(16., text("Tap target behind IgnorePointer")),
@@ -100,13 +100,13 @@ fn main() {
                     Padding::all(16., text("IgnorePointer overlay — taps pass through to green.")),
                 ))
                 .into(),
-            ],
-        );
+            ]),
+        ));
 
         let blocked_signal = app_absorbed.clone();
-        let absorb_demo = Widget::stack(
+        let absorb_demo = Widget::from(Stack::aligned(
             Alignment::CENTER,
-            vec![
+            Vec::<Widget>::from([
                 GestureDetector::new(card(
                     Color::rgba(124, 71, 90, 255),
                     Padding::all(16., text("This target is behind AbsorbPointer and cannot be tapped.")),
@@ -118,8 +118,8 @@ fn main() {
                     Padding::all(16., text("AbsorbPointer overlay — normal child and behind targets are blocked.")),
                 ))
                 .into(),
-            ],
-        );
+            ]),
+        ));
 
         let reset_horizontal = app_horizontal.clone();
         let reset_vertical = app_vertical.clone();
@@ -129,7 +129,7 @@ fn main() {
         let reset_status = app_status.clone();
         Padding::all(
             20.,
-            Widget::column(vec![
+            Widget::from(Column::new(Vec::<Widget>::from([
                 Text::new("Completed interaction primitives")
                     .style(TextStyle {
                         size: 30.,
@@ -157,7 +157,7 @@ fn main() {
                         reset_status.set("waiting for an arena claim".into());
                     })
                     .into(),
-            ]),
+            ]))),
         )
         .into()
     })

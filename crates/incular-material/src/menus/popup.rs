@@ -188,9 +188,9 @@ impl<T> PopupMenuItem<T> {
 impl<T: Clone + 'static> From<PopupMenuItem<T>> for Widget {
     fn from(value: PopupMenuItem<T>) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build_with_selection_and_close(context, None, None)
-        })
+        }))
     }
 }
 
@@ -301,9 +301,9 @@ impl<T> CheckedPopupMenuItem<T> {
 impl<T: Clone + 'static> From<CheckedPopupMenuItem<T>> for Widget {
     fn from(value: CheckedPopupMenuItem<T>) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build_with_selection_and_close(context, None, None)
-        })
+        }))
     }
 }
 

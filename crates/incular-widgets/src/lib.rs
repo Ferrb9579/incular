@@ -2,6 +2,29 @@
 //!
 //! The public crate root provides canonical first-class Flutter-style widget descriptors
 //! while internal retained tree execution remains Rust-native.
+//!
+//! Author UI with concrete widget types and erase to [`Widget`] only at composition or
+//! framework boundaries:
+//!
+//! ```
+//! use incular_widgets::{Column, Padding, Text, Widget};
+//!
+//! let screen: Widget = Padding::all(
+//!     16.0,
+//!     Column::new([
+//!         Widget::from(Text::new("Title")),
+//!         Widget::from(Text::new("Body")),
+//!     ]),
+//! )
+//! .into();
+//!
+//! assert_eq!(screen.debug_type_name(), "Padding");
+//! ```
+//!
+//! `Widget` is intentionally an opaque transport value. Application-specific widgets should
+//! normally be ordinary Rust components/functions that compose these public descriptors.
+//! Custom drawing uses [`CustomPaint`] / [`CustomPainter`]. The retained built-in taxonomy is
+//! sealed; Incular does not expose `WidgetKind` or a public trait-object render protocol.
 
 mod advanced_scrolling;
 mod advanced_slivers;

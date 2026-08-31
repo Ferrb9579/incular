@@ -24,7 +24,10 @@ fn panel(title: &str, child: impl Into<Widget>) -> Widget {
                 .color(PANEL)
                 .border_radius(BorderRadius::circular(10.)),
         )
-        .child(Widget::column(vec![label(title, 16.), child.into()]))
+        .child(Widget::from(Column::new(Vec::<Widget>::from([
+            label(title, 16.),
+            child.into(),
+        ]))))
         .into()
 }
 
@@ -37,7 +40,7 @@ fn main() {
     let page = PageView::new([
         panel(
             "Layout and clipping",
-            Widget::column(vec![
+            Widget::from(Column::new(Vec::<Widget>::from([
                 label("Container expands under bounded constraints", 13.),
                 SizedBox::new()
                     .width(260.)
@@ -55,7 +58,7 @@ fn main() {
                     Widget::from(SizedBox::new().width(90.).child(label("SizedBox", 13.))),
                 ])
                 .into(),
-            ]),
+            ]))),
         ),
         panel(
             "Text and transforms",
@@ -63,11 +66,11 @@ fn main() {
                 TextStyle::new()
                     .font_size(15.)
                     .color(Color::rgba(220, 228, 244, 255)),
-                Widget::column(vec![
+                Widget::from(Column::new(Vec::<Widget>::from([
                     label("DefaultTextStyle is inherited by descendants", 15.),
                     Transform::rotation(0.04, label("retained transform", 20.)).into(),
                     Opacity::new(0.65, label("compositor opacity", 15.)).into(),
-                ]),
+                ]))),
             ),
         ),
         panel(
@@ -102,7 +105,7 @@ fn main() {
     ])
     .scroll_direction(Axis::Horizontal);
 
-    let root = SafeArea::new(Widget::column(vec![
+    let root = SafeArea::new(Widget::from(Column::new(Vec::<Widget>::from([
         label("Flutter Widgets 3.47.1 surface", 24.),
         label(
             "No Material: layout • text • scrolling • clipping • animation",
@@ -110,7 +113,7 @@ fn main() {
         ),
         SizedBox::new().height(8.).into(),
         SizedBox::new().height(620.).child(page).into(),
-    ]));
+    ]))));
     let app =
         Application::new_with_options(WindowOptions::new("Incular Widgets gallery"), move |_| {
             root.clone().into()

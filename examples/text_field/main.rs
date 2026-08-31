@@ -12,7 +12,7 @@ fn main() {
     let name = TextEditingController::with_text("Ada");
     let note = TextEditingController::with_text("First line\nSecond line\n");
     let app = Application::new(move |_cx| {
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular editable text")
                 .color(Color::rgba(220, 230, 255, 255))
                 .into(),
@@ -26,7 +26,7 @@ fn main() {
                 .placeholder("Type Unicode or use an IME")
                 .size(Size::new(320., 180.))
                 .into(),
-        ])
+        ])))
     })
     .expect("valid text field application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

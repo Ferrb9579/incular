@@ -10,9 +10,8 @@ use super::*;
 /// node exists only as the reference-counted ownership boundary. Its fields are
 /// crate-private so framework implementation code can keep exhaustive matching
 /// local without exposing representation details to applications.
-#[doc(hidden)]
 #[derive(Clone)]
-pub struct WidgetNode {
+pub(crate) struct WidgetNode {
     pub(crate) key: Option<Key>,
     pub(crate) kind: WidgetKind,
     pub(crate) semantics: SemanticProperties,
@@ -31,20 +30,6 @@ impl Clone for Widget {
         Self {
             node: self.node.clone(),
         }
-    }
-}
-
-impl std::ops::Deref for Widget {
-    type Target = WidgetNode;
-
-    fn deref(&self) -> &Self::Target {
-        self.node.as_deref().expect("live widget descriptor handle")
-    }
-}
-
-impl std::ops::DerefMut for Widget {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Rc::make_mut(self.node.as_mut().expect("live widget descriptor handle"))
     }
 }
 
@@ -260,14 +245,16 @@ pub(super) fn fractional_constraints(
 impl std::fmt::Debug for Widget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Widget")
-            .field("key", &self.key)
-            .field("kind", &self.kind)
+            .field("key", &self.key())
+            .field("kind", self.kind())
             .finish()
     }
 }
 impl PartialEq for Widget {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key && self.kind == other.kind && self.semantics == other.semantics
+        self.key() == other.key()
+            && self.kind() == other.kind()
+            && self.semantic_properties() == other.semantic_properties()
     }
 }
 impl std::fmt::Debug for WidgetKind {
@@ -2465,10 +2452,14 @@ impl Widget {
     }
 
     /// Returns the immutable descriptor node backing this handle.
-    #[doc(hidden)]
     #[must_use]
-    pub fn node(&self) -> &WidgetNode {
+    pub(crate) fn node(&self) -> &WidgetNode {
         self.node.as_deref().expect("live widget descriptor handle")
+    }
+
+    #[must_use]
+    pub(crate) fn node_mut(&mut self) -> &mut WidgetNode {
+        Rc::make_mut(self.node.as_mut().expect("live widget descriptor handle"))
     }
 
     /// Returns whether two handles refer to the exact same declarative
@@ -2477,9 +2468,8 @@ impl Widget {
     /// Descriptor identity is only an optimization hint; retained identity
     /// still belongs to `Element` and reconciliation continues to honor keys
     /// and widget type compatibility.
-    #[doc(hidden)]
     #[must_use]
-    pub fn ptr_eq(&self, other: &Self) -> bool {
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
         match (&self.node, &other.node) {
             (Some(left), Some(right)) => Rc::ptr_eq(left, right),
             (None, None) => true,
@@ -2491,15 +2481,33 @@ impl Widget {
     ///
     /// This is intentionally hidden from the Flutter-facing prelude. Plan 16
     /// removes the remaining workspace consumers that inspect built-in kinds.
-    #[doc(hidden)]
     #[must_use]
-    pub fn kind(&self) -> &WidgetKind {
+    pub(crate) fn kind(&self) -> &WidgetKind {
         &self.node().kind
+    }
+
+    #[must_use]
+    pub(crate) fn kind_mut(&mut self) -> &mut WidgetKind {
+        &mut self.node_mut().kind
+    }
+
+    #[must_use]
+    pub(crate) fn semantic_properties(&self) -> &SemanticProperties {
+        &self.node().semantics
+    }
+
+    #[must_use]
+    pub(crate) fn semantic_properties_mut(&mut self) -> &mut SemanticProperties {
+        &mut self.node_mut().semantics
+    }
+
+    pub(crate) fn set_key(&mut self, key: Option<Key>) {
+        self.node_mut().key = key;
     }
 
     /// Creates a widget from a internal kind descriptor.
     #[must_use]
-    pub fn from_kind(kind: WidgetKind) -> Self {
+    pub(crate) fn from_kind(kind: WidgetKind) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind,
@@ -2512,25 +2520,26 @@ impl Widget {
     /// `FocusTraversal*` widgets.
     #[doc(hidden)]
     pub(crate) fn with_focus_traversal_policy(mut self, policy: FocusTraversalPolicyKind) -> Self {
-        self.semantics.focus_traversal_policy = Some(policy);
+        self.semantic_properties_mut().focus_traversal_policy = Some(policy);
         self
     }
 
     #[doc(hidden)]
     pub(crate) fn with_focus_traversal_order(mut self, order: Option<f64>) -> Self {
-        self.semantics.focus_traversal_order = order.filter(|value| value.is_finite());
+        self.semantic_properties_mut().focus_traversal_order =
+            order.filter(|value| value.is_finite());
         self
     }
 
     #[doc(hidden)]
     pub(crate) fn with_excluded_focus(mut self, excluding: bool) -> Self {
-        self.semantics.exclude_focus = excluding;
+        self.semantic_properties_mut().exclude_focus = excluding;
         self
     }
 
     #[doc(hidden)]
     pub(crate) fn with_excluded_focus_traversal(mut self, excluding: bool) -> Self {
-        self.semantics.exclude_focus_traversal = excluding;
+        self.semantic_properties_mut().exclude_focus_traversal = excluding;
         self
     }
 
@@ -2539,14 +2548,14 @@ impl Widget {
     /// the runtime crate.
     #[doc(hidden)]
     pub(crate) fn with_undo_history_max_entries(mut self, max_entries: usize) -> Self {
-        self.semantics.undo_history_max_entries = Some(max_entries);
+        self.semantic_properties_mut().undo_history_max_entries = Some(max_entries);
         self
     }
 
     /// Marks this retained subtree as the initial focus scope.
     #[doc(hidden)]
     pub(crate) fn with_focus_scope_autofocus(mut self, autofocus: bool) -> Self {
-        self.semantics.focus_scope_autofocus = autofocus;
+        self.semantic_properties_mut().focus_scope_autofocus = autofocus;
         self
     }
 
@@ -2558,8 +2567,9 @@ impl Widget {
         input_type: TextInputTypeHint,
         input_action: TextInputActionHint,
     ) -> Self {
-        self.semantics.text_input_type = Some(input_type);
-        self.semantics.text_input_action = Some(input_action);
+        let semantics = self.semantic_properties_mut();
+        semantics.text_input_type = Some(input_type);
+        semantics.text_input_action = Some(input_action);
         self
     }
 
@@ -2569,16 +2579,13 @@ impl Widget {
         action: SemanticActionKind,
         callback: Rc<dyn Fn() + 'static>,
     ) -> Self {
+        let callbacks = &mut self.semantic_properties_mut().callbacks;
         match action {
-            SemanticActionKind::Activate => self.semantics.callbacks.activate = Some(callback),
-            SemanticActionKind::Increment => self.semantics.callbacks.increment = Some(callback),
-            SemanticActionKind::Decrement => self.semantics.callbacks.decrement = Some(callback),
-            SemanticActionKind::ScrollForward => {
-                self.semantics.callbacks.scroll_forward = Some(callback)
-            }
-            SemanticActionKind::ScrollBackward => {
-                self.semantics.callbacks.scroll_backward = Some(callback)
-            }
+            SemanticActionKind::Activate => callbacks.activate = Some(callback),
+            SemanticActionKind::Increment => callbacks.increment = Some(callback),
+            SemanticActionKind::Decrement => callbacks.decrement = Some(callback),
+            SemanticActionKind::ScrollForward => callbacks.scroll_forward = Some(callback),
+            SemanticActionKind::ScrollBackward => callbacks.scroll_backward = Some(callback),
             SemanticActionKind::Focus
             | SemanticActionKind::SetText
             | SemanticActionKind::SetSelection => {}
@@ -2588,7 +2595,7 @@ impl Widget {
 
     /// Text content when this widget is text-like (DevTools labels only).
     pub fn text_if_any(&self) -> Option<String> {
-        match &self.kind {
+        match self.kind() {
             WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
                 Some(text.clone())
             }
@@ -2605,12 +2612,12 @@ impl Widget {
     /// safe default for ordinary custom-content controls.
     #[doc(hidden)]
     pub fn semantic_text(&self) -> Option<String> {
-        self.semantics
+        self.semantic_properties()
             .label
             .clone()
             .filter(|label| !label.trim().is_empty())
             .or_else(|| {
-                self.semantics
+                self.semantic_properties()
                     .explicit
                     .as_ref()
                     .and_then(|semantics| semantics.label.clone())
@@ -2628,10 +2635,6 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn fixed_box(size: Size, color: Color) -> Self {
-        Self::box_(size, color)
-    }
-    #[must_use]
     pub(super) fn shape(
         path: Arc<Path>,
         fill: Option<Brush>,
@@ -2646,16 +2649,6 @@ impl Widget {
                 stroke,
                 size,
             },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Paints a caller-provided renderer-neutral display list at a fixed
-    /// logical size.
-    #[must_use]
-    pub fn custom_paint(size: Size, display_list: DisplayList) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::CustomPaint { size, display_list },
             semantics: SemanticProperties::default(),
         })
     }
@@ -2751,7 +2744,7 @@ impl Widget {
         })
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
-        if let WidgetKind::Button(spec) = &mut self.kind {
+        if let WidgetKind::Button(spec) = self.kind_mut() {
             if let Some(callback) = spec.callback.take() {
                 spec.action = allocate(callback);
                 spec.has_callback = true;
@@ -2764,24 +2757,8 @@ impl Widget {
             }
         }
     }
-
     #[must_use]
-    pub fn text(text: impl Into<String>) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Text {
-                text: text.into(),
-                style: TextStyle::default(),
-                align: TextAlign::Start,
-                soft_wrap: true,
-                max_lines: None,
-                overflow: TextOverflow::Clip,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn text_styled(text: impl Into<String>, style: TextStyle, align: TextAlign) -> Self {
+    pub(crate) fn text_styled(text: impl Into<String>, style: TextStyle, align: TextAlign) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Text {
@@ -2796,7 +2773,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn text_configured(
+    pub(crate) fn text_configured(
         text: impl Into<String>,
         style: TextStyle,
         align: TextAlign,
@@ -2886,7 +2863,7 @@ impl Widget {
         })
     }
     pub(crate) fn semantic_index(&self) -> Option<usize> {
-        match &self.kind {
+        match self.kind() {
             WidgetKind::IndexedSemantics { index, .. } => Some(*index),
             _ => None,
         }
@@ -2915,88 +2892,13 @@ impl Widget {
             semantics: SemanticProperties::default(),
         })
     }
-    /// Creates the retained core editing primitive used by
-    /// [`EditableText`]. Higher-level Material controls may add chrome and
-    /// validation around this descriptor.
-    #[must_use]
-    pub fn editable_text(
-        controller: TextEditingController,
-        size: Size,
-        style: TextStyle,
-        placeholder: String,
-        on_submit: Option<Rc<dyn Fn(String)>>,
-        multiline: bool,
-    ) -> Self {
-        Self::editable_text_configured(
-            controller,
-            size,
-            style,
-            placeholder,
-            on_submit,
-            multiline,
-            None,
-            None,
-            false,
-            TextAlign::Start,
-            true,
-            false,
-            false,
-        )
-    }
-
-    /// Creates an editable text primitive with the common editing policies
-    /// used by Material text fields.  The original [`Widget::editable_text`]
-    /// constructor remains as the renderer-neutral, enabled single-line
-    /// default; Material uses this richer boundary so read-only, obscured,
-    /// alignment, and multiline sizing are real retained properties rather
-    /// than decoration-only metadata.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn editable_text_configured(
-        controller: TextEditingController,
-        size: Size,
-        style: TextStyle,
-        placeholder: String,
-        on_submit: Option<Rc<dyn Fn(String)>>,
-        multiline: bool,
-        min_lines: Option<usize>,
-        max_lines: Option<usize>,
-        expands: bool,
-        text_align: TextAlign,
-        enabled: bool,
-        read_only: bool,
-        obscure_text: bool,
-    ) -> Self {
-        Self::editable_text_configured_with_cursor(
-            controller,
-            size,
-            style,
-            placeholder,
-            on_submit,
-            multiline,
-            min_lines,
-            max_lines,
-            expands,
-            text_align,
-            enabled,
-            read_only,
-            obscure_text,
-            1.0,
-            None,
-            0.0,
-            true,
-            Color::WHITE,
-            Color::rgba(72, 120, 220, 150),
-        )
-    }
-
     /// Creates the editable primitive with renderer-neutral caret and
     /// selection paint controls. Material uses this richer boundary for
     /// `TextField` cursor/selection configuration while the legacy constructor
     /// above keeps its source-compatible defaults.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn editable_text_configured_with_cursor(
+    pub(crate) fn editable_text_configured_with_cursor(
         controller: TextEditingController,
         size: Size,
         style: TextStyle,
@@ -3044,101 +2946,10 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn padding(padding: EdgeInsets, child: Self) -> Self {
+    pub(crate) fn padding(padding: EdgeInsets, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Padding { padding, child },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Tightens the incoming layout bounds before passing them to `child`.
-    #[must_use]
-    pub fn constrained(constraints: Constraints, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Constrained { constraints, child },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn limited_box(max_width: f32, max_height: f32, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Limited {
-                max_width: finite_non_negative(max_width),
-                max_height: finite_non_negative(max_height),
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn overflow_box(
-        min_width: Option<f32>,
-        max_width: Option<f32>,
-        min_height: Option<f32>,
-        max_height: Option<f32>,
-        child: Self,
-    ) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Overflow {
-                min_width: min_width.map(finite_non_negative),
-                max_width: max_width.map(finite_non_negative),
-                min_height: min_height.map(finite_non_negative),
-                max_height: max_height.map(finite_non_negative),
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Lets a child take its natural size, optionally retaining the parent's
-    /// limits on one axis while this wrapper itself still fits its parent.
-    #[must_use]
-    pub fn unconstrained(constrained_axis: Option<Axis>, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Unconstrained {
-                constrained_axis,
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Sizes a child to factors of the finite parent bounds on the specified
-    /// axes. Missing factors preserve the child's natural size on that axis.
-    #[must_use]
-    pub fn fractionally_sized(
-        width_factor: Option<f32>,
-        height_factor: Option<f32>,
-        child: Self,
-    ) -> Self {
-        for factor in [width_factor, height_factor].into_iter().flatten() {
-            assert!(
-                factor.is_finite() && factor >= 0.,
-                "fractional factors must be finite and non-negative"
-            );
-        }
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Fractional {
-                width_factor,
-                height_factor,
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Positions a child so that its reported baseline is at `baseline`.
-    #[must_use]
-    pub fn baseline(baseline: f32, child: Self) -> Self {
-        assert!(
-            baseline.is_finite() && baseline >= 0.,
-            "baseline must be finite and non-negative"
-        );
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Baseline { baseline, child },
             semantics: SemanticProperties::default(),
         })
     }
@@ -3147,24 +2958,10 @@ impl Widget {
     /// Descendant paint changes update their own cached picture without
     /// repainting this boundary's otherwise empty retained picture.
     #[must_use]
-    pub fn repaint_boundary(child: Self) -> Self {
+    pub(crate) fn repaint_boundary(child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::RepaintBoundary { child },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Attaches tap, double-tap, long-press, and pan recognition to a retained
-    /// subtree. A hit-tested down event captures the sequence for this region.
-    #[must_use]
-    pub fn gesture(callbacks: GestureCallbacks, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Gesture {
-                behavior: crate::gestures::HitTestBehavior::DeferToChild,
-                callbacks: Box::new(callbacks),
-                child,
-            },
             semantics: SemanticProperties::default(),
         })
     }
@@ -3185,7 +2982,7 @@ impl Widget {
     /// Removes this subtree from pointer hit testing while leaving painting and
     /// semantics intact. Siblings behind it remain eligible for the event.
     #[must_use]
-    pub fn ignore_pointer(ignoring: bool, child: Self) -> Self {
+    pub(crate) fn ignore_pointer(ignoring: bool, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::IgnorePointer { ignoring, child },
@@ -3196,7 +2993,7 @@ impl Widget {
     /// receive ordinary retained interaction while painting and semantics are
     /// preserved.
     #[must_use]
-    pub fn absorb_pointer(absorbing: bool, child: Self) -> Self {
+    pub(crate) fn absorb_pointer(absorbing: bool, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::AbsorbPointer { absorbing, child },
@@ -3204,117 +3001,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn align(alignment: Alignment, child: Self) -> Self {
-        crate::layout::Align::new(alignment, child).into()
-    }
-    #[must_use]
-    pub fn row(children: impl Into<Vec<Self>>) -> Self {
-        crate::layout::Row::new(children.into())
-            .main_axis_size(incular_config::MainAxisSize::Min)
-            .cross_axis_alignment(incular_config::CrossAxisAlignment::Start)
-            .into()
-    }
-    #[must_use]
-    pub fn column(children: impl Into<Vec<Self>>) -> Self {
-        crate::layout::Column::new(children.into())
-            .main_axis_size(incular_config::MainAxisSize::Min)
-            .cross_axis_alignment(incular_config::CrossAxisAlignment::Start)
-            .into()
-    }
-    #[must_use]
-    pub fn flex(direction: Axis, children: impl Into<Vec<Self>>) -> Self {
-        crate::layout::Flex::new(direction, children.into()).into()
-    }
-    #[must_use]
-    pub fn flexible(flex: u32, fit: incular_config::FlexFit, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Flexible {
-                flex: flex.max(1),
-                fit,
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    /// Packs children into successive runs when the main-axis bound is
-    /// exhausted. The axis chooses whether runs flow horizontally or vertically.
-    #[must_use]
-    pub fn wrap(
-        axis: Axis,
-        spacing: f32,
-        run_spacing: f32,
-        children: impl Into<Vec<Self>>,
-    ) -> Self {
-        crate::layout::Wrap::new(children.into())
-            .direction(axis)
-            .spacing(spacing)
-            .run_spacing(run_spacing)
-            .into()
-    }
-    /// Places row-major children in max-content columns.
-    #[must_use]
-    pub fn table(
-        columns: usize,
-        column_spacing: f32,
-        row_spacing: f32,
-        children: impl Into<Vec<Self>>,
-    ) -> Self {
-        crate::layout::Table::new(columns, children.into())
-            .column_spacing(column_spacing)
-            .row_spacing(row_spacing)
-            .into()
-    }
-    /// Paints children in order at the same origin. The last child is the
-    /// front-most hit-test target, matching Flutter's stack semantics.
-    #[must_use]
-    pub fn stack(alignment: Alignment, children: impl Into<Vec<Self>>) -> Self {
-        crate::layout::Stack::new(children.into())
-            .alignment(alignment)
-            .into()
-    }
-    #[must_use]
-    pub fn positioned(
-        left: Option<f32>,
-        top: Option<f32>,
-        right: Option<f32>,
-        bottom: Option<f32>,
-        width: Option<f32>,
-        height: Option<f32>,
-        child: Self,
-    ) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Positioned {
-                left: left.map(finite_non_negative),
-                top: top.map(finite_non_negative),
-                right: right.map(finite_non_negative),
-                bottom: bottom.map(finite_non_negative),
-                width: width.map(finite_non_negative),
-                height: height.map(finite_non_negative),
-                child,
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn indexed_stack(
-        alignment: Alignment,
-        index: usize,
-        children: impl Into<Vec<Self>>,
-    ) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::IndexedStack {
-                alignment,
-                index,
-                children: children.into(),
-            },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn layout_builder(
+    pub(crate) fn layout_builder(
         builder: impl for<'a> Fn(&BuildContext<'a>, Constraints) -> Self + 'static,
     ) -> Self {
         Self::from_node(WidgetNode {
@@ -3384,27 +3071,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn visibility(visible: bool, child: Self) -> Self {
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::Visibility { visible, child },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn aspect_ratio(ratio: f32, child: Self) -> Self {
-        assert!(
-            ratio.is_finite() && ratio > 0.,
-            "aspect ratio must be finite and positive"
-        );
-        Self::from_node(WidgetNode {
-            key: None,
-            kind: WidgetKind::AspectRatio { ratio, child },
-            semantics: SemanticProperties::default(),
-        })
-    }
-    #[must_use]
-    pub fn scroll_view(controller: ScrollController, child: Self) -> Self {
+    pub(crate) fn scroll_view(controller: ScrollController, child: Self) -> Self {
         Self::scroll_view_with_config(
             controller,
             child,
@@ -3438,18 +3105,9 @@ impl Widget {
             semantics: SemanticProperties::default(),
         })
     }
-
-    /// Creates an interactive raw scrollbar overlay around an existing
-    /// scrollable child. The controller remains the single source of truth
-    /// for metrics and offset.
-    #[must_use]
-    pub fn raw_scrollbar(controller: ScrollController, child: impl Into<Self>) -> Self {
-        Self::raw_scrollbar_with_style(controller, RawScrollbarStyle::default(), child)
-    }
-
     /// Creates a raw scrollbar with explicit renderer-independent styling.
     #[must_use]
-    pub fn raw_scrollbar_with_style(
+    pub(crate) fn raw_scrollbar_with_style(
         controller: ScrollController,
         style: RawScrollbarStyle,
         child: impl Into<Self>,
@@ -3468,7 +3126,7 @@ impl Widget {
 
     /// Creates a retained list-wheel viewport from its focused model.
     #[must_use]
-    pub fn list_wheel_viewport(viewport: ListWheelViewport<Self>) -> Self {
+    pub(crate) fn list_wheel_viewport(viewport: ListWheelViewport<Self>) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelViewport {
@@ -3480,7 +3138,7 @@ impl Widget {
 
     /// Creates a retained list-wheel scroll view from its focused model.
     #[must_use]
-    pub fn list_wheel_scroll_view(view: ListWheelScrollView<Self>) -> Self {
+    pub(crate) fn list_wheel_scroll_view(view: ListWheelScrollView<Self>) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelScrollView {
@@ -3492,7 +3150,7 @@ impl Widget {
 
     /// Creates a retained draggable sheet from its focused model.
     #[must_use]
-    pub fn draggable_scrollable_sheet(sheet: DraggableScrollableSheet<Self>) -> Self {
+    pub(crate) fn draggable_scrollable_sheet(sheet: DraggableScrollableSheet<Self>) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DraggableScrollableSheet {
@@ -3504,7 +3162,7 @@ impl Widget {
 
     /// Creates an actuator wrapper which resets the nearest descendant sheets.
     #[must_use]
-    pub fn draggable_scrollable_actuator(
+    pub(crate) fn draggable_scrollable_actuator(
         actuator: DraggableScrollableActuator,
         child: impl Into<Self>,
     ) -> Self {
@@ -3520,7 +3178,7 @@ impl Widget {
 
     /// Creates a retained two-dimensional viewport from its focused model.
     #[must_use]
-    pub fn two_dimensional_viewport(viewport: TwoDimensionalViewport<Self>) -> Self {
+    pub(crate) fn two_dimensional_viewport(viewport: TwoDimensionalViewport<Self>) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalViewport {
@@ -3532,7 +3190,7 @@ impl Widget {
 
     /// Creates a retained two-dimensional scroll view from its focused model.
     #[must_use]
-    pub fn two_dimensional_scroll_view(view: TwoDimensionalScrollView<Self>) -> Self {
+    pub(crate) fn two_dimensional_scroll_view(view: TwoDimensionalScrollView<Self>) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalScrollView {
@@ -3628,7 +3286,7 @@ impl Widget {
     /// Applies an arbitrary Kurbo-backed affine transform after layout.
     /// The transform is compositor-only and defaults to the child's center.
     #[must_use]
-    pub fn transform(transform: CoreTransform, child: Self) -> Self {
+    pub(crate) fn transform(transform: CoreTransform, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Transform {
@@ -3640,7 +3298,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn transform_around(transform: CoreTransform, origin: Offset, child: Self) -> Self {
+    pub(crate) fn transform_around(transform: CoreTransform, origin: Offset, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Transform {
@@ -3652,15 +3310,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn scale(scale: f32, child: Self) -> Self {
-        Self::transform(CoreTransform::scale(scale), child)
-    }
-    #[must_use]
-    pub fn rotate(radians: f32, child: Self) -> Self {
-        Self::transform(CoreTransform::rotation(radians), child)
-    }
-    #[must_use]
-    pub fn fitted_box(fit: ImageFit, alignment: Alignment, child: Self) -> Self {
+    pub(crate) fn fitted_box(fit: ImageFit, alignment: Alignment, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::FittedBox {
@@ -3705,7 +3355,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn opacity(alpha: f32, child: Self) -> Self {
+    pub(crate) fn opacity(alpha: f32, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Opacity {
@@ -3729,7 +3379,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn blur(sigma: f32, child: Self) -> Self {
+    pub(crate) fn blur(sigma: f32, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Blur {
@@ -3768,7 +3418,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn drop_shadow(offset: Offset, sigma: f32, color: Color, child: Self) -> Self {
+    pub(crate) fn drop_shadow(offset: Offset, sigma: f32, color: Color, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DropShadow {
@@ -3798,7 +3448,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn color_filtered(filter: ColorFilter, child: Self) -> Self {
+    pub(crate) fn color_filtered(filter: ColorFilter, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ColorFiltered {
@@ -3826,7 +3476,7 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn blend(mode: BlendMode, child: Self) -> Self {
+    pub(crate) fn blend(mode: BlendMode, child: Self) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Blend { mode, child },
@@ -3835,19 +3485,19 @@ impl Widget {
     }
     #[must_use]
     pub fn with_key(mut self, key: impl Into<Key>) -> Self {
-        self.key = Some(key.into());
+        self.set_key(Some(key.into()));
         self
     }
     /// Overrides the accessible label contributed by this meaningful widget.
     #[must_use]
     pub fn accessibility_label(mut self, label: impl Into<String>) -> Self {
-        self.semantics.label = Some(label.into());
+        self.semantic_properties_mut().label = Some(label.into());
         self
     }
     /// Adds a screen-reader description without changing visible text.
     #[must_use]
     pub fn accessibility_description(mut self, description: impl Into<String>) -> Self {
-        self.semantics.description = Some(description.into());
+        self.semantic_properties_mut().description = Some(description.into());
         self
     }
     /// Supplies explicit Incular semantic metadata for this visual widget.
@@ -3856,13 +3506,13 @@ impl Widget {
     /// types to application code.
     #[must_use]
     pub fn semantics(mut self, semantics: ExplicitSemantics) -> Self {
-        self.semantics.explicit = Some(semantics);
+        self.semantic_properties_mut().explicit = Some(semantics);
         self
     }
     /// Excludes this widget and its implementation-detail subtree from semantics.
     #[must_use]
     pub fn exclude_semantics(mut self) -> Self {
-        self.semantics.hidden = true;
+        self.semantic_properties_mut().hidden = true;
         self
     }
     /// Merges meaningful descendants into one logical accessible node. The
@@ -3870,7 +3520,7 @@ impl Widget {
     /// role; descendants are not exposed separately.
     #[must_use]
     pub fn merge_semantics(mut self) -> Self {
-        self.semantics.merge_descendants = true;
+        self.semantic_properties_mut().merge_descendants = true;
         self
     }
     /// Suppresses preceding semantic siblings at this stacking level. Use it
@@ -3878,21 +3528,29 @@ impl Widget {
     /// to visual content behind the active modal.
     #[must_use]
     pub fn block_semantics(mut self) -> Self {
-        self.semantics.block_previous_siblings = true;
+        self.semantic_properties_mut().block_previous_siblings = true;
         self
     }
     #[must_use]
     pub fn key(&self) -> Option<&Key> {
-        self.key.as_ref()
+        self.node().key.as_ref()
+    }
+    /// Stable diagnostic name for the concrete widget represented by this
+    /// opaque transport value.
+    ///
+    /// This intentionally exposes no layout/render taxonomy or payload data.
+    #[must_use]
+    pub fn debug_type_name(&self) -> &'static str {
+        self.type_().name()
     }
     pub(super) fn type_(&self) -> WidgetType {
-        self.kind.structure().widget_type
+        self.kind().structure().widget_type
     }
     /// Shallow child view for reconciliation. Deep per-child clones were the
     /// measured allocation fire on wide trees (Task 15); reconciliation only
     /// needs references because cloning happens once per *created* element.
     pub(super) fn children_refs(&self) -> WidgetChildren<'_> {
-        self.kind.structure().children
+        self.kind().structure().children
     }
 }
 

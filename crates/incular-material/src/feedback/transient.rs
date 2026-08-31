@@ -150,7 +150,9 @@ impl SnackBarAction {
 impl From<SnackBarAction> for Widget {
     fn from(value: SnackBarAction) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -323,12 +325,12 @@ impl SnackBar {
             surface = surface.margin(margin);
         }
         let visual: Widget = if self.elevation > 0.0 {
-            Widget::drop_shadow(
+            Widget::from(incular_widgets::internal::DropShadow::new(
                 Offset::new(0.0, self.elevation * 0.2),
                 (self.elevation * 0.5).max(1.0),
                 Color::rgba(0, 0, 0, 90),
-                surface.into(),
-            )
+                surface,
+            ))
         } else {
             surface.into()
         };
@@ -345,7 +347,9 @@ impl SnackBar {
 impl From<SnackBar> for Widget {
     fn from(value: SnackBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -646,8 +650,12 @@ impl Tooltip {
                     .border_radius(BorderRadius::circular(theme.tooltip.radius)),
             )
             .into();
-        let popup =
-            Widget::drop_shadow(Offset::new(0.0, 2.0), 3.0, Color::rgba(0, 0, 0, 70), popup);
+        let popup = Widget::from(incular_widgets::internal::DropShadow::new(
+            Offset::new(0.0, 2.0),
+            3.0,
+            Color::rgba(0, 0, 0, 70),
+            popup,
+        ));
         let popup = if self.prefer_below {
             Align::new(
                 incular_config::Alignment::TOP_CENTER,

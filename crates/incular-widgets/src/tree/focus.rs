@@ -12,11 +12,13 @@ impl WidgetTree {
         let mut members = Vec::new();
         let mut sequence = 0;
         if let Some(root) = self.root {
-            if self
-                .elements
-                .get(root.0)
-                .is_some_and(|element| element.widget.semantics.focus_traversal_policy.is_some())
-            {
+            if self.elements.get(root.0).is_some_and(|element| {
+                element
+                    .widget
+                    .semantic_properties()
+                    .focus_traversal_policy
+                    .is_some()
+            }) {
                 self.collect_focus_group(
                     root,
                     FocusTraversalPolicyKind::WidgetOrder,
@@ -54,7 +56,7 @@ impl WidgetTree {
         let mut current = focused;
         while let Some(id) = current {
             if let Some(element) = self.elements.get(id.0)
-                && let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind
+                && let WidgetKind::Gesture { callbacks, .. } = element.widget.kind()
                 && callbacks.has_keyboard_listener()
                 && callbacks.handle_keyboard(event.clone())
             {
@@ -89,7 +91,7 @@ impl WidgetTree {
         self.focusable_elements().into_iter().find(|id| {
             self.elements
                 .get(id.0)
-                .and_then(|element| match &element.widget.kind {
+                .and_then(|element| match element.widget.kind() {
                     WidgetKind::Gesture { callbacks, .. } => callbacks.focus_node.as_ref(),
                     _ => None,
                 })
@@ -105,7 +107,7 @@ impl WidgetTree {
         if let Some(listener) = focusable.iter().find(|id| {
             self.elements
                 .get(id.0)
-                .and_then(|element| match &element.widget.kind {
+                .and_then(|element| match element.widget.kind() {
                     WidgetKind::Gesture { callbacks, .. } => callbacks
                         .focus_node
                         .as_ref()
@@ -118,7 +120,7 @@ impl WidgetTree {
         }
         self.elements
             .iter()
-            .filter(|(_, element)| element.widget.semantics.focus_scope_autofocus)
+            .filter(|(_, element)| element.widget.semantic_properties().focus_scope_autofocus)
             .map(|(raw, _)| ElementId(raw))
             .find_map(|scope| {
                 focusable
@@ -133,7 +135,7 @@ impl WidgetTree {
         let Some(element) = self.elements.get(id.0) else {
             return;
         };
-        let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind else {
+        let WidgetKind::Gesture { callbacks, .. } = element.widget.kind() else {
             return;
         };
         let Some(node) = callbacks.focus_node.as_ref() else {
@@ -157,12 +159,12 @@ impl WidgetTree {
         let Some(element) = self.elements.get(id.0) else {
             return;
         };
-        if element.widget.semantics.exclude_focus_traversal {
+        if element.widget.semantic_properties().exclude_focus_traversal {
             return;
         }
         let policy = element
             .widget
-            .semantics
+            .semantic_properties()
             .focus_traversal_policy
             .unwrap_or(inherited_policy);
         let mut members = Vec::new();
@@ -198,11 +200,12 @@ impl WidgetTree {
             let Some(element) = self.elements.get(id.0) else {
                 continue;
             };
-            if element.widget.semantics.exclude_focus_traversal {
+            if element.widget.semantic_properties().exclude_focus_traversal {
                 continue;
             }
-            let excluded_focus = excluded_focus || element.widget.semantics.exclude_focus;
-            let focusable = match &element.widget.kind {
+            let excluded_focus =
+                excluded_focus || element.widget.semantic_properties().exclude_focus;
+            let focusable = match element.widget.kind() {
                 WidgetKind::Button(spec) => spec.enabled || spec.focusable_when_disabled,
                 WidgetKind::TextField(spec) => spec.enabled,
                 WidgetKind::SelectableText { .. } => true,
@@ -214,8 +217,8 @@ impl WidgetTree {
             };
             if focusable && !excluded_focus {
                 let bounds = self.element_bounds(id).unwrap_or_default();
-                let order = element.widget.semantics.focus_traversal_order;
-                if let WidgetKind::Gesture { callbacks, .. } = &element.widget.kind
+                let order = element.widget.semantic_properties().focus_traversal_order;
+                if let WidgetKind::Gesture { callbacks, .. } = element.widget.kind()
                     && let Some(node) = callbacks.focus_node.as_ref()
                 {
                     node.set_rect(bounds);
@@ -230,7 +233,7 @@ impl WidgetTree {
                 *sequence = sequence.saturating_add(1);
             }
             let (descendants_are_focusable, descendants_are_traversable) =
-                match &element.widget.kind {
+                match element.widget.kind() {
                     WidgetKind::Gesture { callbacks, .. } => {
                         callbacks.focus_node.as_ref().map_or((true, true), |node| {
                             (
@@ -245,9 +248,9 @@ impl WidgetTree {
                 continue;
             }
             let excluded_focus = excluded_focus || !descendants_are_focusable;
-            let focus_children: Vec<_> = match element.widget.kind {
+            let focus_children: Vec<_> = match element.widget.kind() {
                 WidgetKind::IndexedStack { index, .. } => {
-                    element.children.get(index).copied().into_iter().collect()
+                    element.children.get(*index).copied().into_iter().collect()
                 }
                 _ => element.children.clone(),
             };
@@ -256,7 +259,7 @@ impl WidgetTree {
                 let child_policy = self
                     .elements
                     .get(child.0)
-                    .and_then(|child| child.widget.semantics.focus_traversal_policy);
+                    .and_then(|child| child.widget.semantic_properties().focus_traversal_policy);
                 if child_policy.is_some() {
                     work.push(FocusWork::Group(child, policy, excluded_focus));
                 } else {

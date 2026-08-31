@@ -3,7 +3,7 @@ use crate::tree::widget::LoweringFamily;
 
 #[doc(hidden)]
 pub fn render_kind(widget: &Widget, context: &DependencyContext) -> RenderKind {
-    match widget.kind.structure().lowering_family {
+    match widget.kind().structure().lowering_family {
         LoweringFamily::Visual => lower_visual(widget, context),
         LoweringFamily::Layout => lower_layout(widget),
         LoweringFamily::Scrolling => lower_scrolling(widget),

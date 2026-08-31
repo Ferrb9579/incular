@@ -22,7 +22,7 @@ fn wide_row_tree(items: usize, label: &Signal<u64>) -> Widget {
     // Exactly three dependents of `label`, embedded among inert filler so the
     // rebuild contract is independent of total tree size.
     let hot_positions = [items / 7, items / 2, items - 1];
-    let mut children = Vec::with_capacity(items);
+    let mut children: Vec<Widget> = Vec::with_capacity(items);
     for index in 0..items {
         if hot_positions.contains(&index) {
             children.push(Text::new(format!("hot {index} {}", label.get())).into());
@@ -30,7 +30,7 @@ fn wide_row_tree(items: usize, label: &Signal<u64>) -> Widget {
             children.push(Text::new(format!("item {index}")).into());
         }
     }
-    Widget::column(children)
+    Widget::from(incular_widgets::Column::new(children))
 }
 
 /// Contract: a signal read by three widgets invalidates exactly those
@@ -82,13 +82,13 @@ fn compositor_transform_animation_skips_build_layout_paint() {
     let mut app = Application::new(move |_| {
         Widget::translate(
             translation.clone(),
-            Widget::column(vec![
+            Widget::from(incular_widgets::Column::new(vec![
                 Widget::box_(
                     Size::new(180., 70.),
                     incular_core::Color::rgba(130, 70, 200, 255),
                 ),
                 Text::new("Cached text moves with the card").into(),
-            ]),
+            ])),
         )
     })
     .expect("app");
@@ -226,10 +226,10 @@ fn overlay_install_requires_keyed_placeholder() {
     assert!(app.install_performance_overlay(window).is_err());
 
     let mut app2 = Application::new(move |_cx| {
-        Widget::column(vec![
+        Widget::from(incular_widgets::Column::new(vec![
             Text::new("content").into(),
             performance_overlay_placeholder(),
-        ])
+        ]))
     })
     .expect("app2");
     let window2 = primary(&app2);
@@ -343,8 +343,13 @@ fn runtime_wake_without_visible_mutation_produces_no_redraw() {
 fn ten_thousand_signal_writes_coalesce_into_one_rebuild() {
     let counter = Signal::new(0_u64);
     let app_counter = counter.clone();
-    let mut app = Application::new(move |_| Widget::text(format!("value = {}", app_counter.get())))
-        .expect("app");
+    let mut app = Application::new(move |_| {
+        Widget::from(incular_widgets::Text::new(format!(
+            "value = {}",
+            app_counter.get()
+        )))
+    })
+    .expect("app");
     let window = *app.active_window_ids().first().expect("window");
     let _ = app.run_window_frame_at(window, tight(200.), Instant::now());
 

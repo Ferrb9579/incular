@@ -24,10 +24,10 @@ fn prepared(widget: Widget) -> (WidgetTree, incular_widgets::internal::ElementId
 #[test]
 fn opacity_property_update_is_compositor_only() {
     let child = || Widget::box_(Size::new(20.0, 20.0), Color::WHITE);
-    let (mut tree, root) = prepared(Widget::opacity(0.25, child()));
+    let (mut tree, root) = prepared(incular_widgets::Opacity::new(0.25, child()).into());
     let before = tree.diagnostics();
 
-    tree.update(root, Widget::opacity(0.75, child()))
+    tree.update(root, incular_widgets::Opacity::new(0.75, child()).into())
         .expect("update");
     tree.layout(frame()).expect("layout");
     let _ = tree.paint();
@@ -44,15 +44,16 @@ fn opacity_property_update_is_compositor_only() {
 #[test]
 fn affine_property_update_is_compositor_only() {
     let child = || Widget::box_(Size::new(20.0, 20.0), Color::WHITE);
-    let (mut tree, root) = prepared(Widget::transform(
-        Transform::translation(Offset::new(4.0, 2.0)),
-        child(),
-    ));
+    let (mut tree, root) = prepared(
+        incular_widgets::Transform::new(Transform::translation(Offset::new(4.0, 2.0)), child())
+            .into(),
+    );
     let before = tree.diagnostics();
 
     tree.update(
         root,
-        Widget::transform(Transform::translation(Offset::new(18.0, 7.0)), child()),
+        incular_widgets::Transform::new(Transform::translation(Offset::new(18.0, 7.0)), child())
+            .into(),
     )
     .expect("update");
     tree.layout(frame()).expect("layout");
@@ -70,16 +71,20 @@ fn affine_property_update_is_compositor_only() {
 #[test]
 fn text_color_update_repaints_without_relayout() {
     let style = |color| TextStyle::default().font_size(18.0).color(color);
-    let (mut tree, root) = prepared(Widget::text_styled(
-        "retained",
-        style(Color::BLACK),
-        TextAlign::Start,
-    ));
+    let (mut tree, root) = prepared(
+        incular_widgets::Text::new("retained")
+            .style(style(Color::BLACK))
+            .align(TextAlign::Start)
+            .into(),
+    );
     let before = tree.diagnostics();
 
     tree.update(
         root,
-        Widget::text_styled("retained", style(Color::WHITE), TextAlign::Start),
+        incular_widgets::Text::new("retained")
+            .style(style(Color::WHITE))
+            .align(TextAlign::Start)
+            .into(),
     )
     .expect("update");
     tree.layout(frame()).expect("layout");
@@ -92,20 +97,20 @@ fn text_color_update_repaints_without_relayout() {
 
 #[test]
 fn text_metric_update_invalidates_layout_and_paint() {
-    let (mut tree, root) = prepared(Widget::text_styled(
-        "retained",
-        TextStyle::default().font_size(18.0),
-        TextAlign::Start,
-    ));
+    let (mut tree, root) = prepared(
+        incular_widgets::Text::new("retained")
+            .style(TextStyle::default().font_size(18.0))
+            .align(TextAlign::Start)
+            .into(),
+    );
     let before = tree.diagnostics();
 
     tree.update(
         root,
-        Widget::text_styled(
-            "retained",
-            TextStyle::default().font_size(28.0),
-            TextAlign::Start,
-        ),
+        incular_widgets::Text::new("retained")
+            .style(TextStyle::default().font_size(28.0))
+            .align(TextAlign::Start)
+            .into(),
     )
     .expect("update");
     tree.layout(frame()).expect("layout");

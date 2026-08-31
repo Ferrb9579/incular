@@ -28,7 +28,7 @@ impl WidgetTree {
     pub fn button_ancestor(&self, mut id: ElementId) -> Option<(ElementId, Option<ActionId>)> {
         loop {
             if let Some(WidgetKind::Button(spec)) =
-                self.elements.get(id.0).map(|element| &element.widget.kind)
+                self.elements.get(id.0).map(|element| element.widget.kind())
             {
                 if !spec.enabled {
                     return None;
@@ -260,7 +260,7 @@ impl WidgetTree {
     }
 
     pub(super) fn gesture_callbacks(&self, element: ElementId) -> Option<GestureCallbacks> {
-        match &self.elements.get(element.0)?.widget.kind {
+        match self.elements.get(element.0)?.widget.kind() {
             WidgetKind::Gesture { callbacks, .. } => Some((**callbacks).clone()),
             WidgetKind::Draggable { .. } => Some(GestureCallbacks {
                 on_pan_update: Some(Rc::new(|_| {})),
@@ -277,7 +277,7 @@ impl WidgetTree {
             }
             if self.elements.get(id.0).is_some_and(|element| {
                 matches!(
-                    element.widget.kind,
+                    element.widget.kind(),
                     WidgetKind::Gesture { .. } | WidgetKind::Draggable { .. }
                 )
             }) {
@@ -396,13 +396,13 @@ impl WidgetTree {
         self.update_drag_target(key, position);
     }
     pub(super) fn drag_source(&self, element: ElementId) -> Option<Rc<dyn RetainedDragSource>> {
-        match &self.elements.get(element.0)?.widget.kind {
+        match self.elements.get(element.0)?.widget.kind() {
             WidgetKind::Draggable { source, .. } => Some(source.clone()),
             _ => None,
         }
     }
     pub(super) fn drag_target(&self, element: ElementId) -> Option<Rc<dyn RetainedDragTarget>> {
-        match &self.elements.get(element.0)?.widget.kind {
+        match self.elements.get(element.0)?.widget.kind() {
             WidgetKind::DragTarget { target, .. } => Some(target.clone()),
             _ => None,
         }

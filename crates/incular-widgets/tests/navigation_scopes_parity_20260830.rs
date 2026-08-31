@@ -177,10 +177,11 @@ fn page_storage_uses_ordered_key_chains_and_exposes_the_ambient_bucket() {
 
     let seen = Rc::new(RefCell::new(None));
     let seen_in_builder = seen.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child: Widget = incular_widgets::LayoutBuilder::new(move |context, _| {
         *seen_in_builder.borrow_mut() = PageStorage::maybe_of(context);
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(PageStorage::with_bucket(bucket.clone(), child).into())
@@ -196,10 +197,11 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
     let root_scope = restoration_scope();
     let seen = Rc::new(RefCell::new(None));
     let seen_in_builder = seen.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child: Widget = incular_widgets::LayoutBuilder::new(move |context, _| {
         *seen_in_builder.borrow_mut() = current_restoration_scope(context);
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let mut tree = WidgetTree::new();
     tree.mount(RootRestorationScope::with_scope(root_scope.clone(), "application", child).into())
         .expect("mount root restoration scope");
@@ -217,10 +219,11 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
 
     let seen_disabled = Rc::new(RefCell::new(Some(root_scope.clone())));
     let seen_in_builder = seen_disabled.clone();
-    let child = Widget::layout_builder(move |context, _| {
+    let child: Widget = incular_widgets::LayoutBuilder::new(move |context, _| {
         *seen_in_builder.borrow_mut() = current_restoration_scope(context);
         SizedBox::shrink().into()
-    });
+    })
+    .into();
     let mut tree = WidgetTree::new();
     tree.mount(UnmanagedRestorationScope::with_optional_scope(None, child).into())
         .expect("mount disabled restoration scope");

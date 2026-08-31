@@ -42,7 +42,7 @@ fn constraints() -> SliverConstraints {
 }
 
 fn fixed_child(width: f32, height: f32) -> Widget {
-    Widget::fixed_box(Size::new(width, height), Color::WHITE)
+    Widget::box_(Size::new(width, height), Color::WHITE)
 }
 
 #[test]

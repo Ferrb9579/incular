@@ -8,7 +8,7 @@ pub(crate) mod simulations;
 
 fn main() {
     let app = Application::new(|_| {
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Typography")
                 .style(TextStyle {
                     size: 28.0,
@@ -104,7 +104,7 @@ fn main() {
             )
             .background(Color::rgba(240, 244, 250, 255))
             .into(),
-        ])
+        ])))
     })
     .expect("valid typography application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

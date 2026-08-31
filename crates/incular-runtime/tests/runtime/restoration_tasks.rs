@@ -24,10 +24,10 @@ fn tokio_sleep_completion_wakes_the_ui_bridge() {
 
 #[test]
 fn async_signal_completion_invalidates_only_its_dependent_build() {
-    let mut runtime = Runtime::new(Widget::row(vec![
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![
         Widget::box_(Size::new(1., 1.), Color::WHITE),
         Widget::box_(Size::new(1., 1.), Color::WHITE),
-    ]))
+    ])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[1];
@@ -82,10 +82,10 @@ fn cancelled_scope_never_runs_its_ready_task() {
 
 #[test]
 fn cancelled_scoped_completion_is_discarded_after_unmount() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let child = runtime.tree().children(root).unwrap()[0];
@@ -106,7 +106,10 @@ fn cancelled_scoped_completion_is_discarded_after_unmount() {
     // it was associated with has been removed.
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     assert!(!runtime.tree().element_exists(child));
     scope.cancel();
@@ -117,10 +120,10 @@ fn cancelled_scoped_completion_is_discarded_after_unmount() {
 
 #[test]
 fn application_task_survives_an_unrelated_component_unmount() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let wake = Arc::new(TestWake::default());
@@ -133,7 +136,10 @@ fn application_task_survives_an_unrelated_component_unmount() {
     wait_for_wake(&wake);
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     runtime.process_runtime_work();
     assert!(hit.load(Ordering::Acquire));
@@ -141,10 +147,10 @@ fn application_task_survives_an_unrelated_component_unmount() {
 
 #[test]
 fn blocking_result_after_owner_unmount_is_discarded() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let wake = Arc::new(TestWake::default());
@@ -162,7 +168,10 @@ fn blocking_result_after_owner_unmount_is_discarded() {
     wait_for_wake(&wake);
     runtime
         .tree_mut()
-        .update(root, Widget::row(Vec::new()))
+        .update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
         .unwrap();
     scope.cancel();
     runtime.process_runtime_work();
@@ -351,7 +360,7 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
         "main",
         test_window_options("Main", 320., 200.),
         config,
-        |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
     )
     .unwrap();
     let inspector = first
@@ -359,7 +368,7 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
             WindowRestorationId::new("inspector").unwrap(),
             "inspector",
             test_window_options("Inspector", 480., 260.),
-            |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert_eq!(first.active_window_ids().len(), 2);
@@ -372,14 +381,14 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
         "main",
         test_window_options("Main default", 100., 100.),
         config,
-        |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+        |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
     )
     .unwrap();
     second
         .register_restorable_window_factory(
             "inspector",
             test_window_options("Inspector default", 100., 100.),
-            |_| Widget::fixed_box(Size::new(1., 1.), Color::WHITE),
+            |_| Widget::box_(Size::new(1., 1.), Color::WHITE),
         )
         .unwrap();
     assert_eq!(second.restore_restorable_windows().unwrap(), 1);

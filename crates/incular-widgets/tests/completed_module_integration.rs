@@ -2,7 +2,7 @@ use incular_config::Constraints;
 use incular_core::{Color, Offset, PointerPhase, Size};
 use incular_gestures::PointerEvent;
 use incular_semantics::Role;
-use incular_widgets::internal::{RenderKind, Widget, WidgetKind, WidgetTree};
+use incular_widgets::internal::{RenderKind, Widget, WidgetTree};
 use incular_widgets::{
     AnimatedList, AnimatedModalBarrier, AutomaticKeepAlive, BackButtonListener,
     BackCallbackSubscription, BasicRouterDelegate, Container, CustomScrollView, KeepAliveHandle,
@@ -23,10 +23,7 @@ fn colored_row(index: usize) -> Widget {
 }
 
 fn assert_retained_viewport(widget: Widget, logical_count: usize) {
-    assert!(matches!(
-        widget.kind().clone(),
-        WidgetKind::SliverViewport { .. }
-    ));
+    assert_eq!(widget.debug_type_name(), "SliverViewport");
     assert!(format!("{widget:?}").contains("SliverViewport"));
     assert_eq!(widget, widget.clone());
 

@@ -193,11 +193,11 @@ impl ButtonSpec {
             .clone()
             .filter(|label| !label.trim().is_empty())
             .or_else(|| spec.child.as_ref().and_then(Widget::semantic_text));
-        let widget = Widget::layout_builder(move |context, _| {
+        let widget = Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = Theme::of_shared(context).unwrap_or_else(ThemeData::light_shared);
             let controls_theme = theme.control_theme();
             spec.build(&theme, &controls_theme)
-        });
+        }));
         match semantic_label {
             Some(label) => widget.accessibility_label(label),
             None => widget,

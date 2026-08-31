@@ -111,7 +111,7 @@ fn multi_window_action_is_reachable_after_selector_click() {
             ..WindowOptions::default()
         },
         move |cx| {
-            Widget::column(vec![
+            Widget::from(Column::new(Vec::<Widget>::from([
                 navigation(selected_for_build.get(), &navigation_selection),
                 scenario_view(
                     selected_for_build.get(),
@@ -125,7 +125,7 @@ fn multi_window_action_is_reachable_after_selector_click() {
                     cx,
                 )
                 .into(),
-            ])
+            ])))
         },
     )
     .expect("performance gallery selector should build");

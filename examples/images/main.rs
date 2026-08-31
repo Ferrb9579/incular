@@ -25,8 +25,10 @@ fn main() {
     )
     .expect("valid generated image");
     let app = Application::new(move |_| {
-        Widget::column(vec![
-            Widget::text("Decoded PNG, then shared generated image textures:"),
+        Widget::from(Column::new(Vec::<Widget>::from([
+            Widget::from(Text::new(
+                "Decoded PNG, then shared generated image textures:",
+            )),
             Image::new(encoded.clone()).width(128.).height(32.).into(),
             Image::new(checker.clone())
                 .width(128.)
@@ -37,14 +39,16 @@ fn main() {
                 .height(64.)
                 .fit(BoxFit::Cover)
                 .into(),
-            Widget::text("The same shared ImageHandle is used three times."),
+            Widget::from(Text::new(
+                "The same shared ImageHandle is used three times.",
+            )),
             Image::new(checker.clone())
                 .width(64.)
                 .height(64.)
                 .fit(BoxFit::Fill)
                 .sampling(ImageSampling::Nearest)
                 .into(),
-        ])
+        ])))
     });
     let app = app.expect("build image app");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

@@ -19,7 +19,7 @@ fn main() {
         })
         .collect::<Vec<Widget>>();
     let app = Application::new(move |_| {
-        ScrollView::vertical(controller.clone(), Widget::column(items.clone()))
+        ScrollView::vertical(controller.clone(), Widget::from(Column::new(items.clone())))
     })
     .expect("valid scrolling application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

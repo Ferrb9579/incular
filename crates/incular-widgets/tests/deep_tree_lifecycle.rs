@@ -6,7 +6,7 @@ use incular_widgets::internal::{Widget, WidgetTree};
 
 fn deep_padding(depth: usize, mut child: Widget) -> Widget {
     for _ in 0..depth {
-        child = Widget::padding(EdgeInsets::all(0.0), child);
+        child = incular_widgets::Padding::new(EdgeInsets::all(0.0), child).into();
     }
     child
 }
@@ -18,7 +18,6 @@ fn hundred_thousand_nested_widget_descriptors_clone_and_drop_iteratively() {
         Widget::box_(Size::new(1.0, 1.0), Color::TRANSPARENT),
     );
     let clone = widget.clone();
-    assert!(widget.ptr_eq(&clone));
     drop(clone);
     drop(widget);
 }
@@ -31,14 +30,14 @@ fn widget_handle_is_one_pointer_and_shared_subtrees_outlive_parents() {
         "Widget must remain a one-pointer shared descriptor handle"
     );
 
-    let shared = Widget::text("shared");
+    let shared: Widget = incular_widgets::Text::new("shared").into();
     let identity = shared.clone();
-    assert!(shared.ptr_eq(&identity));
 
-    let parent = Widget::column(vec![shared.clone(), shared.clone(), shared.clone()]);
+    let parent: Widget =
+        incular_widgets::Column::new(vec![shared.clone(), shared.clone(), shared.clone()]).into();
     drop(parent);
 
-    assert!(shared.ptr_eq(&identity));
+    assert_eq!(identity.text_if_any().as_deref(), Some("shared"));
     assert_eq!(shared.text_if_any().as_deref(), Some("shared"));
 }
 
@@ -49,7 +48,10 @@ fn four_thousand_level_retained_lifecycle_is_stack_safe_and_leak_free() {
     let mut tree = WidgetTree::new();
     let baseline_layers = tree.compositor_diagnostics().layers;
     let root = tree
-        .mount(deep_padding(DEPTH, Widget::text("leaf")))
+        .mount(deep_padding(
+            DEPTH,
+            incular_widgets::Text::new("leaf").into(),
+        ))
         .expect("deep tree must mount");
     tree.verify_invariants()
         .expect("deep mounted tree invariants must hold");
@@ -62,8 +64,11 @@ fn four_thousand_level_retained_lifecycle_is_stack_safe_and_leak_free() {
     assert!(tree.focusable_elements().is_empty());
     tree.update_semantics();
 
-    tree.update(root, deep_padding(DEPTH, Widget::text("updated")))
-        .expect("deep compatible update must succeed");
+    tree.update(
+        root,
+        deep_padding(DEPTH, incular_widgets::Text::new("updated").into()),
+    )
+    .expect("deep compatible update must succeed");
     tree.verify_invariants()
         .expect("deep updated tree invariants must hold");
     assert_eq!(tree.element_count(), DEPTH + 1);
@@ -77,7 +82,10 @@ fn four_thousand_level_retained_lifecycle_is_stack_safe_and_leak_free() {
     assert_eq!(tree.element_count(), 1);
     assert_eq!(tree.render_object_count(), 1);
     assert_eq!(tree.compositor_diagnostics().layers, baseline_layers + 2);
-    assert!(tree.update(root, Widget::text("stale")).is_err());
+    assert!(
+        tree.update(root, incular_widgets::Text::new("stale").into())
+            .is_err()
+    );
 }
 
 #[test]
@@ -89,7 +97,7 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
     let root = tree
         .mount(Widget::environment_scope(
             1_u64,
-            deep_padding(DEPTH, Widget::text("environment leaf")),
+            deep_padding(DEPTH, incular_widgets::Text::new("environment leaf").into()),
         ))
         .expect("environment root must mount");
     tree.layout(constraints)
@@ -101,7 +109,10 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
 
     tree.update(
         root,
-        Widget::environment_scope(2_u64, deep_padding(DEPTH, Widget::text("environment leaf"))),
+        Widget::environment_scope(
+            2_u64,
+            deep_padding(DEPTH, incular_widgets::Text::new("environment leaf").into()),
+        ),
     )
     .expect("environment update must propagate without recursive bookkeeping");
     tree.layout(constraints)

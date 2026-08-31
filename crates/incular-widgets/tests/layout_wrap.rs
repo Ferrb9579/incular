@@ -1,7 +1,7 @@
 //! Wrap descriptor behavior tests.
 
 use incular_config::{Axis, TextDirection, VerticalDirection, WrapAlignment, WrapCrossAlignment};
-use incular_widgets::{Widget, Wrap, internal::WidgetKind};
+use incular_widgets::{Text, Widget, Wrap};
 
 #[test]
 fn wrap_builder_defaults_match_default() {
@@ -11,7 +11,7 @@ fn wrap_builder_defaults_match_default() {
 #[test]
 fn wrap_builder_preserves_normalization_and_lowering() {
     let wrap = Wrap::builder()
-        .children(vec![Widget::text("child")])
+        .children(vec![Text::new("child").into()])
         .direction(Axis::Vertical)
         .alignment(WrapAlignment::Center)
         .spacing(-2.0)
@@ -22,38 +22,21 @@ fn wrap_builder_preserves_normalization_and_lowering() {
         .vertical_direction(VerticalDirection::Up)
         .build();
 
-    let WidgetKind::Wrap {
-        axis,
-        alignment,
-        spacing,
-        run_alignment,
-        run_spacing,
-        cross_axis_alignment,
-        text_direction,
-        vertical_direction,
-        children,
-    } = Widget::from(wrap).kind().clone().clone()
-    else {
-        panic!("expected Wrap widget kind")
-    };
-
-    assert_eq!(axis, Axis::Vertical);
-    assert_eq!(alignment, WrapAlignment::Center);
-    assert_eq!(spacing, 0.0);
-    assert_eq!(run_alignment, WrapAlignment::SpaceBetween);
-    assert_eq!(run_spacing, 0.0);
-    assert_eq!(cross_axis_alignment, WrapCrossAlignment::End);
-    assert_eq!(text_direction, TextDirection::Rtl);
-    assert_eq!(vertical_direction, VerticalDirection::Up);
-    assert_eq!(children.len(), 1);
+    let expected = Wrap::new([Text::new("child")])
+        .direction(Axis::Vertical)
+        .alignment(WrapAlignment::Center)
+        .spacing(0.0)
+        .run_alignment(WrapAlignment::SpaceBetween)
+        .run_spacing(0.0)
+        .cross_axis_alignment(WrapCrossAlignment::End)
+        .text_direction(TextDirection::Rtl)
+        .vertical_direction(VerticalDirection::Up);
+    assert_eq!(wrap, expected);
+    assert_eq!(Widget::from(wrap).debug_type_name(), "Wrap");
 }
 
 #[test]
 fn constructor_accepts_arbitrary_widget_descriptors() {
     let wrap = Wrap::new([incular_widgets::Text::new("child")]);
-    let WidgetKind::Wrap { children, .. } = Widget::from(wrap).kind().clone().clone() else {
-        panic!("expected Wrap widget kind")
-    };
-
-    assert_eq!(children.len(), 1);
+    assert_eq!(Widget::from(wrap).debug_type_name(), "Wrap");
 }

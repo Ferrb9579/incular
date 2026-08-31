@@ -17,7 +17,7 @@ fn main() {
         println!("Build: pressed");
         Container::new()
             .background(Color::rgba(255, 0, 0, 255))
-            .child(Widget::column(vec![
+            .child(Widget::from(Column::new(Vec::<Widget>::from([
                 Text::new("Incular Custom Application")
                     .color(Color::rgba(220, 230, 255, 255))
                     .into(),
@@ -32,7 +32,7 @@ fn main() {
                     })
                     .into(),
                 Text::new(display_pressed.to_string()).into(),
-            ]))
+            ]))))
             .into()
     })
     .expect("valid application");

@@ -78,7 +78,7 @@ fn stress_row(label: impl Into<String>, height: f32, color: Color) -> Widget {
     Stack::aligned(
         Alignment::CENTER_LEFT,
         [
-            Widget::fixed_box(Size::new(640., height), color),
+            Widget::box_(Size::new(640., height), color),
             Padding::new(
                 EdgeInsets::symmetric(14., 0.),
                 gallery_text(label, 15., TEXT_PRIMARY),
@@ -412,12 +412,12 @@ pub(crate) fn scenario_view(
         10 => transform_animation(translation),
         11 => match cx.window_opener() {
             Some(opener) => multi_window(shared_window_count, opener),
-            None => Widget::text("window opening unavailable"),
+            None => Widget::from(Text::new("window opening unavailable")),
         },
         12 => reconciliation_10k(recon_tick),
         13 => keyed_reorder(reorder_flip),
         14 => document_edit(doc_edits),
-        _ => Widget::text("unknown"),
+        _ => Widget::from(Text::new("unknown")),
     }
 }
 
@@ -447,15 +447,15 @@ fn reconciliation_10k(ticks: &Signal<u64>) -> Widget {
     let controller = ScrollController::new();
     labeled(
         "Parent rebuilds; 10k identical children cost ~zero",
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             RawMaterialButton::new(format!("rebuild parent (generation {generation})"))
                 .on_press(move || bump.update(|value| *value += 1))
                 .into(),
             viewport(
                 Size::new(680., 460.),
-                ScrollView::vertical(controller, Widget::column(rows)),
+                ScrollView::vertical(controller, Widget::from(Column::new(rows))),
             ),
-        ]),
+        ]))),
     )
 }
 
@@ -476,15 +476,15 @@ fn keyed_reorder(flip: &Signal<u64>) -> Widget {
     let controller = ScrollController::new();
     labeled(
         "Keyed reorder of 5,000 children",
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             RawMaterialButton::new(format!("reverse (generation {generation})"))
                 .on_press(move || toggle.update(|value| *value += 1))
                 .into(),
             viewport(
                 Size::new(680., 460.),
-                ScrollView::vertical(controller, Widget::column(children)),
+                ScrollView::vertical(controller, Widget::from(Column::new(children))),
             ),
-        ]),
+        ]))),
     )
 }
 
@@ -510,15 +510,15 @@ fn document_edit(edits: &Signal<u64>) -> Widget {
     let controller = ScrollController::new();
     labeled(
         "300-paragraph document, one-line edits",
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             RawMaterialButton::new(format!("edit paragraph 150 ({generation})"))
                 .on_press(move || bump.update(|value| *value += 1))
                 .into(),
             viewport(
                 Size::new(680., 460.),
-                ScrollView::vertical(controller, Widget::column(lines)),
+                ScrollView::vertical(controller, Widget::from(Column::new(lines))),
             ),
-        ]),
+        ]))),
     )
 }
 
@@ -603,7 +603,7 @@ fn large_text_document() -> Widget {
     let controller = ScrollController::new();
     labeled(
         "Large wrapped document",
-        ScrollView::vertical(controller, Widget::column(paragraphs)),
+        ScrollView::vertical(controller, Widget::from(Column::new(paragraphs))),
     )
 }
 
@@ -636,12 +636,12 @@ fn many_images() -> Widget {
         .collect();
     let rows = grid
         .chunks(10)
-        .map(|chunk| Widget::row(chunk.to_vec()))
+        .map(|chunk| Widget::from(Row::new(chunk.to_vec())))
         .collect::<Vec<_>>();
     let controller = ScrollController::new();
     labeled(
         "200 image instances over few textures",
-        ScrollView::vertical(controller, Widget::column(rows)),
+        ScrollView::vertical(controller, Widget::from(Column::new(rows))),
     )
 }
 
@@ -686,12 +686,12 @@ fn many_paths() -> Widget {
         .collect();
     let rows = grid
         .chunks(6)
-        .map(|chunk| Widget::row(chunk.to_vec()))
+        .map(|chunk| Widget::from(Row::new(chunk.to_vec())))
         .collect::<Vec<_>>();
     let controller = ScrollController::new();
     labeled(
         "120 tessellated vector stars",
-        ScrollView::vertical(controller, Widget::column(rows)),
+        ScrollView::vertical(controller, Widget::from(Column::new(rows))),
     )
 }
 
@@ -726,7 +726,7 @@ fn gradients() -> Widget {
             (1., Color::rgba(190, 60, 255, 255)),
         ]),
     };
-    let rows = Widget::row(vec![
+    let rows = Widget::from(Row::new(Vec::<Widget>::from([
         DecoratedBox::new(Widget::box_(Size::new(300., 34.), Color::TRANSPARENT))
             .background(linear)
             .radius(8.)
@@ -737,7 +737,7 @@ fn gradients() -> Widget {
         DecoratedBox::new(Widget::box_(Size::new(140., 140.), Color::TRANSPARENT))
             .background(sweep)
             .into(),
-    ]);
+    ])));
     labeled("Gradient LUT brushes", rows)
 }
 
@@ -747,14 +747,17 @@ fn effects_stack() -> Widget {
         Color::rgba(70, 110, 200, 255),
     ))
     .radius(12.);
-    let rows = Widget::column(vec![
+    let rows = Widget::from(Column::new(Vec::<Widget>::from([
         Effects::new(card.clone()).blur(8.).into(),
         Effects::new(card.clone())
             .drop_shadow(Offset::new(10., 10.), 12., Color::rgba(0, 0, 0, 180))
             .into(),
-        Widget::opacity(0.4, card.clone().into()),
-        Widget::color_filtered(incular_rendering::ColorFilter::grayscale(1.), card.into()),
-    ]);
+        Widget::from(Opacity::new(0.4, card.clone())),
+        Widget::from(ColorFiltered::new(
+            incular_rendering::ColorFilter::grayscale(1.),
+            card,
+        )),
+    ])));
     labeled("Offscreen effect passes", rows)
 }
 
@@ -765,7 +768,7 @@ fn nested_scroll() -> Widget {
         2_000,
         |item| if item % 3 == 0 { 56. } else { 32. },
         |item| {
-            Widget::fixed_box(
+            Widget::box_(
                 Size::new(360., if item % 3 == 0 { 56. } else { 32. }),
                 Color::rgba(45, 85 + (item % 4) as u8 * 24, 145, 255),
             )
@@ -777,11 +780,11 @@ fn nested_scroll() -> Widget {
         "Nested scrolling with boundary transfer",
         ScrollView::vertical(
             outer,
-            Widget::column(vec![
-                Widget::fixed_box(Size::new(360., 120.), Color::rgba(35, 45, 70, 255)),
+            Widget::from(Column::new(Vec::<Widget>::from([
+                Widget::box_(Size::new(360., 120.), Color::rgba(35, 45, 70, 255)),
                 viewport(Size::new(360., 320.), inner_list),
-                Widget::fixed_box(Size::new(360., 700.), Color::rgba(30, 38, 55, 255)),
-            ]),
+                Widget::box_(Size::new(360., 700.), Color::rgba(30, 38, 55, 255)),
+            ]))),
         ),
     )
 }
@@ -796,7 +799,7 @@ fn gesture_stress(hits: &Signal<u32>) -> Widget {
         });
         let pointer_callback = callback.clone();
         let semantic_callback = callback.clone();
-        let gesture = GestureDetector::new(Widget::fixed_box(
+        let gesture = GestureDetector::new(Widget::box_(
             Size::new(72., 72.),
             Color::rgba(120, 60 + ((index * 13) % 150) as u8, 90, 255),
         ))
@@ -811,14 +814,14 @@ fn gesture_stress(hits: &Signal<u32>) -> Widget {
         );
     }
     let display = hits.clone();
-    let mut rows: Vec<Widget> = vec![Widget::text(format!("taps: {}", display.get()))];
+    let mut rows: Vec<Widget> = vec![Widget::from(Text::new(format!("taps: {}", display.get())))];
     for chunk in cells.chunks(6) {
-        rows.push(Widget::row(chunk.to_vec()));
+        rows.push(Widget::from(Row::new(chunk.to_vec())));
     }
     let controller = ScrollController::new();
     labeled(
         "300 independent gesture regions",
-        ScrollView::vertical(controller, Widget::column(rows)),
+        ScrollView::vertical(controller, Widget::from(Column::new(rows))),
     )
 }
 
@@ -833,10 +836,10 @@ fn transform_animation(translation: &TranslationController) -> Widget {
         "Compositor-only transform animation (BUILD/LAYOUT/PAINT stay zero)",
         Widget::translate(
             trigger,
-            Widget::column(vec![
-                Widget::fixed_box(Size::new(240., 90.), Color::rgba(130, 70, 200, 255)),
-                Widget::text("Cached picture moves without repaint"),
-            ]),
+            Widget::from(Column::new(Vec::<Widget>::from([
+                Widget::box_(Size::new(240., 90.), Color::rgba(130, 70, 200, 255)),
+                Widget::from(Text::new("Cached picture moves without repaint")),
+            ]))),
         ),
     )
 }
@@ -848,7 +851,7 @@ pub(crate) fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widge
     let sibling_shared = shared.clone();
     labeled(
         "Shared state across windows",
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             RawMaterialButton::new(format!("Shared counter: {count}"))
                 .on_press(move || increment.update(|value| *value += 1))
                 .into(),
@@ -868,21 +871,21 @@ pub(crate) fn multi_window(shared: &Signal<u32>, manager: WindowOpener) -> Widge
                     }
                 })
                 .into(),
-            Widget::text(
+            Widget::from(Text::new(
                 "The sibling reads and writes the same Signal; both retained roots update only after interaction.",
-            ),
-        ]),
+            )),
+        ]))),
     )
 }
 
 fn shared_counter_window(shared: &Signal<u32>) -> Widget {
     let count = shared.get();
     let increment = shared.clone();
-    Widget::column(vec![
+    Widget::from(Column::new(Vec::<Widget>::from([
         Text::new("Gallery sibling window").into(),
         RawMaterialButton::new(format!("Shared counter: {count}"))
             .on_press(move || increment.update(|value| *value += 1))
             .into(),
         Text::new("This window is backed by the primary window's Signal.").into(),
-    ])
+    ])))
 }

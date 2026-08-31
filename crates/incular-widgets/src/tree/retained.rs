@@ -231,7 +231,7 @@ impl WidgetTree {
     #[must_use]
     pub fn sliver_viewport_diagnostics(&self) -> Option<SliverViewportDiagnostics> {
         self.elements.iter().find_map(|(_raw, element)| {
-            let WidgetKind::SliverViewport { config } = &element.widget.kind else {
+            let WidgetKind::SliverViewport { config } = element.widget.kind() else {
                 return None;
             };
             let render = self.renders.get(element.render.0)?;
@@ -438,7 +438,7 @@ impl WidgetTree {
         id: ElementId,
     ) -> Option<SliverViewportDiagnostics> {
         let element = self.elements.get(id.0)?;
-        let WidgetKind::SliverViewport { config } = &element.widget.kind else {
+        let WidgetKind::SliverViewport { config } = element.widget.kind() else {
             return None;
         };
         let render = self.renders.get(element.render.0)?;
@@ -495,7 +495,7 @@ impl WidgetTree {
             let Some(element) = self.elements.get_mut(id.0) else {
                 return false;
             };
-            match (&mut element.widget.kind, name) {
+            match (element.widget.kind_mut(), name) {
                 (
                     WidgetKind::Opacity {
                         alpha,
@@ -554,7 +554,7 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn action_for_element(&self, id: ElementId) -> Option<ActionId> {
-        match &self.elements.get(id.0)?.widget.kind {
+        match self.elements.get(id.0)?.widget.kind() {
             WidgetKind::Button(spec) => Some(spec.action),
             _ => None,
         }
@@ -569,15 +569,19 @@ impl WidgetTree {
         id: ElementId,
         action: SemanticActionKind,
     ) -> Option<Rc<dyn Fn() + 'static>> {
-        self.elements
-            .get(id.0)
-            .and_then(|element| element.widget.semantics.callbacks.callback(action))
+        self.elements.get(id.0).and_then(|element| {
+            element
+                .widget
+                .semantic_properties()
+                .callbacks
+                .callback(action)
+        })
     }
     #[must_use]
     pub fn action_ids(&self) -> HashSet<ActionId> {
         self.elements
             .iter()
-            .flat_map(|(_, element)| match &element.widget.kind {
+            .flat_map(|(_, element)| match element.widget.kind() {
                 WidgetKind::Button(spec) => [spec.action, spec.hover_action, spec.exit_action]
                     .map(|action| (action.0 != 0).then_some(action)),
                 _ => [None; 3],
@@ -587,7 +591,7 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn hover_actions_for_element(&self, id: ElementId) -> (Option<ActionId>, Option<ActionId>) {
-        match &self.elements.get(id.0).map(|element| &element.widget.kind) {
+        match &self.elements.get(id.0).map(|element| element.widget.kind()) {
             Some(WidgetKind::Button(spec)) => (
                 (spec.hover_action.0 != 0).then_some(spec.hover_action),
                 (spec.exit_action.0 != 0).then_some(spec.exit_action),

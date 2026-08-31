@@ -12,7 +12,7 @@ fn frame() -> Constraints {
 fn tree_with_subscribers(subscribers: usize) -> (Application, Signal<u64>) {
     let signal = Signal::new(0_u64);
     let app_signal = signal.clone();
-    let mut children = Vec::with_capacity(subscribers + 1_000);
+    let mut children: Vec<incular_widgets::Widget> = Vec::with_capacity(subscribers + 1_000);
     for index in 0..subscribers {
         let hot = app_signal.clone();
         children.push(incular_widgets::Text::new(format!("hot {index} {}", hot.get())).into());
@@ -20,7 +20,7 @@ fn tree_with_subscribers(subscribers: usize) -> (Application, Signal<u64>) {
     for index in 0..1_000 {
         children.push(incular_widgets::Text::new(format!("cold {index}")).into());
     }
-    let root = incular_widgets::Widget::column(children);
+    let root = incular_widgets::Widget::from(incular_widgets::Column::new(children));
     let mut app = Application::new(move |_| root.clone()).expect("app");
     // Warm frame establishes the retained tree and subscriptions.
     let _ = app.run_window_frame_at(

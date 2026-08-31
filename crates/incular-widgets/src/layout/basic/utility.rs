@@ -27,7 +27,7 @@ impl KeyedSubtree {
 impl From<KeyedSubtree> for Widget {
     fn from(value: KeyedSubtree) -> Self {
         let mut child = value.child;
-        child.key = Some(value.key);
+        child.set_key(Some(value.key));
         child
     }
 }

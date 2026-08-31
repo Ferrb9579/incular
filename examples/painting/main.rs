@@ -65,7 +65,7 @@ fn main() {
     };
     let star = star();
     let app = Application::new(move |_| {
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Painting")
                 .style(TextStyle {
                     size: 30.,
@@ -78,7 +78,7 @@ fn main() {
                 .background(rainbow.clone())
                 .radius(8.)
                 .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 DecoratedBox::new(Widget::box_(Size::new(140., 140.), Color::TRANSPARENT))
                     .background(radial.clone())
                     .radius(24.)
@@ -99,9 +99,9 @@ fn main() {
                     .fill(rainbow.clone())
                     .size(Size::new(100., 100.))
                     .into(),
-            ]),
+            ]))),
             Text::new("Shared cached vector icons").into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 Icon::new(icons::check())
                     .size(36.)
                     .brush(Color::rgba(85, 225, 150, 255))
@@ -122,8 +122,8 @@ fn main() {
                     .size(36.)
                     .brush(Color::rgba(85, 225, 150, 255))
                     .into(),
-            ]),
-        ])
+            ]))),
+        ])))
     })
     .expect("valid painting application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

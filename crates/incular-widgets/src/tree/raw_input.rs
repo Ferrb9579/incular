@@ -150,7 +150,7 @@ impl WidgetTree {
     }
 
     fn raw_input_kind(&self, element: ElementId) -> Option<&RawInputKind> {
-        match &self.elements.get(element.0)?.widget.kind {
+        match self.elements.get(element.0)?.widget.kind() {
             WidgetKind::RawInput { kind, .. } => Some(kind),
             _ => None,
         }
@@ -330,7 +330,7 @@ impl WidgetTree {
                 if self.nearest_tap_surface(id) != Some(surface) {
                     return None;
                 }
-                let (callbacks, group_id, consume_outside_taps) = match &element.widget.kind {
+                let (callbacks, group_id, consume_outside_taps) = match element.widget.kind() {
                     WidgetKind::RawInput {
                         kind:
                             RawInputKind::TapRegion {

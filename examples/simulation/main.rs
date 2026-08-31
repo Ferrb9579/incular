@@ -32,7 +32,7 @@ fn main() {
 
         Container::builder()
             .padding(EdgeInsets::all(24.0))
-            .child(Widget::column(vec![
+            .child(Widget::from(Column::new(Vec::<Widget>::from([
                 Text::new("Live simulation demo")
                     .style(TextStyle::new().font_size(20.0).color(Color::WHITE))
                     .into(),
@@ -45,7 +45,7 @@ fn main() {
                 )
                 .accessibility_label("Simulation input"),
                 increment,
-            ]))
+            ]))))
             .build()
             .into()
     })

@@ -107,9 +107,9 @@ impl WidgetTree {
     )> {
         let _node_guard = self.guard_element(FramePhase::Semantics, element);
         let entry = self.element_live(element, "semantic traversal element must remain live");
-        if entry.widget.semantics.hidden
+        if entry.widget.semantic_properties().hidden
             || matches!(
-                entry.widget.kind,
+                entry.widget.kind(),
                 WidgetKind::Visibility { visible: false, .. }
             )
         {
@@ -121,14 +121,14 @@ impl WidgetTree {
         // wins over an automatically supplied sliver index and is carried
         // through transparent wrappers until the first semantic node emits.
         let mut collection = collection;
-        if let WidgetKind::IndexedSemantics { index, .. } = entry.widget.kind {
+        if let WidgetKind::IndexedSemantics { index, .. } = entry.widget.kind() {
             collection = Some(SemanticCollectionContext {
-                item_index: Some(index),
+                item_index: Some(*index),
                 set_size: collection.and_then(|context| context.set_size),
             });
         } else if collection.is_none()
             && let Some(parent) = entry.parent.and_then(|parent| self.elements.get(parent.0))
-            && let WidgetKind::SliverViewport { config } = &parent.widget.kind
+            && let WidgetKind::SliverViewport { config } = parent.widget.kind()
             && let Some(slot) = parent.children.iter().position(|child| *child == element)
         {
             collection = Some(SemanticCollectionContext {
@@ -147,7 +147,7 @@ impl WidgetTree {
             });
         }
         let (mut role, mut default_label, mut value, mut state, mut actions) =
-            match &entry.widget.kind {
+            match entry.widget.kind() {
                 WidgetKind::Button(spec) => (
                     Some(SemanticRole::Button),
                     widget_text(&entry.widget),
@@ -182,7 +182,7 @@ impl WidgetTree {
                     },
                     vec![SemanticActionKind::Focus],
                 ),
-                WidgetKind::Image { .. } if entry.widget.semantics.label.is_some() => (
+                WidgetKind::Image { .. } if entry.widget.semantic_properties().label.is_some() => (
                     Some(SemanticRole::Image),
                     None,
                     None,
@@ -253,11 +253,11 @@ impl WidgetTree {
             };
         let explicit_description = entry
             .widget
-            .semantics
+            .semantic_properties()
             .explicit
             .as_ref()
             .and_then(|semantics| semantics.description.clone());
-        if let Some(explicit) = &entry.widget.semantics.explicit {
+        if let Some(explicit) = &entry.widget.semantic_properties().explicit {
             role = Some(explicit.role);
             default_label = explicit.label.clone().or(default_label);
             value = explicit.value.clone().or(value);
@@ -275,15 +275,21 @@ impl WidgetTree {
             SemanticActionKind::ScrollForward,
             SemanticActionKind::ScrollBackward,
         ] {
-            if entry.widget.semantics.callbacks.supports(action) && !actions.contains(&action) {
+            if entry
+                .widget
+                .semantic_properties()
+                .callbacks
+                .supports(action)
+                && !actions.contains(&action)
+            {
                 actions.push(action);
             }
         }
         actions.retain(|action| {
             semantic_action_is_executable(
-                &entry.widget.kind,
+                entry.widget.kind(),
                 *action,
-                &entry.widget.semantics.callbacks,
+                &entry.widget.semantic_properties().callbacks,
             )
         });
         let this_parent = if let Some(role) = role {
@@ -302,16 +308,16 @@ impl WidgetTree {
                 role,
                 label: entry
                     .widget
-                    .semantics
+                    .semantic_properties()
                     .explicit
                     .as_ref()
                     .and_then(|semantics| semantics.label.clone())
-                    .or_else(|| entry.widget.semantics.label.clone())
+                    .or_else(|| entry.widget.semantic_properties().label.clone())
                     .or(default_label),
                 value,
                 description: entry
                     .widget
-                    .semantics
+                    .semantic_properties()
                     .description
                     .clone()
                     .or(explicit_description),
@@ -325,21 +331,21 @@ impl WidgetTree {
         };
         // A Button deliberately merges its visual label/icon subtree into the
         // one control node. Other containers preserve logical child order.
-        if !matches!(entry.widget.kind, WidgetKind::Button(_))
-            && !entry.widget.semantics.merge_descendants
+        if !matches!(entry.widget.kind(), WidgetKind::Button(_))
+            && !entry.widget.semantic_properties().merge_descendants
         {
             let first_visible_child = entry
                 .children
                 .iter()
                 .rposition(|child| {
-                    self.elements
-                        .get(child.0)
-                        .is_some_and(|child| child.widget.semantics.block_previous_siblings)
+                    self.elements.get(child.0).is_some_and(|child| {
+                        child.widget.semantic_properties().block_previous_siblings
+                    })
                 })
                 .unwrap_or(0);
-            let semantic_children: Vec<_> = match entry.widget.kind {
+            let semantic_children: Vec<_> = match entry.widget.kind() {
                 WidgetKind::IndexedStack { index, .. } => {
-                    entry.children.get(index).copied().into_iter().collect()
+                    entry.children.get(*index).copied().into_iter().collect()
                 }
                 _ => entry.children[first_visible_child..].to_vec(),
             };
@@ -388,7 +394,7 @@ pub(super) fn widget_text(widget: &Widget) -> Option<String> {
     let mut work = vec![widget];
     let mut fragments = Vec::new();
     while let Some(current) = work.pop() {
-        match &current.kind {
+        match current.kind() {
             WidgetKind::Text { text, .. } | WidgetKind::SelectableText { text, .. } => {
                 fragments.push(text.clone());
             }

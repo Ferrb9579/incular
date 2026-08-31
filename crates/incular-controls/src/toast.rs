@@ -145,9 +145,9 @@ impl Provider {
 impl From<Provider> for Widget {
     fn from(value: Provider) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             value.build(&crate::theme::current_control_theme(context))
-        })
+        }))
     }
 }
 
@@ -214,7 +214,7 @@ impl Default for Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
             let entry = ToastEntry {
                 id: ToastId(0),
@@ -233,7 +233,7 @@ impl From<Root> for Widget {
                         ..SemanticState::default()
                     }),
             )
-        })
+        }))
     }
 }
 

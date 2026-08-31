@@ -13,7 +13,8 @@ fn public_text_and_rich_text_overflow_configuration_mounts_retained_widgets() {
         .into();
 
     let mut tree = incular::widgets::internal::WidgetTree::new();
-    tree.mount(Widget::column(vec![text, rich])).unwrap();
+    tree.mount(Widget::from(Column::new(Vec::<Widget>::from([text, rich]))))
+        .unwrap();
     tree.layout(incular::config::Constraints::tight(Size::new(80., 60.)))
         .expect("layout");
 }

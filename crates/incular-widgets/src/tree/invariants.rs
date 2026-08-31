@@ -579,7 +579,7 @@ impl WidgetTree {
                 }
             }
 
-            if matches!(element.widget.kind, WidgetKind::SliverViewport { .. }) {
+            if matches!(element.widget.kind(), WidgetKind::SliverViewport { .. }) {
                 if element.sliver_child_ids.len() != element.children.len()
                     || element.sliver_child_semantic_indices.len() != element.children.len()
                 {

@@ -9,7 +9,7 @@ pub(crate) mod simulations;
 
 fn main() {
     let app = Application::new(|_| {
-        SelectionArea::new(Widget::column(vec![
+        SelectionArea::new(Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Read-only selection")
                 .style(TextStyle {
                     size: 28.,
@@ -32,7 +32,7 @@ fn main() {
                 })
                 .into(),
             Text::new("Selection is read-only: there is no caret or IME session.").into(),
-        ]))
+        ]))))
         .into()
     })
     .expect("valid selection application");

@@ -53,7 +53,7 @@ fn main() {
         let shadow_for_button = shadow_controller.clone();
         let blur_target_button = blur_target.clone();
         let shadow_target_button = shadow_target.clone();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new("Incular Effects")
                 .style(TextStyle {
                     size: 28.,
@@ -64,7 +64,7 @@ fn main() {
             Text::new("Gaussian blur")
                 .color(Color::rgba(220, 225, 240, 255))
                 .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 DropShadow::controlled(
                     shadow_controller.clone(),
                     DecoratedBox::new(Text::new("sharp card").color(Color::WHITE))
@@ -81,20 +81,20 @@ fn main() {
                         .radius(12.),
                 )
                 .into(),
-            ]),
+            ]))),
             Text::new("Blurred image and mixed subtree")
                 .color(Color::rgba(220, 225, 240, 255))
                 .into(),
             Blur::new(
                 7.,
-                Widget::row(vec![
+                Widget::from(Row::new(Vec::<Widget>::from([
                     Image::new(image.clone()).width(70.).height(70.).into(),
                     Icon::new(icons::plus())
                         .size(64.)
                         .brush(Color::rgba(255, 235, 130, 255))
                         .into(),
                     Text::new("text + image + path").color(Color::WHITE).into(),
-                ]),
+                ]))),
             )
             .into(),
             Text::new("Large-radius blur")
@@ -111,7 +111,7 @@ fn main() {
                 .radius(14.),
             )
             .into(),
-            Widget::row(vec![
+            Widget::from(Row::new(Vec::<Widget>::from([
                 RawMaterialButton::new("Animate blur")
                     .on_press(move || {
                         let target = if blur_target_button.get() { 2. } else { 18. };
@@ -134,8 +134,8 @@ fn main() {
                         );
                     })
                     .into(),
-            ]),
-        ])
+            ]))),
+        ])))
     })
     .expect("valid effects application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

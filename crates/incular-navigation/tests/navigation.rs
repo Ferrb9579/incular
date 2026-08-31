@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 
 fn page() -> Widget {
-    Widget::fixed_box(Size::new(1., 1.), Color::WHITE)
+    Widget::box_(Size::new(1., 1.), Color::WHITE)
 }
 
 #[test]

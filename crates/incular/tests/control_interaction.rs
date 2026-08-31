@@ -17,10 +17,10 @@ fn click(runtime: &mut incular_runtime::Runtime, point: Offset) {
 #[test]
 fn checkbox_and_switch_have_uncontrolled_visual_state() {
     let app = Application::new(|_| {
-        Widget::column([
+        Widget::from(Column::new([
             Widget::from(Checkbox::new(false)),
             Widget::from(Switch::new(false)),
-        ])
+        ]))
     })
     .expect("application");
     let mut runtime = app.into_runtime();

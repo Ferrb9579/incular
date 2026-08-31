@@ -14,14 +14,15 @@ use std::{cell::Cell, rc::Rc, time::Instant};
 fn scroll_positions_are_logical_clamped_and_clip_the_viewport() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        controller.clone(),
-        Widget::column(
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(incular_widgets::Column::new(
             (0..5)
                 .map(|_| Widget::box_(Size::new(80., 40.), Color::WHITE))
                 .collect::<Vec<_>>(),
-        ),
-    ))
+        ))
+        .controller(controller.clone())
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -78,7 +79,7 @@ fn horizontal_scroll_preserves_axis_in_layout_transform_and_hit_testing() {
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(
-            incular_widgets::internal::SingleChildScrollView::new(Widget::row(
+            incular_widgets::internal::SingleChildScrollView::new(incular_widgets::Row::new(
                 (0..5)
                     .map(|_| Widget::box_(Size::new(40., 30.), Color::WHITE))
                     .collect::<Vec<_>>(),
@@ -186,8 +187,8 @@ fn page_view_static_children_fill_viewport_and_preserve_reverse_direction() {
     let root = tree
         .mount(
             incular_widgets::internal::PageView::new([
-                Widget::fixed_box(Size::new(20., 20.), Color::WHITE),
-                Widget::fixed_box(Size::new(20., 20.), Color::BLACK),
+                Widget::box_(Size::new(20., 20.), Color::WHITE),
+                Widget::box_(Size::new(20., 20.), Color::BLACK),
             ])
             .scroll_direction(Axis::Horizontal)
             .controller(controller.clone())
@@ -218,8 +219,8 @@ fn page_view_static_children_fill_viewport_and_preserve_reverse_direction() {
     let reverse_root = reverse_tree
         .mount(
             incular_widgets::internal::PageView::new([
-                Widget::fixed_box(Size::new(20., 20.), Color::WHITE),
-                Widget::fixed_box(Size::new(20., 20.), Color::BLACK),
+                Widget::box_(Size::new(20., 20.), Color::WHITE),
+                Widget::box_(Size::new(20., 20.), Color::BLACK),
             ])
             .scroll_direction(Axis::Horizontal)
             .reverse(true)
@@ -254,7 +255,7 @@ fn scroll_physics_survives_descriptor_lowering_and_controls_input() {
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(
-            incular_widgets::internal::SingleChildScrollView::new(Widget::column(
+            incular_widgets::internal::SingleChildScrollView::new(incular_widgets::Column::new(
                 (0..4)
                     .map(|_| Widget::box_(Size::new(80., 40.), Color::WHITE))
                     .collect::<Vec<_>>(),
@@ -280,22 +281,23 @@ fn persistent_headers_pin_in_flow_and_are_pushed_by_the_next_header() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::scroll_view(
-            controller.clone(),
-            Widget::column(vec![
-                Widget::fixed_box(Size::new(80., 40.), Color::BLACK),
+        .mount(
+            incular_widgets::SingleChildScrollView::new(incular_widgets::Column::new(vec![
+                Widget::box_(Size::new(80., 40.), Color::BLACK),
                 Widget::persistent_header(
                     controller.clone(),
-                    Widget::fixed_box(Size::new(80., 20.), Color::rgba(255, 0, 0, 255)),
+                    Widget::box_(Size::new(80., 20.), Color::rgba(255, 0, 0, 255)),
                 ),
-                Widget::fixed_box(Size::new(80., 60.), Color::WHITE),
+                Widget::box_(Size::new(80., 60.), Color::WHITE),
                 Widget::persistent_header(
                     controller.clone(),
-                    Widget::fixed_box(Size::new(80., 20.), Color::rgba(0, 255, 0, 255)),
+                    Widget::box_(Size::new(80., 20.), Color::rgba(0, 255, 0, 255)),
                 ),
-                Widget::fixed_box(Size::new(80., 200.), Color::BLACK),
-            ]),
-        ))
+                Widget::box_(Size::new(80., 200.), Color::BLACK),
+            ]))
+            .controller(controller.clone())
+            .into(),
+        )
         .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -335,10 +337,10 @@ fn pinned_header_sliver_pins_vertical_without_rebuilding_on_scroll() {
     let mut tree = WidgetTree::new();
     let slivers: Vec<Box<dyn incular_widgets::internal::Sliver>> = vec![
         Box::new(incular_widgets::internal::PinnedHeaderSliver::new(
-            Widget::fixed_box(Size::new(100., 20.), Color::WHITE),
+            Widget::box_(Size::new(100., 20.), Color::WHITE),
         )),
         Box::new(incular_widgets::internal::SliverToBoxAdapter::new(
-            Widget::fixed_box(Size::new(100., 220.), Color::BLACK),
+            Widget::box_(Size::new(100., 220.), Color::BLACK),
         )),
     ];
     let root = tree
@@ -375,10 +377,10 @@ fn pinned_header_sliver_supports_horizontal_and_reverse_viewports() {
         let mut tree = WidgetTree::new();
         let slivers: Vec<Box<dyn incular_widgets::internal::Sliver>> = vec![
             Box::new(incular_widgets::internal::PinnedHeaderSliver::new(
-                Widget::fixed_box(Size::new(20., 40.), Color::WHITE),
+                Widget::box_(Size::new(20., 40.), Color::WHITE),
             )),
             Box::new(incular_widgets::internal::SliverToBoxAdapter::new(
-                Widget::fixed_box(Size::new(220., 40.), Color::BLACK),
+                Widget::box_(Size::new(220., 40.), Color::BLACK),
             )),
         ];
         let root = tree
@@ -430,7 +432,7 @@ fn notification_listener_bubbles_sliver_events_and_honors_stop() {
     let observed_outer = outer_events.clone();
     let sliver: Box<dyn incular_widgets::internal::Sliver> =
         Box::new(incular_widgets::internal::SliverToBoxAdapter::new(
-            Widget::fixed_box(Size::new(100., 240.), Color::WHITE),
+            Widget::box_(Size::new(100., 240.), Color::WHITE),
         ));
     let view: Widget = incular_widgets::internal::CustomScrollView::new(vec![sliver])
         .controller(controller.clone())
@@ -698,10 +700,14 @@ fn sliver_slot_replaces_an_incompatible_retained_widget() {
 fn scrollbar_geometry_and_drag_share_the_controller() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        controller.clone(),
-        Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
-    ))
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(Widget::box_(
+            Size::new(100., 1_000.),
+            Color::WHITE,
+        ))
+        .controller(controller.clone())
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
@@ -722,10 +728,14 @@ fn scrollbar_geometry_and_drag_share_the_controller() {
 fn scrollbar_geometry_round_trips_offsets_and_thumb_tops() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        controller.clone(),
-        Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
-    ))
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(Widget::box_(
+            Size::new(100., 4_000.),
+            Color::WHITE,
+        ))
+        .controller(controller.clone())
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 600.)))
         .expect("layout");
@@ -749,7 +759,7 @@ fn sliver_list_small_thumb_drag_is_continuous_and_reversible() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
     tree.mount(fixed_sliver_list(100, 40., controller.clone(), |_| {
-        Widget::fixed_box(Size::new(100., 40.), Color::WHITE)
+        Widget::box_(Size::new(100., 40.), Color::WHITE)
     }))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 600.)))
@@ -777,7 +787,7 @@ fn sliver_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
         1_000_000,
         40.,
         controller.clone(),
-        |_| Widget::fixed_box(Size::new(100., 40.), Color::WHITE),
+        |_| Widget::box_(Size::new(100., 40.), Color::WHITE),
     ))
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 600.)))
@@ -809,10 +819,14 @@ fn sliver_list_minimum_thumb_drag_uses_actual_travel_and_stays_bounded() {
 fn scrollbar_does_not_scroll_when_thumb_has_no_travel() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        controller.clone(),
-        Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
-    ))
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(Widget::box_(
+            Size::new(100., 1_000.),
+            Color::WHITE,
+        ))
+        .controller(controller.clone())
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 20.)))
         .expect("layout");
@@ -827,10 +841,14 @@ fn scrollbar_does_not_scroll_when_thumb_has_no_travel() {
 fn scrollbar_stays_synchronized_after_wheel_and_programmatic_offset_changes() {
     let controller = ScrollController::new();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(
-        controller.clone(),
-        Widget::fixed_box(Size::new(100., 4_000.), Color::WHITE),
-    ))
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(Widget::box_(
+            Size::new(100., 4_000.),
+            Color::WHITE,
+        ))
+        .controller(controller.clone())
+        .into(),
+    )
     .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 600.)))
         .expect("layout");
@@ -859,19 +877,27 @@ fn wheel_at_nested_scroll_transfers_child_boundary_remainder_to_parent_once() {
     let outer = ScrollController::new();
     let inner = ScrollController::new();
     let nested: Widget = SizedBox::from_size(Size::new(100., 100.))
-        .child(Widget::scroll_view(
-            inner.clone(),
-            Widget::fixed_box(Size::new(100., 300.), Color::WHITE),
-        ))
+        .child(
+            incular_widgets::SingleChildScrollView::new(Widget::box_(
+                Size::new(100., 300.),
+                Color::WHITE,
+            ))
+            .controller(inner.clone()),
+        )
         .into();
-    let content = Widget::column(vec![
-        Widget::fixed_box(Size::new(100., 10.), Color::BLACK),
+    let content: Widget = incular_widgets::Column::new(vec![
+        Widget::box_(Size::new(100., 10.), Color::BLACK),
         nested,
-        Widget::fixed_box(Size::new(100., 1_000.), Color::WHITE),
-    ]);
+        Widget::box_(Size::new(100., 1_000.), Color::WHITE),
+    ])
+    .into();
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::scroll_view(outer.clone(), content))
-        .unwrap();
+    tree.mount(
+        incular_widgets::SingleChildScrollView::new(content)
+            .controller(outer.clone())
+            .into(),
+    )
+    .unwrap();
     tree.layout(Constraints::tight(Size::new(100., 100.)))
         .expect("layout");
     assert!(outer.jump_to(100.));

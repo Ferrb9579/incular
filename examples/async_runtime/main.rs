@@ -58,7 +58,7 @@ fn main() {
         };
         Padding::all(
             28.,
-            Widget::column(vec![
+            Widget::from(Column::new(Vec::<Widget>::from([
                 Text::new("Incular async runtime")
                     .style(TextStyle {
                         size: 28.,
@@ -69,7 +69,7 @@ fn main() {
                 Text::new("The window remains input responsive; work wakes Winit only when ready.")
                     .into(),
                 Padding::all(16., Text::new(message)).into(),
-            ]),
+            ]))),
         )
         .into()
     })

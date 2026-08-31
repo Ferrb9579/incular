@@ -97,7 +97,9 @@ impl Badge {
 impl From<Badge> for Widget {
     fn from(value: Badge) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -397,7 +399,9 @@ impl ListTile {
 impl From<ListTile> for Widget {
     fn from(value: ListTile) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -547,7 +551,9 @@ impl CheckboxListTile {
 impl From<CheckboxListTile> for Widget {
     fn from(value: CheckboxListTile) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -708,7 +714,9 @@ impl<T: PartialEq + Clone + 'static> RadioListTile<T> {
 impl<T: PartialEq + Clone + 'static> From<RadioListTile<T>> for Widget {
     fn from(value: RadioListTile<T>) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -856,7 +864,9 @@ impl SwitchListTile {
 impl From<SwitchListTile> for Widget {
     fn from(value: SwitchListTile) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 

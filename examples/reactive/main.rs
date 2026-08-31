@@ -26,7 +26,7 @@ fn main() {
         logger.mount();
         let count_value = count.get();
         let request_state = request.state();
-        Widget::column(vec![
+        Widget::from(Column::new(Vec::<Widget>::from([
             Text::new(format!("count: {count_value}")).into(),
             Text::new(format!("memo: {}", doubled.get())).into(),
             Text::new(format!("request: {request_state:?}")).into(),
@@ -45,7 +45,7 @@ fn main() {
                     }
                 })
                 .into(),
-        ])
+        ])))
     })
     .expect("valid reactive application");
     example_support::spawn_if_requested(app.simulation(), simulations::run);

@@ -198,7 +198,7 @@ impl Material {
 impl From<Material> for Widget {
     fn from(value: Material) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let text_style = Theme::of_shared(context).map_or_else(TextStyle::default, |theme| {
                 theme.core().text_theme.body_medium.clone()
             });
@@ -233,6 +233,6 @@ impl From<Material> for Widget {
             } else {
                 surface.into()
             }
-        })
+        }))
     }
 }

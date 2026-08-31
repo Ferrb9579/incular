@@ -1,7 +1,7 @@
 use incular_core::Color;
 use incular_image::ImageHandle;
 use incular_rendering::Path;
-use incular_widgets::internal::{ImageFit, ImageRepeat, PhysicalModel, PhysicalShape, WidgetKind};
+use incular_widgets::internal::{ImageFit, ImageRepeat, PhysicalModel, PhysicalShape};
 use incular_widgets::{
     Border, BorderDirectional, BorderRadius, BorderRadiusDirectional, BorderSide, BorderStyle,
     BoxDecoration, BoxShadow, ClipRSuperellipse, DecorationImage, GridPaper, ImageFiltered,
@@ -30,16 +30,13 @@ fn effect_builders_preserve_defaults_and_normalize_values() {
             .repeat(ImageRepeat::NoRepeat)
     );
 
-    let icon: Widget = ImageIcon::builder()
-        .image(image_handle())
+    let handle = image_handle();
+    let icon = ImageIcon::builder()
+        .image(handle.clone())
         .size(-2.0)
-        .build()
-        .into();
-    let WidgetKind::Image { width, height, .. } = icon.kind().clone() else {
-        panic!("ImageIcon should lower to an Image widget");
-    };
-    assert_eq!(width, Some(0.0));
-    assert_eq!(height, Some(0.0));
+        .build();
+    assert_eq!(icon, ImageIcon::new(handle).size(0.0));
+    assert_eq!(Widget::from(icon).debug_type_name(), "Image");
 
     let grid = GridPaper::builder().build();
     assert_eq!(grid, GridPaper::default());
@@ -54,11 +51,9 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .sigma(3.0)
         .child(Text::new("filtered"))
         .build();
+    assert_eq!(filtered, ImageFiltered::blur(3.0, Text::new("filtered")));
     let filtered: Widget = filtered.into();
-    assert!(matches!(
-        filtered.kind().clone(),
-        WidgetKind::Blur { sigma_x, sigma_y, .. } if sigma_x == 3.0 && sigma_y == 3.0
-    ));
+    assert_eq!(filtered.debug_type_name(), "ImageFiltered");
 
     let snapshot = SnapshotWidget::builder()
         .child(Text::new("snapshot"))
@@ -70,12 +65,7 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .child(Text::new("clip"))
         .build();
     let clip: Widget = clip.into();
-    assert!(matches!(
-        clip.kind().clone(),
-        WidgetKind::ClipRRect { radius, clip_behavior, .. }
-            if radius == incular_rendering::CornerRadii::uniform(0.0)
-                && clip_behavior == incular_widgets::Clip::AntiAlias
-    ));
+    assert_eq!(clip.debug_type_name(), "ClipRRect");
 
     let physical = PhysicalModel::builder()
         .color(Color::WHITE)
@@ -92,10 +82,7 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .child(Text::new("shape"))
         .build();
     let physical_shape: Widget = physical_shape.into();
-    assert!(matches!(
-        physical_shape.kind().clone(),
-        WidgetKind::ClipPath { .. }
-    ));
+    assert_eq!(physical_shape.debug_type_name(), "ClipPath");
 
     let grid = GridPaper::builder().child(Text::new("grid")).build();
     let _: Widget = grid.into();

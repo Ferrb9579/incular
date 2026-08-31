@@ -7,6 +7,7 @@
 //! dependency cycle on `incular-runtime`.
 
 use super::Widget;
+use crate::Visibility;
 use incular_config::RuntimeEnvironment;
 use incular_core::{Rect, Size};
 use std::{
@@ -463,7 +464,9 @@ impl View {
         let retained_controller = controller.clone();
         Widget::stateful_layout_builder(revision, move |_, _| {
             let data = retained_controller.data();
-            let child = Widget::visibility(!data.is_closed(), child.clone());
+            let child: Widget = Visibility::new(child.clone())
+                .visible(!data.is_closed())
+                .into();
             Widget::environment_scope(
                 data.environment.clone(),
                 Widget::environment_scope(data, child),

@@ -1,7 +1,7 @@
 use super::super::super::*;
 
 pub(super) fn lower_scrolling(widget: &Widget) -> RenderKind {
-    match &widget.kind {
+    match widget.kind() {
         WidgetKind::Scroll {
             controller,
             axis,

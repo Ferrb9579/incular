@@ -12,11 +12,14 @@ use incular_widgets::internal::{ElementId, Key, TreeError, Widget, WidgetTree};
 fn keyed_reorder_reuses_elements() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::row(vec![box_(1), box_(2), box_(3)]))
+        .mount(incular_widgets::Row::new(vec![box_(1), box_(2), box_(3)]).into())
         .unwrap();
     let before = tree.children(root).unwrap().to_vec();
-    tree.update(root, Widget::row(vec![box_(3), box_(1), box_(2)]))
-        .unwrap();
+    tree.update(
+        root,
+        incular_widgets::Row::new(vec![box_(3), box_(1), box_(2)]).into(),
+    )
+    .unwrap();
     let after = tree.children(root).unwrap();
     assert_eq!(after, &[before[2], before[0], before[1]]);
 }
@@ -24,9 +27,12 @@ fn keyed_reorder_reuses_elements() {
 #[test]
 fn removed_ids_are_stale_and_unmounted_once() {
     let mut tree = WidgetTree::new();
-    let root = tree.mount(Widget::row(vec![box_(1), box_(2)])).unwrap();
+    let root = tree
+        .mount(incular_widgets::Row::new(vec![box_(1), box_(2)]).into())
+        .unwrap();
     let removed = tree.children(root).unwrap()[1];
-    tree.update(root, Widget::row(vec![box_(1)])).unwrap();
+    tree.update(root, incular_widgets::Row::new(vec![box_(1)]).into())
+        .unwrap();
     assert!(!tree.element_exists(removed));
     assert_eq!(tree.diagnostics().unmounts, 1);
 }
@@ -35,7 +41,8 @@ fn removed_ids_are_stale_and_unmounted_once() {
 fn duplicate_local_keys_are_rejected() {
     let mut tree = WidgetTree::new();
     assert_eq!(
-        tree.mount(Widget::row(vec![box_(1), box_(1)])).unwrap_err(),
+        tree.mount(incular_widgets::Row::new(vec![box_(1), box_(1)]).into())
+            .unwrap_err(),
         TreeError::DuplicateKey {
             key: Key::Value(1),
             parent: None,
@@ -155,7 +162,7 @@ mod reconciliation_property {
 
     fn reconcile(tree: &mut WidgetTree, parent: ElementId, model: &Model) {
         let desired: Vec<Widget> = model.iter().map(widget_for).collect();
-        tree.update(parent, Widget::column(desired))
+        tree.update(parent, incular_widgets::Column::new(desired).into())
             .expect("reconcile");
         tree.layout(frame()).expect("layout");
     }
@@ -181,7 +188,9 @@ mod reconciliation_property {
         ) {
             let mut model: Model = Vec::new();
             let mut tree = WidgetTree::default();
-            let parent = tree.mount(Widget::column(Vec::new())).expect("mount");
+            let parent = tree
+                .mount(incular_widgets::Column::new(Vec::<Widget>::new()).into())
+                .expect("mount");
             tree.layout(frame()).expect("layout");
 
             for op in &ops {

@@ -91,9 +91,9 @@ impl WidgetTree {
         out.push(WidgetNode {
             id: dev_id,
             parent,
-            type_name: element.widget.kind.dev_type_name_widget(),
-            key: element.widget.key.as_ref().map(key_display),
-            label: leaf_label(&element.widget.kind),
+            type_name: element.widget.kind().dev_type_name_widget(),
+            key: element.widget.key().map(key_display),
+            label: leaf_label(element.widget.kind()),
             child_ids: child_ids.clone(),
             revision: dev_revision(element),
         });
@@ -190,7 +190,7 @@ impl WidgetTree {
                 .transform_point(incular_core::Offset::new(0., baseline))
                 .y
         });
-        let content_bounds = if let WidgetKind::Padding { padding, .. } = &element.widget.kind {
+        let content_bounds = if let WidgetKind::Padding { padding, .. } = element.widget.kind() {
             let local = Rect::from_origin_size(
                 incular_core::Offset::new(padding.left, padding.top),
                 Size::new(
@@ -228,7 +228,7 @@ impl WidgetTree {
             .iter()
             .filter(|(_, element)| {
                 matches!(
-                    element.widget.kind,
+                    element.widget.kind(),
                     WidgetKind::Button(_)
                         | WidgetKind::TextField(_)
                         | WidgetKind::SelectableText { .. }
@@ -259,7 +259,7 @@ impl WidgetTree {
             .iter()
             .filter(|(_, element)| {
                 matches!(
-                    element.widget.kind,
+                    element.widget.kind(),
                     WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. }
                 )
             })
@@ -311,7 +311,7 @@ impl WidgetTree {
         let element = self.dev_elements().get(id.0)?;
         let render_node = self.dev_renders().get(element.render.0)?;
         #[cfg(feature = "devtools")]
-        let properties = crate::devtools_props::inspect_properties(&element.widget.kind);
+        let properties = crate::devtools_props::inspect_properties(element.widget.kind());
         #[cfg(not(feature = "devtools"))]
         let properties = Vec::new();
 
@@ -327,8 +327,8 @@ impl WidgetTree {
         Some(NodeDetails {
             id: dev_id,
             window: window_id,
-            type_name: element.widget.kind.dev_type_name_widget(),
-            key: element.widget.key.as_ref().map(key_display),
+            type_name: element.widget.kind().dev_type_name_widget(),
+            key: element.widget.key().map(key_display),
             state: ElementState {
                 mount_generation: u64::from(id.0.generation()),
                 builds: per_node_builds(element),
@@ -390,7 +390,7 @@ impl WidgetTree {
         let local_transform = transform_array(local);
         let world_transform = transform_array(world);
         let world_bounds = self.element_bounds(id).map(rect_array)?;
-        let padding = match &element.widget.kind {
+        let padding = match element.widget.kind() {
             WidgetKind::Padding { padding, .. } => {
                 Some([padding.left, padding.top, padding.right, padding.bottom])
             }
@@ -433,7 +433,7 @@ impl WidgetTree {
         size: Size,
         content_transform: incular_core::Transform,
     ) -> LayoutDetails {
-        match &element.widget.kind {
+        match element.widget.kind() {
             WidgetKind::Box { .. } | WidgetKind::Decorated { .. } | WidgetKind::Button(_) => {
                 LayoutDetails::Box
             }
@@ -531,7 +531,7 @@ impl WidgetTree {
                 line_count: self.devtools_text_line_count(id),
             },
             _ => LayoutDetails::Custom {
-                layout_kind: element.widget.kind.dev_type_name_widget(),
+                layout_kind: element.widget.kind().dev_type_name_widget(),
             },
         }
     }
@@ -550,7 +550,7 @@ impl WidgetTree {
             .filter_map(|(index, child_id)| {
                 let child = self.dev_elements().get(child_id.0)?;
                 let render = self.dev_renders().get(child.render.0)?;
-                let (flex, fit) = match &child.widget.kind {
+                let (flex, fit) = match child.widget.kind() {
                     WidgetKind::Flexible { flex, fit, .. } => {
                         (Some(*flex), Some(format!("{fit:?}")))
                     }
@@ -563,7 +563,7 @@ impl WidgetTree {
                 Some(FlexChildInspection {
                     node: dev_id(*child_id),
                     index,
-                    type_name: child.widget.kind.dev_type_name_widget(),
+                    type_name: child.widget.kind().dev_type_name_widget(),
                     size: [render.size.width, render.size.height],
                     offset: [render.offset.x, render.offset.y],
                     flex,
@@ -623,7 +623,7 @@ impl WidgetTree {
             .filter_map(|(index, child_id)| {
                 let child = self.dev_elements().get(child_id.0)?;
                 let render = self.dev_renders().get(child.render.0)?;
-                let (left, right, top, bottom, width, height) = match &child.widget.kind {
+                let (left, right, top, bottom, width, height) = match child.widget.kind() {
                     WidgetKind::Positioned {
                         left,
                         right,
@@ -638,7 +638,7 @@ impl WidgetTree {
                 Some(StackChildInspection {
                     node: dev_id(*child_id),
                     index,
-                    type_name: child.widget.kind.dev_type_name_widget(),
+                    type_name: child.widget.kind().dev_type_name_widget(),
                     bounds: [
                         render.offset.x,
                         render.offset.y,
@@ -669,7 +669,7 @@ impl WidgetTree {
         while let Some(current) = cursor {
             match self.dev_elements().get(current.0) {
                 Some(element) => {
-                    parts.push(element.widget.kind.dev_type_name_widget());
+                    parts.push(element.widget.kind().dev_type_name_widget());
                     cursor = element.parent;
                 }
                 None => break,
@@ -883,7 +883,7 @@ fn dev_revision(element: &crate::tree::Element) -> u64 {
 
 fn is_element_internal(element: &crate::tree::Element) -> bool {
     matches!(
-        element.widget.kind,
+        element.widget.kind(),
         WidgetKind::RepaintBoundary { .. } | WidgetKind::LayoutBuilder { .. }
     )
 }

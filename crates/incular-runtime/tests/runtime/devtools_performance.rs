@@ -78,10 +78,10 @@ fn editable_signal_uses_typed_ui_thread_set_and_keeps_old_new_summary() {
 #[cfg(feature = "devtools")]
 #[test]
 fn named_signal_write_reaches_dependent_rebuild_cause() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
@@ -122,10 +122,10 @@ fn named_signal_write_reaches_dependent_rebuild_cause() {
 #[cfg(feature = "devtools")]
 #[test]
 fn tracked_task_completion_is_coalesced_with_its_signal_cause() {
-    let mut runtime = Runtime::new(Widget::row(vec![Widget::box_(
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
         Size::new(1., 1.),
         Color::WHITE,
-    )]))
+    )])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
@@ -216,9 +216,13 @@ fn devtools_overlays_and_deep_trace_are_routed_to_one_window() {
 #[cfg(feature = "devtools")]
 #[test]
 fn devtools_property_edit_routes_to_the_live_window_and_requests_a_frame() {
-    let mut application =
-        Application::new(|_| Widget::opacity(0.8, Widget::box_(Size::new(20., 20.), Color::WHITE)))
-            .unwrap();
+    let mut application = Application::new(|_| {
+        Widget::from(incular_widgets::Opacity::new(
+            0.8,
+            Widget::box_(Size::new(20., 20.), Color::WHITE),
+        ))
+    })
+    .unwrap();
     let window = application.primary_window();
     application
         .run_window_frame_at(

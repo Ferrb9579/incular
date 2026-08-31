@@ -27,7 +27,7 @@ mod reconciliation_structural_contracts {
                 Widget::from(Text::new(label)).with_key(Key::Value(index as u64))
             })
             .collect::<Vec<_>>();
-        Widget::column(children)
+        incular_widgets::Column::new(children).into()
     }
 
     fn prepared(root: Widget) -> (WidgetTree, ElementId) {
@@ -42,10 +42,7 @@ mod reconciliation_structural_contracts {
         // The PARENT differs (spacing), so its child list is rescanned; every
         // child is byte-identical and must cost nothing but a comparison.
         let build = |spacing: f32| {
-            Widget::wrap(
-                incular_config::Axis::Vertical,
-                spacing,
-                spacing,
+            incular_widgets::Wrap::new(
                 (0..10_000)
                     .map(|index| {
                         Widget::from(Text::new(format!("row {index}")))
@@ -53,6 +50,10 @@ mod reconciliation_structural_contracts {
                     })
                     .collect::<Vec<_>>(),
             )
+            .direction(incular_config::Axis::Vertical)
+            .spacing(spacing)
+            .run_spacing(spacing)
+            .into()
         };
         let (mut tree, root) = prepared(build(8.));
         let before = tree.diagnostics();
@@ -110,7 +111,7 @@ mod reconciliation_structural_contracts {
     #[test]
     fn key_reorder_preserves_state_and_counts_moves() {
         let build = |order: &[usize]| {
-            Widget::column(
+            incular_widgets::Column::new(
                 order
                     .iter()
                     .map(|&index| {
@@ -119,6 +120,7 @@ mod reconciliation_structural_contracts {
                     })
                     .collect::<Vec<_>>(),
             )
+            .into()
         };
         let (mut tree, root) = prepared(build(&[0, 1, 2, 3, 4]));
         let before_children = tree.children(root).expect("children").to_vec();
@@ -166,7 +168,7 @@ mod reconciliation_structural_contracts {
             } else {
                 Widget::box_(Size::new(20., 20.), Color::WHITE)
             };
-            Widget::column(vec![child.with_key(Key::Value(7))])
+            incular_widgets::Column::new(vec![child.with_key(Key::Value(7))]).into()
         };
         let (mut tree, root) = prepared(build(0));
         let before = tree.diagnostics();

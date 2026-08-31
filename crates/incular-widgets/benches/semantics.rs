@@ -6,7 +6,7 @@ use incular_widgets::internal::{ActionSurface, WidgetTree};
 use incular_widgets::{Text, Widget};
 
 fn semantic_tree(width: usize) -> Widget {
-    let mut children = Vec::with_capacity(width);
+    let mut children: Vec<Widget> = Vec::with_capacity(width);
     for index in 0..width {
         if index % 3 == 0 {
             children.push(ActionSurface::new(format!("action {index}")).into());
@@ -14,7 +14,7 @@ fn semantic_tree(width: usize) -> Widget {
             children.push(Text::new(format!("label {index}")).into());
         }
     }
-    Widget::column(children)
+    incular_widgets::Column::new(children).into()
 }
 
 fn bench(c: &mut Criterion) {

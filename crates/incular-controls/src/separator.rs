@@ -73,9 +73,9 @@ impl Separator {
 impl From<Separator> for Widget {
     fn from(value: Separator) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| {
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
             let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
-        })
+        }))
     }
 }

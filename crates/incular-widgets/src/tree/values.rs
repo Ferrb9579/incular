@@ -573,11 +573,6 @@ impl Default for ColorFilterController {
     }
 }
 
-/// Compatibility spelling for applications that call a 4×5 filter a color
-/// matrix. It is the same retained controller and has identical invalidation
-/// semantics.
-pub type ColorMatrixController = ColorFilterController;
-
 /// Retained drop-shadow presentation controller. Offset and color are pure
 /// composite properties; sigma changes invalidate only the blurred mask.
 #[derive(Clone)]
@@ -689,8 +684,4 @@ pub(super) fn finite_offset(offset: Offset) -> Offset {
         if offset.x.is_finite() { offset.x } else { 0. },
         if offset.y.is_finite() { offset.y } else { 0. },
     )
-}
-
-pub(super) fn finite_non_negative(value: f32) -> f32 {
-    if value.is_finite() { value.max(0.) } else { 0. }
 }

@@ -352,7 +352,7 @@ pub(crate) fn build_inspector(
                 ))
             });
             let Some((label, row, selected, hovered, expanded, has_children)) = snapshot else {
-                return Widget::text("<stale row>");
+                return Widget::from(Text::new("<stale row>"));
             };
             let color = if selected == Some(row.id) {
                 Color::rgba(46, 112, 202, 255)

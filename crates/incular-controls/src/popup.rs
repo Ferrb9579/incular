@@ -54,7 +54,7 @@ impl From<Root> for Widget {
                 ..SemanticState::default()
             }),
         );
-        Widget::visibility(value.open, child)
+        Widget::from(incular_widgets::Visibility::new(child).visible(value.open))
     }
 }
 

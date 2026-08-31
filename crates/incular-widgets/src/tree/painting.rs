@@ -58,7 +58,7 @@ impl WidgetTree {
         let element = self.element_for_render(id);
         let kind = element
             .and_then(|element| self.elements.get(element.0))
-            .map(|element| &element.widget.kind);
+            .map(|element| element.widget.kind());
         if matches!(kind, Some(WidgetKind::IgnorePointer { ignoring: true, .. }))
             || matches!(node.object.kind, RenderKind::Visibility { visible: false })
         {
@@ -405,12 +405,12 @@ impl WidgetTree {
                 label_style,
                 max_nodes,
                 ..
-            } = &element.widget.kind
+            } = element.widget.kind()
             {
                 let mut parent = element.parent;
                 while let Some(ancestor) = parent {
                     if self.elements.get(ancestor.0).is_some_and(|element| {
-                        matches!(element.widget.kind, WidgetKind::SemanticsDebugger { .. })
+                        matches!(element.widget.kind(), WidgetKind::SemanticsDebugger { .. })
                     }) {
                         return None;
                     }
@@ -508,7 +508,7 @@ impl WidgetTree {
         match self
             .element_for_render(id)
             .and_then(|element| self.elements.get(element.0))
-            .map(|element| &element.widget.kind)
+            .map(|element| element.widget.kind())
         {
             Some(WidgetKind::IgnorePointer { ignoring: true, .. }) => return None,
             Some(WidgetKind::AbsorbPointer {
@@ -615,7 +615,7 @@ impl WidgetTree {
         match self
             .element_for_render(id)
             .and_then(|element| self.elements.get(element.0))
-            .map(|element| &element.widget.kind)
+            .map(|element| element.widget.kind())
         {
             Some(WidgetKind::Gesture { behavior, .. })
                 if *behavior == crate::gestures::HitTestBehavior::DeferToChild =>

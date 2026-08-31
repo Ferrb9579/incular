@@ -55,7 +55,7 @@ fn inspector_builder(
         let local_value = local_count.get();
         Padding::all(
             22.,
-            Widget::column(vec![
+            Widget::from(Column::new(Vec::<Widget>::from([
                 Text::new("Restorable inspector")
                     .style(TextStyle {
                         size: 24.,
@@ -78,7 +78,7 @@ fn inspector_builder(
                     "Close this window to omit it next launch; leave it open and relaunch to restore it.",
                 )
                 .into(),
-            ]),
+            ]))),
         )
         .into()
     }
@@ -202,7 +202,7 @@ fn main() {
 
             Padding::all(
                 20.,
-                Widget::column(vec![
+                Widget::from(Column::new(Vec::<Widget>::from([
                     Text::new("Incular state restoration")
                         .style(TextStyle {
                             size: 30.,
@@ -217,7 +217,7 @@ fn main() {
                         "Counter: {count_value}   •   route stack: {route_depth}"
                     ))
                     .into(),
-                    Widget::row(vec![
+                    Widget::from(Row::new(Vec::<Widget>::from([
                         RawMaterialButton::new("Increment persistent counter")
                             .on_press({
                                 let count = count.clone();
@@ -245,14 +245,14 @@ fn main() {
                                 move || restoration.reset()
                             })
                             .into(),
-                    ]),
+                    ]))),
                     TextField::new(editor)
                         .multiline(true)
                         .placeholder("Persistent text")
                         .size(Size::new(720., 92.))
                         .into(),
                     current.presented_child(),
-                    Widget::row(vec![
+                    Widget::from(Row::new(Vec::<Widget>::from([
                         RawMaterialButton::new("Push restorable details")
                             .on_press({
                                 let registry = registry_for_build.clone();
@@ -290,11 +290,14 @@ fn main() {
                         RawMaterialButton::new("Flush snapshot")
                             .on_press(move || restoration.flush())
                             .into(),
-                    ]),
+                    ]))),
                     SizedBox::from_size(Size::new(720., 220.))
-                        .child(ScrollView::vertical(scroll, Widget::column(items)))
+                        .child(ScrollView::vertical(
+                            scroll,
+                            Widget::from(Column::new(items)),
+                        ))
                         .into(),
-                ]),
+                ]))),
             )
             .into()
         },

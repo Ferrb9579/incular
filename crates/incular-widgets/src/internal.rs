@@ -10,6 +10,8 @@ use incular_config::EdgeInsets;
 use incular_core::{Color, Size};
 use incular_text::TextStyle;
 
+pub use crate::recursion::FramePhase;
+
 // The editor model is owned by `incular-text`; the internal bridge keeps the
 // path available to sibling implementation crates without creating a second
 // retained controller type in Widgets.
@@ -57,8 +59,34 @@ pub use crate::raw_input::*;
 pub use crate::scrolling::*;
 pub use crate::selection::*;
 pub use crate::tree::icons;
-pub use crate::tree::*;
+pub use crate::tree::{
+    ActionId, Blend, Blur, BlurController, BoxFit, BuildContext, ButtonSpec, ButtonState,
+    ColorFilterController, ColorFiltered, DecoratedBox, Diagnostics, DropShadow,
+    DropShadowController, EditableText, Effects, Element, ElementId, ExplicitSemantics,
+    FadeTransition, GeneratedChildIdentity, Icon, Image, ImageFit, ImageRepeat,
+    InheritedScopeValue, InvariantCategory, InvariantViolation, Key, OpacityController,
+    PERFORMANCE_OVERLAY_KEY, PathView, RenderKind, RotationController, ScaleController, ScrollView,
+    ScrollbarDragDiagnostics, SlideTransition, SliverViewportDiagnostics, Text,
+    TextFieldInputSnapshot, TextFieldSpec, TextInputActionHint, TextInputTypeHint, Transform,
+    Transition, TranslationController, TreeError, Widget, WidgetTree, image_fit_rects,
+    image_repeat_destinations, performance_overlay_placeholder, render_kind,
+};
+#[cfg(feature = "devtools")]
+pub use crate::tree::{InvalidationCause, LayoutHistoryRecord};
 pub use incular_scroll::*;
+
+/// Narrow retained bridge used by framework controls that need to preserve an
+/// already-built single-axis scroll viewport without observing `WidgetKind`.
+#[doc(hidden)]
+#[must_use]
+pub fn scroll_view_parts(widget: &Widget) -> Option<(ScrollController, Widget)> {
+    match widget.kind() {
+        crate::tree::WidgetKind::Scroll {
+            controller, child, ..
+        } => Some((controller.clone(), child.clone())),
+        _ => None,
+    }
+}
 
 /// Constructs the retained action node used by runtime and framework tests.
 ///

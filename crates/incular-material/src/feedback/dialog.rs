@@ -273,7 +273,9 @@ impl AlertDialog {
 impl From<AlertDialog> for Widget {
     fn from(value: AlertDialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -385,12 +387,12 @@ impl Dialog {
             .clip_behavior(self.clip_behavior)
             .into();
         let surface = if self.elevation > 0.0 {
-            Widget::drop_shadow(
+            Widget::from(incular_widgets::internal::DropShadow::new(
                 Offset::new(0.0, self.elevation * 0.16),
                 (self.elevation * 0.45).max(1.0),
                 Color::rgba(0, 0, 0, 90),
                 surface,
-            )
+            ))
         } else {
             surface
         };
@@ -409,7 +411,9 @@ impl Dialog {
 impl From<Dialog> for Widget {
     fn from(value: Dialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -514,7 +518,9 @@ impl SimpleDialogOption {
 impl From<SimpleDialogOption> for Widget {
     fn from(value: SimpleDialogOption) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }
 
@@ -681,6 +687,8 @@ impl SimpleDialog {
 impl From<SimpleDialog> for Widget {
     fn from(value: SimpleDialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
+        Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
+            value.build(&current_control_theme(context))
+        }))
     }
 }

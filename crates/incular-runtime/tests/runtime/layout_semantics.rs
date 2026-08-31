@@ -38,29 +38,25 @@ fn semantic_actions_share_logical_button_and_editing_state() {
     };
     let hits = Rc::new(Cell::new(0));
     let controller = TextEditingController::with_text("Ada");
-    let mut runtime = Runtime::new(Widget::column(vec![
-        ActionSurface::new("Increment")
-            .on_press({
-                let hits = hits.clone();
-                move || hits.set(hits.get() + 1)
-            })
-            .into(),
-        EditableText::new(controller.clone()).into(),
-    ]))
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Column::new(vec![
+        Widget::from(ActionSurface::new("Increment").on_press({
+            let hits = hits.clone();
+            move || hits.set(hits.get() + 1)
+        })),
+        Widget::from(EditableText::new(controller.clone())),
+    ])))
     .unwrap();
     let root = runtime.tree().root().unwrap();
     runtime
         .schedule_update(
             root,
-            Widget::column(vec![
-                ActionSurface::new("Increment")
-                    .on_press({
-                        let hits = hits.clone();
-                        move || hits.set(hits.get() + 1)
-                    })
-                    .into(),
-                EditableText::new(controller.clone()).into(),
-            ]),
+            Widget::from(incular_widgets::Column::new(vec![
+                Widget::from(ActionSurface::new("Increment").on_press({
+                    let hits = hits.clone();
+                    move || hits.set(hits.get() + 1)
+                })),
+                Widget::from(EditableText::new(controller.clone())),
+            ])),
         )
         .unwrap();
     runtime
@@ -146,7 +142,7 @@ fn semantic_scroll_uses_existing_controller() {
     let controller = incular_widgets::ScrollController::new();
     let mut runtime = Runtime::new(incular_widgets::internal::ScrollView::vertical(
         controller.clone(),
-        Widget::fixed_box(Size::new(100., 2000.), Color::WHITE),
+        Widget::box_(Size::new(100., 2000.), Color::WHITE),
     ))
     .unwrap();
     runtime
