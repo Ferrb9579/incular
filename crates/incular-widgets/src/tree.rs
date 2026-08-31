@@ -2246,11 +2246,9 @@ impl std::error::Error for TreeError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum AdvancedChildKey {
-    RawScrollbar,
     Wheel(usize),
     TwoDimensional(ChildVicinity),
     Sheet,
-    Actuator,
 }
 
 pub struct Element {

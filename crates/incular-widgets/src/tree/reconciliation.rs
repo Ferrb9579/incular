@@ -3,6 +3,17 @@
 use super::*;
 
 use super::rendering::{carry_replaced_transition, render_kind};
+use super::widget::WidgetChildren;
+
+struct DesiredDynamicChild<K> {
+    key: K,
+    widget: Widget,
+}
+
+struct DynamicChildResult<K> {
+    keys: Vec<K>,
+    children: Vec<ElementId>,
+}
 
 impl WidgetTree {
     pub fn update(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
@@ -424,16 +435,13 @@ impl WidgetTree {
             element.dev.paint_reason = work_reasons.1;
             element.dev.composite_reason = work_reasons.2;
         }
-        // Lazy children are owned by the viewport's indexed materialization
-        // map, not by `Widget::children()`. Recreating a sliver viewport
-        // description must preserve every still-valid mounted child; the
-        // next layout pass will add/drop only indices required by the delegate.
-        if matches!(widget.kind, WidgetKind::SliverViewport { .. }) {
-            #[cfg(feature = "devtools")]
-            self.devtools_trace_end(trace);
-            return Ok(());
-        }
-        if matches!(widget.kind, WidgetKind::LayoutBuilder { .. }) {
+        // Generated children are owned by the dynamic-child protocol, not by
+        // ordinary declarative child topology. Preserve the currently mounted
+        // set across compatible descriptor updates; the next dynamic
+        // materialization validates and commits the replacement set
+        // transactionally. This applies uniformly to slivers, advanced
+        // scrolling families and LayoutBuilder.
+        if matches!(widget.kind.structure().children, WidgetChildren::Dynamic) {
             #[cfg(feature = "devtools")]
             self.devtools_trace_end(trace);
             return Ok(());
@@ -567,7 +575,7 @@ impl WidgetTree {
     /// Reconciles the indexed child window produced by the retained sliver
     /// protocol. Unlike a box list, each child carries a viewport-scoped
     /// identity and an explicit sliver placement/constraint record.
-    pub(super) fn materialize_sliver_children(
+    pub(super) fn reconcile_sliver_children(
         &mut self,
         id: RenderObjectId,
         config: &SliverViewportConfig,
@@ -576,91 +584,48 @@ impl WidgetTree {
         let element_id = self
             .element_for_render(id)
             .expect("sliver viewport element");
-        for child in &layout.children {
-            self.validate_widget_subtree(&child.widget, Some(element_id))
-                .map_err(|source| TreeError::InvalidGeneratedChild {
-                    owner: element_id,
-                    child: GeneratedChildIdentity::Sliver(format!("{:?}", child.id)),
-                    source: Box::new(source),
-                })?;
-        }
-        let (old_ids, old_children) = {
+        let old_ids = {
             let element = self
                 .elements
                 .get(element_id.0)
                 .expect("sliver viewport element");
-            (element.sliver_child_ids.clone(), element.children.clone())
+            element.sliver_child_ids.clone()
         };
-        let existing = old_ids
-            .into_iter()
-            .zip(old_children.iter().copied())
-            .collect::<HashMap<_, _>>();
-        let mut next_ids = Vec::with_capacity(layout.children.len());
+        let desired = layout
+            .children
+            .iter()
+            .map(|child| DesiredDynamicChild {
+                key: child.id,
+                widget: child.widget.clone(),
+            })
+            .collect::<Vec<_>>();
+        let reconciled =
+            self.reconcile_dynamic_children(element_id, &old_ids, desired, true, |key| {
+                GeneratedChildIdentity::Sliver(format!("{key:?}"))
+            })?;
         let mut next_semantic_indices = Vec::with_capacity(layout.children.len());
-        let mut next_children = Vec::with_capacity(layout.children.len());
         let mut pinned = HashSet::new();
         for child in &layout.children {
             let child_id = child.id;
-            let retained = if let Some(existing) = existing
-                .get(&child_id)
-                .copied()
-                .filter(|existing| self.compatible(*existing, &child.widget))
-            {
-                self.update_existing(existing, &child.widget)
-                    .map_err(|source| TreeError::InvalidGeneratedChild {
-                        owner: element_id,
-                        child: GeneratedChildIdentity::Sliver(format!("{child_id:?}")),
-                        source: Box::new(source),
-                    })?;
-                existing
-            } else {
-                // A stable sliver item ID does not guarantee that the widget
-                // shape is unchanged. For example, a list row may gain a
-                // GestureDetector when a workload changes. Retained element
-                // identity is only reusable across compatible widget types;
-                // leave incompatible old children for the cleanup pass below
-                // and mount a fresh element for the same sliver slot.
-                let widget = child.widget.clone();
-                self.diagnostics.items_built += 1;
-                let child = self
-                    .mount_element(Some(element_id), widget)
-                    .map_err(|source| TreeError::InvalidGeneratedChild {
-                        owner: element_id,
-                        child: GeneratedChildIdentity::Sliver(format!("{child_id:?}")),
-                        source: Box::new(source),
-                    })?;
-                self.diagnostics.items_mounted += 1;
-                child
-            };
             if child.pinned {
                 pinned.insert(child_id);
             }
-            next_ids.push(child_id);
             next_semantic_indices.push(
                 child
                     .semantic_index
                     .or_else(|| child.widget.semantic_index())
                     .or_else(|| child_id.item_index()),
             );
-            next_children.push(retained);
-        }
-        let retained = next_children.iter().copied().collect::<HashSet<_>>();
-        for child in old_children {
-            if !retained.contains(&child) {
-                self.unmount_element(child);
-                self.diagnostics.items_unmounted += 1;
-            } else {
-                self.diagnostics.items_reused += 1;
-            }
         }
         let element = self
             .elements
             .get_mut(element_id.0)
             .expect("sliver viewport element");
-        element.children = next_children;
-        element.sliver_child_ids = next_ids;
+        element.children = reconciled.children;
+        element.sliver_child_ids = reconciled.keys;
         element.sliver_child_semantic_indices = next_semantic_indices;
         element.sliver_pinned_ids = pinned;
+        element.advanced_child_keys.clear();
         element.sliver_delegate_revision = config.delegate.revision();
         element.sliver_scroll_revision = config.controller.revision();
         self.sync_render_children(element_id);
@@ -671,38 +636,88 @@ impl WidgetTree {
     /// advanced scrolling algorithms. The algorithm-owned key is kept
     /// separately from the widget key because a lazy child can move in and
     /// out of the cache window without changing its declarative identity.
-    pub(super) fn materialize_advanced_children(
+    pub(super) fn reconcile_advanced_children(
         &mut self,
         element_id: ElementId,
         desired: Vec<(AdvancedChildKey, Widget)>,
     ) -> Result<(), TreeError> {
-        for (key, widget) in &desired {
-            self.validate_widget_subtree(widget, Some(element_id))
-                .map_err(|source| TreeError::InvalidGeneratedChild {
-                    owner: element_id,
-                    child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
-                    source: Box::new(source),
-                })?;
-        }
-        let (old_keys, old_children) = {
+        let old_keys = {
             let element = self
                 .elements
                 .get(element_id.0)
                 .expect("advanced scrolling element");
-            (
-                element.advanced_child_keys.clone(),
-                element.children.clone(),
-            )
+            element.advanced_child_keys.clone()
         };
-        let existing = old_keys
+        let desired = desired
             .into_iter()
+            .map(|(key, widget)| DesiredDynamicChild { key, widget })
+            .collect();
+        let reconciled =
+            self.reconcile_dynamic_children(element_id, &old_keys, desired, true, |key| {
+                GeneratedChildIdentity::Advanced(format!("{key:?}"))
+            })?;
+
+        let element = self
+            .elements
+            .get_mut(element_id.0)
+            .expect("advanced scrolling element");
+        element.children = reconciled.children;
+        element.advanced_child_keys = reconciled.keys;
+        element.sliver_child_ids.clear();
+        element.sliver_child_semantic_indices.clear();
+        element.sliver_pinned_ids.clear();
+        self.sync_render_children(element_id);
+        Ok(())
+    }
+
+    fn reconcile_dynamic_children<K>(
+        &mut self,
+        owner: ElementId,
+        old_keys: &[K],
+        desired: Vec<DesiredDynamicChild<K>>,
+        account_items: bool,
+        identity: impl Fn(&K) -> GeneratedChildIdentity,
+    ) -> Result<DynamicChildResult<K>, TreeError>
+    where
+        K: Clone + Eq + std::hash::Hash,
+    {
+        let mut seen = HashSet::with_capacity(desired.len());
+        for child in &desired {
+            if !seen.insert(child.key.clone()) {
+                return Err(TreeError::InvalidGeneratedChild {
+                    owner,
+                    child: identity(&child.key),
+                    source: Box::new(TreeError::InvalidWidgetConfiguration {
+                        widget: "dynamic child set",
+                        reason: "duplicate generated child key".into(),
+                    }),
+                });
+            }
+            self.validate_widget_subtree(&child.widget, Some(owner))
+                .map_err(|source| TreeError::InvalidGeneratedChild {
+                    owner,
+                    child: identity(&child.key),
+                    source: Box::new(source),
+                })?;
+        }
+
+        let old_children = self
+            .elements
+            .get(owner.0)
+            .expect("dynamic child owner")
+            .children
+            .clone();
+        debug_assert_eq!(old_keys.len(), old_children.len());
+        let existing = old_keys
+            .iter()
+            .cloned()
             .zip(old_children.iter().copied())
             .collect::<HashMap<_, _>>();
-        let mut retained = HashSet::new();
+        let mut retained = HashSet::with_capacity(desired.len());
         let mut next_keys = Vec::with_capacity(desired.len());
         let mut next_children = Vec::with_capacity(desired.len());
 
-        for (key, widget) in desired {
+        for DesiredDynamicChild { key, widget } in desired {
             let child = if let Some(existing) = existing
                 .get(&key)
                 .copied()
@@ -710,22 +725,26 @@ impl WidgetTree {
             {
                 self.update_existing(existing, &widget).map_err(|source| {
                     TreeError::InvalidGeneratedChild {
-                        owner: element_id,
-                        child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
+                        owner,
+                        child: identity(&key),
                         source: Box::new(source),
                     }
                 })?;
                 existing
             } else {
-                self.diagnostics.items_built += 1;
-                let child = self
-                    .mount_element(Some(element_id), widget)
-                    .map_err(|source| TreeError::InvalidGeneratedChild {
-                        owner: element_id,
-                        child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
+                if account_items {
+                    self.diagnostics.items_built += 1;
+                }
+                let child = self.mount_element(Some(owner), widget).map_err(|source| {
+                    TreeError::InvalidGeneratedChild {
+                        owner,
+                        child: identity(&key),
                         source: Box::new(source),
-                    })?;
-                self.diagnostics.items_mounted += 1;
+                    }
+                })?;
+                if account_items {
+                    self.diagnostics.items_mounted += 1;
+                }
                 child
             };
             retained.insert(child);
@@ -736,23 +755,18 @@ impl WidgetTree {
         for child in old_children {
             if !retained.contains(&child) {
                 self.unmount_element(child);
-                self.diagnostics.items_unmounted += 1;
-            } else {
+                if account_items {
+                    self.diagnostics.items_unmounted += 1;
+                }
+            } else if account_items {
                 self.diagnostics.items_reused += 1;
             }
         }
 
-        let element = self
-            .elements
-            .get_mut(element_id.0)
-            .expect("advanced scrolling element");
-        element.children = next_children;
-        element.advanced_child_keys = next_keys;
-        element.sliver_child_ids.clear();
-        element.sliver_child_semantic_indices.clear();
-        element.sliver_pinned_ids.clear();
-        self.sync_render_children(element_id);
-        Ok(())
+        Ok(DynamicChildResult {
+            keys: next_keys,
+            children: next_children,
+        })
     }
 
     pub(super) fn materialize_layout_builder(
@@ -816,24 +830,22 @@ impl WidgetTree {
         } else {
             with_build_environment(environment, || builder(constraints))
         };
-        self.validate_widget_subtree(&child, Some(element_id))
-            .map_err(|source| TreeError::InvalidGeneratedChild {
-                owner: element_id,
-                child: GeneratedChildIdentity::LayoutBuilder,
-                source: Box::new(source),
-            })?;
-        let children = self
-            .reconcile_children(element_id, previous_children, &[&child])
-            .map_err(|source| TreeError::InvalidGeneratedChild {
-                owner: element_id,
-                child: GeneratedChildIdentity::LayoutBuilder,
-                source: Box::new(source),
-            })?;
+        let old_keys = vec![(); previous_children.len()];
+        let reconciled = self.reconcile_dynamic_children(
+            element_id,
+            &old_keys,
+            vec![DesiredDynamicChild {
+                key: (),
+                widget: child,
+            }],
+            false,
+            |_| GeneratedChildIdentity::LayoutBuilder,
+        )?;
         let element = self
             .elements
             .get_mut(element_id.0)
             .expect("layout builder element");
-        element.children = children;
+        element.children = reconciled.children;
         element.layout_builder_constraints = Some(constraints);
         element.layout_builder_revision = revision_value;
         self.sync_render_children(element_id);

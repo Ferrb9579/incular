@@ -88,7 +88,7 @@ impl WidgetTree {
                     let physical_before =
                         physical_scroll_offset(&config.controller, config.reverse);
                     let anchor_before = sliver_anchor(&sliver_layout, physical_before);
-                    let result = self.materialize_sliver_children(id, &config, &sliver_layout);
+                    let result = self.reconcile_sliver_children(id, &config, &sliver_layout);
                     if !self.record_tree_result(result) {
                         return (size, Vec::new());
                     }
