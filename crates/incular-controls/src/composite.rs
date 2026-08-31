@@ -3,7 +3,7 @@
 
 use incular_config::Axis;
 use incular_widgets::Widget;
-use incular_widgets::internal::{ExplicitSemantics, WidgetKind};
+use incular_widgets::internal::ExplicitSemantics;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -215,8 +215,5 @@ impl CompositeController {
 /// plain widget or a `Slot`.
 #[must_use]
 pub fn slot_child(widget: Widget) -> Widget {
-    match widget.kind {
-        WidgetKind::LayoutBuilder { .. } => widget,
-        _ => widget,
-    }
+    widget
 }

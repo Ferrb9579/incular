@@ -20,10 +20,12 @@ fn optional_child_builders_accept_widgets() {
         .color(Color::BLACK)
         .child(child.clone())
         .build();
-    let WidgetKind::Decorated { child: lowered, .. } = Widget::from(colored_box).into_kind() else {
+    let WidgetKind::Decorated { child: lowered, .. } =
+        Widget::from(colored_box).kind().clone().clone()
+    else {
         panic!("expected ColoredBox to lower to a decorated widget");
     };
-    assert_eq!(*lowered, child);
+    assert_eq!(lowered, child);
 }
 
 #[test]
@@ -36,12 +38,15 @@ fn multiple_children_use_vec_widget_storage() {
         .spacing(4.0)
         .build();
 
-    let WidgetKind::Wrap { children, .. } = Widget::from(overflow_bar).into_kind() else {
+    let WidgetKind::Wrap { children, .. } = Widget::from(overflow_bar).kind().clone().clone()
+    else {
         panic!("expected OverflowBar to lower to Wrap");
     };
     assert_eq!(children[0].text_if_any().as_deref(), Some("first"));
     assert_eq!(children[1].text_if_any().as_deref(), Some("second"));
-    let WidgetKind::Wrap { children, .. } = Widget::from(OverflowBar::default()).into_kind() else {
+    let WidgetKind::Wrap { children, .. } =
+        Widget::from(OverflowBar::default()).kind().clone().clone()
+    else {
         panic!("expected default OverflowBar to lower to Wrap");
     };
     assert!(children.is_empty());
@@ -89,14 +94,14 @@ fn split_view_builder_keeps_callback_private_and_children_generic() {
         .second(child)
         .build();
 
-    let WidgetKind::Flex { children, .. } = Widget::from(split).into_kind() else {
+    let WidgetKind::Flex { children, .. } = Widget::from(split).kind().clone().clone() else {
         panic!("expected SplitView to lower to a flex row");
     };
     assert_eq!(children.len(), 3);
-    let WidgetKind::Flexible { child: first, .. } = &children[0].kind else {
+    let WidgetKind::Flexible { child: first, .. } = &children[0].kind().clone().clone() else {
         panic!("expected the first pane to retain its flexible wrapper");
     };
-    let WidgetKind::Flexible { child: second, .. } = &children[2].kind else {
+    let WidgetKind::Flexible { child: second, .. } = &children[2].kind().clone().clone() else {
         panic!("expected the second pane to retain its flexible wrapper");
     };
     assert_eq!(first.text_if_any().as_deref(), Some("child"));

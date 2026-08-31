@@ -827,7 +827,7 @@ mod scrollbar_tests {
             .child(Text::new("content"))
             .build()
             .into();
-        assert!(matches!(default.kind, WidgetKind::LayoutBuilder { .. }));
+        assert!(matches!(default.kind(), WidgetKind::LayoutBuilder { .. }));
 
         let style = RawScrollbarStyle {
             width: 10.,
@@ -841,7 +841,10 @@ mod scrollbar_tests {
             .thumb_visibility(true)
             .build()
             .into();
-        assert!(matches!(configured.kind, WidgetKind::LayoutBuilder { .. }));
+        assert!(matches!(
+            configured.kind(),
+            WidgetKind::LayoutBuilder { .. }
+        ));
     }
 
     #[test]
@@ -852,7 +855,7 @@ mod scrollbar_tests {
             .thumb_visibility(true)
             .build(&ControlTheme::dark());
 
-        assert!(matches!(widget.kind, WidgetKind::Scroll { .. }));
+        assert!(matches!(widget.kind(), WidgetKind::Scroll { .. }));
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");
@@ -905,7 +908,7 @@ mod scrollbar_tests {
             Widget::fixed_box(Size::new(100., 800.), Color::WHITE),
         );
         let widget = Scrollbar::new(existing).build(&ControlTheme::light());
-        assert!(matches!(widget.kind, WidgetKind::Scroll { .. }));
+        assert!(matches!(widget.kind(), WidgetKind::Scroll { .. }));
 
         let mut tree = WidgetTree::new();
         tree.mount(widget).expect("mount scrollbar");

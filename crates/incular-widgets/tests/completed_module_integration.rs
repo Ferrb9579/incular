@@ -23,7 +23,10 @@ fn colored_row(index: usize) -> Widget {
 }
 
 fn assert_retained_viewport(widget: Widget, logical_count: usize) {
-    assert!(matches!(&widget.kind, WidgetKind::SliverViewport { .. }));
+    assert!(matches!(
+        widget.kind().clone(),
+        WidgetKind::SliverViewport { .. }
+    ));
     assert!(format!("{widget:?}").contains("SliverViewport"));
     assert_eq!(widget, widget.clone());
 

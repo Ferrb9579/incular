@@ -311,7 +311,7 @@ impl From<GestureDetector> for Widget {
         Widget::from_kind(WidgetKind::Gesture {
             behavior: value.behavior,
             callbacks: Box::new(value.callbacks),
-            child: std::rc::Rc::new(child),
+            child,
         })
     }
 }
@@ -345,7 +345,7 @@ impl From<IgnorePointer> for Widget {
     fn from(value: IgnorePointer) -> Self {
         Widget::from_kind(WidgetKind::IgnorePointer {
             ignoring: value.ignoring,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -379,7 +379,7 @@ impl From<AbsorbPointer> for Widget {
     fn from(value: AbsorbPointer) -> Self {
         Widget::from_kind(WidgetKind::AbsorbPointer {
             absorbing: value.absorbing,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }

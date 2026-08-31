@@ -123,7 +123,7 @@ impl WidgetTree {
                     let WidgetKind::RawScrollbar { child, .. } = &element.widget.kind else {
                         return None;
                     };
-                    Some(child.as_ref().clone())
+                    Some(child.clone())
                 });
                 if let Some(child) = child {
                     let result = self.materialize_advanced_children(
@@ -220,7 +220,7 @@ impl WidgetTree {
                     else {
                         return None;
                     };
-                    Some(child.as_ref().clone())
+                    Some(child.clone())
                 });
                 if let Some(child) = child {
                     let result = self.materialize_advanced_children(

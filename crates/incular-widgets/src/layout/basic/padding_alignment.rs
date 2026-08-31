@@ -47,7 +47,7 @@ impl From<Padding> for Widget {
     fn from(value: Padding) -> Self {
         Widget::from_kind(WidgetKind::Padding {
             padding: value.padding,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -108,7 +108,7 @@ impl From<Align> for Widget {
             alignment: value.alignment,
             width_factor: value.width_factor,
             height_factor: value.height_factor,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }

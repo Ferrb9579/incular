@@ -1238,13 +1238,13 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
             .and_then(|size| dimension(size, axis))
             .or_else(|| widget_main_extent_hint(child, axis)),
         WidgetKind::Banner { child, .. } => child
-            .as_deref()
+            .as_ref()
             .and_then(|child| widget_main_extent_hint(child, axis)),
         WidgetKind::Button(spec) => dimension(spec.size, axis)
             .filter(|extent| *extent > 0.)
             .or_else(|| {
                 spec.child
-                    .as_deref()
+                    .as_ref()
                     .and_then(|child| widget_main_extent_hint(child, axis))
             })
             .or_else(|| dimension(spec.size, axis)),
@@ -1373,7 +1373,7 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
             widget_main_extent_hint(child, axis)
         }
         WidgetKind::RawInput { child, .. } => child
-            .as_deref()
+            .as_ref()
             .and_then(|child| widget_main_extent_hint(child, axis)),
         WidgetKind::Baseline { child, .. } => widget_main_extent_hint(child, axis),
         WidgetKind::Flexible { child, .. } => widget_main_extent_hint(child, axis),

@@ -67,9 +67,7 @@ impl RepaintBoundary {
 
 impl From<RepaintBoundary> for Widget {
     fn from(value: RepaintBoundary) -> Self {
-        Widget::from_kind(WidgetKind::RepaintBoundary {
-            child: std::rc::Rc::new(value.child),
-        })
+        Widget::from_kind(WidgetKind::RepaintBoundary { child: value.child })
     }
 }
 

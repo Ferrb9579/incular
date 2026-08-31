@@ -149,7 +149,7 @@ impl From<Row> for Widget {
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
             spacing: value.spacing.max(0.0),
-            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
+            children: value.children,
         })
     }
 }
@@ -291,7 +291,7 @@ impl From<Column> for Widget {
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
             spacing: value.spacing.max(0.0),
-            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
+            children: value.children,
         })
     }
 }
@@ -414,7 +414,7 @@ impl From<Flex> for Widget {
             text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             vertical_direction: value.vertical_direction,
             spacing: value.spacing.max(0.0),
-            children: value.children.into_iter().map(std::rc::Rc::new).collect(),
+            children: value.children,
         })
     }
 }
@@ -481,7 +481,7 @@ impl From<Flexible> for Widget {
         Widget::from_kind(WidgetKind::Flexible {
             flex: value.flex.max(1),
             fit: value.fit,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -530,7 +530,7 @@ impl From<Expanded> for Widget {
         Widget::from_kind(WidgetKind::Flexible {
             flex: value.flex.max(1),
             fit: FlexFit::Tight,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }

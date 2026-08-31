@@ -52,7 +52,7 @@ impl From<FractionallySizedBox> for Widget {
         Widget::from_kind(WidgetKind::Fractional {
             width_factor: value.width_factor,
             height_factor: value.height_factor,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -81,7 +81,7 @@ impl From<Baseline> for Widget {
     fn from(value: Baseline) -> Self {
         Widget::from_kind(WidgetKind::Baseline {
             baseline: value.baseline,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -110,7 +110,7 @@ impl From<AspectRatio> for Widget {
     fn from(value: AspectRatio) -> Self {
         Widget::from_kind(WidgetKind::AspectRatio {
             ratio: value.aspect_ratio,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }

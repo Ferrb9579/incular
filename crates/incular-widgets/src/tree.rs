@@ -473,7 +473,7 @@ pub struct ButtonSpec {
     pub(crate) exit_action: ActionId,
     pub(crate) exit_callback: Option<Rc<dyn Fn()>>,
     pub(crate) has_callback: bool,
-    pub(crate) child: Option<Rc<Widget>>,
+    pub(crate) child: Option<Widget>,
 }
 
 #[doc(hidden)]
@@ -521,7 +521,7 @@ pub enum WidgetKind {
         background: Option<Brush>,
         border: Option<Border>,
         radius: CornerRadii,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Banner {
         message: String,
@@ -531,7 +531,7 @@ pub enum WidgetKind {
         color: Color,
         text_style: TextStyle,
         shadow: BoxShadow,
-        child: Option<Rc<Widget>>,
+        child: Option<Widget>,
     },
     Button(ButtonSpec),
     Text {
@@ -549,25 +549,25 @@ pub enum WidgetKind {
     },
     SelectionArea {
         controller: SelectionAreaController,
-        child: Rc<Widget>,
+        child: Widget,
     },
     SelectionContainer {
         delegate: SelectionContainerDelegate,
-        child: Rc<Widget>,
+        child: Widget,
     },
     SelectionListener {
         notifier: SelectionListenerNotifier,
         delegate: SelectionContainerDelegate,
-        child: Rc<Widget>,
+        child: Widget,
     },
     IndexedSemantics {
         index: usize,
-        child: Rc<Widget>,
+        child: Widget,
     },
     SemanticsDebugger {
         label_style: TextStyle,
         max_nodes: usize,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Image {
         image: ImageHandle,
@@ -581,70 +581,70 @@ pub enum WidgetKind {
     TextField(TextFieldSpec),
     Padding {
         padding: EdgeInsets,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Constrained {
         constraints: Constraints,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Limited {
         max_width: f32,
         max_height: f32,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Overflow {
         min_width: Option<f32>,
         max_width: Option<f32>,
         min_height: Option<f32>,
         max_height: Option<f32>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Unconstrained {
         constrained_axis: Option<Axis>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Fractional {
         width_factor: Option<f32>,
         height_factor: Option<f32>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Baseline {
         baseline: f32,
-        child: Rc<Widget>,
+        child: Widget,
     },
     RepaintBoundary {
-        child: Rc<Widget>,
+        child: Widget,
     },
     Gesture {
         behavior: crate::gestures::HitTestBehavior,
         callbacks: Box<GestureCallbacks>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     RawInput {
         kind: RawInputKind,
-        child: Option<Rc<Widget>>,
+        child: Option<Widget>,
     },
     Draggable {
         source: Rc<dyn RetainedDragSource>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     DragTarget {
         target: Rc<dyn RetainedDragTarget>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     IgnorePointer {
         ignoring: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     AbsorbPointer {
         absorbing: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Align {
         alignment: Alignment,
         width_factor: Option<f32>,
         height_factor: Option<f32>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Flex {
         axis: Axis,
@@ -654,12 +654,12 @@ pub enum WidgetKind {
         text_direction: TextDirection,
         vertical_direction: VerticalDirection,
         spacing: f32,
-        children: Vec<Rc<Widget>>,
+        children: Vec<Widget>,
     },
     Flexible {
         flex: u32,
         fit: incular_config::FlexFit,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Wrap {
         axis: Axis,
@@ -670,20 +670,20 @@ pub enum WidgetKind {
         cross_axis_alignment: WrapCrossAlignment,
         text_direction: TextDirection,
         vertical_direction: VerticalDirection,
-        children: Vec<Rc<Widget>>,
+        children: Vec<Widget>,
     },
     Table {
         columns: usize,
         column_spacing: f32,
         row_spacing: f32,
-        children: Vec<Rc<Widget>>,
+        children: Vec<Widget>,
     },
     Stack {
         alignment: Alignment,
         text_direction: TextDirection,
         fit: StackFit,
         clip_behavior: Clip,
-        children: Vec<Rc<Widget>>,
+        children: Vec<Widget>,
     },
     Positioned {
         left: Option<f32>,
@@ -692,12 +692,12 @@ pub enum WidgetKind {
         bottom: Option<f32>,
         width: Option<f32>,
         height: Option<f32>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     IndexedStack {
         alignment: Alignment,
         index: usize,
-        children: Vec<Rc<Widget>>,
+        children: Vec<Widget>,
     },
     SafeArea {
         minimum: EdgeInsets,
@@ -706,25 +706,25 @@ pub enum WidgetKind {
         right: bool,
         bottom: bool,
         maintain_bottom_view_padding: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ClipRect {
         clip_behavior: Clip,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ClipRRect {
         radius: CornerRadii,
         clip_behavior: Clip,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ClipOval {
         clip_behavior: Clip,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ClipPath {
         path: Arc<Path>,
         clip_behavior: Clip,
-        child: Rc<Widget>,
+        child: Widget,
     },
     LayoutBuilder {
         builder: Rc<dyn Fn(Constraints) -> Widget>,
@@ -738,23 +738,23 @@ pub enum WidgetKind {
     },
     Visibility {
         visible: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     AspectRatio {
         ratio: f32,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Scroll {
         controller: ScrollController,
         axis: Axis,
         reverse: bool,
         physics: ScrollPhysics,
-        child: Rc<Widget>,
+        child: Widget,
     },
     RawScrollbar {
         controller: ScrollController,
         style: RawScrollbarStyle,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ListWheelScrollView {
         view: RetainedWheelScrollView,
@@ -767,7 +767,7 @@ pub enum WidgetKind {
     },
     DraggableScrollableActuator {
         actuator: RetainedActuator,
-        child: Rc<Widget>,
+        child: Widget,
     },
     TwoDimensionalScrollView {
         view: RetainedTwoDimensionalScrollView,
@@ -782,50 +782,50 @@ pub enum WidgetKind {
         axis: Axis,
         reverse: bool,
         pinned: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     NotificationListener {
         callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     SliverViewport {
         config: Rc<SliverViewportConfig>,
     },
     Translate {
         controller: TranslationController,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Transform {
         transform: CoreTransform,
         origin: Option<Offset>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Scale {
         controller: ScaleController,
         origin: Option<Offset>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Rotation {
         controller: RotationController,
         origin: Option<Offset>,
         alignment: Option<Alignment>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     FittedBox {
         fit: ImageFit,
         alignment: Alignment,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Opacity {
         alpha: f32,
         controller: Option<OpacityController>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Blur {
         sigma_x: f32,
         sigma_y: f32,
         controller: Option<BlurController>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     DropShadow {
         offset: Offset,
@@ -833,36 +833,36 @@ pub enum WidgetKind {
         sigma_y: f32,
         color: Color,
         controller: Option<DropShadowController>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ColorFiltered {
         filter: ColorFilter,
         controller: Option<ColorFilterController>,
-        child: Rc<Widget>,
+        child: Widget,
     },
     Blend {
         mode: BlendMode,
-        child: Rc<Widget>,
+        child: Widget,
     },
     ShaderMask {
         shader: ShaderCallback,
         blend_mode: BlendMode,
-        child: Rc<Widget>,
+        child: Widget,
     },
     BackdropFilter {
         blur: GaussianBlur,
         blend_mode: BlendMode,
         enabled: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     AnnotatedRegion {
         annotation: Annotation,
         sized: bool,
-        child: Rc<Widget>,
+        child: Widget,
     },
     CompositedTransformTarget {
         link: LayerLink,
-        child: Rc<Widget>,
+        child: Widget,
     },
     CompositedTransformFollower {
         link: LayerLink,
@@ -870,7 +870,7 @@ pub enum WidgetKind {
         offset: Offset,
         target_anchor: LayerAnchor,
         follower_anchor: LayerAnchor,
-        child: Rc<Widget>,
+        child: Widget,
     },
 }
 

@@ -35,7 +35,7 @@ fn effect_builders_preserve_defaults_and_normalize_values() {
         .size(-2.0)
         .build()
         .into();
-    let WidgetKind::Image { width, height, .. } = icon.kind else {
+    let WidgetKind::Image { width, height, .. } = icon.kind().clone() else {
         panic!("ImageIcon should lower to an Image widget");
     };
     assert_eq!(width, Some(0.0));
@@ -56,7 +56,7 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .build();
     let filtered: Widget = filtered.into();
     assert!(matches!(
-        filtered.kind,
+        filtered.kind().clone(),
         WidgetKind::Blur { sigma_x, sigma_y, .. } if sigma_x == 3.0 && sigma_y == 3.0
     ));
 
@@ -71,7 +71,7 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .build();
     let clip: Widget = clip.into();
     assert!(matches!(
-        clip.kind,
+        clip.kind().clone(),
         WidgetKind::ClipRRect { radius, clip_behavior, .. }
             if radius == incular_rendering::CornerRadii::uniform(0.0)
                 && clip_behavior == incular_widgets::Clip::AntiAlias
@@ -92,7 +92,10 @@ fn composition_builders_accept_arbitrary_widgets_and_keep_lowering_inputs() {
         .child(Text::new("shape"))
         .build();
     let physical_shape: Widget = physical_shape.into();
-    assert!(matches!(physical_shape.kind, WidgetKind::ClipPath { .. }));
+    assert!(matches!(
+        physical_shape.kind().clone(),
+        WidgetKind::ClipPath { .. }
+    ));
 
     let grid = GridPaper::builder().child(Text::new("grid")).build();
     let _: Widget = grid.into();

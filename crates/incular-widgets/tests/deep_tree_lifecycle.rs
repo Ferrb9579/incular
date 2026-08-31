@@ -12,12 +12,34 @@ fn deep_padding(depth: usize, mut child: Widget) -> Widget {
 }
 
 #[test]
-fn dropping_fifty_thousand_nested_widget_descriptors_is_iterative() {
+fn hundred_thousand_nested_widget_descriptors_clone_and_drop_iteratively() {
     let widget = deep_padding(
-        50_000,
+        100_000,
         Widget::box_(Size::new(1.0, 1.0), Color::TRANSPARENT),
     );
+    let clone = widget.clone();
+    assert!(widget.ptr_eq(&clone));
+    drop(clone);
     drop(widget);
+}
+
+#[test]
+fn widget_handle_is_one_pointer_and_shared_subtrees_outlive_parents() {
+    assert_eq!(
+        std::mem::size_of::<Widget>(),
+        std::mem::size_of::<usize>(),
+        "Widget must remain a one-pointer shared descriptor handle"
+    );
+
+    let shared = Widget::text("shared");
+    let identity = shared.clone();
+    assert!(shared.ptr_eq(&identity));
+
+    let parent = Widget::column(vec![shared.clone(), shared.clone(), shared.clone()]);
+    drop(parent);
+
+    assert!(shared.ptr_eq(&identity));
+    assert_eq!(shared.text_if_any().as_deref(), Some("shared"));
 }
 
 #[test]

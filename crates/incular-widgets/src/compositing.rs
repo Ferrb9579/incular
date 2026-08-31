@@ -88,7 +88,7 @@ impl From<ShaderMask> for Widget {
         Widget::from_kind(WidgetKind::ShaderMask {
             shader: value.shader,
             blend_mode: value.blend_mode,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -149,7 +149,7 @@ impl From<BackdropFilter> for Widget {
             blur: value.blur,
             blend_mode: value.blend_mode,
             enabled: value.enabled,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -197,7 +197,7 @@ impl<T: Any + Clone + 'static> From<AnnotatedRegion<T>> for Widget {
         Widget::from_kind(WidgetKind::AnnotatedRegion {
             annotation: Annotation::new(value.value),
             sized: value.sized,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -229,7 +229,7 @@ impl From<CompositedTransformTarget> for Widget {
     fn from(value: CompositedTransformTarget) -> Self {
         Widget::from_kind(WidgetKind::CompositedTransformTarget {
             link: value.link,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -305,7 +305,7 @@ impl From<CompositedTransformFollower> for Widget {
             offset: value.offset,
             target_anchor: value.target_anchor,
             follower_anchor: value.follower_anchor,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }

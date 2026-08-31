@@ -4,53 +4,103 @@
 
 use super::*;
 
-/// The first built-in widgets. Their values contain no mutable runtime state.
+/// Immutable declarative descriptor node shared by cheap [`Widget`] handles.
+///
+/// The type is doc-hidden because `Widget` is the public transport value; the
+/// node exists only as the reference-counted ownership boundary. Its fields are
+/// crate-private so framework implementation code can keep exhaustive matching
+/// local without exposing representation details to applications.
+#[doc(hidden)]
 #[derive(Clone)]
+pub struct WidgetNode {
+    pub(crate) key: Option<Key>,
+    pub(crate) kind: WidgetKind,
+    pub(crate) semantics: SemanticProperties,
+}
+
+/// A cheap immutable declarative widget handle.
+///
+/// Cloning a `Widget` clones one reference-counted descriptor pointer; retained
+/// identity continues to belong exclusively to [`Element`].
 pub struct Widget {
-    pub key: Option<Key>,
-    pub kind: WidgetKind,
-    pub(super) semantics: SemanticProperties,
+    node: Option<Rc<WidgetNode>>,
+}
+
+impl Clone for Widget {
+    fn clone(&self) -> Self {
+        Self {
+            node: self.node.clone(),
+        }
+    }
+}
+
+impl std::ops::Deref for Widget {
+    type Target = WidgetNode;
+
+    fn deref(&self) -> &Self::Target {
+        self.node.as_deref().expect("live widget descriptor handle")
+    }
+}
+
+impl std::ops::DerefMut for Widget {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Rc::make_mut(self.node.as_mut().expect("live widget descriptor handle"))
+    }
+}
+
+struct WidgetDropQueue {
+    active: bool,
+    pending: Vec<Rc<WidgetNode>>,
+}
+
+thread_local! {
+    static WIDGET_DROP_QUEUE: RefCell<WidgetDropQueue> = const {
+        RefCell::new(WidgetDropQueue {
+            active: false,
+            pending: Vec::new(),
+        })
+    };
 }
 
 impl Drop for Widget {
     fn drop(&mut self) {
-        // WidgetKind holds declarative child edges in Rc. The final strong
-        // reference can still recursively destroy a deep, perfectly valid
-        // descriptor chain through Rc's drop glue. Detach uniquely owned edges
-        // level by level so descriptor destruction is memory-bounded rather
-        // than native-stack-bounded.
-        let mut pending = self.kind.structure().children.shared_handles();
-        let old_kind = std::mem::replace(
-            &mut self.kind,
-            WidgetKind::Box {
-                size: Size::ZERO,
-                color: Color::TRANSPARENT,
-            },
-        );
-        // Every child edge has a temporary shared owner in `pending`, so
-        // dropping the descriptor payload itself cannot recursively destroy a
-        // descendant chain.
-        drop(old_kind);
-        while let Some(child) = pending.pop() {
-            let Ok(mut child) = Rc::try_unwrap(child) else {
-                // Another declarative or retained owner still holds this
-                // descriptor. Dropping this edge only decrements the count and
-                // cannot recursively destroy the descendant chain here.
-                continue;
-            };
-            let grandchildren = child.kind.structure().children.shared_handles();
-            let old_kind = std::mem::replace(
-                &mut child.kind,
-                WidgetKind::Box {
-                    size: Size::ZERO,
-                    color: Color::TRANSPARENT,
-                },
-            );
-            drop(old_kind);
-            pending.extend(grandchildren);
-            // `child` now owns no Widget descendants, so its normal Drop is
-            // constant-stack even when it came from a pathological chain.
-        }
+        let Some(node) = self.node.take() else {
+            return;
+        };
+        WIDGET_DROP_QUEUE.with(|queue| {
+            {
+                let mut queue = queue.borrow_mut();
+                queue.pending.push(node);
+                if queue.active {
+                    return;
+                }
+                queue.active = true;
+            }
+
+            struct ResetDropQueue<'a>(&'a RefCell<WidgetDropQueue>);
+            impl Drop for ResetDropQueue<'_> {
+                fn drop(&mut self) {
+                    self.0.borrow_mut().active = false;
+                }
+            }
+            let _reset = ResetDropQueue(queue);
+
+            loop {
+                let next = queue.borrow_mut().pending.pop();
+                let Some(node) = next else {
+                    break;
+                };
+                match Rc::try_unwrap(node) {
+                    // Dropping the unique node invokes Drop for its child Widget
+                    // handles. Because this queue is active, those drops enqueue
+                    // their nodes instead of recursively destroying them.
+                    Ok(node) => drop(node),
+                    // Another descriptor/clone still owns this node. Releasing
+                    // this edge cannot destroy its descendants yet.
+                    Err(node) => drop(node),
+                }
+            }
+        });
     }
 }
 
@@ -1655,7 +1705,7 @@ impl PartialEq for WidgetKind {
                     (None, None) => true,
                     _ => false,
                 };
-                callback_equal && b.as_ref() == d.as_ref()
+                callback_equal && b == d
             }
             _ => false,
         }
@@ -1924,9 +1974,9 @@ pub(crate) enum ChildShape {
 /// widget descriptor.
 pub(crate) enum WidgetChildren<'a> {
     None,
-    Optional(Option<&'a Rc<Widget>>),
-    Single(&'a Rc<Widget>),
-    Many(&'a [Rc<Widget>]),
+    Optional(Option<&'a Widget>),
+    Single(&'a Widget),
+    Many(&'a [Widget]),
     Dynamic,
 }
 
@@ -1953,24 +2003,12 @@ impl WidgetChildren<'_> {
             Self::Many(children) => children.len(),
         }
     }
-
-    /// Clones only direct `Rc` edges. This is intentionally used by the
-    /// stack-safe descriptor destructor: holding these temporary references
-    /// prevents normal `Rc` drop glue from recursively destroying descendants.
-    fn shared_handles(&self) -> Vec<Rc<Widget>> {
-        match self {
-            Self::None | Self::Dynamic => Vec::new(),
-            Self::Optional(child) => child.iter().map(|child| Rc::clone(child)).collect(),
-            Self::Single(child) => vec![Rc::clone(child)],
-            Self::Many(children) => children.to_vec(),
-        }
-    }
 }
 
 pub(crate) enum WidgetChildrenIter<'a> {
     None,
-    One(Option<&'a Rc<Widget>>),
-    Many(std::slice::Iter<'a, Rc<Widget>>),
+    One(Option<&'a Widget>),
+    Many(std::slice::Iter<'a, Widget>),
 }
 
 impl<'a> Iterator for WidgetChildrenIter<'a> {
@@ -1979,8 +2017,8 @@ impl<'a> Iterator for WidgetChildrenIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::None => None,
-            Self::One(child) => child.take().map(Rc::as_ref),
-            Self::Many(children) => children.next().map(Rc::as_ref),
+            Self::One(child) => child.take(),
+            Self::Many(children) => children.next(),
         }
     }
 
@@ -2418,25 +2456,53 @@ impl WidgetKind {
 }
 
 impl Widget {
+    fn from_node(node: WidgetNode) -> Self {
+        Self {
+            node: Some(Rc::new(node)),
+        }
+    }
+
+    /// Returns the immutable descriptor node backing this handle.
+    #[doc(hidden)]
     #[must_use]
-    pub fn into_kind(mut self) -> WidgetKind {
-        std::mem::replace(
-            &mut self.kind,
-            WidgetKind::Box {
-                size: Size::ZERO,
-                color: Color::TRANSPARENT,
-            },
-        )
+    pub fn node(&self) -> &WidgetNode {
+        self.node.as_deref().expect("live widget descriptor handle")
+    }
+
+    /// Returns whether two handles refer to the exact same declarative
+    /// descriptor allocation.
+    ///
+    /// Descriptor identity is only an optimization hint; retained identity
+    /// still belongs to `Element` and reconciliation continues to honor keys
+    /// and widget type compatibility.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        match (&self.node, &other.node) {
+            (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the framework-internal descriptor kind by borrow.
+    ///
+    /// This is intentionally hidden from the Flutter-facing prelude. Plan 16
+    /// removes the remaining workspace consumers that inspect built-in kinds.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn kind(&self) -> &WidgetKind {
+        &self.node().kind
     }
 
     /// Creates a widget from a internal kind descriptor.
     #[must_use]
     pub fn from_kind(kind: WidgetKind) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind,
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Attaches retained focus traversal metadata to a transparent wrapper.
@@ -2553,11 +2619,11 @@ impl Widget {
 
     #[must_use]
     pub fn box_(size: Size, color: Color) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Box { size, color },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn fixed_box(size: Size, color: Color) -> Self {
@@ -2570,7 +2636,7 @@ impl Widget {
         stroke: Option<(Brush, Stroke)>,
         size: Option<Size>,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Shape {
                 path,
@@ -2579,17 +2645,17 @@ impl Widget {
                 size,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Paints a caller-provided renderer-neutral display list at a fixed
     /// logical size.
     #[must_use]
     pub fn custom_paint(size: Size, display_list: DisplayList) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::CustomPaint { size, display_list },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub(super) fn decorated(
@@ -2599,21 +2665,21 @@ impl Widget {
         radius: CornerRadii,
         child: Widget,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Decorated {
                 size,
                 background,
                 border,
                 radius,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub(crate) fn button(size: Size, color: Color, action: ActionId) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Button(ButtonSpec {
                 size,
@@ -2634,7 +2700,7 @@ impl Widget {
                 child: None,
             }),
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Builds the retained action surface shared by sibling control crates.
@@ -2654,7 +2720,7 @@ impl Widget {
                 Widget::text_styled(surface.label, surface.label_style, TextAlign::Start),
             )
         });
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Button(ButtonSpec {
                 size: surface.size,
@@ -2672,7 +2738,7 @@ impl Widget {
                 exit_action: ActionId(0),
                 exit_callback: surface.exit_callback,
                 has_callback: false,
-                child: Some(std::rc::Rc::new(label)),
+                child: Some(label),
             }),
             semantics: SemanticProperties {
                 // Custom content is inspected for a text or explicit semantic
@@ -2680,7 +2746,7 @@ impl Widget {
                 label: semantic_label,
                 ..SemanticProperties::default()
             },
-        }
+        })
     }
     pub fn bind_callbacks(&mut self, allocate: &mut impl FnMut(Rc<dyn Fn()>) -> ActionId) {
         if let WidgetKind::Button(spec) = &mut self.kind {
@@ -2699,7 +2765,7 @@ impl Widget {
 
     #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Text {
                 text: text.into(),
@@ -2710,11 +2776,11 @@ impl Widget {
                 overflow: TextOverflow::Clip,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn text_styled(text: impl Into<String>, style: TextStyle, align: TextAlign) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Text {
                 text: text.into(),
@@ -2725,7 +2791,7 @@ impl Widget {
                 overflow: TextOverflow::Clip,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn text_configured(
@@ -2736,7 +2802,7 @@ impl Widget {
         max_lines: Option<usize>,
         overflow: TextOverflow,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Text {
                 text: text.into(),
@@ -2747,7 +2813,7 @@ impl Widget {
                 overflow,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn selectable_text_styled(
@@ -2755,7 +2821,7 @@ impl Widget {
         style: TextStyle,
         align: TextAlign,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::SelectableText {
                 text: text.into(),
@@ -2763,52 +2829,43 @@ impl Widget {
                 align,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn selection_area(controller: SelectionAreaController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::SelectionArea {
-                controller,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::SelectionArea { controller, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn selection_container(delegate: SelectionContainerDelegate, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::SelectionContainer {
-                delegate,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::SelectionContainer { delegate, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub(crate) fn selection_listener(notifier: SelectionListenerNotifier, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::SelectionListener {
                 delegate: SelectionContainerDelegate::with_controller(notifier.controller()),
                 notifier,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub(crate) fn indexed_semantics(index: usize, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::IndexedSemantics {
-                index,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::IndexedSemantics { index, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub(crate) fn semantics_debugger(
@@ -2816,15 +2873,15 @@ impl Widget {
         max_nodes: usize,
         child: Self,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::SemanticsDebugger {
                 label_style,
                 max_nodes,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     pub(crate) fn semantic_index(&self) -> Option<usize> {
         match &self.kind {
@@ -2842,7 +2899,7 @@ impl Widget {
         alignment: Alignment,
         sampling: ImageSampling,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Image {
                 image,
@@ -2854,7 +2911,7 @@ impl Widget {
                 sampling,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Creates the retained core editing primitive used by
     /// [`EditableText`]. Higher-level Material controls may add chrome and
@@ -2958,7 +3015,7 @@ impl Widget {
         cursor_color: Color,
         selection_color: Color,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TextField(TextFieldSpec {
                 controller,
@@ -2982,42 +3039,36 @@ impl Widget {
                 selection_color,
             }),
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn padding(padding: EdgeInsets, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Padding {
-                padding,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Padding { padding, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Tightens the incoming layout bounds before passing them to `child`.
     #[must_use]
     pub fn constrained(constraints: Constraints, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Constrained {
-                constraints,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Constrained { constraints, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn limited_box(max_width: f32, max_height: f32, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Limited {
                 max_width: finite_non_negative(max_width),
                 max_height: finite_non_negative(max_height),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn overflow_box(
@@ -3027,30 +3078,30 @@ impl Widget {
         max_height: Option<f32>,
         child: Self,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Overflow {
                 min_width: min_width.map(finite_non_negative),
                 max_width: max_width.map(finite_non_negative),
                 min_height: min_height.map(finite_non_negative),
                 max_height: max_height.map(finite_non_negative),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Lets a child take its natural size, optionally retaining the parent's
     /// limits on one axis while this wrapper itself still fits its parent.
     #[must_use]
     pub fn unconstrained(constrained_axis: Option<Axis>, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Unconstrained {
                 constrained_axis,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Sizes a child to factors of the finite parent bounds on the specified
     /// axes. Missing factors preserve the child's natural size on that axis.
@@ -3066,15 +3117,15 @@ impl Widget {
                 "fractional factors must be finite and non-negative"
             );
         }
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Fractional {
                 width_factor,
                 height_factor,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Positions a child so that its reported baseline is at `baseline`.
     #[must_use]
@@ -3083,14 +3134,11 @@ impl Widget {
             baseline.is_finite() && baseline >= 0.,
             "baseline must be finite and non-negative"
         );
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Baseline {
-                baseline,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Baseline { baseline, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Creates an explicit retained picture boundary around `child`.
     ///
@@ -3098,74 +3146,60 @@ impl Widget {
     /// repainting this boundary's otherwise empty retained picture.
     #[must_use]
     pub fn repaint_boundary(child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::RepaintBoundary {
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::RepaintBoundary { child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Attaches tap, double-tap, long-press, and pan recognition to a retained
     /// subtree. A hit-tested down event captures the sequence for this region.
     #[must_use]
     pub fn gesture(callbacks: GestureCallbacks, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Gesture {
                 behavior: crate::gestures::HitTestBehavior::DeferToChild,
                 callbacks: Box::new(callbacks),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     pub(crate) fn draggable(source: Rc<dyn RetainedDragSource>, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Draggable {
-                source,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Draggable { source, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     pub(crate) fn drag_target(target: Rc<dyn RetainedDragTarget>, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::DragTarget {
-                target,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::DragTarget { target, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Removes this subtree from pointer hit testing while leaving painting and
     /// semantics intact. Siblings behind it remain eligible for the event.
     #[must_use]
     pub fn ignore_pointer(ignoring: bool, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::IgnorePointer {
-                ignoring,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::IgnorePointer { ignoring, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Intercepts pointer hit testing at this boundary. Descendants do not
     /// receive ordinary retained interaction while painting and semantics are
     /// preserved.
     #[must_use]
     pub fn absorb_pointer(absorbing: bool, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::AbsorbPointer {
-                absorbing,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::AbsorbPointer { absorbing, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn align(alignment: Alignment, child: Self) -> Self {
@@ -3191,15 +3225,15 @@ impl Widget {
     }
     #[must_use]
     pub fn flexible(flex: u32, fit: incular_config::FlexFit, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Flexible {
                 flex: flex.max(1),
                 fit,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Packs children into successive runs when the main-axis bound is
     /// exhausted. The axis chooses whether runs flow horizontally or vertically.
@@ -3247,7 +3281,7 @@ impl Widget {
         height: Option<f32>,
         child: Self,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Positioned {
                 left: left.map(finite_non_negative),
@@ -3256,10 +3290,10 @@ impl Widget {
                 bottom: bottom.map(finite_non_negative),
                 width: width.map(finite_non_negative),
                 height: height.map(finite_non_negative),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn indexed_stack(
@@ -3267,19 +3301,19 @@ impl Widget {
         index: usize,
         children: impl Into<Vec<Self>>,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::IndexedStack {
                 alignment,
                 index,
-                children: children.into().into_iter().map(std::rc::Rc::new).collect(),
+                children: children.into(),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn layout_builder(builder: impl Fn(Constraints) -> Self + 'static) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(builder),
@@ -3288,7 +3322,7 @@ impl Widget {
                 revision: None,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Wraps a child in an ambient retained builder environment. The wrapper
@@ -3297,7 +3331,7 @@ impl Widget {
     #[must_use]
     pub fn environment_scope<T: Any>(value: T, child: Self) -> Self {
         let value: Rc<dyn Any> = Rc::new(value);
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(move |_| child.clone()),
@@ -3306,14 +3340,14 @@ impl Widget {
                 revision: None,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a transparent retained node that prevents descendants from
     /// reading typed environments installed above it.
     #[must_use]
     pub fn environment_boundary(child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(move |_| child.clone()),
@@ -3322,7 +3356,7 @@ impl Widget {
                 revision: None,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained layout builder backed by an explicit local state
@@ -3335,7 +3369,7 @@ impl Widget {
         revision: Rc<Cell<u64>>,
         builder: impl Fn(Constraints) -> Self + 'static,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
                 builder: Rc::new(builder),
@@ -3344,18 +3378,15 @@ impl Widget {
                 revision: Some(revision),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn visibility(visible: bool, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Visibility {
-                visible,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Visibility { visible, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn aspect_ratio(ratio: f32, child: Self) -> Self {
@@ -3363,14 +3394,11 @@ impl Widget {
             ratio.is_finite() && ratio > 0.,
             "aspect ratio must be finite and positive"
         );
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::AspectRatio {
-                ratio,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::AspectRatio { ratio, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn scroll_view(controller: ScrollController, child: Self) -> Self {
@@ -3395,17 +3423,17 @@ impl Widget {
         reverse: bool,
         physics: ScrollPhysics,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Scroll {
                 controller,
                 axis,
                 reverse,
                 physics,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates an interactive raw scrollbar overlay around an existing
@@ -3424,51 +3452,51 @@ impl Widget {
         child: impl Into<Self>,
     ) -> Self {
         let child = child.into();
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::RawScrollbar {
                 controller,
                 style,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained list-wheel viewport from its focused model.
     #[must_use]
     pub fn list_wheel_viewport(viewport: ListWheelViewport<Self>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelViewport {
                 viewport: RetainedWheelViewport(Rc::new(RefCell::new(viewport))),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained list-wheel scroll view from its focused model.
     #[must_use]
     pub fn list_wheel_scroll_view(view: ListWheelScrollView<Self>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ListWheelScrollView {
                 view: RetainedWheelScrollView(Rc::new(RefCell::new(view))),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained draggable sheet from its focused model.
     #[must_use]
     pub fn draggable_scrollable_sheet(sheet: DraggableScrollableSheet<Self>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DraggableScrollableSheet {
                 sheet: RetainedDraggableSheet(Rc::new(RefCell::new(sheet))),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates an actuator wrapper which resets the nearest descendant sheets.
@@ -3477,38 +3505,38 @@ impl Widget {
         actuator: DraggableScrollableActuator,
         child: impl Into<Self>,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DraggableScrollableActuator {
                 actuator: RetainedActuator(Rc::new(actuator)),
-                child: std::rc::Rc::new(child.into()),
+                child: child.into(),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained two-dimensional viewport from its focused model.
     #[must_use]
     pub fn two_dimensional_viewport(viewport: TwoDimensionalViewport<Self>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalViewport {
                 viewport: RetainedTwoDimensionalViewport(Rc::new(RefCell::new(viewport))),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained two-dimensional scroll view from its focused model.
     #[must_use]
     pub fn two_dimensional_scroll_view(view: TwoDimensionalScrollView<Self>) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::TwoDimensionalScrollView {
                 view: RetainedTwoDimensionalScrollView(Rc::new(RefCell::new(view))),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Keeps this flow child at the leading edge of `controller`'s viewport
     /// once it reaches that edge. Consecutive persistent headers push their
@@ -3528,17 +3556,17 @@ impl Widget {
         reverse: bool,
         pinned: bool,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::PersistentHeader {
                 controller,
                 axis,
                 reverse,
                 pinned,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained notification-listener wrapper. The wrapper has no
@@ -3548,14 +3576,11 @@ impl Widget {
         callback: Option<Rc<dyn Fn(ScrollNotification) -> bool>>,
         child: Self,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::NotificationListener {
-                callback,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::NotificationListener { callback, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
 
     /// Creates a retained sliver viewport. Sliver children are materialized by
@@ -3572,7 +3597,7 @@ impl Widget {
         clip_behavior: Clip,
         delegate: Rc<dyn SliverViewportDelegate>,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::SliverViewport {
                 config: Rc::new(SliverViewportConfig {
@@ -3587,44 +3612,41 @@ impl Widget {
                 }),
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn translate(controller: TranslationController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Translate {
-                controller,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Translate { controller, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     /// Applies an arbitrary Kurbo-backed affine transform after layout.
     /// The transform is compositor-only and defaults to the child's center.
     #[must_use]
     pub fn transform(transform: CoreTransform, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Transform {
                 transform,
                 origin: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn transform_around(transform: CoreTransform, origin: Offset, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Transform {
                 transform,
                 origin: Some(finite_offset(origin)),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn scale(scale: f32, child: Self) -> Self {
@@ -3636,27 +3658,27 @@ impl Widget {
     }
     #[must_use]
     pub fn fitted_box(fit: ImageFit, alignment: Alignment, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::FittedBox {
                 fit,
                 alignment,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn controlled_scale(controller: ScaleController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Scale {
                 controller,
                 origin: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn controlled_rotation(controller: RotationController, child: Self) -> Self {
@@ -3668,83 +3690,83 @@ impl Widget {
         alignment: Option<Alignment>,
         child: Self,
     ) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Rotation {
                 controller,
                 origin: None,
                 alignment,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn opacity(alpha: f32, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Opacity {
                 alpha: normalize_opacity(alpha),
                 controller: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn controlled_opacity(controller: OpacityController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Opacity {
                 alpha: controller.opacity(),
                 controller: Some(controller),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn blur(sigma: f32, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Blur {
                 sigma_x: normalize_sigma(sigma),
                 sigma_y: normalize_sigma(sigma),
                 controller: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn asymmetric_blur(sigma_x: f32, sigma_y: f32, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Blur {
                 sigma_x: normalize_sigma(sigma_x),
                 sigma_y: normalize_sigma(sigma_y),
                 controller: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn controlled_blur(controller: BlurController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::Blur {
                 sigma_x: controller.sigma(),
                 sigma_y: controller.sigma(),
                 controller: Some(controller),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn drop_shadow(offset: Offset, sigma: f32, color: Color, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DropShadow {
                 offset: finite_offset(offset),
@@ -3752,14 +3774,14 @@ impl Widget {
                 sigma_y: normalize_sigma(sigma),
                 color,
                 controller: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn controlled_drop_shadow(controller: DropShadowController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::DropShadow {
                 offset: controller.offset(),
@@ -3767,22 +3789,22 @@ impl Widget {
                 sigma_y: controller.sigma(),
                 color: controller.color(),
                 controller: Some(controller),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn color_filtered(filter: ColorFilter, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ColorFiltered {
                 filter,
                 controller: None,
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn color_matrix(filter: ColorFilter, child: Self) -> Self {
@@ -3790,26 +3812,23 @@ impl Widget {
     }
     #[must_use]
     pub fn controlled_color_filtered(controller: ColorFilterController, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::ColorFiltered {
                 filter: controller.filter(),
                 controller: Some(controller),
-                child: std::rc::Rc::new(child),
+                child,
             },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn blend(mode: BlendMode, child: Self) -> Self {
-        Self {
+        Self::from_node(WidgetNode {
             key: None,
-            kind: WidgetKind::Blend {
-                mode,
-                child: std::rc::Rc::new(child),
-            },
+            kind: WidgetKind::Blend { mode, child },
             semantics: SemanticProperties::default(),
-        }
+        })
     }
     #[must_use]
     pub fn with_key(mut self, key: impl Into<Key>) -> Self {

@@ -84,7 +84,10 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(decorated.kind, WidgetKind::Decorated { .. }));
+    assert!(matches!(
+        decorated.kind().clone(),
+        WidgetKind::Decorated { .. }
+    ));
 
     let constrained: Widget = Container::builder()
         .child(Text::new("child"))
@@ -93,7 +96,10 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(constrained.kind, WidgetKind::Constrained { .. }));
+    assert!(matches!(
+        constrained.kind().clone(),
+        WidgetKind::Constrained { .. }
+    ));
 
     let margin: Widget = Container::builder()
         .child(Text::new("child"))
@@ -102,7 +108,7 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(margin.kind, WidgetKind::Padding { .. }));
+    assert!(matches!(margin.kind().clone(), WidgetKind::Padding { .. }));
 
     let transformed: Widget = Container::builder()
         .child(Text::new("child"))
@@ -111,14 +117,20 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::None)
         .build()
         .into();
-    assert!(matches!(transformed.kind, WidgetKind::Transform { .. }));
+    assert!(matches!(
+        transformed.kind().clone(),
+        WidgetKind::Transform { .. }
+    ));
 
     let clipped: Widget = Container::builder()
         .child(Text::new("child"))
         .clip_behavior(Clip::AntiAlias)
         .build()
         .into();
-    assert!(matches!(clipped.kind, WidgetKind::ClipRect { .. }));
+    assert!(matches!(
+        clipped.kind().clone(),
+        WidgetKind::ClipRect { .. }
+    ));
 
     let rounded: Widget = Container::builder()
         .child(Text::new("child"))
@@ -126,7 +138,10 @@ fn lowering_preserves_the_outer_wrapper_order() {
         .clip_behavior(Clip::AntiAlias)
         .build()
         .into();
-    assert!(matches!(rounded.kind, WidgetKind::ClipRRect { .. }));
+    assert!(matches!(
+        rounded.kind().clone(),
+        WidgetKind::ClipRRect { .. }
+    ));
 }
 
 #[test]
@@ -137,7 +152,7 @@ fn lowering_without_clipping_keeps_content_sized_child_path() {
         .build()
         .into();
 
-    assert!(matches!(widget.kind, WidgetKind::Text { .. }));
+    assert!(matches!(widget.kind().clone(), WidgetKind::Text { .. }));
 }
 
 #[test]
@@ -147,5 +162,5 @@ fn empty_container_lowering_keeps_fallback_alignment_behavior() {
         .build()
         .into();
 
-    assert!(matches!(widget.kind, WidgetKind::Align { .. }));
+    assert!(matches!(widget.kind().clone(), WidgetKind::Align { .. }));
 }

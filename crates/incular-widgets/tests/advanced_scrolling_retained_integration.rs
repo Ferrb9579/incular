@@ -66,15 +66,15 @@ fn raw_scrollbar_geometry_drag_and_retained_conversions_are_public() {
         ..RawScrollbarStyle::default()
     });
     let retained = scrollbar.with_child(Widget::fixed_box(Size::new(80.0, 100.0), Color::WHITE));
-    match &retained.kind {
+    match retained.kind().clone() {
         WidgetKind::RawScrollbar {
             controller: retained_controller,
             style,
             child,
         } => {
-            assert_eq!(retained_controller, &controller);
+            assert_eq!(retained_controller, controller);
             assert_eq!(style.orientation, RawScrollbarOrientation::Left);
-            assert!(matches!(&child.kind, WidgetKind::Box { .. }));
+            assert!(matches!(child.kind().clone(), WidgetKind::Box { .. }));
         }
         _ => panic!("RawScrollbar::with_child did not retain a RawScrollbar widget"),
     }
@@ -84,13 +84,13 @@ fn raw_scrollbar_geometry_drag_and_retained_conversions_are_public() {
         Widget::box_(Size::new(80.0, 100.0), Color::WHITE),
     );
     assert!(matches!(
-        &constructor_widget.kind,
+        constructor_widget.kind().clone(),
         WidgetKind::RawScrollbar { .. }
     ));
 
     let converted_widget: Widget = RawScrollbar::new(controller).into();
     assert!(matches!(
-        &converted_widget.kind,
+        converted_widget.kind().clone(),
         WidgetKind::RawScrollbar { .. }
     ));
 }
@@ -124,7 +124,7 @@ fn wheel_viewport_and_scroll_view_layout_hit_test_and_retain_public_models() {
 
     let retained_viewport = Widget::list_wheel_viewport(viewport);
     assert!(matches!(
-        &retained_viewport.kind,
+        retained_viewport.kind().clone(),
         WidgetKind::ListWheelViewport { .. }
     ));
 
@@ -134,7 +134,7 @@ fn wheel_viewport_and_scroll_view_layout_hit_test_and_retain_public_models() {
     )
     .into();
     assert!(matches!(
-        &converted_viewport.kind,
+        converted_viewport.kind().clone(),
         WidgetKind::ListWheelViewport { .. }
     ));
 
@@ -150,7 +150,7 @@ fn wheel_viewport_and_scroll_view_layout_hit_test_and_retain_public_models() {
 
     let retained_scroll_view: Widget = scroll_view.into();
     assert!(matches!(
-        &retained_scroll_view.kind,
+        retained_scroll_view.kind().clone(),
         WidgetKind::ListWheelScrollView { .. }
     ));
 }
@@ -170,7 +170,7 @@ fn draggable_sheet_state_handoff_reset_and_retained_conversions_are_public() {
     let sheet_controller = sheet.controller();
     let (state, child) = sheet.mount();
     assert!(sheet_controller.is_attached());
-    assert!(matches!(&child.kind, WidgetKind::Scroll { .. }));
+    assert!(matches!(child.kind().clone(), WidgetKind::Scroll { .. }));
 
     let notifications = Rc::new(RefCell::new(Vec::new()));
     let notifications_for_listener = notifications.clone();
@@ -201,7 +201,7 @@ fn draggable_sheet_state_handoff_reset_and_retained_conversions_are_public() {
 
     let retained_sheet: Widget = sheet.into();
     assert!(matches!(
-        &retained_sheet.kind,
+        retained_sheet.kind().clone(),
         WidgetKind::DraggableScrollableSheet { .. }
     ));
 
@@ -209,13 +209,13 @@ fn draggable_sheet_state_handoff_reset_and_retained_conversions_are_public() {
         .clone()
         .with_child(Widget::box_(Size::new(10.0, 10.0), Color::WHITE));
     assert!(matches!(
-        &retained_actuator.kind,
+        retained_actuator.kind().clone(),
         WidgetKind::DraggableScrollableActuator { .. }
     ));
 
     let converted_actuator: Widget = actuator.into();
     assert!(matches!(
-        &converted_actuator.kind,
+        converted_actuator.kind().clone(),
         WidgetKind::DraggableScrollableActuator { .. }
     ));
 }
@@ -251,7 +251,7 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
 
     let retained_scroll_view: Widget = view.into();
     assert!(matches!(
-        &retained_scroll_view.kind,
+        retained_scroll_view.kind().clone(),
         WidgetKind::TwoDimensionalScrollView { .. }
     ));
 
@@ -275,7 +275,7 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
 
     let retained_viewport = Widget::two_dimensional_viewport(viewport);
     assert!(matches!(
-        &retained_viewport.kind,
+        retained_viewport.kind().clone(),
         WidgetKind::TwoDimensionalViewport { .. }
     ));
 
@@ -288,7 +288,7 @@ fn two_dimensional_views_keep_axis_state_hit_testing_and_retained_conversions() 
     )
     .into();
     assert!(matches!(
-        &converted_viewport.kind,
+        converted_viewport.kind().clone(),
         WidgetKind::TwoDimensionalViewport { .. }
     ));
 }

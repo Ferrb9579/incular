@@ -444,7 +444,7 @@ impl From<Listener> for Widget {
                 callbacks: value.callbacks,
                 behavior: value.behavior,
             },
-            child: value.child.map(std::rc::Rc::new),
+            child: value.child,
         })
     }
 }
@@ -526,7 +526,7 @@ impl From<RawGestureDetector> for Widget {
                 behavior,
                 exclude_from_semantics: value.exclude_from_semantics,
             },
-            child: value.child.map(std::rc::Rc::new),
+            child: value.child,
         })
     }
 }
@@ -618,7 +618,7 @@ impl From<MouseRegion> for Widget {
                 opaque: value.opaque,
                 behavior: value.behavior,
             },
-            child: value.child.map(std::rc::Rc::new),
+            child: value.child,
         })
     }
 }
@@ -715,11 +715,11 @@ impl From<TapRegion> for Widget {
                 group_id: value.group_id,
                 consume_outside_taps: value.consume_outside_taps,
             },
-            child: Some(std::rc::Rc::new(
+            child: Some(
                 value
                     .child
                     .unwrap_or_else(|| crate::SizedBox::shrink().into()),
-            )),
+            ),
         })
     }
 }
@@ -743,7 +743,7 @@ impl From<TapRegionSurface> for Widget {
     fn from(value: TapRegionSurface) -> Self {
         Widget::from_kind(WidgetKind::RawInput {
             kind: RawInputKind::TapRegionSurface,
-            child: Some(std::rc::Rc::new(value.child)),
+            child: Some(value.child),
         })
     }
 }
@@ -836,11 +836,11 @@ impl From<TextFieldTapRegion> for Widget {
                 group_id: value.group_id,
                 consume_outside_taps: value.consume_outside_taps,
             },
-            child: Some(std::rc::Rc::new(
+            child: Some(
                 value
                     .child
                     .unwrap_or_else(|| crate::SizedBox::shrink().into()),
-            )),
+            ),
         })
     }
 }

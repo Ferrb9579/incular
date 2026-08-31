@@ -22,7 +22,7 @@ fn stack_builder_defaults_match_default_and_lowering() {
         fit,
         clip_behavior,
         children,
-    } = widget.into_kind()
+    } = widget.kind().clone().clone()
     else {
         panic!("expected Stack widget kind")
     };
@@ -49,7 +49,7 @@ fn positioned_builder_keeps_required_generic_child() {
         width,
         height,
         child,
-    } = Widget::from(positioned).into_kind()
+    } = Widget::from(positioned).kind().clone().clone()
     else {
         panic!("expected Positioned widget kind")
     };
@@ -74,7 +74,7 @@ fn indexed_stack_builder_defaults_and_constructor_keep_children() {
         alignment,
         index,
         children,
-    } = Widget::from(indexed).into_kind()
+    } = Widget::from(indexed).kind().clone().clone()
     else {
         panic!("expected IndexedStack widget kind")
     };

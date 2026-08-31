@@ -74,18 +74,18 @@ impl Scrollbar {
         // requested. This preserves keys and explicit semantics on an already
         // constructed viewport instead of needlessly erasing its metadata.
         if controller.is_none()
-            && let WidgetKind::Scroll { controller, .. } = &child.kind
+            && let WidgetKind::Scroll { controller, .. } = child.kind()
         {
             controller.set_scrollbar_style(style);
             controller.set_scrollbar_thumb_visibility(thumb_visibility);
             return child;
         }
 
-        let (controller, child) = match &child.kind {
+        let (controller, child) = match child.kind() {
             // Reusing an existing viewport should not create nested scroll
             // positions. Rebuild it with the chosen controller so the style
             // and interaction contract stay attached to the visible viewport.
-            WidgetKind::Scroll { child, .. } => (controller.unwrap(), (**child).clone()),
+            WidgetKind::Scroll { child, .. } => (controller.unwrap(), child.clone()),
             // For ordinary content, retain the complete descriptor (including
             // its key/semantics) as the scroll viewport's child.
             _ => (controller.unwrap_or_default(), child),

@@ -38,7 +38,7 @@ impl From<ClipRect> for Widget {
     fn from(value: ClipRect) -> Self {
         Widget::from_kind(WidgetKind::ClipRect {
             clip_behavior: value.clip_behavior,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -77,7 +77,7 @@ impl From<ClipRRect> for Widget {
         Widget::from_kind(WidgetKind::ClipRRect {
             radius: value.radius,
             clip_behavior: value.clip_behavior,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -112,7 +112,7 @@ impl From<ClipOval> for Widget {
     fn from(value: ClipOval) -> Self {
         Widget::from_kind(WidgetKind::ClipOval {
             clip_behavior: value.clip_behavior,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
@@ -151,7 +151,7 @@ impl From<ClipPath> for Widget {
         Widget::from_kind(WidgetKind::ClipPath {
             path: value.path,
             clip_behavior: value.clip_behavior,
-            child: std::rc::Rc::new(value.child),
+            child: value.child,
         })
     }
 }
