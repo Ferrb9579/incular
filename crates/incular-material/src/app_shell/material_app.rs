@@ -2,7 +2,7 @@ use super::environment::MaterialScrollBehavior;
 use crate::foundation::Theme;
 use crate::{ThemeData, ThemeMode};
 use incular_config::{Brightness, Locale, RuntimeEnvironment};
-use incular_widgets::{CheckedModeBanner, DefaultTextStyle, SizedBox, Widget};
+use incular_widgets::{BuildContext, CheckedModeBanner, DefaultTextStyle, SizedBox, Widget};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -238,7 +238,7 @@ impl MaterialApp {
     }
 
     #[must_use]
-    pub fn build(&self) -> Widget {
+    pub fn build(&self, context: &BuildContext<'_>) -> Widget {
         let child = self
             .initial_route
             .as_ref()
@@ -246,9 +246,9 @@ impl MaterialApp {
             .cloned()
             .or_else(|| self.home.clone())
             .unwrap_or_else(|| SizedBox::shrink().into());
-        let system_brightness =
-            incular_widgets::internal::current_build_environment::<RuntimeEnvironment>()
-                .map_or(Brightness::Light, |environment| environment.brightness);
+        let system_brightness = context
+            .depend_on::<RuntimeEnvironment>()
+            .map_or(Brightness::Light, |environment| environment.brightness);
         let theme = match self.theme_mode {
             ThemeMode::Dark => self
                 .dark_theme
@@ -296,6 +296,6 @@ impl Default for MaterialApp {
 impl From<MaterialApp> for Widget {
     fn from(value: MaterialApp) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build())
+        Widget::layout_builder(move |context, _| value.build(context))
     }
 }

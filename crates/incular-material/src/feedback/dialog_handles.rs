@@ -82,7 +82,7 @@ impl DialogHandle {
         }
     }
 
-    fn build_overlay(&self) -> Widget {
+    fn build_overlay(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
         let dismiss = self.clone();
         let barrier = ActionSurface::with_child(Container::new().color(self.barrier_color))
             .color(Color::TRANSPARENT)
@@ -97,7 +97,7 @@ impl DialogHandle {
             barrier
         };
         let barrier: Widget = Positioned::fill(barrier).into();
-        Stack::new([barrier, self.dialog.build(&current_control_theme())]).into()
+        Stack::new([barrier, self.dialog.build(&current_control_theme(context))]).into()
     }
 
     /// Presents the dialog over `child` when this handle is open.
@@ -105,9 +105,9 @@ impl DialogHandle {
     pub fn present(&self, child: impl Into<Widget>) -> Widget {
         let child = child.into();
         let handle = self.clone();
-        Widget::stateful_layout_builder(self.revision.clone(), move |_| {
+        Widget::stateful_layout_builder(self.revision.clone(), move |context, _| {
             let base = OverlayPortal::new(child.clone())
-                .overlay_child(handle.build_overlay())
+                .overlay_child(handle.build_overlay(context))
                 .show(handle.is_open());
             let presented: Widget = base.into();
             if handle.is_open() {

@@ -2,22 +2,22 @@
 
 #![allow(clippy::type_complexity)]
 
-use incular_core::BuildContext;
-
-use crate::Widget;
+use crate::{BuildContext, Widget};
 use std::rc::Rc;
 use std::time::Duration;
 
 /// Rebuilds its child when an animation controller notifies of a tick.
 #[derive(Clone)]
 pub struct AnimatedBuilder {
-    builder: Rc<dyn Fn(&BuildContext, Option<Widget>) -> Widget>,
+    builder: Rc<dyn for<'a> Fn(&BuildContext<'a>, Option<Widget>) -> Widget>,
     child: Option<Widget>,
 }
 
 impl AnimatedBuilder {
     #[must_use]
-    pub fn new<W>(builder: impl Fn(&BuildContext, Option<Widget>) -> W + 'static) -> Self
+    pub fn new<W>(
+        builder: impl for<'a> Fn(&BuildContext<'a>, Option<Widget>) -> W + 'static,
+    ) -> Self
     where
         W: Into<Widget> + 'static,
     {
@@ -36,8 +36,9 @@ impl AnimatedBuilder {
 
 impl From<AnimatedBuilder> for Widget {
     fn from(value: AnimatedBuilder) -> Self {
-        let dummy_ctx = BuildContext::new();
-        (value.builder)(&dummy_ctx, value.child)
+        let builder = value.builder;
+        let child = value.child;
+        Widget::layout_builder(move |context, _| builder(context, child.clone()))
     }
 }
 
@@ -46,7 +47,7 @@ impl From<AnimatedBuilder> for Widget {
 pub struct TweenAnimationBuilder<T: Clone + 'static> {
     tween_end: T,
     duration: Duration,
-    builder: Rc<dyn Fn(&BuildContext, &T, Option<Widget>) -> Widget>,
+    builder: Rc<dyn for<'a> Fn(&BuildContext<'a>, &T, Option<Widget>) -> Widget>,
     child: Option<Widget>,
 }
 
@@ -55,7 +56,7 @@ impl<T: Clone + 'static> TweenAnimationBuilder<T> {
     pub fn new<W>(
         tween_end: T,
         duration: Duration,
-        builder: impl Fn(&BuildContext, &T, Option<Widget>) -> W + 'static,
+        builder: impl for<'a> Fn(&BuildContext<'a>, &T, Option<Widget>) -> W + 'static,
     ) -> Self
     where
         W: Into<Widget> + 'static,
@@ -82,8 +83,10 @@ impl<T: Clone + 'static> TweenAnimationBuilder<T> {
 
 impl<T: Clone + 'static> From<TweenAnimationBuilder<T>> for Widget {
     fn from(value: TweenAnimationBuilder<T>) -> Self {
-        let dummy_ctx = BuildContext::new();
-        (value.builder)(&dummy_ctx, &value.tween_end, value.child)
+        let builder = value.builder;
+        let tween_end = value.tween_end;
+        let child = value.child;
+        Widget::layout_builder(move |context, _| builder(context, &tween_end, child.clone()))
     }
 }
 
@@ -91,12 +94,15 @@ impl<T: Clone + 'static> From<TweenAnimationBuilder<T>> for Widget {
 #[derive(Clone)]
 pub struct RepeatingAnimationBuilder {
     duration: Duration,
-    builder: Rc<dyn Fn(&BuildContext, f32) -> Widget>,
+    builder: Rc<dyn for<'a> Fn(&BuildContext<'a>, f32) -> Widget>,
 }
 
 impl RepeatingAnimationBuilder {
     #[must_use]
-    pub fn new<W>(duration: Duration, builder: impl Fn(&BuildContext, f32) -> W + 'static) -> Self
+    pub fn new<W>(
+        duration: Duration,
+        builder: impl for<'a> Fn(&BuildContext<'a>, f32) -> W + 'static,
+    ) -> Self
     where
         W: Into<Widget> + 'static,
     {
@@ -114,7 +120,7 @@ impl RepeatingAnimationBuilder {
 
 impl From<RepeatingAnimationBuilder> for Widget {
     fn from(value: RepeatingAnimationBuilder) -> Self {
-        let dummy_ctx = BuildContext::new();
-        (value.builder)(&dummy_ctx, 1.0)
+        let builder = value.builder;
+        Widget::layout_builder(move |context, _| builder(context, 1.0))
     }
 }

@@ -16,6 +16,109 @@ struct DynamicChildResult<K> {
 }
 
 impl WidgetTree {
+    fn inherited_contexts_for(
+        &self,
+        parent: Option<ElementId>,
+        boundary: bool,
+        scope: Option<&InheritedScopeValue>,
+    ) -> (DependencyContext, DependencyContext) {
+        self.inherited_contexts_for_consumers(
+            parent,
+            boundary,
+            scope,
+            ConsumerId::new(),
+            ConsumerId::new(),
+        )
+    }
+
+    fn inherited_contexts_for_consumers(
+        &self,
+        parent: Option<ElementId>,
+        boundary: bool,
+        scope: Option<&InheritedScopeValue>,
+        build_consumer: ConsumerId,
+        render_consumer: ConsumerId,
+    ) -> (DependencyContext, DependencyContext) {
+        let (parent_build, parent_render) =
+            parent.and_then(|id| self.elements.get(id.0)).map_or_else(
+                || (self.dependency_root.clone(), self.dependency_root.clone()),
+                |element| {
+                    (
+                        element.build_context.clone(),
+                        element.render_context.clone(),
+                    )
+                },
+            );
+        let mut build = if boundary {
+            parent_build.boundary_for_consumer(build_consumer)
+        } else {
+            parent_build.for_related_consumer(build_consumer)
+        };
+        let mut render = if boundary {
+            parent_render.boundary_for_consumer(render_consumer)
+        } else {
+            parent_render.for_related_consumer(render_consumer)
+        };
+        if let Some(scope) = scope {
+            build = build.provide_erased(scope.type_id, scope.value.clone());
+            render = render.provide_erased(scope.type_id, scope.value.clone());
+        }
+        (build, render)
+    }
+
+    /// Rebinds contexts only when inherited topology itself changes (a lookup
+    /// boundary is added/removed or a scope changes the type it provides).
+    /// Ordinary value updates never walk the subtree; they invalidate exact
+    /// subscribers through the retained dependency tracker.
+    fn rebind_inherited_subtree(&mut self, root: ElementId) {
+        let mut work = vec![root];
+        while let Some(id) = work.pop() {
+            let Some(element) = self.elements.get(id.0) else {
+                continue;
+            };
+            let parent = element.parent;
+            let boundary = element.environment_boundary;
+            let scope = element.environment_override.clone();
+            let build_consumer = element.build_context.consumer_id();
+            let render_consumer = element.render_context.consumer_id();
+            let old_build = element.build_context.clone();
+            let old_render = element.render_context.clone();
+            let widget = element.widget.clone();
+            let render = element.render;
+            let children = element.children.clone();
+            old_build.clear_dependencies();
+            old_render.clear_dependencies();
+            let (build_context, render_context) = self.inherited_contexts_for_consumers(
+                parent,
+                boundary,
+                scope.as_ref(),
+                build_consumer,
+                render_consumer,
+            );
+            let new_kind = render_context.build(|context| render_kind(&widget, context));
+            let invalidation = self
+                .renders
+                .get_mut(render.0)
+                .expect("live rebound render")
+                .object
+                .update_kind(new_kind);
+            if let Some(element) = self.elements.get_mut(id.0) {
+                element.build_context = build_context;
+                element.render_context = render_context;
+                element.layout_builder_constraints = None;
+                element.layout_builder_revision = 0;
+            }
+            if matches!(widget.kind, WidgetKind::LayoutBuilder { .. })
+                || invalidation.contains(RenderInvalidation::LAYOUT)
+            {
+                self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+            } else if invalidation.contains(RenderInvalidation::PAINT) {
+                self.mark_render_dirty(render, DirtyFlags::PAINT, false);
+            }
+            work.extend(children.into_iter().rev());
+        }
+    }
+
     pub fn update(&mut self, id: ElementId, widget: Widget) -> Result<(), TreeError> {
         if !self.elements.contains(id.0) {
             return Err(TreeError::MissingElement(id));
@@ -113,9 +216,6 @@ impl WidgetTree {
             handlers.push((action, callback));
             action
         });
-        let inherited_environment = parent
-            .and_then(|id| self.elements.get(id.0))
-            .and_then(|element| element.environment.clone());
         let (environment_override, environment_boundary) = match &widget.kind {
             WidgetKind::LayoutBuilder {
                 environment,
@@ -124,14 +224,14 @@ impl WidgetTree {
             } => (environment.clone(), *environment_boundary),
             _ => (None, false),
         };
-        let environment = if environment_boundary {
-            None
-        } else {
-            compose_environment(environment_override.clone(), inherited_environment)
-        };
+        let (build_context, render_context) = self.inherited_contexts_for(
+            parent,
+            environment_boundary,
+            environment_override.as_ref(),
+        );
         self.check_keys_borrowed(None, widget.children_refs())?;
         let layers = RenderLayers::create(&mut self.compositor, &widget.kind);
-        let kind = render_kind(&widget, environment.as_ref());
+        let kind = render_context.build(|context| render_kind(&widget, context));
         let render = self.renders.insert(RenderNode {
             parent: None,
             children: Vec::new(),
@@ -159,12 +259,21 @@ impl WidgetTree {
             sliver_scroll_revision: 0,
             layout_builder_constraints: None,
             layout_builder_revision: 0,
-            environment,
+            build_context: build_context.clone(),
+            render_context: render_context.clone(),
             environment_override,
             environment_boundary,
             #[cfg(feature = "devtools")]
             dev: ElementDevData::default(),
         }));
+        self.inherited_consumers.insert(
+            build_context.consumer_id(),
+            (id, InheritedDependencyKind::Build),
+        );
+        self.inherited_consumers.insert(
+            render_context.consumer_id(),
+            (id, InheritedDependencyKind::Render),
+        );
         self.elements.get_mut(id.0).expect("fresh element").children = Vec::new();
         if let WidgetKind::SelectionListener { notifier, .. } = &widget.kind {
             notifier.register();
@@ -173,67 +282,47 @@ impl WidgetTree {
         Ok(id)
     }
 
-    pub(super) fn propagate_environment(&mut self, id: ElementId) {
-        let (inherited, children) = {
-            let element = self.elements.get(id.0).expect("live environment element");
-            (element.environment.clone(), element.children.clone())
-        };
-        let mut work = children
-            .into_iter()
-            .rev()
-            .map(|child| (child, inherited.clone()))
-            .collect::<Vec<_>>();
-        while let Some((child, inherited)) = work.pop() {
-            let (override_value, boundary, previous, widget, render) = {
-                let element = self.elements.get(child.0).expect("live child");
-                (
-                    element.environment_override.clone(),
-                    element.environment_boundary,
-                    element.environment.clone(),
-                    element.widget.clone(),
-                    element.render,
-                )
+    fn apply_inherited_invalidations(&mut self) {
+        let dirty = self.dependency_root.take_dirty_consumers();
+        for consumer in dirty {
+            let Some(&(id, kind)) = self.inherited_consumers.get(&consumer) else {
+                continue;
             };
-            let effective = if boundary {
-                None
-            } else {
-                compose_environment(override_value, inherited.clone())
+            let Some(element) = self.elements.get(id.0) else {
+                continue;
             };
-            let changed = match (&previous, &effective) {
-                (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
-                (None, None) => false,
-                _ => true,
-            };
-            if changed {
-                let new_kind = render_kind(&widget, effective.as_ref());
-                let invalidation = self
-                    .renders
-                    .get_mut(render.0)
-                    .expect("live child render")
-                    .object
-                    .update_kind(new_kind);
-                {
-                    let element = self.elements.get_mut(child.0).expect("live child");
-                    element.environment = effective;
-                    element.layout_builder_constraints = None;
-                    element.layout_builder_revision = 0;
-                }
-                if invalidation.contains(RenderInvalidation::LAYOUT) {
+            let render = element.render;
+            match kind {
+                InheritedDependencyKind::Build => {
+                    if let Some(element) = self.elements.get_mut(id.0) {
+                        element.layout_builder_constraints = None;
+                        element.layout_builder_revision = 0;
+                    }
                     self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
-                } else if invalidation.contains(RenderInvalidation::PAINT) {
-                    self.mark_render_dirty(render, DirtyFlags::PAINT, false);
+                }
+                InheritedDependencyKind::Render => {
+                    let (widget, context) = {
+                        let element = self.elements.get(id.0).expect("live inherited consumer");
+                        (element.widget.clone(), element.render_context.clone())
+                    };
+                    let new_kind = context.build(|context| render_kind(&widget, context));
+                    let invalidation = self
+                        .renders
+                        .get_mut(render.0)
+                        .expect("live inherited render")
+                        .object
+                        .update_kind(new_kind);
+                    if invalidation.contains(RenderInvalidation::LAYOUT) {
+                        self.mark_render_dirty(
+                            render,
+                            DirtyFlags::LAYOUT | DirtyFlags::PAINT,
+                            true,
+                        );
+                    } else if invalidation.contains(RenderInvalidation::PAINT) {
+                        self.mark_render_dirty(render, DirtyFlags::PAINT, false);
+                    }
                 }
             }
-            let (next_inherited, children) = {
-                let element = self.elements.get(child.0).expect("live child");
-                (element.environment.clone(), element.children.clone())
-            };
-            work.extend(
-                children
-                    .into_iter()
-                    .rev()
-                    .map(|descendant| (descendant, next_inherited.clone())),
-            );
         }
     }
 
@@ -271,6 +360,10 @@ impl WidgetTree {
             .elements
             .get(id.0)
             .ok_or(TreeError::MissingElement(id))?;
+        if current.widget.ptr_eq(widget) {
+            self.diagnostics.identical_child_bailouts += 1;
+            return Ok(());
+        }
         if current.widget.children_refs().is_empty()
             && widget.children_refs().is_empty()
             && current.widget == *widget
@@ -299,10 +392,14 @@ impl WidgetTree {
             old_notifier.unregister();
             new_notifier.register();
         }
-        let old_environment = self
-            .elements
-            .get(id.0)
-            .and_then(|element| element.environment.clone());
+        let (old_override, old_boundary, render_context) = {
+            let element = self.elements.get(id.0).expect("present");
+            (
+                element.environment_override.clone(),
+                element.environment_boundary,
+                element.render_context.clone(),
+            )
+        };
         let (new_override, new_boundary) = match &widget.kind {
             WidgetKind::LayoutBuilder {
                 environment,
@@ -311,22 +408,15 @@ impl WidgetTree {
             } => (environment.clone(), *environment_boundary),
             _ => (None, false),
         };
-        let parent_environment = self
-            .elements
-            .get(id.0)
-            .and_then(|element| element.parent)
-            .and_then(|parent| self.elements.get(parent.0))
-            .and_then(|parent| parent.environment.clone());
-        let new_environment = if new_boundary {
-            None
-        } else {
-            compose_environment(new_override.clone(), parent_environment.clone())
-        };
-        let environment_changed = match (&old_environment, &new_environment) {
-            (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
-            (None, None) => false,
-            _ => true,
-        };
+        let old_type = old_override.as_ref().map(|scope| scope.type_id);
+        let new_type = new_override.as_ref().map(|scope| scope.type_id);
+        let environment_topology_changed = old_boundary != new_boundary || old_type != new_type;
+        let environment_value_changed = !environment_topology_changed
+            && match (&old_override, &new_override) {
+                (Some(old), Some(new)) => !Rc::ptr_eq(&old.value, &new.value),
+                (None, None) => false,
+                _ => false,
+            };
         #[cfg(feature = "devtools")]
         let property_changes = crate::devtools_props::diff_properties(&old.kind, &widget.kind);
         debug_assert_eq!(
@@ -336,8 +426,14 @@ impl WidgetTree {
         );
         self.check_keys_borrowed(Some(id), widget.children_refs())?;
         let render = self.elements.get(id.0).expect("present").render;
-        let old_kind = render_kind(&old, old_environment.as_ref());
-        let new_kind = render_kind(widget, new_environment.as_ref());
+        let old_kind = self
+            .renders
+            .get(render.0)
+            .expect("present")
+            .object
+            .kind
+            .clone();
+        let new_kind = render_context.build(|context| render_kind(widget, context));
         carry_replaced_transition(&old_kind, &new_kind);
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
@@ -397,8 +493,7 @@ impl WidgetTree {
             element.widget = widget.clone();
             element.environment_override = new_override;
             element.environment_boundary = new_boundary;
-            element.environment = new_environment;
-            if environment_changed {
+            if environment_topology_changed || environment_value_changed {
                 element.layout_builder_constraints = None;
             }
             element.dirty.remove(DirtyFlags::BUILD);
@@ -406,8 +501,23 @@ impl WidgetTree {
         if layer_structure_changed {
             self.sync_render_children(id);
         }
-        if environment_changed {
-            self.propagate_environment(id);
+        if environment_topology_changed {
+            self.rebind_inherited_subtree(id);
+        } else if environment_value_changed {
+            let (build_context, render_context, scope) = {
+                let element = self.elements.get(id.0).expect("present");
+                (
+                    element.build_context.clone(),
+                    element.render_context.clone(),
+                    element
+                        .environment_override
+                        .clone()
+                        .expect("value change retains a scope"),
+                )
+            };
+            build_context.set_erased(scope.type_id, scope.value.clone());
+            render_context.set_erased(scope.type_id, scope.value);
+            self.apply_inherited_invalidations();
         }
         if matches!(widget.kind, WidgetKind::LayoutBuilder { .. }) {
             // A new descriptor may carry a different builder closure while
@@ -786,7 +896,7 @@ impl WidgetTree {
         let _build_guard = self.guard_element(FramePhase::Build, element_id);
         let (
             builder,
-            environment_boundary,
+            build_context,
             revision,
             previous_constraints,
             previous_revision,
@@ -797,17 +907,14 @@ impl WidgetTree {
                 .get(element_id.0)
                 .expect("layout builder element");
             let WidgetKind::LayoutBuilder {
-                builder,
-                environment_boundary,
-                revision,
-                ..
+                builder, revision, ..
             } = &element.widget.kind
             else {
                 return Ok(());
             };
             (
                 builder.clone(),
-                *environment_boundary,
+                element.build_context.clone(),
                 revision.clone(),
                 element.layout_builder_constraints,
                 element.layout_builder_revision,
@@ -821,15 +928,10 @@ impl WidgetTree {
         {
             return Ok(());
         }
-        let environment = self
-            .elements
-            .get(element_id.0)
-            .and_then(|element| element.environment.clone());
-        let child = if environment_boundary {
-            with_build_environment_boundary(|| builder(constraints))
-        } else {
-            with_build_environment(environment, || builder(constraints))
-        };
+        let child = build_context.build(|context| {
+            let context = BuildContext::new(context);
+            builder(&context, constraints)
+        });
         let old_keys = vec![(); previous_children.len()];
         let reconciled = self.reconcile_dynamic_children(
             element_id,
@@ -1063,6 +1165,12 @@ impl WidgetTree {
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;
                     };
+                    let build_consumer = element.build_context.consumer_id();
+                    let render_consumer = element.render_context.consumer_id();
+                    element.build_context.clear_dependencies();
+                    element.render_context.clear_dependencies();
+                    self.inherited_consumers.remove(&build_consumer);
+                    self.inherited_consumers.remove(&render_consumer);
                     match &element.widget.kind {
                         WidgetKind::SelectionListener {
                             notifier, delegate, ..

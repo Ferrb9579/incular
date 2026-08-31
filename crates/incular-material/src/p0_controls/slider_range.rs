@@ -401,85 +401,89 @@ impl Slider {
 
 impl From<Slider> for Widget {
     fn from(value: Slider) -> Self {
-        let step = value
-            .divisions
-            .map(|divisions| (value.max - value.min) / divisions.max(1) as f32)
-            .unwrap_or(0.01);
-        let (tap_enabled, drag_enabled) = match value.interaction {
-            SliderInteraction::TapAndSlide => (true, true),
-            SliderInteraction::TapOnly => (true, false),
-            SliderInteraction::SlideOnly | SliderInteraction::SlideThumb => (false, true),
-        };
-        let mut root = incular_controls::slider::Root::new()
-            .range(value.min, value.max)
-            .step(step)
-            .value(value.value)
-            .secondary_value(value.secondary_track_value)
-            .tap_enabled(tap_enabled)
-            .drag_enabled(drag_enabled)
-            .rtl(value.rtl)
-            .disabled(!value.enabled);
-        if let Some(node) = value.focus_node {
-            root = root.focus_node(node);
-        }
-        root = root.autofocus(value.autofocus);
-        if let Some(label) = value.label.clone() {
-            root = root.semantic_value(label);
-        }
-        if let Some(theme) = Theme::of_shared() {
-            let slider_theme = &theme.selection_controls().slider_theme;
-            let state = if value.enabled {
-                WidgetStates::default()
-            } else {
-                WidgetStates::default().with(WidgetState::Disabled)
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            let value = value.as_ref().clone();
+            let step = value
+                .divisions
+                .map(|divisions| (value.max - value.min) / divisions.max(1) as f32)
+                .unwrap_or(0.01);
+            let (tap_enabled, drag_enabled) = match value.interaction {
+                SliderInteraction::TapAndSlide => (true, true),
+                SliderInteraction::TapOnly => (true, false),
+                SliderInteraction::SlideOnly | SliderInteraction::SlideThumb => (false, true),
             };
-            if let Some(color) = slider_theme
-                .active_track_color
-                .as_ref()
-                .map(|property| property.resolve(state))
-            {
-                root = root.active_track_color(color);
+            let mut root = incular_controls::slider::Root::new()
+                .range(value.min, value.max)
+                .step(step)
+                .value(value.value)
+                .secondary_value(value.secondary_track_value)
+                .tap_enabled(tap_enabled)
+                .drag_enabled(drag_enabled)
+                .rtl(value.rtl)
+                .disabled(!value.enabled);
+            if let Some(node) = value.focus_node {
+                root = root.focus_node(node);
             }
-            if let Some(color) = slider_theme
-                .inactive_track_color
-                .as_ref()
-                .map(|property| property.resolve(state))
-            {
-                root = root.inactive_track_color(color);
+            root = root.autofocus(value.autofocus);
+            if let Some(label) = value.label.clone() {
+                root = root.semantic_value(label);
             }
-            if let Some(color) = slider_theme
-                .secondary_active_track_color
-                .as_ref()
-                .map(|property| property.resolve(state))
-            {
-                root = root.secondary_track_color(color);
-            }
-            if let Some(color) = slider_theme
-                .thumb_color
-                .as_ref()
-                .map(|property| property.resolve(state))
-            {
-                root = root.thumb_color(color);
-            }
-            if !value.enabled {
-                if let Some(color) = slider_theme.disabled_active_track_color {
+            if let Some(theme) = Theme::of_shared(context) {
+                let slider_theme = &theme.selection_controls().slider_theme;
+                let state = if value.enabled {
+                    WidgetStates::default()
+                } else {
+                    WidgetStates::default().with(WidgetState::Disabled)
+                };
+                if let Some(color) = slider_theme
+                    .active_track_color
+                    .as_ref()
+                    .map(|property| property.resolve(state))
+                {
                     root = root.active_track_color(color);
                 }
-                if let Some(color) = slider_theme.disabled_inactive_track_color {
+                if let Some(color) = slider_theme
+                    .inactive_track_color
+                    .as_ref()
+                    .map(|property| property.resolve(state))
+                {
                     root = root.inactive_track_color(color);
                 }
+                if let Some(color) = slider_theme
+                    .secondary_active_track_color
+                    .as_ref()
+                    .map(|property| property.resolve(state))
+                {
+                    root = root.secondary_track_color(color);
+                }
+                if let Some(color) = slider_theme
+                    .thumb_color
+                    .as_ref()
+                    .map(|property| property.resolve(state))
+                {
+                    root = root.thumb_color(color);
+                }
+                if !value.enabled {
+                    if let Some(color) = slider_theme.disabled_active_track_color {
+                        root = root.active_track_color(color);
+                    }
+                    if let Some(color) = slider_theme.disabled_inactive_track_color {
+                        root = root.inactive_track_color(color);
+                    }
+                }
             }
-        }
-        if let Some(callback) = value.on_changed {
-            root = root.on_value_change(move |next| callback(next));
-        }
-        if let Some(callback) = value.on_change_start {
-            root = root.on_change_start(move |next| callback(next));
-        }
-        if let Some(callback) = value.on_change_end {
-            root = root.on_change_end(move |next| callback(next));
-        }
-        root.into()
+            if let Some(callback) = value.on_changed {
+                root = root.on_value_change(move |next| callback(next));
+            }
+            if let Some(callback) = value.on_change_start {
+                root = root.on_change_start(move |next| callback(next));
+            }
+            if let Some(callback) = value.on_change_end {
+                root = root.on_change_end(move |next| callback(next));
+            }
+            root.into()
+        })
     }
 }
 
@@ -697,7 +701,7 @@ impl From<RangeSlider> for Widget {
             let current = current.clone();
             let revision = revision.clone();
             let active_thumb = active_thumb.clone();
-            Widget::stateful_layout_builder(revision.clone(), move |constraints| {
+            Widget::stateful_layout_builder(revision.clone(), move |context, constraints| {
                 // Use the available width when the parent is bounded, while
                 // retaining a compact intrinsic size for unconstrained overlays.
                 let track_width = if constraints.max_width.is_finite() {
@@ -705,7 +709,7 @@ impl From<RangeSlider> for Widget {
                 } else {
                     180.0
                 };
-                let theme = current_control_theme();
+                let theme = current_control_theme(context);
                 let track_height = theme.slider.track_height.max(1.0);
                 let thumb_size = theme.slider.thumb_size.max(track_height);
                 let active_color = theme.colors.accent;

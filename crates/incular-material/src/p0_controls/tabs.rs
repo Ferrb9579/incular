@@ -352,7 +352,7 @@ impl From<TabBar> for Widget {
             .as_ref()
             .map(TabController::revision_cell)
             .unwrap_or_else(|| Rc::new(Cell::new(0)));
-        Widget::stateful_layout_builder(revision, move |_| value.build())
+        Widget::stateful_layout_builder(revision, move |_, _| value.build())
     }
 }
 

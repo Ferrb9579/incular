@@ -64,7 +64,7 @@ fn material_menu_opens_in_an_application_frame_without_recursing() {
             .dark_theme_shared(dark_theme.clone())
             .theme_mode(ThemeMode::Light)
             .title("Incular Material workbench")
-            .build()
+            .into()
         })
         .expect("create material menu application");
     let constraints = Constraints::tight(Size::new(1180.0, 820.0));

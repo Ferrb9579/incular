@@ -755,10 +755,9 @@ impl Default for ControlTheme {
     }
 }
 
-/// Reads the nearest retained control theme while a control descriptor is
-/// materializing. Outside a retained build this intentionally falls back to
-/// the dark preset, matching `ControlTheme::default()`.
+/// Reads the nearest retained control theme and registers the caller as a
+/// dependent of that exact inherited scope.
 #[must_use]
-pub fn current_control_theme() -> ControlTheme {
-    incular_widgets::internal::current_build_environment::<ControlTheme>().unwrap_or_default()
+pub fn current_control_theme(context: &incular_widgets::BuildContext<'_>) -> ControlTheme {
+    context.depend_on::<ControlTheme>().unwrap_or_default()
 }

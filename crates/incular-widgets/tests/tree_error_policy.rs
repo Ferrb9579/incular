@@ -98,7 +98,7 @@ fn eager_mount_rejects_duplicate_keys_before_allocating_retained_state() {
 #[test]
 fn layout_builder_returns_contextual_error_without_leaking_child_state() {
     let mut tree = WidgetTree::new();
-    tree.mount(LayoutBuilder::new(|_| invalid_generated_widget()).into())
+    tree.mount(LayoutBuilder::new(|_, _| invalid_generated_widget()).into())
         .expect("layout builder mount");
     let before_elements = tree.element_count();
     let before_renders = tree.render_object_count();
@@ -202,7 +202,7 @@ fn duplicate_dynamic_key_rejects_the_new_set_without_destroying_the_previous_com
 #[test]
 fn compatibility_layout_records_recoverable_error_instead_of_panicking() {
     let mut tree = WidgetTree::new();
-    tree.mount(LayoutBuilder::new(|_| invalid_generated_widget()).into())
+    tree.mount(LayoutBuilder::new(|_, _| invalid_generated_widget()).into())
         .expect("layout builder mount");
 
     tree.layout(Constraints::tight(Size::new(100., 100.)));

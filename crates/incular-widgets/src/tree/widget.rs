@@ -1665,7 +1665,9 @@ impl PartialEq for WidgetKind {
             ) => {
                 Rc::ptr_eq(a, b)
                     && match (c, d) {
-                        (Some(x), Some(y)) => Rc::ptr_eq(x, y),
+                        (Some(x), Some(y)) => {
+                            x.type_id == y.type_id && Rc::ptr_eq(&x.value, &y.value)
+                        }
                         (None, None) => true,
                         _ => false,
                     }
@@ -3312,7 +3314,9 @@ impl Widget {
         })
     }
     #[must_use]
-    pub fn layout_builder(builder: impl Fn(Constraints) -> Self + 'static) -> Self {
+    pub fn layout_builder(
+        builder: impl for<'a> Fn(&BuildContext<'a>, Constraints) -> Self + 'static,
+    ) -> Self {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
@@ -3325,17 +3329,16 @@ impl Widget {
         })
     }
 
-    /// Wraps a child in an ambient retained builder environment. The wrapper
-    /// is transparent to layout and paint; descendants read the value when
-    /// their own deferred builders are materialized.
+    /// Wraps a child in a retained typed inherited scope. The wrapper is
+    /// transparent to layout and paint; descendant builders read the value
+    /// through their explicit [`BuildContext`].
     #[must_use]
     pub fn environment_scope<T: Any>(value: T, child: Self) -> Self {
-        let value: Rc<dyn Any> = Rc::new(value);
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
-                builder: Rc::new(move |_| child.clone()),
-                environment: Some(value),
+                builder: Rc::new(move |_, _| child.clone()),
+                environment: Some(InheritedScopeValue::new(value)),
                 environment_boundary: false,
                 revision: None,
             },
@@ -3350,7 +3353,7 @@ impl Widget {
         Self::from_node(WidgetNode {
             key: None,
             kind: WidgetKind::LayoutBuilder {
-                builder: Rc::new(move |_| child.clone()),
+                builder: Rc::new(move |_, _| child.clone()),
                 environment: None,
                 environment_boundary: true,
                 revision: None,
@@ -3367,7 +3370,7 @@ impl Widget {
     #[must_use]
     pub fn stateful_layout_builder(
         revision: Rc<Cell<u64>>,
-        builder: impl Fn(Constraints) -> Self + 'static,
+        builder: impl for<'a> Fn(&BuildContext<'a>, Constraints) -> Self + 'static,
     ) -> Self {
         Self::from_node(WidgetNode {
             key: None,

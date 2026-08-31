@@ -29,7 +29,7 @@ fn ordinary_child_shapes_materialize_the_expected_retained_topology() {
 #[test]
 fn dynamic_children_are_not_eager_declarative_children() {
     let mut tree = WidgetTree::new();
-    tree.mount(Widget::layout_builder(|_| Widget::text("generated")))
+    tree.mount(Widget::layout_builder(|_, _| Widget::text("generated")))
         .expect("layout-builder mount");
 
     assert_eq!(tree.element_count(), 1);

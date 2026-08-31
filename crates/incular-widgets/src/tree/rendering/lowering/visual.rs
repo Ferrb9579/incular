@@ -1,6 +1,6 @@
 use super::super::super::*;
 use super::super::resolve_text_style;
-pub(super) fn lower_visual(widget: &Widget, environment: Option<&Rc<dyn Any>>) -> RenderKind {
+pub(super) fn lower_visual(widget: &Widget, context: &DependencyContext) -> RenderKind {
     match &widget.kind {
         WidgetKind::Box { size, color } => RenderKind::Box {
             desired: *size,
@@ -43,8 +43,8 @@ pub(super) fn lower_visual(widget: &Widget, environment: Option<&Rc<dyn Any>>) -
             shadow,
             ..
         } => {
-            let ambient_direction = environment
-                .and_then(environment_value::<TextDirection>)
+            let ambient_direction = context
+                .depend::<TextDirection>()
                 .unwrap_or(TextDirection::Ltr);
             RenderKind::Banner {
                 message: message.clone(),
@@ -75,7 +75,7 @@ pub(super) fn lower_visual(widget: &Widget, environment: Option<&Rc<dyn Any>>) -
             overflow,
         } => RenderKind::Text {
             text: text.clone(),
-            style: resolve_text_style(style, environment),
+            style: resolve_text_style(style, context),
             align: *align,
             soft_wrap: *soft_wrap,
             max_lines: *max_lines,
@@ -83,7 +83,7 @@ pub(super) fn lower_visual(widget: &Widget, environment: Option<&Rc<dyn Any>>) -
         },
         WidgetKind::SelectableText { text, style, align } => RenderKind::SelectableText {
             text: text.clone(),
-            style: resolve_text_style(style, environment),
+            style: resolve_text_style(style, context),
             align: *align,
         },
         WidgetKind::SelectionArea { .. } => RenderKind::SelectionArea,
@@ -118,7 +118,7 @@ pub(super) fn lower_visual(widget: &Widget, environment: Option<&Rc<dyn Any>>) -
         WidgetKind::TextField(spec) => RenderKind::TextField {
             controller: spec.controller.clone(),
             desired: spec.size,
-            style: resolve_text_style(&spec.style, environment),
+            style: resolve_text_style(&spec.style, context),
             placeholder: spec.placeholder.clone(),
             multiline: spec.multiline,
             min_lines: spec.min_lines,

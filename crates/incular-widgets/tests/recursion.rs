@@ -18,11 +18,11 @@ fn recursive_builder() -> Widget {
             .as_ref()
             .expect("recursive builder installed")
             .clone();
-        Widget::layout_builder(move |constraints| next(constraints))
+        Widget::layout_builder(move |_, constraints| next(constraints))
     });
     *slot.borrow_mut() = Some(Rc::clone(&builder));
 
-    Widget::layout_builder(move |constraints| builder(constraints))
+    Widget::layout_builder(move |_, constraints| builder(constraints))
 }
 
 fn report_directory(test_name: &str) -> PathBuf {

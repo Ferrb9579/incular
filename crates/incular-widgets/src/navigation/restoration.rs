@@ -1,6 +1,6 @@
 //! Explicit root and unmanaged restoration-scope ownership.
 
-use crate::Widget;
+use crate::{BuildContext, Widget};
 use incular_core::{RestorationKey, RestorationScope as CoreRestorationScope};
 
 #[derive(Clone)]
@@ -11,11 +11,11 @@ struct RestorationEnvironment {
 /// Reads the nearest explicit restoration scope while a deferred descendant
 /// is being materialized.
 #[must_use]
-pub fn current_restoration_scope() -> Option<CoreRestorationScope> {
-    if let Some(environment) = crate::tree::current_build_environment::<RestorationEnvironment>() {
+pub fn current_restoration_scope(context: &BuildContext<'_>) -> Option<CoreRestorationScope> {
+    if let Some(environment) = context.depend_on::<RestorationEnvironment>() {
         environment.scope
     } else {
-        crate::tree::current_build_environment::<CoreRestorationScope>()
+        context.depend_on::<CoreRestorationScope>()
     }
 }
 
@@ -177,8 +177,8 @@ impl From<RootRestorationScope> for Widget {
         let explicit_root = value.root_scope;
         let restoration_id = value.restoration_id;
         let child = value.child;
-        Widget::layout_builder(move |_| {
-            let root = current_restoration_scope().or_else(|| explicit_root.clone());
+        Widget::layout_builder(move |context, _| {
+            let root = current_restoration_scope(context).or_else(|| explicit_root.clone());
             let scope = match (root, restoration_id.as_deref()) {
                 (Some(root), Some(restoration_id)) => RestorationKey::new(restoration_id)
                     .ok()

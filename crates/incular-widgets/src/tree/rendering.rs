@@ -95,12 +95,9 @@ impl RenderKind {
     }
 }
 
-pub(super) fn resolve_text_style(
-    style: &TextStyle,
-    environment: Option<&Rc<dyn Any>>,
-) -> TextStyle {
-    environment
-        .and_then(environment_value::<TextStyle>)
+pub(super) fn resolve_text_style(style: &TextStyle, context: &DependencyContext) -> TextStyle {
+    context
+        .depend::<TextStyle>()
         .map_or_else(|| style.clone(), |default| default.merge(style))
 }
 

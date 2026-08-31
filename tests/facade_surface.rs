@@ -132,7 +132,7 @@ fn facade_exposes_retained_layout_closure_widgets() {
     let _: Widget = Spacer::new().into();
     let _: Widget = Positioned::new(child.clone()).left(2.).top(3.).into();
     let _: Widget = IndexedStack::new([child.clone()]).index(0).into();
-    let _: Widget = LayoutBuilder::new(move |_| child.clone()).into();
+    let _: Widget = LayoutBuilder::new(move |_, _| child.clone()).into();
 }
 
 #[test]

@@ -240,7 +240,7 @@ impl AppBar {
 impl From<AppBar> for Widget {
     fn from(value: AppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -359,7 +359,7 @@ impl Default for SliverAppBar {
 impl From<SliverAppBar> for Widget {
     fn from(value: SliverAppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -479,14 +479,19 @@ impl Scaffold {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
+    pub fn build(
+        &self,
+        context: &incular_widgets::BuildContext<'_>,
+        theme: &ControlTheme,
+    ) -> Widget {
         let mut children = Vec::new();
         if let Some(app_bar) = &self.app_bar {
             children.push(app_bar.build(theme));
         }
-        let scaffold_background = Theme::of_shared().map_or(theme.colors.background, |theme| {
-            theme.colors().scaffold_background_color
-        });
+        let scaffold_background = Theme::of_shared(context)
+            .map_or(theme.colors.background, |theme| {
+                theme.colors().scaffold_background_color
+            });
         let body = Expanded::new(
             Material::new(self.body.clone()).color(self.background.unwrap_or(scaffold_background)),
         );
@@ -549,6 +554,8 @@ impl Scaffold {
 impl From<Scaffold> for Widget {
     fn from(value: Scaffold) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| {
+            value.build(context, &current_control_theme(context))
+        })
     }
 }

@@ -277,9 +277,8 @@ impl Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         })
     }

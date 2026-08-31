@@ -673,7 +673,7 @@ impl TextField {
         self
     }
 
-    fn build(&self, theme: &ControlTheme) -> Widget {
+    fn build(&self, context: &incular_widgets::BuildContext<'_>, theme: &ControlTheme) -> Widget {
         let background = self.decoration.background.unwrap_or(theme.colors.surface);
         let foreground = self.decoration.foreground.unwrap_or({
             if self.style.has_explicit_color {
@@ -745,9 +745,9 @@ impl TextField {
         }
 
         let mut content: Widget = if let Some(decoration) = self.material_decoration.clone() {
-            let decoration_theme =
-                incular_widgets::internal::current_build_environment::<InputDecorationThemeData>()
-                    .unwrap_or_default();
+            let decoration_theme = context
+                .depend_on::<InputDecorationThemeData>()
+                .unwrap_or_default();
             let mut decoration = decoration.apply_defaults(&decoration_theme);
             if decoration.error_text.is_none() {
                 decoration.error_text = self.error_text.clone();
@@ -883,10 +883,9 @@ impl From<TextField> for Widget {
             });
         }
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
-            value.build(&theme)
+        Widget::layout_builder(move |context, _| {
+            let theme = context.depend_on::<ControlTheme>().unwrap_or_default();
+            value.build(context, &theme)
         })
     }
 }

@@ -139,6 +139,7 @@ impl<T> PopupMenuItem<T> {
 
     fn build_with_selection_and_close(
         &self,
+        context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
         close: Option<Rc<dyn Fn() + 'static>>,
     ) -> Widget
@@ -180,20 +181,16 @@ impl<T> PopupMenuItem<T> {
                     .text_style(style.resolve(ControlState::empty())),
             );
         }
-        item.build_with_close(close)
-    }
-
-    fn build_with_selection(&self, on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>) -> Widget
-    where
-        T: Clone + 'static,
-    {
-        self.build_with_selection_and_close(on_selected, None)
+        item.build_with_close(context, close)
     }
 }
 
 impl<T: Clone + 'static> From<PopupMenuItem<T>> for Widget {
     fn from(value: PopupMenuItem<T>) -> Self {
-        value.build_with_selection(None)
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            value.build_with_selection_and_close(context, None, None)
+        })
     }
 }
 
@@ -283,6 +280,7 @@ impl<T> CheckedPopupMenuItem<T> {
 
     fn build_with_selection_and_close(
         &self,
+        context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
         close: Option<Rc<dyn Fn() + 'static>>,
     ) -> Widget
@@ -290,26 +288,22 @@ impl<T> CheckedPopupMenuItem<T> {
         T: Clone + 'static,
     {
         let mark: Widget = if self.checked {
-            ControlIcon::Check.widget(16.0, current_control_theme().colors.accent)
+            ControlIcon::Check.widget(16.0, current_control_theme(context).colors.accent)
         } else {
             SizedBox::new().width(16.0).into()
         };
         let child = Row::new([mark, self.child.clone()]).spacing(8.0);
         self.popup_item(child)
-            .build_with_selection_and_close(on_selected, close)
-    }
-
-    fn build_with_selection(&self, on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>) -> Widget
-    where
-        T: Clone + 'static,
-    {
-        self.build_with_selection_and_close(on_selected, None)
+            .build_with_selection_and_close(context, on_selected, close)
     }
 }
 
 impl<T: Clone + 'static> From<CheckedPopupMenuItem<T>> for Widget {
     fn from(value: CheckedPopupMenuItem<T>) -> Self {
-        value.build_with_selection(None)
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            value.build_with_selection_and_close(context, None, None)
+        })
     }
 }
 
@@ -433,12 +427,13 @@ impl<T> From<PopupMenuDivider> for PopupMenuEntry<T> {
 impl<T: Clone + 'static> PopupMenuEntry<T> {
     fn build_with_selection(
         &self,
+        context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
         close: Option<Rc<dyn Fn() + 'static>>,
     ) -> Widget {
         match self {
-            Self::Item(item) => item.build_with_selection_and_close(on_selected, close),
-            Self::Checked(item) => item.build_with_selection_and_close(on_selected, close),
+            Self::Item(item) => item.build_with_selection_and_close(context, on_selected, close),
+            Self::Checked(item) => item.build_with_selection_and_close(context, on_selected, close),
             Self::Divider(divider) => divider.clone().into(),
         }
     }
@@ -694,8 +689,8 @@ impl<T> PopupMenuButton<T> {
 }
 
 impl<T: Clone + 'static> PopupMenuButton<T> {
-    fn build(&self) -> Widget {
-        let theme = current_control_theme();
+    fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        let theme = current_control_theme(context);
         let controller = self.controller.clone();
         let on_opened = self.on_opened.clone();
         let on_tap = self.on_tap.clone();
@@ -748,7 +743,9 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
         }) as Rc<dyn Fn(Option<T>) + 'static>;
         let children = (self.item_builder)()
             .into_iter()
-            .map(|item| item.build_with_selection(Some(select.clone()), Some(close.clone())))
+            .map(|item| {
+                item.build_with_selection(context, Some(select.clone()), Some(close.clone()))
+            })
             .collect::<Vec<Widget>>();
         let mut style = self.menu_style.clone().unwrap_or_default();
         if let Some(padding) = self.menu_padding {
@@ -798,7 +795,7 @@ impl<T: Clone + 'static> From<PopupMenuButton<T>> for Widget {
     fn from(value: PopupMenuButton<T>) -> Self {
         let value = Rc::new(value);
         let revision = value.controller.revision();
-        Widget::stateful_layout_builder(revision, move |_| value.build())
+        Widget::stateful_layout_builder(revision, move |context, _| value.build(context))
     }
 }
 

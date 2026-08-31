@@ -942,7 +942,9 @@ impl<T: 'static> Router<T> {
         let runtime = RouterRuntime::new(self);
         let revision = runtime.borrow().revision.clone();
         let retained = runtime.clone();
-        Widget::stateful_layout_builder(revision, move |_| RouterRuntime::build_widget(&retained))
+        Widget::stateful_layout_builder(revision, move |_, _| {
+            RouterRuntime::build_widget(&retained)
+        })
     }
 
     /// Alias for [`Self::into_widget`] useful in an application root builder.

@@ -400,12 +400,12 @@ mod menu_tests {
                 .spacing(12.0),
             )]))
             .into();
-        let root = MaterialApp::new(ScaffoldMessenger::new(
+        let root: Widget = MaterialApp::new(ScaffoldMessenger::new(
             Scaffold::new(body)
                 .app_bar(AppBar::new(Text::new("Material Workbench")))
                 .floating_action_button(FloatingActionButton::extended("Create")),
         ))
-        .build();
+        .into();
         let mut tree = WidgetTree::new();
         tree.mount(root).expect("mount material scaffold");
         tree.layout(Constraints::tight(Size::new(1180.0, 820.0)));

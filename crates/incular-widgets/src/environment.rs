@@ -4,13 +4,13 @@ use incular_config::{
     Locale, LocaleResolver, LocalizationCatalog, LocalizedMessage, RuntimeEnvironment,
     TextDirection,
 };
-use incular_core::{BuildContext, Color};
+use incular_core::Color;
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_text::TextStyle;
 use std::{any::Any, rc::Rc};
 use typed_builder::TypedBuilder;
 
-use crate::{LayoutBuilder, Widget};
+use crate::{BuildContext, LayoutBuilder, Widget};
 
 pub use incular_config::ContentSensitivity;
 
@@ -315,12 +315,12 @@ pub enum Orientation {
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct OrientationBuilder {
-    builder: Rc<dyn Fn(&BuildContext, Orientation) -> Widget>,
+    builder: Rc<dyn for<'a> Fn(&BuildContext<'a>, Orientation) -> Widget>,
 }
 
 impl OrientationBuilder {
     #[must_use]
-    pub fn new<W>(builder: impl Fn(&BuildContext, Orientation) -> W + 'static) -> Self
+    pub fn new<W>(builder: impl for<'a> Fn(&BuildContext<'a>, Orientation) -> W + 'static) -> Self
     where
         W: Into<Widget> + 'static,
     {
@@ -333,14 +333,13 @@ impl OrientationBuilder {
 impl From<OrientationBuilder> for Widget {
     fn from(value: OrientationBuilder) -> Self {
         let builder = value.builder;
-        LayoutBuilder::new(move |constraints| {
+        LayoutBuilder::new(move |context, constraints| {
             let orientation = if constraints.max_width > constraints.max_height {
                 Orientation::Landscape
             } else {
                 Orientation::Portrait
             };
-            let dummy_ctx = BuildContext::new();
-            builder(&dummy_ctx, orientation)
+            builder(context, orientation)
         })
         .into()
     }
@@ -575,8 +574,8 @@ impl LookupBoundary {
     /// Reads a typed environment value visible from the currently materialized
     /// retained builder. A lookup never crosses the nearest boundary.
     #[must_use]
-    pub fn lookup<T: Any + Clone>() -> Option<T> {
-        crate::tree::current_build_environment::<T>()
+    pub fn lookup<T: Any + Clone>(context: &BuildContext<'_>) -> Option<T> {
+        context.find::<T>()
     }
 }
 

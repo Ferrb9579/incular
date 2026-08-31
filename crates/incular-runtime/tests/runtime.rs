@@ -89,7 +89,7 @@ fn runtime_frame_propagates_layout_builder_configuration_error() {
             Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(11_u64),
         ])
     };
-    let mut runtime = Runtime::new(LayoutBuilder::new(move |_| invalid()).into())
+    let mut runtime = Runtime::new(LayoutBuilder::new(move |_, _| invalid()).into())
         .expect("layout builder root mounts before generated output exists");
 
     let error = runtime
@@ -135,7 +135,7 @@ fn rounded_text_inserted_by_a_layout_builder_is_frame_stable() {
     let open = Rc::new(Cell::new(false));
     let revision = Rc::new(Cell::new(0));
     let open_for_builder = open.clone();
-    let root = Widget::stateful_layout_builder(revision.clone(), move |_| {
+    let root = Widget::stateful_layout_builder(revision.clone(), move |_, _| {
         if open_for_builder.get() {
             Container::new()
                 .height(32.0)

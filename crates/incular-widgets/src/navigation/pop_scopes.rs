@@ -151,11 +151,11 @@ impl From<PopScope> for Widget {
         let child = value.child;
         let registration = Rc::new(RefCell::new(None::<BackRegistration>));
         let registration_state = registration.clone();
-        Widget::layout_builder(move |_| {
+        Widget::layout_builder(move |context, _| {
             if registration_state.borrow().is_none() {
                 let dispatcher = explicit_dispatcher
                     .clone()
-                    .or_else(crate::tree::current_build_environment::<BackButtonDispatcher>);
+                    .or_else(|| context.depend_on::<BackButtonDispatcher>());
                 if let Some(dispatcher) = dispatcher {
                     *registration_state.borrow_mut() = Some(controller.register(&dispatcher));
                 }
@@ -367,11 +367,11 @@ impl From<NavigatorPopHandler> for Widget {
         let child = value.child;
         let registration = Rc::new(RefCell::new(None::<BackRegistration>));
         let registration_state = registration.clone();
-        Widget::layout_builder(move |_| {
+        Widget::layout_builder(move |context, _| {
             if registration_state.borrow().is_none() {
                 let dispatcher = explicit_dispatcher
                     .clone()
-                    .or_else(crate::tree::current_build_environment::<BackButtonDispatcher>);
+                    .or_else(|| context.depend_on::<BackButtonDispatcher>());
                 if let Some(dispatcher) = dispatcher {
                     *registration_state.borrow_mut() = Some(controller.register(&dispatcher));
                 }
@@ -445,13 +445,13 @@ impl From<BackButtonListener> for Widget {
         let child = value.child;
         let registration = Rc::new(RefCell::new(None::<BackRegistration>));
         let registration_state = registration.clone();
-        Widget::layout_builder(move |_| {
+        Widget::layout_builder(move |context, _| {
             if registration_state.borrow().is_none()
                 && let (Some(callback), Some(dispatcher)) = (
                     callback.clone(),
                     explicit_dispatcher
                         .clone()
-                        .or_else(crate::tree::current_build_environment::<BackButtonDispatcher>),
+                        .or_else(|| context.depend_on::<BackButtonDispatcher>()),
                 )
             {
                 *registration_state.borrow_mut() =

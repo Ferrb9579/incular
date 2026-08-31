@@ -320,7 +320,7 @@ impl WidgetsAppController {
     pub fn into_widget(self) -> Widget {
         let revision = self.inner.borrow().revision.clone();
         let retained = self.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
+        Widget::stateful_layout_builder(revision, move |_, _| {
             let information = retained.current_route();
             Widget::environment_scope(
                 WidgetsAppData {

@@ -576,9 +576,8 @@ impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
         let revision = value.revision.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        Widget::stateful_layout_builder(revision, move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         })
     }

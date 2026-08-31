@@ -345,9 +345,8 @@ impl From<Button> for Widget {
             .label
             .clone()
             .or_else(|| value.child.as_ref().and_then(Widget::semantic_text));
-        let widget = Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        let widget = Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         });
         semantic_label.map_or(widget.clone(), |label| widget.accessibility_label(label))

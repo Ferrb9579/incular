@@ -255,84 +255,90 @@ impl<T> DropdownButton<T> {
 
 impl<T: Clone + PartialEq + 'static> From<DropdownButton<T>> for Widget {
     fn from(value: DropdownButton<T>) -> Self {
-        let enabled = value.on_changed.is_some() && !value.items.is_empty();
-        let selected = value.value.as_ref().and_then(|selected| {
-            value
-                .items
-                .iter()
-                .find(|item| item.item_value() == Some(selected))
-        });
-        let selected_widget = selected
-            .map(|item| item.item_child().clone())
-            .or_else(|| value.hint.clone())
-            .or_else(|| value.disabled_hint.clone())
-            .unwrap_or_else(|| Text::new("Select").into());
-        let mut selected_widget = Container::with_child(selected_widget).alignment(value.alignment);
-        if value.is_expanded {
-            // An expanded dropdown consumes the width offered by its parent;
-            // the menu itself keeps its independent width/height constraints.
-            selected_widget = selected_widget.width(f32::INFINITY);
-        }
-        let mut content =
-            Row::new([selected_widget]).cross_axis_alignment(CrossAxisAlignment::Center);
-        if let Some(icon) = value.icon.clone() {
-            content = Row::new([content.into(), icon]).spacing(8.0);
-        } else {
-            content = Row::new([
-                content.into(),
-                ControlIcon::ChevronDown.widget(20.0, current_control_theme().colors.foreground),
-            ])
-            .spacing(8.0);
-        }
-        let mut popup = PopupMenuButton::from_items(value.items.clone())
-            .child(content)
-            .enabled(enabled)
-            .barrier_dismissible(value.barrier_dismissible)
-            .on_tap({
-                let callback = value.on_tap.clone();
-                move || {
-                    if let Some(callback) = callback.as_ref() {
-                        callback();
-                    }
-                }
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            let value = value.as_ref().clone();
+            let enabled = value.on_changed.is_some() && !value.items.is_empty();
+            let selected = value.value.as_ref().and_then(|selected| {
+                value
+                    .items
+                    .iter()
+                    .find(|item| item.item_value() == Some(selected))
             });
-        if let Some(callback) = value.on_changed.clone() {
-            popup = popup.on_selected(move |selected| callback(Some(selected)));
-        }
-        if let Some(style) = value.style {
-            popup = popup.style(style);
-        }
-        if let Some(padding) = value.padding {
-            popup = popup.padding(padding);
-        }
-        if let Some(color) = value.dropdown_color {
-            popup = popup.color(color);
-        }
-        let mut menu_style = value.menu_style.unwrap_or_default();
-        if let Some(width) = value.menu_width {
-            menu_style = menu_style.fixed_size(Size::new(width, f32::INFINITY));
-        }
-        if let Some(max_height) = value.menu_max_height {
-            let current = menu_style
-                .maximum_size
-                .unwrap_or(Size::new(f32::INFINITY, f32::INFINITY));
-            menu_style = menu_style.maximum_size(Size::new(current.width, max_height));
-        }
-        if let Some(height) = value.item_height {
-            let mut item_style = ButtonStyle::new().height(height);
-            if value.is_dense {
-                item_style = item_style.padding(EdgeInsets::symmetric(8.0, 2.0));
+            let selected_widget = selected
+                .map(|item| item.item_child().clone())
+                .or_else(|| value.hint.clone())
+                .or_else(|| value.disabled_hint.clone())
+                .unwrap_or_else(|| Text::new("Select").into());
+            let mut selected_widget =
+                Container::with_child(selected_widget).alignment(value.alignment);
+            if value.is_expanded {
+                // An expanded dropdown consumes the width offered by its parent;
+                // the menu itself keeps its independent width/height constraints.
+                selected_widget = selected_widget.width(f32::INFINITY);
             }
-            popup = popup.menu_style(menu_style).style(item_style);
-        } else {
-            popup = popup.menu_style(menu_style);
-        }
-        let popup: Widget = popup.into();
-        if value.autofocus {
-            incular_widgets::Focus::new(popup).autofocus(true).into()
-        } else {
-            popup
-        }
+            let mut content =
+                Row::new([selected_widget]).cross_axis_alignment(CrossAxisAlignment::Center);
+            if let Some(icon) = value.icon.clone() {
+                content = Row::new([content.into(), icon]).spacing(8.0);
+            } else {
+                content = Row::new([
+                    content.into(),
+                    ControlIcon::ChevronDown
+                        .widget(20.0, current_control_theme(context).colors.foreground),
+                ])
+                .spacing(8.0);
+            }
+            let mut popup = PopupMenuButton::from_items(value.items.clone())
+                .child(content)
+                .enabled(enabled)
+                .barrier_dismissible(value.barrier_dismissible)
+                .on_tap({
+                    let callback = value.on_tap.clone();
+                    move || {
+                        if let Some(callback) = callback.as_ref() {
+                            callback();
+                        }
+                    }
+                });
+            if let Some(callback) = value.on_changed.clone() {
+                popup = popup.on_selected(move |selected| callback(Some(selected)));
+            }
+            if let Some(style) = value.style {
+                popup = popup.style(style);
+            }
+            if let Some(padding) = value.padding {
+                popup = popup.padding(padding);
+            }
+            if let Some(color) = value.dropdown_color {
+                popup = popup.color(color);
+            }
+            let mut menu_style = value.menu_style.unwrap_or_default();
+            if let Some(width) = value.menu_width {
+                menu_style = menu_style.fixed_size(Size::new(width, f32::INFINITY));
+            }
+            if let Some(max_height) = value.menu_max_height {
+                let current = menu_style
+                    .maximum_size
+                    .unwrap_or(Size::new(f32::INFINITY, f32::INFINITY));
+                menu_style = menu_style.maximum_size(Size::new(current.width, max_height));
+            }
+            if let Some(height) = value.item_height {
+                let mut item_style = ButtonStyle::new().height(height);
+                if value.is_dense {
+                    item_style = item_style.padding(EdgeInsets::symmetric(8.0, 2.0));
+                }
+                popup = popup.menu_style(menu_style).style(item_style);
+            } else {
+                popup = popup.menu_style(menu_style);
+            }
+            let popup: Widget = popup.into();
+            if value.autofocus {
+                incular_widgets::Focus::new(popup).autofocus(true).into()
+            } else {
+                popup
+            }
+        })
     }
 }
 
@@ -718,13 +724,15 @@ impl<T: Clone + PartialEq + 'static> From<DropdownMenu<T>> for Widget {
     fn from(value: DropdownMenu<T>) -> Self {
         value.attach_controller_listener();
         let value = Rc::new(value);
-        Widget::stateful_layout_builder(value.revision.clone(), move |_| value.build())
+        Widget::stateful_layout_builder(value.revision.clone(), move |context, _| {
+            value.build(context)
+        })
     }
 }
 
 impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
-    fn build(&self) -> Widget {
-        let theme = current_control_theme();
+    fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        let theme = current_control_theme(context);
         let query = self.controller.text().to_lowercase();
         let visible = self
             .entries

@@ -273,7 +273,7 @@ impl AlertDialog {
 impl From<AlertDialog> for Widget {
     fn from(value: AlertDialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -409,7 +409,7 @@ impl Dialog {
 impl From<Dialog> for Widget {
     fn from(value: Dialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -514,7 +514,7 @@ impl SimpleDialogOption {
 impl From<SimpleDialogOption> for Widget {
     fn from(value: SimpleDialogOption) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -681,6 +681,6 @@ impl SimpleDialog {
 impl From<SimpleDialog> for Widget {
     fn from(value: SimpleDialog) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }

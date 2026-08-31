@@ -5,7 +5,7 @@ fn rounded_text_inserted_by_a_layout_builder_is_frame_stable() {
     let open = Rc::new(Cell::new(false));
     let revision = Rc::new(Cell::new(0));
     let open_for_builder = open.clone();
-    let root = Widget::stateful_layout_builder(revision.clone(), move |_| {
+    let root = Widget::stateful_layout_builder(revision.clone(), move |_, _| {
         if open_for_builder.get() {
             Container::new()
                 .height(32.0)

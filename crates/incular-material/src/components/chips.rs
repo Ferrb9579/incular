@@ -348,7 +348,7 @@ impl RawChip {
 impl From<RawChip> for Widget {
     fn from(value: RawChip) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 

@@ -264,7 +264,7 @@ fn main() {
                 ThemeMode::Light
             })
             .title("Incular Material workbench")
-            .build()
+            .into()
     })
     .expect("valid Material workbench application");
 

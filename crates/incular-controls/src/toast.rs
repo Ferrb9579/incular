@@ -145,7 +145,9 @@ impl Provider {
 impl From<Provider> for Widget {
     fn from(value: Provider) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&crate::theme::current_control_theme()))
+        Widget::layout_builder(move |context, _| {
+            value.build(&crate::theme::current_control_theme(context))
+        })
     }
 }
 
@@ -212,8 +214,8 @@ impl Default for Root {
 impl From<Root> for Widget {
     fn from(value: Root) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = crate::theme::current_control_theme();
+        Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             let entry = ToastEntry {
                 id: ToastId(0),
                 title: value.title.clone(),

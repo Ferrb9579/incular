@@ -164,53 +164,54 @@ impl MenuBar {
 
 impl From<MenuBar> for Widget {
     fn from(value: MenuBar) -> Self {
-        let theme = current_control_theme();
-        let children = if let Some(style) = value.item_style {
-            value
-                .children
-                .into_iter()
-                .map(|child| ControlButton::with_child(child).style(style.clone()).into())
-                .collect::<Vec<Widget>>()
-        } else {
-            value.children
-        };
-        let row: Widget = Row::new(children)
-            .spacing(value.spacing)
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .into();
-        let style = value.style.unwrap_or_default();
-        let surface = Container::with_child(row)
-            .padding(style.padding.unwrap_or(value.padding))
-            .alignment(value.alignment)
-            .decoration(
-                BoxDecoration::new()
-                    .border_radius(style.resolve_shape(ControlState::empty()))
-                    .border(
-                        style
-                            .side
-                            .as_ref()
-                            .map(|side| side.resolve(ControlState::empty()))
-                            .unwrap_or_else(|| Border::new(0.0, Color::TRANSPARENT)),
-                    ),
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            let theme = current_control_theme(context);
+            let children = if let Some(style) = value.item_style.clone() {
+                value
+                    .children
+                    .iter()
+                    .cloned()
+                    .map(|child| ControlButton::with_child(child).style(style.clone()).into())
+                    .collect::<Vec<Widget>>()
+            } else {
+                value.children.clone()
+            };
+            let row: Widget = Row::new(children)
+                .spacing(value.spacing)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into();
+            let style = value.style.clone().unwrap_or_default();
+            let surface = Container::with_child(row)
+                .padding(style.padding.unwrap_or(value.padding))
+                .alignment(value.alignment)
+                .decoration(
+                    BoxDecoration::new()
+                        .border_radius(style.resolve_shape(ControlState::empty()))
+                        .border(
+                            style
+                                .side
+                                .as_ref()
+                                .map(|side| side.resolve(ControlState::empty()))
+                                .unwrap_or_else(|| Border::new(0.0, Color::TRANSPARENT)),
+                        ),
+                )
+                .clip_behavior(value.clip_behavior);
+            let state = ControlState::from_enabled(value.enabled);
+            let material: Widget = Material::new(surface)
+                .color(style.resolve_background(state, &theme))
+                .shadow_color(style.resolve_shadow(state, &theme))
+                .elevation(style.resolve_elevation(state))
+                .border_radius(style.resolve_shape(state))
+                .clip_behavior(value.clip_behavior)
+                .into();
+            material.semantics(
+                ExplicitSemantics::new(SemanticRole::Menu).state(SemanticState {
+                    enabled: value.enabled,
+                    ..SemanticState::default()
+                }),
             )
-            .clip_behavior(value.clip_behavior);
-        // Keep the menu bar's surface state-aware in the same way as popup
-        // menus. `enabled` controls the semantic state and custom child
-        // controls remain responsible for their own activation policy.
-        let state = ControlState::from_enabled(value.enabled);
-        let material: Widget = Material::new(surface)
-            .color(style.resolve_background(state, &theme))
-            .shadow_color(style.resolve_shadow(state, &theme))
-            .elevation(style.resolve_elevation(state))
-            .border_radius(style.resolve_shape(state))
-            .clip_behavior(value.clip_behavior)
-            .into();
-        material.semantics(
-            ExplicitSemantics::new(SemanticRole::Menu).state(SemanticState {
-                enabled: value.enabled,
-                ..SemanticState::default()
-            }),
-        )
+        })
     }
 }
 
@@ -355,7 +356,11 @@ impl MenuItemButton {
         self
     }
 
-    pub(super) fn build_with_close(&self, close: Option<Rc<dyn Fn() + 'static>>) -> Widget {
+    pub(super) fn build_with_close(
+        &self,
+        context: &incular_widgets::BuildContext<'_>,
+        close: Option<Rc<dyn Fn() + 'static>>,
+    ) -> Widget {
         let mut children = Vec::with_capacity(3);
         if let Some(icon) = &self.leading_icon {
             children.push(icon.clone());
@@ -409,7 +414,7 @@ impl MenuItemButton {
         // Menu rows are materialized by an already-deferred menu builder. Build
         // the inner control eagerly here so opening a menu does not introduce
         // another layout-builder boundary into a lazy sliver child.
-        let mut result: Widget = button.build(&current_control_theme());
+        let mut result: Widget = button.build(&current_control_theme(context));
         if let Some(hover) = self.on_hover.clone() {
             let enter = hover.clone();
             let exit = hover;
@@ -440,7 +445,8 @@ impl MenuItemButton {
 
 impl From<MenuItemButton> for Widget {
     fn from(value: MenuItemButton) -> Self {
-        value.build_with_close(None)
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| value.build_with_close(context, None))
     }
 }
 

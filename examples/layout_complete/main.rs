@@ -70,7 +70,7 @@ fn main() {
                 label("FittedBox + arbitrary retained affine Transform"),
                 SizedBox::from_size(Size::new(360., 115.)).child(FittedBox::new(Transform::rotation(-0.12, tile(Size::new(220., 60.), Color::rgba(81, 169, 137, 255)))).fit(BoxFit::Contain).alignment(Alignment::CENTER)).into(),
             ])),
-            panel(LayoutBuilder::new(|constraints| {
+            panel(LayoutBuilder::new(|_, constraints| {
                 let width = if constraints.max_width.is_finite() { constraints.max_width.round() } else { 0. };
                 DecoratedBox::new(Padding::all(8., label(&format!("LayoutBuilder observed max width: {width}px"))))
                     .background(Color::rgba(82, 101, 157, 255))

@@ -287,7 +287,7 @@ fn devtools_shell_tabs_remain_hittable_above_the_scrolling_body() {
     let active = Signal::new(ToolView::Widgets);
     let observed = active.clone();
     let scroll = ScrollController::new();
-    let root: Widget = LayoutBuilder::new(move |constraints| {
+    let root: Widget = LayoutBuilder::new(move |_, constraints| {
         let width = constraints.max_width.max(960.);
         let height = constraints.max_height.max(640.);
         let body_height = (height - 116.).max(1.);

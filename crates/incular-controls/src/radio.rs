@@ -201,9 +201,8 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
 impl<T: Clone + PartialEq + 'static> From<Root<T>> for Widget {
     fn from(value: Root<T>) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         })
     }

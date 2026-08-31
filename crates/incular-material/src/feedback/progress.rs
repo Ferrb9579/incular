@@ -1,7 +1,7 @@
 use super::helpers::finite_non_negative;
 use incular_config::EdgeInsets;
 use incular_core::{Color, Size};
-use incular_widgets::BorderRadius;
+use incular_widgets::{BorderRadius, BuildContext};
 use typed_builder::TypedBuilder;
 
 /// Stroke cap options used by [`ProgressIndicatorThemeData`].
@@ -210,6 +210,8 @@ impl From<ProgressIndicatorTheme> for incular_widgets::Widget {
 
 /// Reads the nearest retained [`ProgressIndicatorThemeData`].
 #[must_use]
-pub fn current_progress_indicator_theme() -> Option<ProgressIndicatorThemeData> {
-    incular_widgets::internal::current_build_environment::<ProgressIndicatorThemeData>()
+pub fn current_progress_indicator_theme(
+    context: &BuildContext<'_>,
+) -> Option<ProgressIndicatorThemeData> {
+    context.depend_on::<ProgressIndicatorThemeData>()
 }

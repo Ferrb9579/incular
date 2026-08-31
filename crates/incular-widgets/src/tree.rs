@@ -20,8 +20,8 @@ use incular_config::{
     WrapCrossAlignment,
 };
 use incular_core::{
-    Arena, ArenaId, Color, DirtyFlags, KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size,
-    Transform as CoreTransform,
+    Arena, ArenaId, BuildContext as DependencyContext, Color, ConsumerId, DirtyFlags,
+    KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size, Transform as CoreTransform,
 };
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
@@ -117,16 +117,59 @@ pub use retained::{PERFORMANCE_OVERLAY_KEY, performance_overlay_placeholder};
 pub use values::*;
 pub use widget::Widget;
 
-thread_local! {
-    /// Type-erased values made available while a retained layout builder is
-    /// materialized. Control libraries use this hook for ambient, typed
-    /// scopes without coupling the raw widget crate to a design-system crate.
-    static BUILD_ENVIRONMENT: RefCell<Vec<BuildEnvironmentFrame>> = const { RefCell::new(Vec::new()) };
+/// A borrowed view of the retained inherited environment for one live build
+/// operation. The reference cannot escape the callback that receives it.
+pub struct BuildContext<'a> {
+    inner: &'a DependencyContext,
 }
 
-enum BuildEnvironmentFrame {
-    Values(Option<Rc<dyn Any>>),
-    Boundary,
+pub(crate) type LayoutBuilderCallback = dyn for<'a> Fn(&BuildContext<'a>, Constraints) -> Widget;
+
+impl<'a> BuildContext<'a> {
+    fn new(inner: &'a DependencyContext) -> Self {
+        Self { inner }
+    }
+
+    /// Reads the nearest inherited value and registers this element as a
+    /// dependent of the exact retained scope that supplied it.
+    #[must_use]
+    pub fn depend_on<T: Any + Clone>(&self) -> Option<T> {
+        self.inner.depend::<T>()
+    }
+
+    /// Reads the nearest inherited value without creating an invalidation edge.
+    #[must_use]
+    pub fn find<T: Any + Clone>(&self) -> Option<T> {
+        self.inner.read::<T>()
+    }
+
+    /// Shared-ownership form of [`BuildContext::depend_on`].
+    #[must_use]
+    pub fn depend_on_shared<T: Any>(&self) -> Option<Rc<T>> {
+        self.inner.depend_shared::<T>()
+    }
+
+    /// Shared-ownership form of [`BuildContext::find`].
+    #[must_use]
+    pub fn find_shared<T: Any>(&self) -> Option<Rc<T>> {
+        self.inner.read_shared::<T>()
+    }
+}
+
+#[derive(Clone)]
+#[doc(hidden)]
+pub struct InheritedScopeValue {
+    pub(crate) type_id: TypeId,
+    pub(crate) value: Rc<dyn Any>,
+}
+
+impl InheritedScopeValue {
+    fn new<T: Any>(value: T) -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            value: Rc::new(value),
+        }
+    }
 }
 
 fn text_call_label(method: &str, text: &str) -> String {
@@ -135,148 +178,6 @@ fn text_call_label(method: &str, text: &str) -> String {
         preview.push('…');
     }
     format!("{method}({preview:?})")
-}
-
-/// A persistent chain of typed values inherited by a retained subtree.
-///
-/// `Widget::environment_scope` is represented by a layout-builder node so the
-/// core widget crate does not need to know the concrete environment types. A
-/// single erased value is not enough when independent scopes are nested (for
-/// example, Material's theme, input-decoration theme, and control theme), so
-/// effective environments retain the complete nearest-first chain here.
-struct InheritedEnvironment {
-    value: Rc<dyn Any>,
-    parent: Option<Rc<InheritedEnvironment>>,
-}
-
-fn environment_chain(value: Rc<dyn Any>) -> Rc<InheritedEnvironment> {
-    match value.downcast::<InheritedEnvironment>() {
-        Ok(chain) => chain,
-        Err(value) => Rc::new(InheritedEnvironment {
-            value,
-            parent: None,
-        }),
-    }
-}
-
-#[doc(hidden)]
-pub fn compose_environment(
-    local: Option<Rc<dyn Any>>,
-    inherited: Option<Rc<dyn Any>>,
-) -> Option<Rc<dyn Any>> {
-    let Some(local) = local else {
-        return inherited;
-    };
-    let Some(inherited) = inherited else {
-        return Some(local);
-    };
-    Some(Rc::new(InheritedEnvironment {
-        value: local,
-        parent: Some(environment_chain(inherited)),
-    }) as Rc<dyn Any>)
-}
-
-fn environment_value<T: Any + Clone>(environment: &Rc<dyn Any>) -> Option<T> {
-    if let Some(value) = environment.downcast_ref::<T>() {
-        return Some(value.clone());
-    }
-    let mut chain = environment.downcast_ref::<InheritedEnvironment>();
-    while let Some(scope) = chain {
-        if let Some(value) = scope.value.downcast_ref::<T>() {
-            return Some(value.clone());
-        }
-        chain = scope.parent.as_deref();
-    }
-    None
-}
-
-/// Runs a retained builder with one inherited, type-erased environment value.
-/// This is intentionally small and renderer-neutral; higher-level crates
-/// provide typed accessors around it.
-pub fn with_build_environment<R>(
-    environment: Option<Rc<dyn Any>>,
-    callback: impl FnOnce() -> R,
-) -> R {
-    BUILD_ENVIRONMENT.with(|stack| {
-        stack
-            .borrow_mut()
-            .push(BuildEnvironmentFrame::Values(environment));
-    });
-    struct EnvironmentGuard;
-    impl Drop for EnvironmentGuard {
-        fn drop(&mut self) {
-            BUILD_ENVIRONMENT.with(|stack| {
-                let _ = stack.borrow_mut().pop();
-            });
-        }
-    }
-    let _guard = EnvironmentGuard;
-    callback()
-}
-
-/// Runs a retained builder behind an explicit lookup boundary. The boundary
-/// hides all outer typed environments while allowing scopes installed by the
-/// builder itself to remain visible to its descendants.
-pub fn with_build_environment_boundary<R>(callback: impl FnOnce() -> R) -> R {
-    BUILD_ENVIRONMENT.with(|stack| {
-        stack.borrow_mut().push(BuildEnvironmentFrame::Boundary);
-    });
-    struct EnvironmentGuard;
-    impl Drop for EnvironmentGuard {
-        fn drop(&mut self) {
-            BUILD_ENVIRONMENT.with(|stack| {
-                let _ = stack.borrow_mut().pop();
-            });
-        }
-    }
-    let _guard = EnvironmentGuard;
-    callback()
-}
-
-/// Reads the nearest typed value from the active retained builder scope.
-#[must_use]
-pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
-    BUILD_ENVIRONMENT.with(|stack| {
-        let stack = stack.borrow();
-        for frame in stack.iter().rev() {
-            match frame {
-                BuildEnvironmentFrame::Boundary => break,
-                BuildEnvironmentFrame::Values(value) => {
-                    let Some(environment) = value.as_ref() else {
-                        continue;
-                    };
-                    if let Some(value) = environment_value::<T>(environment) {
-                        return Some(value);
-                    }
-                }
-            }
-        }
-        None
-    })
-}
-
-/// Reads a typed retained environment without placing the value-sized result
-/// on the caller's stack. This matters for large theme descriptors on native
-/// entry threads, whose stack is smaller than a test harness thread's stack.
-#[must_use]
-pub fn current_build_environment_boxed<T: Any + Clone>() -> Option<Box<T>> {
-    BUILD_ENVIRONMENT.with(|stack| {
-        let stack = stack.borrow();
-        for frame in stack.iter().rev() {
-            match frame {
-                BuildEnvironmentFrame::Boundary => break,
-                BuildEnvironmentFrame::Values(value) => {
-                    let Some(environment) = value.as_ref() else {
-                        continue;
-                    };
-                    if let Some(value) = environment_value::<T>(environment) {
-                        return Some(Box::new(value));
-                    }
-                }
-            }
-        }
-        None
-    })
 }
 
 /// Application-authored semantic metadata for a visual widget that does not
@@ -685,8 +586,8 @@ pub enum WidgetKind {
         child: Widget,
     },
     LayoutBuilder {
-        builder: Rc<dyn Fn(Constraints) -> Widget>,
-        environment: Option<Rc<dyn Any>>,
+        builder: Rc<LayoutBuilderCallback>,
+        environment: Option<InheritedScopeValue>,
         environment_boundary: bool,
         /// Optional mutable revision for builders whose callback updates
         /// retained local state without replacing the parent widget.  The
@@ -2277,11 +2178,15 @@ pub struct Element {
     sliver_scroll_revision: u64,
     layout_builder_constraints: Option<Constraints>,
     layout_builder_revision: u64,
-    /// Effective inherited retained builder environment for this element.
-    environment: Option<Rc<dyn Any>>,
-    /// Environment supplied directly by this element, if any. This lets a
-    /// nested scope shadow its parent while descendants continue inheriting.
-    environment_override: Option<Rc<dyn Any>>,
+    /// Dependency owner used while this element materializes a builder.
+    build_context: DependencyContext,
+    /// Separate dependency owner used by render lowering so rebuilding a
+    /// LayoutBuilder cannot erase dependencies observed by a retained render
+    /// object (for example DefaultTextStyle).
+    render_context: DependencyContext,
+    /// Environment supplied directly by this element, if any. The value lives
+    /// in the retained BuildContext environment rather than an ambient stack.
+    environment_override: Option<InheritedScopeValue>,
     /// Whether this element cuts off all environments installed above it.
     environment_boundary: bool,
     /// DevTools-only instrumentation. Zero cost in production builds.
@@ -2861,6 +2766,8 @@ pub struct WidgetTree {
     semantics: SemanticsTree,
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selections: HashMap<ElementId, StaticSelection>,
+    dependency_root: DependencyContext,
+    inherited_consumers: HashMap<ConsumerId, (ElementId, InheritedDependencyKind)>,
     environment: RuntimeEnvironment,
     pending_tree_error: Option<TreeError>,
     last_tree_error: Option<TreeError>,
@@ -2962,4 +2869,10 @@ fn flatten_focus_group(group: FocusTraversalGroupMembers, out: &mut Vec<ElementI
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InheritedDependencyKind {
+    Build,
+    Render,
 }

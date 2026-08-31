@@ -312,7 +312,7 @@ impl Title {
         let child = self.child;
         let revision = controller.state.borrow().revision.clone();
         let retained_controller = controller.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
+        Widget::stateful_layout_builder(revision, move |_, _| {
             retained_controller.synchronize();
             Widget::environment_scope(retained_controller.data(), child.clone())
         })

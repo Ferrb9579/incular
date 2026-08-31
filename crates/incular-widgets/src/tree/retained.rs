@@ -13,6 +13,7 @@ impl Default for WidgetTree {
 impl WidgetTree {
     #[must_use]
     pub fn new() -> Self {
+        let dependency_root = DependencyContext::new();
         Self {
             elements: Arena::new(),
             renders: Arena::new(),
@@ -40,6 +41,8 @@ impl WidgetTree {
             semantics: SemanticsTree::new(),
             semantic_ids: HashMap::new(),
             static_selections: HashMap::new(),
+            dependency_root,
+            inherited_consumers: HashMap::new(),
             environment: RuntimeEnvironment::default(),
             pending_tree_error: None,
             last_tree_error: None,
@@ -79,7 +82,7 @@ impl WidgetTree {
             if let Some(sensitivity) = element
                 .environment_override
                 .as_ref()
-                .and_then(|value| value.downcast_ref::<ContentSensitivity>())
+                .and_then(|value| value.value.downcast_ref::<ContentSensitivity>())
             {
                 host.register(*sensitivity);
             }

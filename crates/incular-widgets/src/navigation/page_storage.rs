@@ -289,21 +289,21 @@ impl PageStorage {
     /// Reads the nearest page-storage bucket while a deferred descendant is
     /// being materialized.
     #[must_use]
-    pub fn maybe_of() -> Option<PageStorageBucket> {
-        current_page_storage_bucket()
+    pub fn maybe_of(context: &crate::BuildContext<'_>) -> Option<PageStorageBucket> {
+        current_page_storage_bucket(context)
     }
 
     /// Reads the nearest page-storage bucket and panics when no scope exists.
     #[must_use]
-    pub fn of() -> PageStorageBucket {
-        Self::maybe_of().expect("PageStorage.of() called without a PageStorage scope")
+    pub fn of(context: &crate::BuildContext<'_>) -> PageStorageBucket {
+        Self::maybe_of(context).expect("PageStorage.of() called without a PageStorage scope")
     }
 }
 
 /// Reads the nearest retained page-storage scope.
 #[must_use]
-pub fn current_page_storage_bucket() -> Option<PageStorageBucket> {
-    crate::tree::current_build_environment::<PageStorageBucket>()
+pub fn current_page_storage_bucket(context: &crate::BuildContext<'_>) -> Option<PageStorageBucket> {
+    context.depend_on::<PageStorageBucket>()
 }
 
 impl From<PageStorage> for Widget {

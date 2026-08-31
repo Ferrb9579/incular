@@ -114,9 +114,8 @@ impl TextField {
 impl From<TextField> for Widget {
     fn from(value: TextField) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         })
     }
@@ -199,9 +198,8 @@ impl TextArea {
 impl From<TextArea> for Widget {
     fn from(value: TextArea) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| {
-            let theme = incular_widgets::internal::current_build_environment::<ControlTheme>()
-                .unwrap_or_default();
+        Widget::layout_builder(move |context, _| {
+            let theme = crate::theme::current_control_theme(context);
             value.build(&theme)
         })
     }

@@ -262,7 +262,7 @@ fn main() {
             let header = gallery_header(selected);
             let scroll = dashboard_scroll.clone();
 
-            let dashboard: Widget = LayoutBuilder::new(move |constraints| {
+            let dashboard: Widget = LayoutBuilder::new(move |_, constraints| {
                 let width = constraints.max_width.max(640.);
                 let height = constraints.max_height.max(640.);
                 let content_width = (width - 48.).max(592.);

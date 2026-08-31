@@ -350,13 +350,15 @@ impl From<UnconstrainedBox> for Widget {
 /// Rebuilds a subtree when incoming layout constraints change.
 #[derive(Clone)]
 pub struct LayoutBuilder {
-    builder: Rc<dyn Fn(Constraints) -> Widget>,
+    builder: Rc<crate::tree::LayoutBuilderCallback>,
 }
 
 impl LayoutBuilder {
     /// Creates a LayoutBuilder with a constraint builder closure.
     #[must_use]
-    pub fn new(builder: impl Fn(Constraints) -> Widget + 'static) -> Self {
+    pub fn new(
+        builder: impl for<'a> Fn(&crate::BuildContext<'a>, Constraints) -> Widget + 'static,
+    ) -> Self {
         Self {
             builder: Rc::new(builder),
         }
@@ -512,7 +514,7 @@ impl From<ConstraintsTransformBox> for Widget {
         let transform = value.transform;
         let child = value.child;
         let alignment = value.alignment;
-        LayoutBuilder::new(move |incoming| {
+        LayoutBuilder::new(move |_, incoming| {
             let child_constraints = transform(incoming);
             ConstrainedBox::new(child_constraints, Align::new(alignment, child.clone())).into()
         })

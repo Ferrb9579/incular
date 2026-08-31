@@ -5,6 +5,7 @@ use incular_core::{Color, Offset, Size};
 use incular_text::TextStyle;
 use incular_widgets::internal::DropShadow;
 use incular_widgets::{BorderRadius, BoxDecoration, Container, DefaultTextStyle, Widget};
+use std::rc::Rc;
 use std::time::Duration;
 use typed_builder::TypedBuilder;
 
@@ -196,39 +197,42 @@ impl Material {
 
 impl From<Material> for Widget {
     fn from(value: Material) -> Self {
-        let text_style = Theme::of_shared().map_or_else(TextStyle::default, |theme| {
-            theme.core().text_theme.body_medium.clone()
-        });
-        let child: Widget = DefaultTextStyle::new(text_style, value.child).into();
-        let mut surface_color = value.color;
-        if let Some(tint) = value.surface_tint_color {
-            let amount = (0.05 + value.elevation / 240.0).min(0.20);
-            surface_color = mix(surface_color, tint, amount);
-        }
-        let mut surface = Container::with_child(child)
-            .decoration(
-                BoxDecoration::new()
-                    .color(surface_color)
-                    .border_radius(value.border_radius),
-            )
-            .clip_behavior(value.clip_behavior);
-        if let Some(padding) = value.padding {
-            surface = surface.padding(padding);
-        }
-        if value.material_type == MaterialType::Circle {
-            surface =
-                surface.decoration(BoxDecoration::new().shape(incular_widgets::BoxShape::Circle));
-        }
-        if value.elevation > 0.0 {
-            DropShadow::new(
-                Offset::new(0.0, value.elevation * 0.18),
-                (value.elevation * 0.55).max(1.0),
-                value.shadow_color,
-                surface,
-            )
-            .into()
-        } else {
-            surface.into()
-        }
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| {
+            let text_style = Theme::of_shared(context).map_or_else(TextStyle::default, |theme| {
+                theme.core().text_theme.body_medium.clone()
+            });
+            let child: Widget = DefaultTextStyle::new(text_style, value.child.clone()).into();
+            let mut surface_color = value.color;
+            if let Some(tint) = value.surface_tint_color {
+                let amount = (0.05 + value.elevation / 240.0).min(0.20);
+                surface_color = mix(surface_color, tint, amount);
+            }
+            let mut surface = Container::with_child(child)
+                .decoration(
+                    BoxDecoration::new()
+                        .color(surface_color)
+                        .border_radius(value.border_radius),
+                )
+                .clip_behavior(value.clip_behavior);
+            if let Some(padding) = value.padding {
+                surface = surface.padding(padding);
+            }
+            if value.material_type == MaterialType::Circle {
+                surface = surface
+                    .decoration(BoxDecoration::new().shape(incular_widgets::BoxShape::Circle));
+            }
+            if value.elevation > 0.0 {
+                DropShadow::new(
+                    Offset::new(0.0, value.elevation * 0.18),
+                    (value.elevation * 0.55).max(1.0),
+                    value.shadow_color,
+                    surface,
+                )
+                .into()
+            } else {
+                surface.into()
+            }
+        })
     }
 }

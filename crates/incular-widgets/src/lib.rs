@@ -199,9 +199,9 @@ pub use selection_listener::SelectionListener;
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
 pub use semantics_debugger::{DEFAULT_SEMANTICS_DEBUGGER_NODE_LIMIT, SemanticsDebugger};
 pub use tree::{
-    BoxFit, ColorFiltered, DecoratedBox, EditableText, FadeTransition, Icon, Image, ImageRepeat,
-    Opacity, RotationTransition, ScaleTransition, SlideTransition, Text, TextFieldInputSnapshot,
-    TextInputActionHint, TextInputTypeHint, Transform, Widget,
+    BoxFit, BuildContext, ColorFiltered, DecoratedBox, EditableText, FadeTransition, Icon, Image,
+    ImageRepeat, Opacity, RotationTransition, ScaleTransition, SlideTransition, Text,
+    TextFieldInputSnapshot, TextInputActionHint, TextInputTypeHint, Transform, Widget,
 };
 pub use utilities::{
     Banner, BannerLocation, CheckedModeBanner, ErrorWidget, Expansible, PerformanceOverlay,

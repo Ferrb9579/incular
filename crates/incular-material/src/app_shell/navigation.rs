@@ -222,7 +222,7 @@ impl Default for NavigationRail {
 impl From<NavigationRail> for Widget {
     fn from(value: NavigationRail) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -405,6 +405,6 @@ impl Default for NavigationDrawer {
 impl From<NavigationDrawer> for Widget {
     fn from(value: NavigationDrawer) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }

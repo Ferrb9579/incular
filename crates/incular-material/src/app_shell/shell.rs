@@ -296,7 +296,7 @@ impl Default for BottomAppBar {
 impl From<BottomAppBar> for Widget {
     fn from(value: BottomAppBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -469,12 +469,12 @@ impl From<ScaffoldMessenger> for Widget {
         let revision = value.controller.revision();
         let child = value.child.clone();
         let controller = value.controller.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
+        Widget::stateful_layout_builder(revision, move |context, _| {
             let shell = ScaffoldMessenger {
                 child: child.clone(),
                 controller: controller.clone(),
             };
-            shell.build(&current_control_theme())
+            shell.build(&current_control_theme(context))
         })
     }
 }

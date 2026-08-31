@@ -3,7 +3,7 @@
 use incular_config::Brightness;
 use incular_controls::{ButtonStyle, ControlTheme, SplashFactory};
 use incular_core::Color;
-use incular_widgets::{BorderRadius, Widget};
+use incular_widgets::{BorderRadius, BuildContext, Widget};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
@@ -874,18 +874,17 @@ impl Theme {
     }
 
     #[must_use]
-    pub fn of() -> Option<ThemeData> {
-        Self::of_shared().map(|theme| (*theme).clone()).or_else(|| {
-            incular_widgets::internal::current_build_environment_boxed::<ThemeData>()
-                .map(|theme| *theme)
-        })
+    pub fn of(context: &BuildContext<'_>) -> Option<ThemeData> {
+        Self::of_shared(context)
+            .map(|theme| (*theme).clone())
+            .or_else(|| context.depend_on::<ThemeData>())
     }
 
     /// Reads the ambient theme without copying the large theme descriptor onto
     /// the native UI stack. Material application roots use this shared form.
     #[must_use]
-    pub(crate) fn of_shared() -> Option<Rc<ThemeData>> {
-        incular_widgets::internal::current_build_environment::<Rc<ThemeData>>()
+    pub(crate) fn of_shared(context: &BuildContext<'_>) -> Option<Rc<ThemeData>> {
+        context.depend_on::<Rc<ThemeData>>()
     }
 
     /// Installs one shared theme descriptor plus the derived control scopes.

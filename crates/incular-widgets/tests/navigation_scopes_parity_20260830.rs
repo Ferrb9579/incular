@@ -7,52 +7,21 @@
 
 use incular_config::Constraints;
 use incular_core::RestorationKey;
+use incular_widgets::NavigationBackButtonDispatcher as BackButtonDispatcher;
 use incular_widgets::internal::WidgetTree;
 use incular_widgets::{
-    Animation, AnimationController, Color, Container, GestureDetector, HitTestBehavior, Semantics,
-    Size, SizedBox, Stack, Text, Widget,
+    AnimatedModalBarrier, Animation, AnimationController, BackButtonListener, Color,
+    NavigatorPopHandlerController, PageStorage, PageStorageBucket, PageStorageKey, PopAttempt,
+    PopScopeController, RootRestorationScope, Size, SizedBox, Text, UnmanagedRestorationScope,
+    Widget, current_restoration_scope,
 };
 use serde_json::{Value, json};
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     collections::BTreeMap,
     rc::Rc,
     time::Duration,
 };
-
-mod tree {
-    use super::{Any, Rc};
-
-    pub fn current_build_environment<T: Any + Clone>() -> Option<T> {
-        incular_widgets::internal::current_build_environment::<T>()
-    }
-
-    #[allow(dead_code)]
-    pub fn with_build_environment<R>(
-        environment: Option<Rc<dyn Any>>,
-        callback: impl FnOnce() -> R,
-    ) -> R {
-        incular_widgets::internal::with_build_environment(environment, callback)
-    }
-}
-
-#[path = "../src/navigation/back_dispatch.rs"]
-mod back_dispatch;
-#[path = "../src/navigation/barrier.rs"]
-mod barrier;
-#[path = "../src/navigation/page_storage.rs"]
-mod page_storage;
-#[path = "../src/navigation/pop_scopes.rs"]
-mod pop_scopes;
-#[path = "../src/navigation/restoration.rs"]
-mod restoration;
-
-use back_dispatch::{BackButtonDispatcher, PopAttempt};
-use barrier::AnimatedModalBarrier;
-use page_storage::{PageStorage, PageStorageBucket, PageStorageKey};
-use pop_scopes::{BackButtonListener, NavigatorPopHandlerController, PopScopeController};
-use restoration::{RootRestorationScope, UnmanagedRestorationScope, current_restoration_scope};
 
 #[derive(Default)]
 struct MemoryRestorationBackend(RefCell<BTreeMap<Vec<RestorationKey>, Value>>);
@@ -207,8 +176,8 @@ fn page_storage_uses_ordered_key_chains_and_exposes_the_ambient_bucket() {
 
     let seen = Rc::new(RefCell::new(None));
     let seen_in_builder = seen.clone();
-    let child = Widget::layout_builder(move |_| {
-        *seen_in_builder.borrow_mut() = PageStorage::maybe_of();
+    let child = Widget::layout_builder(move |context, _| {
+        *seen_in_builder.borrow_mut() = PageStorage::maybe_of(context);
         SizedBox::shrink().into()
     });
     let mut tree = WidgetTree::new();
@@ -225,8 +194,8 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
     let root_scope = restoration_scope();
     let seen = Rc::new(RefCell::new(None));
     let seen_in_builder = seen.clone();
-    let child = Widget::layout_builder(move |_| {
-        *seen_in_builder.borrow_mut() = current_restoration_scope();
+    let child = Widget::layout_builder(move |context, _| {
+        *seen_in_builder.borrow_mut() = current_restoration_scope(context);
         SizedBox::shrink().into()
     });
     let mut tree = WidgetTree::new();
@@ -245,8 +214,8 @@ fn restoration_scopes_claim_stable_paths_and_none_shadows_ambient_scope() {
 
     let seen_disabled = Rc::new(RefCell::new(Some(root_scope.clone())));
     let seen_in_builder = seen_disabled.clone();
-    let child = Widget::layout_builder(move |_| {
-        *seen_in_builder.borrow_mut() = current_restoration_scope();
+    let child = Widget::layout_builder(move |context, _| {
+        *seen_in_builder.borrow_mut() = current_restoration_scope(context);
         SizedBox::shrink().into()
     });
     let mut tree = WidgetTree::new();

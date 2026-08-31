@@ -79,6 +79,10 @@ impl TrackerInner {
     fn take_dirty(&self, consumer: ConsumerId) -> bool {
         self.dirty.borrow_mut().remove(&consumer)
     }
+
+    fn take_all_dirty(&self) -> Vec<ConsumerId> {
+        self.dirty.borrow_mut().drain().collect()
+    }
 }
 
 struct Environment {
@@ -216,6 +220,29 @@ impl BuildContext {
         }
     }
 
+    /// Creates another dependency owner that observes the same retained
+    /// inherited environment and shares this context's dependency tracker.
+    #[must_use]
+    pub fn for_related_consumer(&self, consumer: ConsumerId) -> Self {
+        Self {
+            environment: self.environment.clone(),
+            tracker: self.tracker.clone(),
+            consumer,
+        }
+    }
+
+    /// Creates an explicit inherited lookup boundary for another consumer.
+    /// Values above this point are not visible, while dependency invalidation
+    /// remains in the same retained-tree tracker.
+    #[must_use]
+    pub fn boundary_for_consumer(&self, consumer: ConsumerId) -> Self {
+        Self {
+            environment: Environment::root(),
+            tracker: self.tracker.clone(),
+            consumer,
+        }
+    }
+
     /// Returns the identity used for dependency invalidation.
     #[must_use]
     pub const fn consumer_id(&self) -> ConsumerId {
@@ -239,6 +266,52 @@ impl BuildContext {
         let child = self.child();
         child.insert(value);
         child
+    }
+
+    /// Creates a child environment from a type-erased framework value. This is
+    /// the retained-tree integration point; application-facing APIs should use
+    /// typed `provide`/lookup methods instead.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn provide_erased(&self, type_id: TypeId, value: Rc<dyn Any>) -> Self {
+        let child = self.child();
+        child.environment.values.borrow_mut().insert(type_id, value);
+        child
+    }
+
+    /// Replaces a local type-erased value and invalidates only consumers that
+    /// subscribed to this exact retained environment/type key.
+    #[doc(hidden)]
+    pub fn set_erased(&self, type_id: TypeId, value: Rc<dyn Any>) {
+        self.environment.values.borrow_mut().insert(type_id, value);
+        self.environment
+            .revision
+            .set(self.environment.revision.get().wrapping_add(1));
+        self.tracker.invalidate(DependencyKey::Environment {
+            environment: self.environment.id,
+            type_id,
+        });
+    }
+
+    /// Removes a local type-erased value and invalidates its exact subscribers.
+    #[doc(hidden)]
+    pub fn remove_erased(&self, type_id: TypeId) -> bool {
+        let removed = self
+            .environment
+            .values
+            .borrow_mut()
+            .remove(&type_id)
+            .is_some();
+        if removed {
+            self.environment
+                .revision
+                .set(self.environment.revision.get().wrapping_add(1));
+            self.tracker.invalidate(DependencyKey::Environment {
+                environment: self.environment.id,
+                type_id,
+            });
+        }
+        removed
     }
 
     /// Inserts or replaces a value in this environment. Existing consumers
@@ -361,6 +434,14 @@ impl BuildContext {
         self.read()
     }
 
+    /// Reads a shared inherited value while recording the dependency without
+    /// cloning the value itself.
+    #[must_use]
+    pub fn depend_shared<T: Any>(&self) -> Option<Rc<T>> {
+        self.record_environment(TypeId::of::<T>());
+        self.read_shared()
+    }
+
     /// Alias for [`BuildContext::depend`], matching reactive UI terminology.
     #[must_use]
     pub fn watch<T: Any + Clone>(&self) -> Option<T> {
@@ -432,6 +513,14 @@ impl BuildContext {
     /// Takes and clears this consumer's invalidation bit.
     pub fn take_dirty(&self) -> bool {
         self.tracker.take_dirty(self.consumer)
+    }
+
+    /// Drains all dirty consumers that share this retained dependency tracker.
+    /// Schedulers use this to translate precise inherited-value invalidations
+    /// into their own element work queues.
+    #[doc(hidden)]
+    pub fn take_dirty_consumers(&self) -> Vec<ConsumerId> {
+        self.tracker.take_all_dirty()
     }
 
     #[must_use]

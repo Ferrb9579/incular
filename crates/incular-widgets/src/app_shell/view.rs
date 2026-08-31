@@ -461,7 +461,7 @@ impl View {
         let child = self.child;
         let revision = controller.state.borrow().revision.clone();
         let retained_controller = controller.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
+        Widget::stateful_layout_builder(revision, move |_, _| {
             let data = retained_controller.data();
             let child = Widget::visibility(!data.is_closed(), child.clone());
             Widget::environment_scope(
@@ -911,7 +911,7 @@ impl ViewAnchor {
         let title = self.title;
         let revision = controller.inner.state.borrow().revision.clone();
         let retained_controller = controller.clone();
-        Widget::stateful_layout_builder(revision, move |_| {
+        Widget::stateful_layout_builder(revision, move |_, _| {
             if let Some(view) = view.as_ref() {
                 let data = view.data();
                 let request = AuxiliaryViewRequest {

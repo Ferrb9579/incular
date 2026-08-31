@@ -204,7 +204,7 @@ impl MenuAnchor {
         self
     }
 
-    fn build(&self) -> Widget {
+    fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
         let open = self.controller.is_open();
         let anchor_child = self.builder.as_ref().map_or_else(
             || {
@@ -254,7 +254,7 @@ impl MenuAnchor {
             return anchor;
         }
 
-        let theme = current_control_theme();
+        let theme = current_control_theme(context);
         let style = self.style.clone().unwrap_or_default();
         let items = if let Some(item_style) = self.item_style.clone() {
             self.menu_children
@@ -309,6 +309,6 @@ impl From<MenuAnchor> for Widget {
     fn from(value: MenuAnchor) -> Self {
         let value = Rc::new(value);
         let revision = value.controller.revision();
-        Widget::stateful_layout_builder(revision, move |_| value.build())
+        Widget::stateful_layout_builder(revision, move |context, _| value.build(context))
     }
 }

@@ -170,7 +170,7 @@ impl BottomNavigationBar {
 impl From<BottomNavigationBar> for Widget {
     fn from(value: BottomNavigationBar) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| value.build(&current_control_theme(context)))
     }
 }
 
@@ -284,46 +284,55 @@ impl NavigationBar {
         self.on_destination_selected = Some(Rc::new(callback));
         self
     }
+
+    fn build(&self, context: &incular_widgets::BuildContext<'_>) -> Widget {
+        let selected = self
+            .selected_index
+            .min(self.destinations.len().saturating_sub(1));
+        let behavior = self.label_behavior;
+        let callback = self.on_destination_selected.clone();
+        let children = self
+            .destinations
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, item)| {
+                let icon = if index == selected {
+                    item.selected_icon.unwrap_or(item.icon)
+                } else {
+                    item.icon
+                };
+                let show_label = matches!(behavior, NavigationDestinationLabelBehavior::AlwaysShow)
+                    || (matches!(
+                        behavior,
+                        NavigationDestinationLabelBehavior::OnlyShowSelected
+                    ) && index == selected);
+                let child: Widget = if show_label {
+                    Column::new([icon, Text::new(item.label).into()])
+                        .spacing(2.0)
+                        .into()
+                } else {
+                    icon
+                };
+                let mut button = TextButton::with_child(child).enabled(item.enabled);
+                if item.enabled
+                    && let Some(callback) = callback.clone()
+                {
+                    button = button.on_click(move || callback(index));
+                }
+                Widget::from(button)
+            });
+        Container::new()
+            .height(80.0)
+            .color(current_control_theme(context).colors.surface)
+            .child(Row::new(children).main_axis_alignment(MainAxisAlignment::SpaceEvenly))
+            .into()
+    }
 }
 
 impl From<NavigationBar> for Widget {
     fn from(value: NavigationBar) -> Self {
-        let destinations = value.destinations;
-        let selected = value
-            .selected_index
-            .min(destinations.len().saturating_sub(1));
-        let behavior = value.label_behavior;
-        let callback = value.on_destination_selected;
-        let children = destinations.into_iter().enumerate().map(|(index, item)| {
-            let icon = if index == selected {
-                item.selected_icon.unwrap_or(item.icon)
-            } else {
-                item.icon
-            };
-            let show_label = matches!(behavior, NavigationDestinationLabelBehavior::AlwaysShow)
-                || (matches!(
-                    behavior,
-                    NavigationDestinationLabelBehavior::OnlyShowSelected
-                ) && index == selected);
-            let child: Widget = if show_label {
-                Column::new([icon, Text::new(item.label).into()])
-                    .spacing(2.0)
-                    .into()
-            } else {
-                icon
-            };
-            let mut button = TextButton::with_child(child).enabled(item.enabled);
-            if item.enabled
-                && let Some(callback) = callback.clone()
-            {
-                button = button.on_click(move || callback(index));
-            }
-            Widget::from(button)
-        });
-        Container::new()
-            .height(80.0)
-            .color(current_control_theme().colors.surface)
-            .child(Row::new(children).main_axis_alignment(MainAxisAlignment::SpaceEvenly))
-            .into()
+        let value = Rc::new(value);
+        Widget::layout_builder(move |context, _| value.build(context))
     }
 }

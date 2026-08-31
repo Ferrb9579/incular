@@ -103,8 +103,12 @@ impl LinearProgressIndicator {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let indicator_theme = current_progress_indicator_theme().unwrap_or_default();
+    pub fn build(
+        &self,
+        context: &incular_widgets::BuildContext<'_>,
+        theme: &ControlTheme,
+    ) -> Widget {
+        let indicator_theme = current_progress_indicator_theme(context).unwrap_or_default();
         let mut controls_theme = theme.clone();
         if let Some(color) = indicator_theme.color {
             controls_theme.colors.accent = color;
@@ -134,7 +138,9 @@ impl LinearProgressIndicator {
 impl From<LinearProgressIndicator> for Widget {
     fn from(value: LinearProgressIndicator) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| {
+            value.build(context, &current_control_theme(context))
+        })
     }
 }
 
@@ -246,8 +252,12 @@ impl CircularProgressIndicator {
     }
 
     #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let indicator_theme = current_progress_indicator_theme().unwrap_or_default();
+    pub fn build(
+        &self,
+        context: &incular_widgets::BuildContext<'_>,
+        theme: &ControlTheme,
+    ) -> Widget {
+        let indicator_theme = current_progress_indicator_theme(context).unwrap_or_default();
         let size = self.size.max(1.0);
         let stroke = self
             .stroke_width
@@ -330,6 +340,8 @@ fn circle_arc(center: Offset, radius: f32, start: f32, end: f32) -> Path {
 impl From<CircularProgressIndicator> for Widget {
     fn from(value: CircularProgressIndicator) -> Self {
         let value = Rc::new(value);
-        Widget::layout_builder(move |_| value.build(&current_control_theme()))
+        Widget::layout_builder(move |context, _| {
+            value.build(context, &current_control_theme(context))
+        })
     }
 }

@@ -11,8 +11,7 @@ use incular_text::{RichText, TextAlign, TextOverflow, TextStyle};
 use incular_widgets::internal::*;
 use incular_widgets::*;
 use std::{
-    any::Any,
-    cell::Cell,
+    cell::{Cell, RefCell},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -21,19 +20,21 @@ use std::{
 fn nested_environment_scopes_keep_all_typed_values() {
     let outer = Color::rgba(12, 34, 56, 255);
     let inner = TextStyle::new().font_size(24.0);
-    let environment = compose_environment(
-        Some(Rc::new(inner.clone()) as Rc<dyn Any>),
-        Some(Rc::new(outer) as Rc<dyn Any>),
-    )
-    .expect("nested environment");
-
-    with_build_environment(Some(environment), || {
-        assert_eq!(
-            current_build_environment::<TextStyle>(),
-            Some(inner.clone())
-        );
-        assert_eq!(current_build_environment::<Color>(), Some(outer));
+    let seen = Rc::new(RefCell::new(None));
+    let observed = seen.clone();
+    let child = Widget::layout_builder(move |context, _| {
+        *observed.borrow_mut() = Some((
+            context.depend_on::<TextStyle>(),
+            context.depend_on::<Color>(),
+        ));
+        SizedBox::shrink().into()
     });
+    let widget = Widget::environment_scope(outer, Widget::environment_scope(inner.clone(), child));
+    let mut tree = WidgetTree::new();
+    tree.mount(widget).expect("mount nested scopes");
+    tree.layout(Constraints::tight(Size::new(20., 20.)));
+
+    assert_eq!(*seen.borrow(), Some((Some(inner), Some(outer))));
 }
 
 #[test]
@@ -173,7 +174,7 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
     let observed = builds.clone();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::layout_builder(move |constraints| {
+        .mount(Widget::layout_builder(move |_, constraints| {
             observed.set(observed.get() + 1);
             Widget::fixed_box(Size::new(constraints.max_width, 10.), Color::WHITE)
         }))
@@ -194,7 +195,7 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
 fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::layout_builder(|_| Widget::text("old child")))
+        .mount(Widget::layout_builder(|_, _| Widget::text("old child")))
         .unwrap();
     let constraints = Constraints::tight(Size::new(200., 40.));
 
@@ -202,8 +203,11 @@ fn layout_builder_rebuilds_when_its_descriptor_changes_at_same_constraints() {
     tree.update_semantics();
     assert!(tree.semantics_debug_dump().contains("old child"));
 
-    tree.update(root, Widget::layout_builder(|_| Widget::text("new child")))
-        .unwrap();
+    tree.update(
+        root,
+        Widget::layout_builder(|_, _| Widget::text("new child")),
+    )
+    .unwrap();
     tree.layout(constraints);
     tree.update_semantics();
 
@@ -226,7 +230,8 @@ fn plain_text_uses_the_documented_natural_default_style() {
 #[test]
 fn icons_fit_and_center_their_declared_logical_box() {
     let icon: Widget = Icon::new(icons::check()).size(12.).into();
-    let RenderKind::Shape { path, desired, .. } = render_kind(&icon, None) else {
+    let context = incular_core::BuildContext::new();
+    let RenderKind::Shape { path, desired, .. } = render_kind(&icon, &context) else {
         panic!("Icon should retain a shape render kind");
     };
     let bounds = path.bounds().expect("check path has geometry");
@@ -247,7 +252,7 @@ fn stateful_layout_builder_rebuilds_when_local_revision_changes() {
     let builder_state = state.clone();
     let mut tree = WidgetTree::new();
     let root = tree
-        .mount(Widget::stateful_layout_builder(revision, move |_| {
+        .mount(Widget::stateful_layout_builder(revision, move |_, _| {
             observed.set(observed.get() + 1);
             Widget::fixed_box(
                 Size::new(10. + builder_state.get() as f32, 10.),
