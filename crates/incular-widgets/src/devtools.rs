@@ -206,7 +206,7 @@ impl WidgetTree {
             bounds,
             content_bounds,
             baseline_y,
-            clip_bounds: render.clip_layer.map(|_| bounds),
+            clip_bounds: render.object.layers.clip.map(|_| bounds),
         })
     }
 
@@ -341,7 +341,7 @@ impl WidgetTree {
                 offset: Some([render_node.offset.x, render_node.offset.y]),
                 world_bounds: self.element_bounds(id).map(rect_array),
                 baseline: render_node.baseline,
-                clip: render_node.clip_layer.map(|_| {
+                clip: render_node.object.layers.clip.map(|_| {
                     [
                         render_node.offset.x,
                         render_node.offset.y,
@@ -419,7 +419,7 @@ impl WidgetTree {
             world_bounds,
             content_bounds,
             padding,
-            clip: render.clip_layer.map(|_| world_bounds),
+            clip: render.object.layers.clip.map(|_| world_bounds),
             baseline: render.baseline,
             details,
         })

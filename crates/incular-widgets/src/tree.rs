@@ -27,8 +27,8 @@ use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
 use incular_rendering::{
     Annotation, BlendMode, Border, Brush, ColorFilter, CornerRadii, DisplayList, DropShadowEffect,
-    FillRule, FilterQuality, GaussianBlur, ImageSampling, LayerAnchor, LayerId, LayerLink,
-    LayerTree, PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma,
+    FillRule, FilterQuality, GaussianBlur, ImageSampling, LayerAnchor, LayerLink, LayerTree,
+    PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma,
 };
 use incular_scroll::{
     ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,
@@ -48,9 +48,9 @@ use std::sync::Arc;
 use incular_devtools_protocol::{DebugValue, DevWidgetId, TraceEvent, TracePhase};
 
 use crate::advanced_scrolling::{
-    ChildVicinity, DraggableScrollableActuator, DraggableScrollableSheet, DraggableScrollableState,
-    ListWheelScrollView, ListWheelViewport, RawScrollbar, RawScrollbarStyle,
-    TwoDimensionalScrollView, TwoDimensionalViewport, TwoDimensionalViewportLayout, WheelLayout,
+    ChildVicinity, DraggableScrollableActuator, DraggableScrollableSheet, ListWheelScrollView,
+    ListWheelViewport, RawScrollbar, RawScrollbarStyle, TwoDimensionalScrollView,
+    TwoDimensionalViewport,
 };
 use crate::compositing::ShaderCallback;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
@@ -64,6 +64,7 @@ use crate::painting_effects::BoxShadow;
 use crate::raw_input::{GestureRecognizer, RawInputKind};
 use crate::recursion::{DiagnosticNode, DiagnosticNodeId, RecursionDiagnostics};
 pub use crate::recursion::{FramePhase, RecursionReport};
+use crate::render_object::{LegacyRenderLayers, RenderGeometry, RenderNode, RenderObjectPayload};
 use crate::scrolling::{
     SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };
@@ -2642,53 +2643,6 @@ pub struct SliverViewportDiagnostics {
     pub render_object_count: usize,
     pub picture_layer_count: usize,
 }
-pub struct RenderObject {
-    pub parent: Option<RenderObjectId>,
-    pub children: Vec<RenderObjectId>,
-    kind: RenderKind,
-    pub size: Size,
-    pub offset: Offset,
-    pub constraints: Option<Constraints>,
-    dirty: DirtyFlags,
-    cache: DisplayList,
-    text_layout: Option<Arc<TextLayout>>,
-    text_revision: u64,
-    text_visual_revision: u64,
-    text_scroll_x: f32,
-    text_scroll_y: f32,
-    advanced_scrollbar: Option<RawScrollbar>,
-    wheel_layout: Option<WheelLayout<Widget>>,
-    two_dimensional_layout: Option<TwoDimensionalViewportLayout<Widget>>,
-    draggable_state: Option<DraggableScrollableState>,
-    scrollbar_hovered: bool,
-    scrollbar_dragging: bool,
-    focused: bool,
-    pub(crate) baseline: Option<f32>,
-    button_state: ButtonState,
-    button_hovered: bool,
-    button_pressed: bool,
-    button_focused: bool,
-    /// Static parent-relative layout placement. This is never used to store a
-    /// scroll or animation displacement.
-    layer: LayerId,
-    picture: Option<LayerId>,
-    /// Optional post-child picture used for shape-aware focus outlines on
-    /// transparent compound-control hit surfaces.
-    focus_picture: Option<LayerId>,
-    pub(crate) clip_layer: Option<LayerId>,
-    content_layer: Option<LayerId>,
-    opacity_layer: Option<LayerId>,
-    blur_layer: Option<LayerId>,
-    shadow_layer: Option<LayerId>,
-    color_filter_layer: Option<LayerId>,
-    blend_layer: Option<LayerId>,
-    shader_mask_layer: Option<LayerId>,
-    backdrop_filter_layer: Option<LayerId>,
-    annotation_layer: Option<LayerId>,
-    leader_layer: Option<LayerId>,
-    follower_layer: Option<LayerId>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ScrollbarDrag {
     render: RenderObjectId,
@@ -2847,7 +2801,7 @@ impl DeepTraceCapture {
 /// Persistent UI state. IDs become invalid immediately after unmount.
 pub struct WidgetTree {
     elements: Arena<Element>,
-    renders: Arena<RenderObject>,
+    renders: Arena<RenderNode>,
     root: Option<ElementId>,
     diagnostics: Diagnostics,
     unmounted: Vec<ElementId>,

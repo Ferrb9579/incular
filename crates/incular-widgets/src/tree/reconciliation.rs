@@ -77,7 +77,9 @@ impl WidgetTree {
                             .renders
                             .get(self.render_id(id).expect("mounted").0)
                             .expect("mounted render")
-                            .layer;
+                            .object
+                            .layers
+                            .root;
                         self.compositor.set_root(layer);
                     }
                 }
@@ -509,47 +511,37 @@ impl WidgetTree {
                 )
             }
         };
-        let render = self.renders.insert(RenderObject {
+        let kind = render_kind(&widget, environment.as_ref());
+        let render = self.renders.insert(RenderNode {
             parent: None,
             children: Vec::new(),
-            kind: render_kind(&widget, environment.as_ref()),
-            size: Size::ZERO,
-            offset: Offset::ZERO,
-            constraints: None,
+            geometry: RenderGeometry {
+                size: Size::ZERO,
+                offset: Offset::ZERO,
+                constraints: None,
+                baseline: None,
+            },
             dirty: DirtyFlags::LAYOUT | DirtyFlags::PAINT,
-            cache: DisplayList::new(),
-            text_layout: None,
-            text_revision: 0,
-            text_visual_revision: 0,
-            text_scroll_x: 0.,
-            text_scroll_y: 0.,
-            advanced_scrollbar: None,
-            wheel_layout: None,
-            two_dimensional_layout: None,
-            draggable_state: None,
-            scrollbar_hovered: false,
-            scrollbar_dragging: false,
-            focused: false,
-            baseline: None,
-            button_state: ButtonState::Normal,
-            button_hovered: false,
-            button_pressed: false,
-            button_focused: false,
-            layer,
-            picture,
-            focus_picture,
-            clip_layer,
-            content_layer,
-            opacity_layer,
-            blur_layer,
-            shadow_layer,
-            color_filter_layer,
-            blend_layer,
-            shader_mask_layer,
-            backdrop_filter_layer,
-            annotation_layer,
-            leader_layer,
-            follower_layer,
+            object: RenderObjectPayload::new(
+                kind,
+                LegacyRenderLayers {
+                    root: layer,
+                    picture,
+                    focus_picture,
+                    clip: clip_layer,
+                    content: content_layer,
+                    opacity: opacity_layer,
+                    blur: blur_layer,
+                    shadow: shadow_layer,
+                    color_filter: color_filter_layer,
+                    blend: blend_layer,
+                    shader_mask: shader_mask_layer,
+                    backdrop_filter: backdrop_filter_layer,
+                    annotation: annotation_layer,
+                    leader: leader_layer,
+                    follower: follower_layer,
+                },
+            ),
         });
         let id = ElementId(self.elements.insert(Element {
             parent,
@@ -611,7 +603,8 @@ impl WidgetTree {
                 self.renders
                     .get_mut(render.0)
                     .expect("live child render")
-                    .kind = new_kind;
+                    .object
+                    .replace_kind(new_kind);
                 {
                     let element = self.elements.get_mut(child.0).expect("live child");
                     element.environment = effective;
@@ -720,12 +713,16 @@ impl WidgetTree {
             let opacity_only = opacity_composite_only_change(&old_kind, &new_kind);
             let effect_only = effect_composite_only_change(&old_kind, &new_kind);
             let affine_only = affine_composite_only_change(&old_kind, &new_kind);
-            self.renders.get_mut(render.0).expect("present").kind = new_kind.clone();
+            self.renders
+                .get_mut(render.0)
+                .expect("present")
+                .object
+                .replace_kind(new_kind.clone());
             if let RenderKind::Banner { shadow, .. } = &new_kind
                 && let Some(layer) = self
                     .renders
                     .get(render.0)
-                    .and_then(|node| node.shadow_layer)
+                    .and_then(|node| node.object.layers.shadow)
             {
                 let sigma = crate::utilities::banner_shadow_sigma(shadow.blur_radius);
                 self.compositor.update_drop_shadow(
@@ -741,7 +738,11 @@ impl WidgetTree {
                 // Alpha is consumed by the retained compositor layer. Keep
                 // paint/layout caches warm for opacity-only rebuilds.
                 if let RenderKind::Opacity { alpha, .. } = new_kind {
-                    if let Some(layer) = self.renders.get(render.0).and_then(|n| n.opacity_layer) {
+                    if let Some(layer) = self
+                        .renders
+                        .get(render.0)
+                        .and_then(|n| n.object.layers.opacity)
+                    {
                         self.compositor.update_opacity(layer, alpha);
                     }
                 }
@@ -754,7 +755,11 @@ impl WidgetTree {
                     RenderKind::Blur {
                         sigma_x, sigma_y, ..
                     } => {
-                        if let Some(layer) = self.renders.get(render.0).and_then(|n| n.blur_layer) {
+                        if let Some(layer) = self
+                            .renders
+                            .get(render.0)
+                            .and_then(|n| n.object.layers.blur)
+                        {
                             self.compositor
                                 .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y));
                         }
@@ -766,7 +771,10 @@ impl WidgetTree {
                         color,
                         ..
                     } => {
-                        if let Some(layer) = self.renders.get(render.0).and_then(|n| n.shadow_layer)
+                        if let Some(layer) = self
+                            .renders
+                            .get(render.0)
+                            .and_then(|n| n.object.layers.shadow)
                         {
                             self.compositor.update_drop_shadow(
                                 layer,
@@ -778,14 +786,16 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.color_filter_layer)
+                            .and_then(|node| node.object.layers.color_filter)
                         {
                             self.compositor.update_color_filter(layer, filter);
                         }
                     }
                     RenderKind::Blend { mode } => {
-                        if let Some(layer) =
-                            self.renders.get(render.0).and_then(|node| node.blend_layer)
+                        if let Some(layer) = self
+                            .renders
+                            .get(render.0)
+                            .and_then(|node| node.object.layers.blend)
                         {
                             self.compositor.update_blend(layer, mode);
                         }
@@ -794,7 +804,7 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.shader_mask_layer)
+                            .and_then(|node| node.object.layers.shader_mask)
                         {
                             let size = self.renders.get(render.0).expect("present").size;
                             self.compositor.update_shader_mask(
@@ -814,7 +824,7 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.backdrop_filter_layer)
+                            .and_then(|node| node.object.layers.backdrop_filter)
                         {
                             self.compositor
                                 .update_backdrop_filter(layer, blur, blend_mode, enabled);
@@ -824,7 +834,7 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.annotation_layer)
+                            .and_then(|node| node.object.layers.annotation)
                         {
                             let size = self.renders.get(render.0).expect("present").size;
                             self.compositor
@@ -835,7 +845,7 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.leader_layer)
+                            .and_then(|node| node.object.layers.leader)
                         {
                             let size = self.renders.get(render.0).expect("present").size;
                             self.compositor.update_leader(layer, link, size);
@@ -851,7 +861,7 @@ impl WidgetTree {
                         if let Some(layer) = self
                             .renders
                             .get(render.0)
-                            .and_then(|node| node.follower_layer)
+                            .and_then(|node| node.object.layers.follower)
                         {
                             let size = self.renders.get(render.0).expect("present").size;
                             self.compositor.update_follower(
@@ -875,7 +885,7 @@ impl WidgetTree {
                 if let (Some(layer), Some(transform)) = (
                     self.renders
                         .get(render.0)
-                        .and_then(|node| node.content_layer),
+                        .and_then(|node| node.object.layers.content),
                     self.content_transform(render),
                 ) {
                     self.compositor.update_transform(layer, transform);
@@ -1403,7 +1413,7 @@ impl WidgetTree {
             .renders
             .iter()
             .filter_map(|(raw, render)| {
-                let RenderKind::SliverViewport { config } = &render.kind else {
+                let RenderKind::SliverViewport { config } = &render.object.kind else {
                     return None;
                 };
                 let element = self.element_for_render(RenderObjectId(raw))?;
@@ -1488,7 +1498,7 @@ impl WidgetTree {
 
     pub(super) fn scroll_controller_for_element(&self, id: ElementId) -> Option<ScrollController> {
         let render = self.elements.get(id.0)?.render;
-        match &self.renders.get(render.0)?.kind {
+        match &self.renders.get(render.0)?.object.kind {
             RenderKind::Scroll { controller, .. } => Some(controller.clone()),
             RenderKind::SliverViewport { config } => Some(config.controller.clone()),
             _ => None,
@@ -1568,49 +1578,49 @@ impl WidgetTree {
             self.unmount_element(child);
         }
         if let Some(render) = self.renders.remove(element.render.0) {
-            if let Some(picture) = render.picture {
+            if let Some(picture) = render.object.layers.picture {
                 self.compositor.remove(picture);
             }
-            if let Some(picture) = render.focus_picture {
+            if let Some(picture) = render.object.layers.focus_picture {
                 self.compositor.remove(picture);
             }
-            if let Some(layer) = render.clip_layer {
+            if let Some(layer) = render.object.layers.clip {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.content_layer {
+            if let Some(layer) = render.object.layers.content {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.opacity_layer {
+            if let Some(layer) = render.object.layers.opacity {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.blur_layer {
+            if let Some(layer) = render.object.layers.blur {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.shadow_layer {
+            if let Some(layer) = render.object.layers.shadow {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.color_filter_layer {
+            if let Some(layer) = render.object.layers.color_filter {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.blend_layer {
+            if let Some(layer) = render.object.layers.blend {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.shader_mask_layer {
+            if let Some(layer) = render.object.layers.shader_mask {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.backdrop_filter_layer {
+            if let Some(layer) = render.object.layers.backdrop_filter {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.annotation_layer {
+            if let Some(layer) = render.object.layers.annotation {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.leader_layer {
+            if let Some(layer) = render.object.layers.leader {
                 self.compositor.remove(layer);
             }
-            if let Some(layer) = render.follower_layer {
+            if let Some(layer) = render.object.layers.follower {
                 self.compositor.remove(layer);
             }
-            self.compositor.remove(render.layer);
+            self.compositor.remove(render.object.layers.root);
         }
         self.unmounted.push(id);
         self.diagnostics.unmounts += 1;
@@ -1664,26 +1674,30 @@ impl WidgetTree {
         ) = {
             let node = self.renders.get(render.0).expect("mounted");
             (
-                node.layer,
-                node.picture,
-                node.focus_picture,
-                node.content_layer,
-                node.opacity_layer,
-                node.blur_layer,
-                node.shadow_layer,
-                node.color_filter_layer,
-                node.blend_layer,
-                node.shader_mask_layer,
-                node.backdrop_filter_layer,
-                node.annotation_layer,
-                node.leader_layer,
-                node.follower_layer,
-                node.kind.clone(),
+                node.object.layers.root,
+                node.object.layers.picture,
+                node.object.layers.focus_picture,
+                node.object.layers.content,
+                node.object.layers.opacity,
+                node.object.layers.blur,
+                node.object.layers.shadow,
+                node.object.layers.color_filter,
+                node.object.layers.blend,
+                node.object.layers.shader_mask,
+                node.object.layers.backdrop_filter,
+                node.object.layers.annotation,
+                node.object.layers.leader,
+                node.object.layers.follower,
+                node.object.kind.clone(),
             )
         };
         let mut child_layers = render_children
             .iter()
-            .filter_map(|child| self.renders.get(child.0).map(|render| render.layer))
+            .filter_map(|child| {
+                self.renders
+                    .get(child.0)
+                    .map(|render| render.object.layers.root)
+            })
             .collect::<Vec<_>>();
         if let RenderKind::IndexedStack { index, .. } = kind {
             child_layers = child_layers.get(index).copied().into_iter().collect();

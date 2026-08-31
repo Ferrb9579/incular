@@ -157,7 +157,10 @@ impl WidgetTree {
                     None,
                     SemanticState {
                         enabled: *enabled,
-                        focused: render.button_focused,
+                        focused: render
+                            .button_state()
+                            .expect("button render must own button state")
+                            .focused,
                         focusable: *enabled || *focusable_when_disabled,
                         ..SemanticState::default()
                     },
@@ -180,7 +183,10 @@ impl WidgetTree {
                     None,
                     SemanticState {
                         focusable: true,
-                        focused: render.focused,
+                        focused: render
+                            .selectable_text_state()
+                            .expect("selectable-text render must own selectable state")
+                            .focused,
                         ..SemanticState::default()
                     },
                     vec![SemanticActionKind::Focus],
@@ -216,7 +222,10 @@ impl WidgetTree {
                         Some(value.text),
                         SemanticState {
                             enabled: *enabled,
-                            focused: render.focused,
+                            focused: render
+                                .text_field_state()
+                                .expect("text-field render must own text-field state")
+                                .focused,
                             focusable: *enabled,
                             editable: *enabled && !*read_only,
                             multiline: *multiline,

@@ -21,30 +21,40 @@ impl WidgetTree {
     ) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.renders.get_mut(render.0).expect("live");
-        if matches!(node.kind, RenderKind::Button { .. }) {
-            node.button_focused = focused;
-            node.button_state = if node.button_pressed {
+        if let Some(button) = node.button_state_mut() {
+            button.focused = focused;
+            button.visual = if button.pressed {
                 ButtonState::Pressed
-            } else if node.button_focused {
+            } else if button.focused {
                 ButtonState::Focused
-            } else if node.button_hovered {
+            } else if button.hovered {
                 ButtonState::Hovered
             } else {
                 ButtonState::Normal
             };
             node.dirty.insert(DirtyFlags::PAINT);
         }
-        if matches!(node.kind, RenderKind::TextField { .. }) && node.focused != focused {
-            node.focused = focused;
+        if node
+            .text_field_state()
+            .is_some_and(|state| state.focused != focused)
+        {
+            node.text_field_state_mut()
+                .expect("text field state")
+                .focused = focused;
             node.dirty.insert(DirtyFlags::PAINT);
             if focused {
-                if let RenderKind::TextField { controller, .. } = &node.kind {
+                if let RenderKind::TextField { controller, .. } = &node.object.kind {
                     controller.reset_caret(now);
                 }
             }
         }
-        if matches!(node.kind, RenderKind::SelectableText { .. }) && node.focused != focused {
-            node.focused = focused;
+        if node
+            .selectable_text_state()
+            .is_some_and(|state| state.focused != focused)
+        {
+            node.selectable_text_state_mut()
+                .expect("selectable text state")
+                .focused = focused;
             node.dirty.insert(DirtyFlags::PAINT);
         }
         Ok(())
@@ -113,7 +123,7 @@ impl WidgetTree {
                 ..
             },
             Some(layout),
-        ) = (&node.kind, node.text_layout.clone())
+        ) = (&node.object.kind, node.text_layout_cloned())
         else {
             return false;
         };
@@ -154,10 +164,10 @@ impl WidgetTree {
         let Some(node) = self.renders.get(render.0) else {
             return false;
         };
-        let RenderKind::TextField { controller, .. } = &node.kind else {
+        let RenderKind::TextField { controller, .. } = &node.object.kind else {
             return false;
         };
-        let Some(layout) = node.text_layout.clone() else {
+        let Some(layout) = node.text_layout_cloned() else {
             return false;
         };
         if right {
@@ -186,7 +196,7 @@ impl WidgetTree {
                 ..
             },
             Some(layout),
-        ) = (&node.kind, node.text_layout.clone())
+        ) = (&node.object.kind, node.text_layout_cloned())
         else {
             return false;
         };
@@ -225,10 +235,14 @@ impl WidgetTree {
         let (layout, scroll_x, scroll_y, multiline, controller) =
             match self.renders.get(render.0).map(|node| {
                 (
-                    &node.kind,
-                    node.text_layout.clone(),
-                    node.text_scroll_x,
-                    node.text_scroll_y,
+                    &node.object.kind,
+                    node.text_layout_cloned(),
+                    node.text_field_state()
+                        .expect("text-field render must own text-field state")
+                        .scroll_x,
+                    node.text_field_state()
+                        .expect("text-field render must own text-field state")
+                        .scroll_y,
                 )
             }) {
                 Some((
@@ -316,7 +330,7 @@ impl WidgetTree {
         let Some(layout) = self
             .renders
             .get(render.0)
-            .and_then(|node| node.text_layout.clone())
+            .and_then(RenderNode::text_layout_cloned)
         else {
             return false;
         };
@@ -535,7 +549,9 @@ impl WidgetTree {
             return self
                 .elements
                 .get(area.0)
-                .is_some_and(|element| matches!(element.widget.kind, WidgetKind::SelectableText { .. }))
+                .is_some_and(|element| {
+                    matches!(element.widget.kind, WidgetKind::SelectableText { .. })
+                })
                 .then_some(vec![area])
                 .unwrap_or_default();
         };
@@ -625,7 +641,7 @@ impl WidgetTree {
             let Some(layout) = self
                 .renders
                 .get(render.0)
-                .and_then(|node| node.text_layout.clone())
+                .and_then(RenderNode::text_layout_cloned)
             else {
                 continue;
             };
@@ -693,7 +709,7 @@ impl WidgetTree {
             return None;
         }
         let render = self.render_id(point.element)?;
-        let layout = self.renders.get(render.0)?.text_layout.as_ref()?;
+        let layout = self.renders.get(render.0)?.text_layout()?.as_ref();
         let (x, y, line_height) =
             caret_geometry(layout, point.byte, incular_text::TextAffinity::Downstream);
         let area_transform = self
@@ -727,7 +743,7 @@ impl WidgetTree {
     #[must_use]
     pub fn text_controller(&self, id: ElementId) -> Option<TextEditingController> {
         let render = self.render_id(id)?;
-        match &self.renders.get(render.0)?.kind {
+        match &self.renders.get(render.0)?.object.kind {
             RenderKind::TextField { controller, .. } => Some(controller.clone()),
             _ => None,
         }
@@ -769,7 +785,7 @@ impl WidgetTree {
             .render_id(id)
             .and_then(|render| self.renders.get(render.0).map(|node| (render, node)))
             .and_then(|(render, node)| {
-                let layout = node.text_layout.as_ref()?;
+                let layout = node.text_layout()?.as_ref();
                 let (x, y, height) = caret_geometry(
                     layout,
                     controller.selection().extent,
@@ -780,12 +796,25 @@ impl WidgetTree {
                 } else {
                     ((node.size.height - height) / 2.0).max(0.0)
                 };
-                Some(self.render_world_transform(render).transform_rect_bbox(
-                    Rect::from_origin_size(
-                        Offset::new(x - node.text_scroll_x + 8.0, y - node.text_scroll_y + top),
-                        Size::new(1.0, height.max(1.0)),
+                Some(
+                    self.render_world_transform(render).transform_rect_bbox(
+                        Rect::from_origin_size(
+                            Offset::new(
+                                x - node
+                                    .text_field_state()
+                                    .expect("text-field render must own text-field state")
+                                    .scroll_x
+                                    + 8.0,
+                                y - node
+                                    .text_field_state()
+                                    .expect("text-field render must own text-field state")
+                                    .scroll_y
+                                    + top,
+                            ),
+                            Size::new(1.0, height.max(1.0)),
+                        ),
                     ),
-                ))
+                )
             })
             .unwrap_or(bounds);
         Some(TextFieldInputSnapshot {

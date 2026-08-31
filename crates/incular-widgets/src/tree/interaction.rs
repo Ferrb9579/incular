@@ -513,16 +513,18 @@ impl WidgetTree {
     pub fn button_state(&self, id: ElementId) -> Option<ButtonState> {
         self.render_id(id)
             .and_then(|render| self.renders.get(render.0))
-            .map(|render| render.button_state)
+            .and_then(|render| render.button_state().map(|state| state.visual))
     }
     pub fn set_button_state(&mut self, id: ElementId, state: ButtonState) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.renders.get_mut(render.0).expect("live render");
-        if matches!(node.kind, RenderKind::Button { .. }) && node.button_state != state {
-            node.button_state = state;
-            node.button_hovered = matches!(state, ButtonState::Hovered);
-            node.button_pressed = matches!(state, ButtonState::Pressed);
-            node.button_focused = matches!(state, ButtonState::Focused);
+        if let Some(button) = node.button_state_mut()
+            && button.visual != state
+        {
+            button.visual = state;
+            button.hovered = matches!(state, ButtonState::Hovered);
+            button.pressed = matches!(state, ButtonState::Pressed);
+            button.focused = matches!(state, ButtonState::Focused);
             node.dirty.insert(DirtyFlags::PAINT);
         }
         Ok(())
@@ -540,23 +542,23 @@ impl WidgetTree {
     ) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
         let node = self.renders.get_mut(render.0).expect("live render");
-        if !matches!(node.kind, RenderKind::Button { .. }) {
+        let Some(button) = node.button_state_mut() else {
             return Ok(());
-        }
+        };
         if let Some(value) = hovered {
-            node.button_hovered = value;
+            button.hovered = value;
         }
         if let Some(value) = pressed {
-            node.button_pressed = value;
+            button.pressed = value;
         }
         if let Some(value) = focused {
-            node.button_focused = value;
+            button.focused = value;
         }
-        node.button_state = if node.button_pressed {
+        button.visual = if button.pressed {
             ButtonState::Pressed
-        } else if node.button_focused {
+        } else if button.focused {
             ButtonState::Focused
-        } else if node.button_hovered {
+        } else if button.hovered {
             ButtonState::Hovered
         } else {
             ButtonState::Normal
@@ -601,18 +603,18 @@ impl WidgetTree {
             .map(|(id, node)| {
                 (
                     RenderObjectId(id),
-                    node.kind.clone(),
-                    node.content_layer,
-                    node.opacity_layer,
-                    node.blur_layer,
-                    node.shadow_layer,
-                    node.color_filter_layer,
-                    node.blend_layer,
-                    node.shader_mask_layer,
-                    node.backdrop_filter_layer,
-                    node.annotation_layer,
-                    node.leader_layer,
-                    node.follower_layer,
+                    node.object.kind.clone(),
+                    node.object.layers.content,
+                    node.object.layers.opacity,
+                    node.object.layers.blur,
+                    node.object.layers.shadow,
+                    node.object.layers.color_filter,
+                    node.object.layers.blend,
+                    node.object.layers.shader_mask,
+                    node.object.layers.backdrop_filter,
+                    node.object.layers.annotation,
+                    node.object.layers.leader,
+                    node.object.layers.follower,
                 )
             })
             .collect::<Vec<_>>();
@@ -993,7 +995,7 @@ impl WidgetTree {
         let mut viewports = Vec::new();
         loop {
             let render = self.elements.get(element.0).expect("live element").render;
-            match &self.renders.get(render.0).expect("live render").kind {
+            match &self.renders.get(render.0).expect("live render").object.kind {
                 RenderKind::Scroll {
                     controller,
                     axis,
@@ -1060,18 +1062,19 @@ impl WidgetTree {
         let Some(render) = self.render_id(id) else {
             return false;
         };
-        let (controller, reverse, physics) = match &self.renders.get(render.0).expect("live").kind {
-            RenderKind::Scroll {
-                controller,
-                axis: _,
-                reverse,
-                physics,
-            } => (controller.clone(), *reverse, *physics),
-            RenderKind::SliverViewport { config } => {
-                (config.controller.clone(), config.reverse, config.physics)
-            }
-            _ => return false,
-        };
+        let (controller, reverse, physics) =
+            match &self.renders.get(render.0).expect("live").object.kind {
+                RenderKind::Scroll {
+                    controller,
+                    axis: _,
+                    reverse,
+                    physics,
+                } => (controller.clone(), *reverse, *physics),
+                RenderKind::SliverViewport { config } => {
+                    (config.controller.clone(), config.reverse, config.physics)
+                }
+                _ => return false,
+            };
         let page_extent = physics
             .snap_extent(controller.viewport_extent())
             .unwrap_or_else(|| controller.viewport_extent());
@@ -1109,7 +1112,9 @@ impl WidgetTree {
                     self.renders
                         .get_mut(render.0)
                         .expect("live")
-                        .scrollbar_dragging = true;
+                        .scroll_state_mut()
+                        .expect("scrollbar target must own scroll state")
+                        .dragging = true;
                 } else {
                     let delta = if point.y < geometry.thumb.origin.y {
                         -controller.viewport_extent()
@@ -1156,8 +1161,11 @@ impl WidgetTree {
                 for render in ids {
                     let node = self.renders.get_mut(render.0).expect("live");
                     let is_hovered = hovered == Some(render);
-                    if node.scrollbar_hovered != is_hovered {
-                        node.scrollbar_hovered = is_hovered;
+                    let Some(scroll) = node.scroll_state_mut() else {
+                        continue;
+                    };
+                    if scroll.hovered != is_hovered {
+                        scroll.hovered = is_hovered;
                         node.dirty.insert(DirtyFlags::PAINT);
                         changed = true;
                     }
@@ -1169,7 +1177,9 @@ impl WidgetTree {
                     return false;
                 };
                 let node = self.renders.get_mut(drag.render.0).expect("live");
-                node.scrollbar_dragging = false;
+                node.scroll_state_mut()
+                    .expect("scrollbar drag target must own scroll state")
+                    .dragging = false;
                 node.dirty.insert(DirtyFlags::PAINT);
                 true
             }

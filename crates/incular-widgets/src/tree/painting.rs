@@ -58,7 +58,7 @@ impl WidgetTree {
             .and_then(|element| self.elements.get(element.0))
             .map(|element| &element.widget.kind);
         if matches!(kind, Some(WidgetKind::IgnorePointer { ignoring: true, .. }))
-            || matches!(node.kind, RenderKind::Visibility { visible: false })
+            || matches!(node.object.kind, RenderKind::Visibility { visible: false })
         {
             return RawHitResult::default();
         }
@@ -76,7 +76,7 @@ impl WidgetTree {
             };
         }
         if matches!(
-            node.kind,
+            node.object.kind,
             RenderKind::Transform { .. }
                 | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
@@ -111,7 +111,7 @@ impl WidgetTree {
             }
             return result;
         }
-        let current = match &node.kind {
+        let current = match &node.object.kind {
             RenderKind::Translate { controller } => origin + node.offset + controller.offset(),
             RenderKind::PersistentHeader {
                 controller,
@@ -128,7 +128,7 @@ impl WidgetTree {
         if !Rect::from_origin_size(current, node.size).contains(point) {
             return RawHitResult::default();
         }
-        let child_origin = match &node.kind {
+        let child_origin = match &node.object.kind {
             RenderKind::Scroll {
                 controller,
                 axis,
@@ -141,7 +141,7 @@ impl WidgetTree {
             RenderKind::Translate { .. } => current,
             _ => current,
         };
-        let hit_children = if matches!(node.kind, RenderKind::SliverViewport { .. }) {
+        let hit_children = if matches!(node.object.kind, RenderKind::SliverViewport { .. }) {
             let pinned = element
                 .and_then(|element| self.elements.get(element.0))
                 .map(|element| element.sliver_pinned_ids.clone())
@@ -164,7 +164,7 @@ impl WidgetTree {
             });
             ordered
         } else {
-            match &node.kind {
+            match &node.object.kind {
                 RenderKind::IndexedStack { index, .. } => {
                     node.children.get(*index).copied().into_iter().collect()
                 }
@@ -207,7 +207,7 @@ impl WidgetTree {
         let constraints = self.renders.get(id.0).and_then(|render| render.constraints);
         let _node_guard = self.guard_render(FramePhase::Paint, id, constraints);
         if matches!(
-            self.renders.get(id.0).expect("live").kind,
+            self.renders.get(id.0).expect("live").object.kind,
             RenderKind::Visibility { visible: false }
         ) {
             return;
@@ -216,9 +216,9 @@ impl WidgetTree {
             let node = self.renders.get(id.0).expect("live");
             (
                 node.offset,
-                node.cache.clone(),
+                node.object.cache.clone(),
                 node.children.clone(),
-                node.kind.clone(),
+                node.object.kind.clone(),
             )
         };
         if let RenderKind::PersistentHeader {
@@ -243,9 +243,15 @@ impl WidgetTree {
             .flatten()
             .and_then(|element| self.devtools_trace_begin_element(element, TracePhase::Paint));
         if dirty {
-            let kind = self.renders.get(id.0).expect("live").kind.clone();
+            let kind = self.renders.get(id.0).expect("live").object.kind.clone();
             let size = self.renders.get(id.0).expect("live").size;
-            let focus_picture = self.renders.get(id.0).expect("live").focus_picture;
+            let focus_picture = self
+                .renders
+                .get(id.0)
+                .expect("live")
+                .object
+                .layers
+                .focus_picture;
             let focus_ring = match &kind {
                 RenderKind::Button {
                     color,
@@ -254,7 +260,12 @@ impl WidgetTree {
                     ..
                 } => {
                     let render = self.renders.get(id.0).expect("live");
-                    (render.button_focused && *enabled && color.alpha == 0)
+                    (render
+                        .button_state()
+                        .expect("button render must own button state")
+                        .focused
+                        && *enabled
+                        && color.alpha == 0)
                         .then_some(*focused_color)
                         .flatten()
                 }
@@ -327,7 +338,7 @@ impl WidgetTree {
                             color,
                         });
                     }
-                    if let Some(layout) = self.renders.get(id.0).expect("live").text_layout.clone()
+                    if let Some(layout) = self.renders.get(id.0).expect("live").text_layout_cloned()
                     {
                         let text_offset = Offset::new(
                             geometry.rect.origin.x,
@@ -360,6 +371,9 @@ impl WidgetTree {
                     ..
                 } => {
                     let render = self.renders.get(id.0).expect("live");
+                    let button = render
+                        .button_state()
+                        .expect("button render must own button state");
                     // Transparent buttons are commonly used as the retained
                     // hit/semantic surface for compound controls (checkboxes,
                     // switches, toggles, and radios).  Treat their focused
@@ -367,11 +381,11 @@ impl WidgetTree {
                     // hit surface.  Filling a label row with the accent made
                     // keyboard focus look like a stuck hover highlight and
                     // obscured the control's actual state.
-                    let state_color = if render.button_pressed {
+                    let state_color = if button.pressed {
                         pressed_color.or(hover_color).or(focused_color)
-                    } else if render.button_hovered {
+                    } else if button.hovered {
                         hover_color
-                    } else if render.button_focused {
+                    } else if button.focused {
                         focus_ring.map(|_| Color::TRANSPARENT)
                     } else {
                         None
@@ -392,7 +406,7 @@ impl WidgetTree {
                 RenderKind::Text {
                     style, overflow, ..
                 } => {
-                    if let Some(layout) = self.renders.get(id.0).expect("live").text_layout.clone()
+                    if let Some(layout) = self.renders.get(id.0).expect("live").text_layout_cloned()
                     {
                         if overflow == TextOverflow::Clip {
                             cache.push(PaintCommand::PushClip {
@@ -417,7 +431,7 @@ impl WidgetTree {
                         .element_for_render(id)
                         .and_then(|element| self.static_selection_range(element));
                     if let (Some(layout), Some(selection)) = (
-                        self.renders.get(id.0).expect("live").text_layout.clone(),
+                        self.renders.get(id.0).expect("live").text_layout_cloned(),
                         selection,
                     ) {
                         for rect in selection_rects(&layout, selection, 0., 0., 0.) {
@@ -435,7 +449,7 @@ impl WidgetTree {
                             }
                         }
                     } else if let Some(layout) =
-                        self.renders.get(id.0).expect("live").text_layout.clone()
+                        self.renders.get(id.0).expect("live").text_layout_cloned()
                     {
                         for line in layout.lines.iter() {
                             for run in line.runs.iter() {
@@ -500,11 +514,14 @@ impl WidgetTree {
                 } => {
                     let (layout, focused, scroll_x, scroll_y) = {
                         let node = self.renders.get(id.0).expect("live");
+                        let state = node
+                            .text_field_state()
+                            .expect("text-field render must own text-field state");
                         (
-                            node.text_layout.clone(),
-                            node.focused,
-                            node.text_scroll_x,
-                            node.text_scroll_y,
+                            node.text_layout_cloned(),
+                            state.focused,
+                            state.scroll_x,
+                            state.scroll_y,
                         )
                     };
                     let value = controller.value();
@@ -603,8 +620,11 @@ impl WidgetTree {
                         }
                     }
                     let node = self.renders.get_mut(id.0).expect("live");
-                    node.text_scroll_x = active_scroll_x;
-                    node.text_scroll_y = active_scroll_y;
+                    let state = node
+                        .text_field_state_mut()
+                        .expect("text-field render must own text-field state");
+                    state.scroll_x = active_scroll_x;
+                    state.scroll_y = active_scroll_y;
                 }
                 RenderKind::Scroll { controller, .. } => {
                     self.paint_scrollbar(id, size, &controller, &mut cache);
@@ -617,7 +637,7 @@ impl WidgetTree {
                     if let Some(layer) = self
                         .renders
                         .get(id.0)
-                        .and_then(|node| node.shader_mask_layer)
+                        .and_then(|node| node.object.layers.shader_mask)
                     {
                         self.compositor.update_shader_mask(
                             layer,
@@ -645,12 +665,12 @@ impl WidgetTree {
                 });
             }
             let node = self.renders.get_mut(id.0).expect("live");
-            node.cache = cache;
+            node.object.cache = cache;
             node.dirty.remove(DirtyFlags::PAINT);
-            if let Some(picture) = node.picture {
+            if let Some(picture) = node.object.layers.picture {
                 self.compositor.update_picture(
                     picture,
-                    node.cache.clone(),
+                    node.object.cache.clone(),
                     Rect::from_origin_size(Offset::ZERO, node.size),
                 );
             }
@@ -673,7 +693,7 @@ impl WidgetTree {
             transform: CoreTransform::translation(offset),
         });
         if dirty {
-            output.extend_from(&self.renders.get(id.0).expect("live").cache);
+            output.extend_from(&self.renders.get(id.0).expect("live").object.cache);
         } else {
             self.diagnostics.display_lists_reused += 1;
             output.extend_from(&cache);
@@ -789,7 +809,7 @@ impl WidgetTree {
         bounds: Rect,
         message: &str,
     ) {
-        let max_width = bounds.size.width.max(180.0).min(480.0);
+        let max_width = bounds.size.width.clamp(180.0, 480.0);
         let _external_call = self
             .recursion_diagnostics
             .external_call(text_call_label("TextEngine::layout_with_options", message));
@@ -836,10 +856,10 @@ impl WidgetTree {
             return;
         }
         let node = self.renders.get(id.0).expect("live");
-        if !controller.scrollbar_thumb_visibility()
-            && !node.scrollbar_hovered
-            && !node.scrollbar_dragging
-        {
+        let scroll = node
+            .scroll_state()
+            .expect("scrollbar paint requires a scroll viewport");
+        if !controller.scrollbar_thumb_visibility() && !scroll.hovered && !scroll.dragging {
             return;
         }
         let thumb = style.thumb_color;
@@ -875,7 +895,7 @@ impl WidgetTree {
             _ => {}
         }
         if matches!(
-            node.kind,
+            node.object.kind,
             RenderKind::Transform { .. }
                 | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
@@ -900,7 +920,7 @@ impl WidgetTree {
             }
             return None;
         }
-        let current = match &node.kind {
+        let current = match &node.object.kind {
             RenderKind::Translate { controller } => origin + node.offset + controller.offset(),
             RenderKind::PersistentHeader {
                 controller,
@@ -917,10 +937,10 @@ impl WidgetTree {
         if !Rect::from_origin_size(current, node.size).contains(point) {
             return None;
         }
-        if matches!(node.kind, RenderKind::Visibility { visible: false }) {
+        if matches!(node.object.kind, RenderKind::Visibility { visible: false }) {
             return None;
         }
-        let child_origin = match &node.kind {
+        let child_origin = match &node.object.kind {
             RenderKind::Scroll {
                 controller,
                 axis,
@@ -933,7 +953,8 @@ impl WidgetTree {
             RenderKind::Translate { .. } => current,
             _ => current,
         };
-        let hit_children: Vec<_> = if matches!(node.kind, RenderKind::SliverViewport { .. }) {
+        let hit_children: Vec<_> = if matches!(node.object.kind, RenderKind::SliverViewport { .. })
+        {
             let pinned = self
                 .element_for_render(id)
                 .and_then(|element| self.elements.get(element.0))
@@ -957,7 +978,7 @@ impl WidgetTree {
             });
             ordered
         } else {
-            match &node.kind {
+            match &node.object.kind {
                 RenderKind::IndexedStack { index, .. } => {
                     node.children.get(*index).copied().into_iter().collect()
                 }
@@ -993,7 +1014,7 @@ impl WidgetTree {
         render: RenderObjectId,
     ) -> Option<(ScrollController, ScrollbarGeometry)> {
         let node = self.renders.get(render.0)?;
-        let controller = match &node.kind {
+        let controller = match &node.object.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
             RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,
@@ -1009,7 +1030,7 @@ impl WidgetTree {
         render: RenderObjectId,
     ) -> Option<(ScrollController, ScrollbarGeometry)> {
         let node = self.renders.get(render.0)?;
-        let controller = match &node.kind {
+        let controller = match &node.object.kind {
             RenderKind::Scroll { controller, .. } => controller.clone(),
             RenderKind::SliverViewport { config } => config.controller.clone(),
             _ => return None,

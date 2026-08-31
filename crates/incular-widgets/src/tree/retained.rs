@@ -53,7 +53,7 @@ impl WidgetTree {
         self.environment = environment;
         if dirty_safe_area {
             for (_, render) in self.renders.iter_mut() {
-                if matches!(render.kind, RenderKind::SafeArea { .. }) {
+                if matches!(render.object.kind, RenderKind::SafeArea { .. }) {
                     render.dirty.insert(DirtyFlags::LAYOUT);
                 }
             }
@@ -352,7 +352,7 @@ impl WidgetTree {
     #[doc(hidden)]
     #[must_use]
     pub fn render_object_kind(&self, id: RenderObjectId) -> Option<&RenderKind> {
-        self.renders.get(id.0).map(|render| &render.kind)
+        self.renders.get(id.0).map(|render| &render.object.kind)
     }
     /// Returns the cached text layout for a retained text render object.
     #[doc(hidden)]
@@ -360,7 +360,8 @@ impl WidgetTree {
     pub fn text_layout(&self, id: RenderObjectId) -> Option<&TextLayout> {
         self.renders
             .get(id.0)
-            .and_then(|render| render.text_layout.as_deref())
+            .and_then(RenderNode::text_layout)
+            .map(Arc::as_ref)
     }
     /// Current world-space bounds for a mounted element. This is useful for
     /// platform-neutral tooling and tests; it never exposes a render ID.
@@ -405,14 +406,7 @@ impl WidgetTree {
     #[cfg(feature = "devtools")]
     pub(crate) fn devtools_text_line_count(&self, id: ElementId) -> Option<usize> {
         let render = self.render_id(id)?;
-        Some(
-            self.renders
-                .get(render.0)?
-                .text_layout
-                .as_ref()?
-                .lines
-                .len(),
-        )
+        Some(self.renders.get(render.0)?.text_layout()?.lines.len())
     }
 
     #[must_use]
@@ -421,13 +415,13 @@ impl WidgetTree {
         self.render_id(id)
             .and_then(|render| self.renders.get(render.0))
             .is_some_and(|render| {
-                render.picture.is_some()
-                    || render.clip_layer.is_some()
-                    || render.opacity_layer.is_some()
-                    || render.blur_layer.is_some()
-                    || render.shadow_layer.is_some()
-                    || render.color_filter_layer.is_some()
-                    || render.blend_layer.is_some()
+                render.object.layers.picture.is_some()
+                    || render.object.layers.clip.is_some()
+                    || render.object.layers.opacity.is_some()
+                    || render.object.layers.blur.is_some()
+                    || render.object.layers.shadow.is_some()
+                    || render.object.layers.color_filter.is_some()
+                    || render.object.layers.blend.is_some()
             })
     }
 
@@ -471,7 +465,7 @@ impl WidgetTree {
         })
     }
     #[cfg(feature = "devtools")]
-    pub(crate) fn dev_renders(&self) -> &Arena<RenderObject> {
+    pub(crate) fn dev_renders(&self) -> &Arena<RenderNode> {
         &self.renders
     }
 
@@ -525,12 +519,12 @@ impl WidgetTree {
             let RenderKind::Opacity {
                 alpha,
                 controller: None,
-            } = &mut render_node.kind
+            } = &mut render_node.object.kind
             else {
                 return false;
             };
             *alpha = value;
-            render_node.opacity_layer
+            render_node.object.layers.opacity
         };
         if let Some(layer) = opacity_layer {
             let _ = self.compositor.update_opacity(layer, value);

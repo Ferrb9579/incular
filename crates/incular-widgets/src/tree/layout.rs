@@ -54,11 +54,14 @@ impl WidgetTree {
             .renders
             .iter()
             .filter_map(|(raw, render)| {
-                let RenderKind::TextField { controller, .. } = &render.kind else {
+                let RenderKind::TextField { controller, .. } = &render.object.kind else {
                     return None;
                 };
                 let (content, visual) = controller.revisions();
-                ((content != render.text_revision) || (visual != render.text_visual_revision))
+                let state = render
+                    .text_field_state()
+                    .expect("text-field render must own text-field state");
+                ((content != state.content_revision) || (visual != state.visual_revision))
                     .then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
@@ -78,6 +81,7 @@ impl WidgetTree {
             .renders
             .get(id.0)
             .expect("advanced scrolling render")
+            .object
             .kind
             .clone();
         let viewport_size = advanced_viewport_size(constraints);
@@ -113,7 +117,9 @@ impl WidgetTree {
                 self.renders
                     .get_mut(id.0)
                     .expect("wheel render")
-                    .wheel_layout = Some(layout);
+                    .wheel_state_mut()
+                    .expect("wheel render must own wheel state")
+                    .layout = Some(layout);
             }
             RenderKind::ListWheelViewport { viewport } => {
                 let layout = viewport
@@ -131,13 +137,16 @@ impl WidgetTree {
                 self.renders
                     .get_mut(id.0)
                     .expect("wheel render")
-                    .wheel_layout = Some(layout);
+                    .wheel_state_mut()
+                    .expect("wheel render must own wheel state")
+                    .layout = Some(layout);
             }
             RenderKind::DraggableScrollableSheet { sheet } => {
                 let state = if let Some(state) = self
                     .renders
                     .get(id.0)
-                    .and_then(|render| render.draggable_state.clone())
+                    .and_then(|render| render.draggable_sheet_state())
+                    .and_then(|state| state.state.clone())
                 {
                     state
                 } else {
@@ -145,7 +154,9 @@ impl WidgetTree {
                     self.renders
                         .get_mut(id.0)
                         .expect("draggable sheet render")
-                        .draggable_state = Some(state.clone());
+                        .draggable_sheet_state_mut()
+                        .expect("draggable-sheet render must own draggable state")
+                        .state = Some(state.clone());
                     self.materialize_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::Sheet, child)],
@@ -196,7 +207,9 @@ impl WidgetTree {
                 self.renders
                     .get_mut(id.0)
                     .expect("two-dimensional render")
-                    .two_dimensional_layout = Some(layout);
+                    .two_dimensional_state_mut()
+                    .expect("two-dimensional render must own viewport state")
+                    .layout = Some(layout);
             }
             RenderKind::TwoDimensionalViewport { viewport } => {
                 let layout = viewport
@@ -219,7 +232,9 @@ impl WidgetTree {
                 self.renders
                     .get_mut(id.0)
                     .expect("two-dimensional render")
-                    .two_dimensional_layout = Some(layout);
+                    .two_dimensional_state_mut()
+                    .expect("two-dimensional render must own viewport state")
+                    .layout = Some(layout);
             }
             _ => {}
         }
@@ -233,7 +248,7 @@ impl WidgetTree {
             .and_then(|element| element.parent);
         while let Some(candidate) = parent {
             if let Some(controller) = self.scroll_controller_for_element(candidate)
-                && !controllers.iter().any(|existing| *existing == controller)
+                && !controllers.contains(&controller)
             {
                 controllers.push(controller);
             }
@@ -266,7 +281,7 @@ impl WidgetTree {
     #[doc(hidden)]
     pub fn content_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
         let node = self.renders.get(id.0)?;
-        match &node.kind {
+        match &node.object.kind {
             RenderKind::Transform { transform, origin } => {
                 Some(transform_around(*transform, *origin, node.size))
             }
@@ -295,7 +310,7 @@ impl WidgetTree {
     }
     pub(super) fn child_content_transform(&self, id: RenderObjectId) -> CoreTransform {
         let node = self.renders.get(id.0).expect("live render");
-        match &node.kind {
+        match &node.object.kind {
             RenderKind::Scroll {
                 controller,
                 axis,
@@ -328,7 +343,7 @@ impl WidgetTree {
             offset,
             target_anchor,
             follower_anchor,
-        } = &node.kind
+        } = &node.object.kind
         else {
             return CoreTransform::IDENTITY;
         };
@@ -371,7 +386,7 @@ impl WidgetTree {
         let mut world = self.render_world_transform(id);
         if self.content_transform(id).is_some()
             || matches!(
-                self.renders.get(id.0).map(|node| &node.kind),
+                self.renders.get(id.0).map(|node| &node.object.kind),
                 Some(RenderKind::Follower { .. })
             )
         {
@@ -387,7 +402,7 @@ impl WidgetTree {
         loop {
             let node = self.renders.get(id.0).expect("live render");
             origin = origin + node.offset;
-            match &node.kind {
+            match &node.object.kind {
                 RenderKind::Scroll {
                     controller,
                     axis,
@@ -428,7 +443,7 @@ impl WidgetTree {
             let node = self.renders.get(id.0).expect("live render");
             origin = origin + node.offset;
             if !is_self {
-                match &node.kind {
+                match &node.object.kind {
                     RenderKind::Scroll {
                         controller,
                         axis,
@@ -498,7 +513,7 @@ impl WidgetTree {
         let next_y = self
             .renders
             .iter()
-            .filter_map(|(raw, node)| match &node.kind {
+            .filter_map(|(raw, node)| match &node.object.kind {
                 RenderKind::PersistentHeader {
                     controller: candidate,
                     axis: candidate_axis,
@@ -546,7 +561,7 @@ impl WidgetTree {
             if let RenderKind::Scroll {
                 controller: viewport,
                 ..
-            } = &node.kind
+            } = &node.object.kind
                 && viewport == controller
             {
                 return Some((id, position));
@@ -611,14 +626,14 @@ impl WidgetTree {
             (render.constraints, render.size)
         });
         if matches!(
-            self.renders.get(id.0).expect("live").kind,
+            self.renders.get(id.0).expect("live").object.kind,
             RenderKind::LayoutBuilder
         ) {
             self.materialize_layout_builder(id, constraints);
         }
         if self.renders.get(id.0).is_some_and(|render| {
             matches!(
-                render.kind,
+                render.object.kind,
                 RenderKind::RawScrollbar { .. }
                     | RenderKind::ListWheelScrollView { .. }
                     | RenderKind::ListWheelViewport { .. }
@@ -632,7 +647,7 @@ impl WidgetTree {
         }
         let (kind, children) = {
             let n = self.renders.get(id.0).expect("live");
-            (n.kind.clone(), n.children.clone())
+            (n.object.kind.clone(), n.children.clone())
         };
         let (size, offsets) = match kind {
             RenderKind::Box { desired, .. }
@@ -678,7 +693,7 @@ impl WidgetTree {
                     TextLayoutOptions::new(Some(80.0), TextAlign::Center),
                 );
                 let node = self.renders.get_mut(id.0).expect("live");
-                node.text_layout = Some(text_layout.clone());
+                node.set_text_layout(text_layout.clone());
                 node.baseline = Some(text_layout.metrics.baseline);
                 (size, offsets)
             }
@@ -965,7 +980,7 @@ impl WidgetTree {
                         let child = self.renders.get_mut(child.0).expect("sliver child");
                         child.offset = config.axis.offset(layout.offset, layout.cross_offset);
                         self.compositor.update_transform(
-                            child.layer,
+                            child.object.layers.root,
                             CoreTransform::translation(child.offset),
                         );
                     }
@@ -1087,7 +1102,7 @@ impl WidgetTree {
                     .iter()
                     .map(|child| {
                         let render_node = self.renders.get(child.0).expect("live");
-                        match &render_node.kind {
+                        match &render_node.object.kind {
                             RenderKind::Flexible { flex: f, fit } => (*f, *fit),
                             _ => (0, FlexFit::Loose),
                         }
@@ -1224,7 +1239,7 @@ impl WidgetTree {
                 let mut max_non_pos_h: f32 = 0.0;
                 for child in &children {
                     let render_node = self.renders.get(child.0).expect("live");
-                    if !matches!(render_node.kind, RenderKind::Positioned { .. }) {
+                    if !matches!(render_node.object.kind, RenderKind::Positioned { .. }) {
                         self.layout_render(*child, non_positioned_constraints);
                         let size = self.renders.get(child.0).expect("live").size;
                         max_non_pos_w = max_non_pos_w.max(size.width);
@@ -1247,7 +1262,7 @@ impl WidgetTree {
                         bottom,
                         width,
                         height,
-                    } = render_node.kind
+                    } = render_node.object.kind
                     {
                         let pos = incular_layout::Positioned {
                             left,
@@ -1429,7 +1444,7 @@ impl WidgetTree {
                 );
                 let size = constraints.constrain(layout.metrics.size);
                 let node = self.renders.get_mut(id.0).expect("live");
-                node.text_layout = Some(layout.clone());
+                node.set_text_layout(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
@@ -1443,7 +1458,7 @@ impl WidgetTree {
                 let layout = self.text_engine.layout(&text, &style, width, align);
                 let size = constraints.constrain(layout.metrics.size);
                 let node = self.renders.get_mut(id.0).expect("live");
-                node.text_layout = Some(layout.clone());
+                node.set_text_layout(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
@@ -1511,9 +1526,12 @@ impl WidgetTree {
                 ));
                 let (revision, visual_revision) = controller.revisions();
                 let node = self.renders.get_mut(id.0).expect("live");
-                node.text_layout = Some(layout.clone());
-                node.text_revision = revision;
-                node.text_visual_revision = visual_revision;
+                node.set_text_layout(layout.clone());
+                let state = node
+                    .text_field_state_mut()
+                    .expect("text-field render must own text-field state");
+                state.content_revision = revision;
+                state.visual_revision = visual_revision;
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
@@ -1546,21 +1564,24 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 };
                 let node = self.renders.get_mut(id.0).expect("live raw scrollbar");
-                let replace = match node.advanced_scrollbar.as_ref() {
+                let state = node
+                    .raw_scrollbar_state_mut()
+                    .expect("raw-scrollbar render must own scrollbar state");
+                let replace = match state.scrollbar.as_ref() {
                     Some(scrollbar) => scrollbar.controller() != controller,
                     None => true,
                 };
                 if replace {
                     let mut scrollbar = RawScrollbar::new(controller.clone());
                     scrollbar.set_style(style);
-                    node.advanced_scrollbar = Some(scrollbar);
-                } else if let Some(scrollbar) = node.advanced_scrollbar.as_mut()
+                    state.scrollbar = Some(scrollbar);
+                } else if let Some(scrollbar) = state.scrollbar.as_mut()
                     && scrollbar.style() != style
                 {
                     scrollbar.set_style(style);
                 }
-                let _ = node
-                    .advanced_scrollbar
+                let _ = state
+                    .scrollbar
                     .as_ref()
                     .expect("raw scrollbar state")
                     .geometry(size);
@@ -1570,7 +1591,8 @@ impl WidgetTree {
                 let (layout_size, placements) = self
                     .renders
                     .get(id.0)
-                    .and_then(|render| render.wheel_layout.as_ref())
+                    .and_then(RenderNode::wheel_state)
+                    .and_then(|state| state.layout.as_ref())
                     .map(|layout| {
                         (
                             layout.size,
@@ -1603,7 +1625,8 @@ impl WidgetTree {
                 if let Some(state) = self
                     .renders
                     .get(id.0)
-                    .and_then(|render| render.draggable_state.clone())
+                    .and_then(RenderNode::draggable_sheet_state)
+                    .and_then(|state| state.state.clone())
                 {
                     let viewport_size = advanced_viewport_size(constraints);
                     state.set_parent_height(viewport_size.height);
@@ -1642,7 +1665,8 @@ impl WidgetTree {
                 let (layout_size, placements) = self
                     .renders
                     .get(id.0)
-                    .and_then(|render| render.two_dimensional_layout.as_ref())
+                    .and_then(RenderNode::two_dimensional_state)
+                    .and_then(|state| state.layout.as_ref())
                     .map(|layout| {
                         (
                             layout.size,
@@ -1729,16 +1753,18 @@ impl WidgetTree {
             let child = self.renders.get_mut(child.0).expect("live");
             child.offset = offset;
             self.compositor
-                .update_transform(child.layer, CoreTransform::translation(offset));
+                .update_transform(child.object.layers.root, CoreTransform::translation(offset));
         }
         let node = self.renders.get_mut(id.0).expect("live");
         node.size = size;
         node.constraints = Some(constraints);
         node.dirty.remove(DirtyFlags::LAYOUT);
         node.dirty.insert(DirtyFlags::PAINT);
-        self.compositor
-            .update_transform(node.layer, CoreTransform::translation(node.offset));
-        if let Some(clip) = node.clip_layer {
+        self.compositor.update_transform(
+            node.object.layers.root,
+            CoreTransform::translation(node.offset),
+        );
+        if let Some(clip) = node.object.layers.clip {
             self.compositor
                 .update_clip(clip, Rect::from_origin_size(Offset::ZERO, node.size));
         }
@@ -1747,7 +1773,7 @@ impl WidgetTree {
         // `update_compositor` without revisiting this path.
         let (content_layer, transform) = {
             let node = self.renders.get(id.0).expect("live");
-            (node.content_layer, self.content_transform(id))
+            (node.object.layers.content, self.content_transform(id))
         };
         if let (Some(content), Some(transform)) = (content_layer, transform) {
             self.compositor.update_transform(content, transform);
@@ -1755,11 +1781,11 @@ impl WidgetTree {
         let (kind, layer_ids) = {
             let node = self.renders.get(id.0).expect("live");
             (
-                node.kind.clone(),
+                node.object.kind.clone(),
                 (
-                    node.annotation_layer,
-                    node.leader_layer,
-                    node.follower_layer,
+                    node.object.layers.annotation,
+                    node.object.layers.leader,
+                    node.object.layers.follower,
                 ),
             )
         };

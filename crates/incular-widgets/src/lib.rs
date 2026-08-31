@@ -29,6 +29,7 @@ mod radio_selection;
 mod raw_input;
 mod raw_tooltip;
 mod recursion;
+mod render_object;
 mod safe_area;
 mod scrolling;
 mod selection;
