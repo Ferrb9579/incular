@@ -237,6 +237,23 @@ impl RenderFeatureState {
     }
 }
 
+impl FeatureClass {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Text => "text",
+            Self::SelectableText => "selectable-text",
+            Self::TextField => "text-field",
+            Self::Button => "button",
+            Self::RawScrollbar => "raw-scrollbar",
+            Self::Scroll => "scroll",
+            Self::Wheel => "wheel",
+            Self::DraggableSheet => "draggable-sheet",
+            Self::TwoDimensional => "two-dimensional",
+        }
+    }
+}
+
 /// One typed payload owned by a retained render node.
 pub(crate) struct RenderObjectPayload {
     pub(crate) kind: RenderKind,
@@ -291,6 +308,17 @@ impl DerefMut for RenderNode {
 }
 
 impl RenderNode {
+    pub(crate) fn feature_matches_kind(&self) -> bool {
+        self.object.feature.class() == RenderFeatureState::class_for(&self.object.kind)
+    }
+
+    pub(crate) fn feature_class_names(&self) -> (&'static str, &'static str) {
+        (
+            RenderFeatureState::class_for(&self.object.kind).name(),
+            self.object.feature.class().name(),
+        )
+    }
+
     pub(crate) fn text_layout(&self) -> Option<&Arc<TextLayout>> {
         match &self.object.feature {
             RenderFeatureState::Text(state) => state.layout.as_ref(),
@@ -357,6 +385,13 @@ impl RenderNode {
 
     pub(crate) fn raw_scrollbar_state_mut(&mut self) -> Option<&mut RenderRawScrollbarState> {
         match &mut self.object.feature {
+            RenderFeatureState::RawScrollbar(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn raw_scrollbar_state(&self) -> Option<&RenderRawScrollbarState> {
+        match &self.object.feature {
             RenderFeatureState::RawScrollbar(state) => Some(state),
             _ => None,
         }

@@ -20,7 +20,7 @@ impl WidgetTree {
         now: Instant,
     ) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
-        let node = self.renders.get_mut(render.0).expect("live");
+        let node = self.render_live_mut(render, "retained render must remain live");
         if let Some(button) = node.button_state_mut() {
             button.focused = focused;
             button.visual = if button.pressed {
@@ -124,9 +124,7 @@ impl WidgetTree {
         let (target, affinity) = caret_for_line_position(&layout, target_line, x);
         controller.move_cursor_with_affinity(target, affinity, extend);
         controller.set_preferred_caret_x(x);
-        self.renders
-            .get_mut(render.0)
-            .expect("live")
+        self.render_live_mut(render, "text-field render must remain live")
             .dirty
             .insert(DirtyFlags::PAINT);
         true
@@ -153,9 +151,7 @@ impl WidgetTree {
         } else {
             controller.move_left_visual(&layout, extend);
         }
-        self.renders
-            .get_mut(render.0)
-            .expect("live")
+        self.render_live_mut(render, "text-field render must remain live")
             .dirty
             .insert(DirtyFlags::PAINT);
         true
@@ -193,9 +189,7 @@ impl WidgetTree {
             incular_text::TextAffinity::Downstream
         };
         controller.move_cursor_with_affinity(target, affinity, extend);
-        self.renders
-            .get_mut(render.0)
-            .expect("live")
+        self.render_live_mut(render, "text-field render must remain live")
             .dirty
             .insert(DirtyFlags::PAINT);
         true
@@ -212,15 +206,12 @@ impl WidgetTree {
         };
         let (layout, scroll_x, scroll_y, multiline, controller) =
             match self.renders.get(render.0).map(|node| {
+                let state = self.text_field_state_live(render);
                 (
                     &node.object.kind,
                     node.text_layout_cloned(),
-                    node.text_field_state()
-                        .expect("text-field render must own text-field state")
-                        .scroll_x,
-                    node.text_field_state()
-                        .expect("text-field render must own text-field state")
-                        .scroll_y,
+                    state.scroll_x,
+                    state.scroll_y,
                 )
             }) {
                 Some((
@@ -269,9 +260,7 @@ impl WidgetTree {
             affinity,
         );
         controller.reset_caret(now);
-        self.renders
-            .get_mut(render.0)
-            .expect("live")
+        self.render_live_mut(render, "text-field render must remain live")
             .dirty
             .insert(DirtyFlags::PAINT);
         true
@@ -578,9 +567,7 @@ impl WidgetTree {
         }
         for element in entries {
             if let Some(render) = self.render_id(element) {
-                self.renders
-                    .get_mut(render.0)
-                    .expect("live selectable text")
+                self.render_live_mut(render, "selectable-text render must remain live")
                     .dirty
                     .insert(DirtyFlags::PAINT);
             }
@@ -757,6 +744,7 @@ impl WidgetTree {
             .and_then(|render| self.renders.get(render.0).map(|node| (render, node)))
             .and_then(|(render, node)| {
                 let layout = node.text_layout()?.as_ref();
+                let state = self.text_field_state_live(render);
                 let (x, y, height) = caret_geometry(
                     layout,
                     spec.controller.selection().extent,
@@ -767,25 +755,12 @@ impl WidgetTree {
                 } else {
                     ((node.size.height - height) / 2.0).max(0.0)
                 };
-                Some(
-                    self.render_world_transform(render).transform_rect_bbox(
-                        Rect::from_origin_size(
-                            Offset::new(
-                                x - node
-                                    .text_field_state()
-                                    .expect("text-field render must own text-field state")
-                                    .scroll_x
-                                    + 8.0,
-                                y - node
-                                    .text_field_state()
-                                    .expect("text-field render must own text-field state")
-                                    .scroll_y
-                                    + top,
-                            ),
-                            Size::new(1.0, height.max(1.0)),
-                        ),
+                Some(self.render_world_transform(render).transform_rect_bbox(
+                    Rect::from_origin_size(
+                        Offset::new(x - state.scroll_x + 8.0, y - state.scroll_y + top),
+                        Size::new(1.0, height.max(1.0)),
                     ),
-                )
+                ))
             })
             .unwrap_or(bounds);
         Some(TextFieldInputSnapshot {

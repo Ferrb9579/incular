@@ -209,13 +209,15 @@ impl WidgetTree {
         let constraints = self.renders.get(id.0).and_then(|render| render.constraints);
         let _node_guard = self.guard_render(FramePhase::Paint, id, constraints);
         if matches!(
-            self.renders.get(id.0).expect("live").object.kind,
+            self.render_live(id, "retained render must remain live")
+                .object
+                .kind,
             RenderKind::Visibility { visible: false }
         ) {
             return;
         }
         let (mut offset, cache, children, kind) = {
-            let node = self.renders.get(id.0).expect("live");
+            let node = self.render_live(id, "retained render must remain live");
             (
                 node.offset,
                 node.object.cache.clone(),
@@ -234,9 +236,7 @@ impl WidgetTree {
                 offset + self.persistent_header_translation(id, controller, axis, reverse, pinned);
         }
         let dirty = self
-            .renders
-            .get(id.0)
-            .expect("live")
+            .render_live(id, "paint render must remain live")
             .dirty
             .contains(DirtyFlags::PAINT);
         #[cfg(feature = "devtools")]
@@ -245,12 +245,16 @@ impl WidgetTree {
             .flatten()
             .and_then(|element| self.devtools_trace_begin_element(element, TracePhase::Paint));
         if dirty {
-            let kind = self.renders.get(id.0).expect("live").object.kind.clone();
-            let size = self.renders.get(id.0).expect("live").size;
+            let kind = self
+                .render_live(id, "retained render must remain live")
+                .object
+                .kind
+                .clone();
+            let size = self
+                .render_live(id, "retained render must remain live")
+                .size;
             let focus_picture = self
-                .renders
-                .get(id.0)
-                .expect("live")
+                .render_live(id, "paint render must remain live")
                 .object
                 .layers
                 .focus_picture;
@@ -271,21 +275,28 @@ impl WidgetTree {
                     border: Border::new(2.0, focus_ring),
                 });
             }
-            let node = self.renders.get_mut(id.0).expect("live");
-            node.object.cache = cache;
-            node.dirty.remove(DirtyFlags::PAINT);
-            if let Some(picture) = node.object.layers.picture {
+            let (picture, cached, node_size) = {
+                let node = self.render_live_mut(id, "retained render must remain live");
+                node.object.cache = cache;
+                node.dirty.remove(DirtyFlags::PAINT);
+                (
+                    node.object.layers.picture,
+                    node.object.cache.clone(),
+                    node.size,
+                )
+            };
+            if let Some(picture) = picture {
                 self.compositor.update_picture(
                     picture,
-                    node.object.cache.clone(),
-                    Rect::from_origin_size(Offset::ZERO, node.size),
+                    cached,
+                    Rect::from_origin_size(Offset::ZERO, node_size),
                 );
             }
             if let Some(picture) = focus_picture {
                 self.compositor.update_picture(
                     picture,
                     focus_cache,
-                    Rect::from_origin_size(Offset::ZERO, node.size),
+                    Rect::from_origin_size(Offset::ZERO, node_size),
                 );
             }
             self.diagnostics.paints += 1;
@@ -300,7 +311,12 @@ impl WidgetTree {
             transform: CoreTransform::translation(offset),
         });
         if dirty {
-            output.extend_from(&self.renders.get(id.0).expect("live").object.cache);
+            output.extend_from(
+                &self
+                    .render_live(id, "retained render must remain live")
+                    .object
+                    .cache,
+            );
         } else {
             self.diagnostics.display_lists_reused += 1;
             output.extend_from(&cache);
@@ -310,7 +326,9 @@ impl WidgetTree {
             | RenderKind::ClipRRect { .. }
             | RenderKind::ClipOval { .. }
             | RenderKind::ClipPath { .. } => {
-                let node_size = self.renders.get(id.0).expect("live").size;
+                let node_size = self
+                    .render_live(id, "retained render must remain live")
+                    .size;
                 output.push(PaintCommand::PushClip {
                     rect: Rect::from_origin_size(Offset::ZERO, node_size),
                 });
@@ -462,10 +480,7 @@ impl WidgetTree {
         if !geometry.visible {
             return;
         }
-        let node = self.renders.get(id.0).expect("live");
-        let scroll = node
-            .scroll_state()
-            .expect("scrollbar paint requires a scroll viewport");
+        let scroll = self.scroll_state_live(id);
         if !controller.scrollbar_thumb_visibility() && !scroll.hovered && !scroll.dragging {
             return;
         }

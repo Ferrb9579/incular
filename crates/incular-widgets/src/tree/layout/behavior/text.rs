@@ -32,7 +32,7 @@ impl WidgetTree {
                         .overflow(overflow),
                 );
                 let size = constraints.constrain(layout.metrics.size);
-                let node = self.renders.get_mut(id.0).expect("live");
+                let node = self.render_live_mut(id, "retained render must remain live");
                 node.set_text_layout(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
@@ -46,7 +46,7 @@ impl WidgetTree {
                     .external_call(text_call_label("TextEngine::layout", &text));
                 let layout = self.text_engine.layout(&text, &style, width, align);
                 let size = constraints.constrain(layout.metrics.size);
-                let node = self.renders.get_mut(id.0).expect("live");
+                let node = self.render_live_mut(id, "retained render must remain live");
                 node.set_text_layout(layout.clone());
                 node.baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
@@ -114,14 +114,15 @@ impl WidgetTree {
                     intrinsic_height.max(minimum_height),
                 ));
                 let (revision, visual_revision) = controller.revisions();
-                let node = self.renders.get_mut(id.0).expect("live");
-                node.set_text_layout(layout.clone());
-                let state = node
-                    .text_field_state_mut()
-                    .expect("text-field render must own text-field state");
-                state.content_revision = revision;
-                state.visual_revision = visual_revision;
-                node.baseline = Some(layout.metrics.baseline);
+                self.render_live_mut(id, "retained render must remain live")
+                    .set_text_layout(layout.clone());
+                {
+                    let state = self.text_field_state_live_mut(id);
+                    state.content_revision = revision;
+                    state.visual_revision = visual_revision;
+                }
+                self.render_live_mut(id, "retained render must remain live")
+                    .baseline = Some(layout.metrics.baseline);
                 (size, Vec::new())
             }
             _ => unreachable!("text layout received a non-text render kind"),

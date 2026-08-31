@@ -97,9 +97,7 @@ impl WidgetTree {
             );
             let new_kind = render_context.build(|context| render_kind(&widget, context));
             let invalidation = self
-                .renders
-                .get_mut(render.0)
-                .expect("live rebound render")
+                .render_live_mut(render, "rebound render must remain live")
                 .object
                 .update_kind(new_kind);
             if let Some(element) = self.elements.get_mut(id.0) {
@@ -166,9 +164,7 @@ impl WidgetTree {
                         root = Some(id);
                     }
                     if let Some(parent) = parent {
-                        self.elements
-                            .get_mut(parent.0)
-                            .expect("mount parent remains live")
+                        self.element_live_mut(parent, "mount parent must remain live")
                             .children
                             .push(id);
                     }
@@ -189,9 +185,7 @@ impl WidgetTree {
                         .is_some_and(|element| element.parent.is_none())
                     {
                         let layer = self
-                            .renders
-                            .get(self.render_id(id).expect("mounted").0)
-                            .expect("mounted render")
+                            .render_for_live_element(id, "mounted root must own a live render")
                             .object
                             .layers
                             .root;
@@ -274,7 +268,6 @@ impl WidgetTree {
             render_context.consumer_id(),
             (id, InheritedDependencyKind::Render),
         );
-        self.elements.get_mut(id.0).expect("fresh element").children = Vec::new();
         if let WidgetKind::SelectionListener { notifier, .. } = &widget.kind {
             notifier.register();
         }
@@ -302,14 +295,12 @@ impl WidgetTree {
                 }
                 InheritedDependencyKind::Render => {
                     let (widget, context) = {
-                        let element = self.elements.get(id.0).expect("live inherited consumer");
+                        let element = self.element_live(id, "inherited consumer must remain live");
                         (element.widget.clone(), element.render_context.clone())
                     };
                     let new_kind = context.build(|context| render_kind(&widget, context));
                     let invalidation = self
-                        .renders
-                        .get_mut(render.0)
-                        .expect("live inherited render")
+                        .render_live_mut(render, "inherited render must remain live")
                         .object
                         .update_kind(new_kind);
                     if invalidation.contains(RenderInvalidation::LAYOUT) {
@@ -393,7 +384,7 @@ impl WidgetTree {
             new_notifier.register();
         }
         let (old_override, old_boundary, render_context) = {
-            let element = self.elements.get(id.0).expect("present");
+            let element = self.element_live(id, "retained element must remain live");
             (
                 element.environment_override.clone(),
                 element.environment_boundary,
@@ -425,11 +416,11 @@ impl WidgetTree {
             "only compatible elements may update"
         );
         self.check_keys_borrowed(Some(id), widget.children_refs())?;
-        let render = self.elements.get(id.0).expect("present").render;
+        let render = self
+            .element_live(id, "retained element must remain live")
+            .render;
         let old_kind = self
-            .renders
-            .get(render.0)
-            .expect("present")
+            .render_live(render, "updated render must remain live")
             .object
             .kind
             .clone();
@@ -439,21 +430,22 @@ impl WidgetTree {
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
         let mut layer_structure_changed = false;
         if old_kind != new_kind {
-            layer_structure_changed = self
-                .renders
-                .get_mut(render.0)
-                .expect("present")
+            let mut layers = self
+                .render_live(render, "updated render must remain live")
                 .object
                 .layers
-                .reconcile_structure(&mut self.compositor, &widget.kind);
+                .clone();
+            layer_structure_changed =
+                layers.reconcile_structure(&mut self.compositor, &widget.kind);
+            self.render_live_mut(render, "updated render must remain live")
+                .object
+                .layers = layers;
             let invalidation = self
-                .renders
-                .get_mut(render.0)
-                .expect("present")
+                .render_live_mut(render, "updated render must remain live")
                 .object
                 .update_kind(new_kind.clone());
             let (layers, size) = {
-                let node = self.renders.get(render.0).expect("present");
+                let node = self.render_live(render, "updated render must remain live");
                 (node.object.layers.clone(), node.size)
             };
             let world_transform = self.render_world_transform(render);
@@ -489,7 +481,7 @@ impl WidgetTree {
             }
         }
         {
-            let element = self.elements.get_mut(id.0).expect("present");
+            let element = self.element_live_mut(id, "retained element must remain live");
             element.widget = widget.clone();
             element.environment_override = new_override;
             element.environment_boundary = new_boundary;
@@ -505,7 +497,7 @@ impl WidgetTree {
             self.rebind_inherited_subtree(id);
         } else if environment_value_changed {
             let (build_context, render_context, scope) = {
-                let element = self.elements.get(id.0).expect("present");
+                let element = self.element_live(id, "retained element must remain live");
                 (
                     element.build_context.clone(),
                     element.render_context.clone(),
@@ -537,7 +529,7 @@ impl WidgetTree {
         self.diagnostics.rebuilds += 1;
         #[cfg(feature = "devtools")]
         {
-            let element = self.elements.get_mut(id.0).expect("present");
+            let element = self.element_live_mut(id, "retained element must remain live");
             element.dev.builds += 1;
             element.dev.revision += 1;
             element.dev.property_changes = property_changes;
@@ -556,11 +548,15 @@ impl WidgetTree {
             self.devtools_trace_end(trace);
             return Ok(());
         }
-        let previous = self.elements.get(id.0).expect("present").children.clone();
+        let previous = self
+            .element_live(id, "retained element must remain live")
+            .children
+            .clone();
         let desired = widget.children_refs().into_iter().collect::<Vec<_>>();
         let reconciled = self.reconcile_children(id, previous.clone(), &desired)?;
         if reconciled != previous {
-            self.elements.get_mut(id.0).expect("present").children = reconciled;
+            self.element_live_mut(id, "retained element must remain live")
+                .children = reconciled;
             self.sync_render_children(id);
         }
         self.sync_raw_input_state(id);
@@ -691,14 +687,16 @@ impl WidgetTree {
         config: &SliverViewportConfig,
         layout: &SliverViewportLayout,
     ) -> Result<(), TreeError> {
-        let element_id = self
-            .element_for_render(id)
-            .expect("sliver viewport element");
+        let element_id = self.element_for_render(id).unwrap_or_else(|| {
+            self.panic_invariant(
+                InvariantCategory::Ownership,
+                None,
+                Some(id),
+                "sliver viewport render must have a live element owner",
+            )
+        });
         let old_ids = {
-            let element = self
-                .elements
-                .get(element_id.0)
-                .expect("sliver viewport element");
+            let element = self.element_live(element_id, "sliver viewport element must remain live");
             element.sliver_child_ids.clone()
         };
         let desired = layout
@@ -727,10 +725,7 @@ impl WidgetTree {
                     .or_else(|| child_id.item_index()),
             );
         }
-        let element = self
-            .elements
-            .get_mut(element_id.0)
-            .expect("sliver viewport element");
+        let element = self.element_live_mut(element_id, "sliver viewport element must remain live");
         element.children = reconciled.children;
         element.sliver_child_ids = reconciled.keys;
         element.sliver_child_semantic_indices = next_semantic_indices;
@@ -752,10 +747,8 @@ impl WidgetTree {
         desired: Vec<(AdvancedChildKey, Widget)>,
     ) -> Result<(), TreeError> {
         let old_keys = {
-            let element = self
-                .elements
-                .get(element_id.0)
-                .expect("advanced scrolling element");
+            let element =
+                self.element_live(element_id, "advanced scrolling element must remain live");
             element.advanced_child_keys.clone()
         };
         let desired = desired
@@ -767,10 +760,8 @@ impl WidgetTree {
                 GeneratedChildIdentity::Advanced(format!("{key:?}"))
             })?;
 
-        let element = self
-            .elements
-            .get_mut(element_id.0)
-            .expect("advanced scrolling element");
+        let element =
+            self.element_live_mut(element_id, "advanced scrolling element must remain live");
         element.children = reconciled.children;
         element.advanced_child_keys = reconciled.keys;
         element.sliver_child_ids.clear();
@@ -812,9 +803,7 @@ impl WidgetTree {
         }
 
         let old_children = self
-            .elements
-            .get(owner.0)
-            .expect("dynamic child owner")
+            .element_live(owner, "dynamic child owner must remain live")
             .children
             .clone();
         debug_assert_eq!(old_keys.len(), old_children.len());
@@ -892,7 +881,14 @@ impl WidgetTree {
         id: RenderObjectId,
         constraints: Constraints,
     ) -> Result<(), TreeError> {
-        let element_id = self.element_for_render(id).expect("layout builder element");
+        let element_id = self.element_for_render(id).unwrap_or_else(|| {
+            self.panic_invariant(
+                InvariantCategory::Ownership,
+                None,
+                Some(id),
+                "layout-builder render must have a live element owner",
+            )
+        });
         let _build_guard = self.guard_element(FramePhase::Build, element_id);
         let (
             builder,
@@ -902,10 +898,7 @@ impl WidgetTree {
             previous_revision,
             previous_children,
         ) = {
-            let element = self
-                .elements
-                .get(element_id.0)
-                .expect("layout builder element");
+            let element = self.element_live(element_id, "layout-builder element must remain live");
             let WidgetKind::LayoutBuilder {
                 builder, revision, ..
             } = &element.widget.kind
@@ -943,10 +936,7 @@ impl WidgetTree {
             false,
             |_| GeneratedChildIdentity::LayoutBuilder,
         )?;
-        let element = self
-            .elements
-            .get_mut(element_id.0)
-            .expect("layout builder element");
+        let element = self.element_live_mut(element_id, "layout-builder element must remain live");
         element.children = reconciled.children;
         element.layout_builder_constraints = Some(constraints);
         element.layout_builder_revision = revision_value;
@@ -1165,6 +1155,9 @@ impl WidgetTree {
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;
                     };
+                    if let Some(semantic) = self.semantic_ids.remove(&id) {
+                        let _ = self.semantics.remove(semantic);
+                    }
                     let build_consumer = element.build_context.consumer_id();
                     let render_consumer = element.render_context.consumer_id();
                     element.build_context.clear_dependencies();
@@ -1256,7 +1249,7 @@ impl WidgetTree {
     }
     pub(super) fn sync_render_children(&mut self, id: ElementId) {
         let (render, children) = {
-            let e = self.elements.get(id.0).expect("mounted");
+            let e = self.element_live(id, "mounted element must remain live");
             (e.render, e.children.clone())
         };
         let render_children: Vec<_> = children
@@ -1264,7 +1257,7 @@ impl WidgetTree {
             .filter_map(|child| self.render_id(child))
             .collect();
         let children_changed = {
-            let node = self.renders.get_mut(render.0).expect("mounted");
+            let node = self.render_live_mut(render, "mounted render must remain live");
             let changed = node.children != render_children;
             node.children = render_children.clone();
             if changed {
@@ -1273,15 +1266,16 @@ impl WidgetTree {
             changed
         };
         let (layers, kind) = {
-            let node = self.renders.get(render.0).expect("mounted");
+            let node = self.render_live(render, "mounted render must remain live");
             (node.object.layers.clone(), node.object.kind.clone())
         };
         let mut child_layers = render_children
             .iter()
-            .filter_map(|child| {
-                self.renders
-                    .get(child.0)
-                    .map(|render| render.object.layers.root)
+            .map(|child| {
+                self.render_live(*child, "mounted child render must remain live")
+                    .object
+                    .layers
+                    .root
             })
             .collect::<Vec<_>>();
         if let RenderKind::IndexedStack { index, .. } = kind {
@@ -1308,7 +1302,8 @@ impl WidgetTree {
         }
         layers.set_render_children(&mut self.compositor, &kind, child_layers);
         for child in render_children {
-            self.renders.get_mut(child.0).expect("mounted").parent = Some(render);
+            self.render_live_mut(child, "mounted child render must remain live")
+                .parent = Some(render);
         }
         if children_changed {
             self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);

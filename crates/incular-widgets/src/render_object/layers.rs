@@ -281,6 +281,21 @@ impl RenderLayers {
         }
     }
 
+    pub(crate) fn owned_ids(&self) -> [Option<LayerId>; 5] {
+        let (attachment_a, attachment_b) = match self.attachment {
+            LayerAttachment::Direct => (None, None),
+            LayerAttachment::Clip { clip, content } => (Some(clip), Some(content)),
+            ref attachment => (attachment.primary_layer(), None),
+        };
+        [
+            Some(self.root),
+            self.picture,
+            self.focus_picture,
+            attachment_a,
+            attachment_b,
+        ]
+    }
+
     /// Rebuilds only this render node's owned layer structure when the
     /// declarative compositor spec changes. The root transform ID remains
     /// stable so parent topology and render identity never need rewriting.

@@ -14,17 +14,9 @@ impl WidgetTree {
                 focused_color,
                 enabled,
                 ..
-            } => {
-                let render = self.renders.get(id.0).expect("live");
-                (render
-                    .button_state()
-                    .expect("button render must own button state")
-                    .focused
-                    && *enabled
-                    && color.alpha == 0)
-                    .then_some(*focused_color)
-                    .flatten()
-            }
+            } => (self.button_state_live(id).focused && *enabled && color.alpha == 0)
+                .then_some(*focused_color)
+                .flatten(),
             _ => None,
         };
         match kind {
@@ -91,7 +83,10 @@ impl WidgetTree {
                         color,
                     });
                 }
-                if let Some(layout) = self.renders.get(id.0).expect("live").text_layout_cloned() {
+                if let Some(layout) = self
+                    .render_live(id, "retained render must remain live")
+                    .text_layout_cloned()
+                {
                     let text_offset = Offset::new(
                         geometry.rect.origin.x,
                         geometry.rect.origin.y
@@ -122,10 +117,7 @@ impl WidgetTree {
                 enabled,
                 ..
             } => {
-                let render = self.renders.get(id.0).expect("live");
-                let button = render
-                    .button_state()
-                    .expect("button render must own button state");
+                let button = self.button_state_live(id);
                 // Transparent buttons are commonly used as the retained
                 // hit/semantic surface for compound controls (checkboxes,
                 // switches, toggles, and radios).  Treat their focused

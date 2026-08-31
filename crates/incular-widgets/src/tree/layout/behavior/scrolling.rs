@@ -17,7 +17,9 @@ impl WidgetTree {
             } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, scroll_constraints(axis, constraints));
-                    let content = self.renders.get(child.0).expect("live").size;
+                    let content = self
+                        .render_live(child, "retained render must remain live")
+                        .size;
                     let size = scroll_size(axis, constraints, content);
                     controller.update_extents_with_physics(
                         axis.main_extent(content),
@@ -32,15 +34,15 @@ impl WidgetTree {
             RenderKind::RawScrollbar { controller, style } => {
                 let (size, offsets) = if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 };
-                let node = self.renders.get_mut(id.0).expect("live raw scrollbar");
-                let state = node
-                    .raw_scrollbar_state_mut()
-                    .expect("raw-scrollbar render must own scrollbar state");
+                let state = self.raw_scrollbar_state_live_mut(id);
                 let replace = match state.scrollbar.as_ref() {
                     Some(scrollbar) => scrollbar.controller() != controller,
                     None => true,
@@ -63,10 +65,9 @@ impl WidgetTree {
             }
             RenderKind::ListWheelScrollView { .. } | RenderKind::ListWheelViewport { .. } => {
                 let (layout_size, placements) = self
-                    .renders
-                    .get(id.0)
-                    .and_then(RenderNode::wheel_state)
-                    .and_then(|state| state.layout.as_ref())
+                    .wheel_state_live(id)
+                    .layout
+                    .as_ref()
                     .map(|layout| {
                         (
                             layout.size,
@@ -97,9 +98,8 @@ impl WidgetTree {
             }
             RenderKind::DraggableScrollableSheet { config } => {
                 if let Some(state) = self
-                    .renders
-                    .get(id.0)
-                    .and_then(RenderNode::draggable_sheet_state)
+                    .render_live(id, "draggable-sheet render must remain live")
+                    .draggable_sheet_state()
                     .and_then(|state| state.state.clone())
                 {
                     let viewport_size = advanced_viewport_size(constraints);
@@ -128,7 +128,10 @@ impl WidgetTree {
             RenderKind::DraggableScrollableActuator { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
@@ -137,10 +140,9 @@ impl WidgetTree {
             RenderKind::TwoDimensionalScrollView { .. }
             | RenderKind::TwoDimensionalViewport { .. } => {
                 let (layout_size, placements) = self
-                    .renders
-                    .get(id.0)
-                    .and_then(RenderNode::two_dimensional_state)
-                    .and_then(|state| state.layout.as_ref())
+                    .two_dimensional_state_live(id)
+                    .layout
+                    .as_ref()
                     .map(|layout| {
                         (
                             layout.size,

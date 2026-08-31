@@ -90,9 +90,7 @@ impl WidgetTree {
                     return None;
                 };
                 let (content, visual) = controller.revisions();
-                let state = render
-                    .text_field_state()
-                    .expect("text-field render must own text-field state");
+                let state = render.text_field_state()?;
                 ((content != state.content_revision) || (visual != state.visual_revision))
                     .then_some(RenderObjectId(raw))
             })
@@ -110,9 +108,7 @@ impl WidgetTree {
             return true;
         };
         let kind = self
-            .renders
-            .get(id.0)
-            .expect("advanced scrolling render")
+            .render_live(id, "advanced scrolling render must remain live")
             .object
             .kind
             .clone();
@@ -144,12 +140,7 @@ impl WidgetTree {
                         }
                     }
                     config.update_mounted_state(&state, mounted_config.as_deref());
-                    self.renders
-                        .get_mut(id.0)
-                        .expect("draggable sheet render")
-                        .draggable_sheet_state_mut()
-                        .expect("draggable-sheet render must own draggable state")
-                        .mounted_config = Some(config.clone());
+                    self.draggable_sheet_state_live_mut(id).mounted_config = Some(config.clone());
                     state
                 } else {
                     let (state, child) = config.mount();
@@ -160,12 +151,7 @@ impl WidgetTree {
                     if !self.record_tree_result(result) {
                         return false;
                     }
-                    let retained = self
-                        .renders
-                        .get_mut(id.0)
-                        .expect("draggable sheet render")
-                        .draggable_sheet_state_mut()
-                        .expect("draggable-sheet render must own draggable state");
+                    let retained = self.draggable_sheet_state_live_mut(id);
                     retained.state = Some(state.clone());
                     retained.mounted_config = Some(config.clone());
                     state
@@ -194,11 +180,7 @@ impl WidgetTree {
         viewport_size: Size,
     ) -> bool {
         let layout = self
-            .renders
-            .get_mut(id.0)
-            .expect("wheel render")
-            .wheel_state_mut()
-            .expect("wheel render must own wheel state")
+            .wheel_state_live_mut(id)
             .viewport
             .as_mut()
             .expect("wheel render must own retained viewport")
@@ -214,12 +196,7 @@ impl WidgetTree {
         if !self.record_tree_result(result) {
             return false;
         }
-        self.renders
-            .get_mut(id.0)
-            .expect("wheel render")
-            .wheel_state_mut()
-            .expect("wheel render must own wheel state")
-            .layout = Some(layout);
+        self.wheel_state_live_mut(id).layout = Some(layout);
         true
     }
 
@@ -230,11 +207,7 @@ impl WidgetTree {
         viewport_size: Size,
     ) -> bool {
         let layout = self
-            .renders
-            .get_mut(id.0)
-            .expect("two-dimensional render")
-            .two_dimensional_state_mut()
-            .expect("two-dimensional render must own viewport state")
+            .two_dimensional_state_live_mut(id)
             .viewport
             .as_mut()
             .expect("two-dimensional render must own retained viewport")
@@ -255,12 +228,7 @@ impl WidgetTree {
         if !self.record_tree_result(result) {
             return false;
         }
-        self.renders
-            .get_mut(id.0)
-            .expect("two-dimensional render")
-            .two_dimensional_state_mut()
-            .expect("two-dimensional render must own viewport state")
-            .layout = Some(layout);
+        self.two_dimensional_state_live_mut(id).layout = Some(layout);
         true
     }
 
@@ -333,7 +301,7 @@ impl WidgetTree {
         }
     }
     pub(super) fn child_content_transform(&self, id: RenderObjectId) -> CoreTransform {
-        let node = self.renders.get(id.0).expect("live render");
+        let node = self.render_live(id, "child transform render must remain live");
         match &node.object.kind {
             RenderKind::Scroll {
                 controller,
@@ -360,7 +328,7 @@ impl WidgetTree {
         }
     }
     pub(super) fn follower_content_transform(&self, id: RenderObjectId) -> CoreTransform {
-        let node = self.renders.get(id.0).expect("live follower");
+        let node = self.render_live(id, "follower render must remain live");
         let RenderKind::Follower {
             link,
             show_when_unlinked,
@@ -393,12 +361,14 @@ impl WidgetTree {
         let mut cursor = Some(id);
         while let Some(current) = cursor {
             path.push(current);
-            cursor = self.renders.get(current.0).expect("live render").parent;
+            cursor = self
+                .render_live(current, "world-transform ancestor must remain live")
+                .parent;
         }
         path.reverse();
         let mut world = CoreTransform::IDENTITY;
         for (index, current) in path.iter().enumerate() {
-            let node = self.renders.get(current.0).expect("live render");
+            let node = self.render_live(*current, "world-transform path render must remain live");
             world = world.then(CoreTransform::translation(node.offset));
             if index + 1 != path.len() {
                 world = world.then(self.child_content_transform(*current));
@@ -424,7 +394,7 @@ impl WidgetTree {
     pub fn render_origin(&self, mut id: RenderObjectId) -> Offset {
         let mut origin = Offset::ZERO;
         loop {
-            let node = self.renders.get(id.0).expect("live render");
+            let node = self.render_live(id, "render-origin path must remain live");
             origin = origin + node.offset;
             match &node.object.kind {
                 RenderKind::Scroll {
@@ -464,7 +434,7 @@ impl WidgetTree {
         let mut origin = Offset::ZERO;
         let mut is_self = true;
         loop {
-            let node = self.renders.get(id.0).expect("live render");
+            let node = self.render_live(id, "viewport-origin path must remain live");
             origin = origin + node.offset;
             if !is_self {
                 match &node.object.kind {
@@ -612,7 +582,7 @@ impl WidgetTree {
         }
         let mut current = Some(id);
         while let Some(render) = current {
-            let node = self.renders.get_mut(render.0).expect("live render");
+            let node = self.render_live_mut(render, "dirty propagation render must remain live");
             node.dirty.insert(flags);
             current = if propagate_layout && flags.contains(DirtyFlags::LAYOUT) {
                 node.parent
@@ -630,12 +600,13 @@ impl WidgetTree {
     pub(super) fn layout_render_inner(&mut self, id: RenderObjectId, constraints: Constraints) {
         let _node_guard = self.guard_render(FramePhase::Layout, id, Some(constraints));
         let needs = self
-            .renders
-            .get(id.0)
-            .expect("live")
+            .render_live(id, "layout render must remain live")
             .dirty
             .contains(DirtyFlags::LAYOUT)
-            || self.renders.get(id.0).expect("live").constraints != Some(constraints);
+            || self
+                .render_live(id, "retained render must remain live")
+                .constraints
+                != Some(constraints);
         if !needs {
             self.diagnostics.layout_cache_hits += 1;
             return;
@@ -646,11 +617,13 @@ impl WidgetTree {
             .and_then(|element| self.devtools_trace_begin_element(element, TracePhase::Layout));
         #[cfg(feature = "devtools")]
         let old_layout = self.deep_trace.as_ref().map(|_| {
-            let render = self.renders.get(id.0).expect("live");
+            let render = self.render_live(id, "retained render must remain live");
             (render.constraints, render.size)
         });
         if matches!(
-            self.renders.get(id.0).expect("live").object.kind,
+            self.render_live(id, "retained render must remain live")
+                .object
+                .kind,
             RenderKind::LayoutBuilder
         ) {
             let result = self.materialize_layout_builder(id, constraints);
@@ -672,7 +645,7 @@ impl WidgetTree {
             return;
         }
         let (kind, children) = {
-            let n = self.renders.get(id.0).expect("live");
+            let n = self.render_live(id, "retained render must remain live");
             (n.object.kind.clone(), n.children.clone())
         };
         let (size, offsets) = self.layout_kind(id, kind, &children, constraints);
@@ -680,25 +653,29 @@ impl WidgetTree {
             // The parent computes this placement after the child has completed
             // its own layout. Update the retained placement layer here rather
             // than waiting for a later child layout pass (which may not occur).
-            let child = self.renders.get_mut(child.0).expect("live");
-            child.offset = offset;
+            let layer = {
+                let child = self.render_live_mut(child, "retained render must remain live");
+                child.offset = offset;
+                child.object.layers.root
+            };
             self.compositor
-                .update_transform(child.object.layers.root, CoreTransform::translation(offset));
+                .update_transform(layer, CoreTransform::translation(offset));
         }
-        let node = self.renders.get_mut(id.0).expect("live");
-        node.size = size;
-        node.constraints = Some(constraints);
-        node.dirty.remove(DirtyFlags::LAYOUT);
-        node.dirty.insert(DirtyFlags::PAINT);
-        self.compositor.update_transform(
-            node.object.layers.root,
-            CoreTransform::translation(node.offset),
-        );
+        let (layer, node_offset) = {
+            let node = self.render_live_mut(id, "retained render must remain live");
+            node.size = size;
+            node.constraints = Some(constraints);
+            node.dirty.remove(DirtyFlags::LAYOUT);
+            node.dirty.insert(DirtyFlags::PAINT);
+            (node.object.layers.root, node.offset)
+        };
+        self.compositor
+            .update_transform(layer, CoreTransform::translation(node_offset));
         // Static affine wrappers, clips, and geometry-sensitive effect layers
         // receive their initial retained geometry during layout. Later
         // controller changes are handled by `update_compositor`.
         let (layers, kind, transform) = {
-            let node = self.renders.get(id.0).expect("live");
+            let node = self.render_live(id, "retained render must remain live");
             (
                 node.object.layers.clone(),
                 node.object.kind.clone(),

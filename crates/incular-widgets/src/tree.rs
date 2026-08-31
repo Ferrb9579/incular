@@ -81,6 +81,7 @@ use crate::selection::{
 
 mod focus;
 mod interaction;
+mod invariants;
 mod layout;
 mod painting;
 mod raw_input;
@@ -112,6 +113,8 @@ use widget::{
     sliver_viewport_size, unconstrained_constraints,
 };
 
+#[doc(hidden)]
+pub use invariants::{InvariantCategory, InvariantViolation};
 pub use rendering::{image_fit_rects, image_repeat_destinations, render_kind};
 pub use retained::{PERFORMANCE_OVERLAY_KEY, performance_overlay_placeholder};
 pub use values::*;

@@ -515,7 +515,7 @@ impl WidgetTree {
     }
     pub fn set_button_state(&mut self, id: ElementId, state: ButtonState) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
-        let node = self.renders.get_mut(render.0).expect("live render");
+        let node = self.render_live_mut(render, "button render identity must remain live");
         if let Some(button) = node.button_state_mut()
             && button.visual != state
         {
@@ -539,7 +539,7 @@ impl WidgetTree {
         focused: Option<bool>,
     ) -> Result<(), TreeError> {
         let render = self.render_id(id).ok_or(TreeError::MissingElement(id))?;
-        let node = self.renders.get_mut(render.0).expect("live render");
+        let node = self.render_live_mut(render, "button render identity must remain live");
         let Some(button) = node.button_state_mut() else {
             return Ok(());
         };
@@ -638,9 +638,7 @@ impl WidgetTree {
                         self.diagnostics.scroll_offset_updates += 1;
                         // Only this viewport's overlay picture changes; the
                         // retained content subtree remains compositor-only.
-                        self.renders
-                            .get_mut(_render.0)
-                            .expect("live")
+                        self.render_live_mut(_render, "scroll render must remain live")
                             .dirty
                             .insert(DirtyFlags::PAINT);
                     }
@@ -669,9 +667,7 @@ impl WidgetTree {
                         changed = true;
                         self.diagnostics.compositor_only_updates += 1;
                         self.diagnostics.scroll_offset_updates += 1;
-                        self.renders
-                            .get_mut(_render.0)
-                            .expect("live")
+                        self.render_live_mut(_render, "sliver viewport render must remain live")
                             .dirty
                             .insert(DirtyFlags::PAINT);
                         let has_pinned_children = self
@@ -743,7 +739,9 @@ impl WidgetTree {
                 }
                 RenderKind::Transform { transform, origin } => {
                     if let Some(content) = layers.content() {
-                        let size = self.renders.get(_render.0).expect("live").size;
+                        let size = self
+                            .render_live(_render, "retained render must remain live")
+                            .size;
                         if self
                             .compositor
                             .update_transform(content, transform_around(transform, origin, size))
@@ -759,7 +757,9 @@ impl WidgetTree {
                     }
                     active |= controller.is_active();
                     if let Some(content) = layers.content() {
-                        let size = self.renders.get(_render.0).expect("live").size;
+                        let size = self
+                            .render_live(_render, "retained render must remain live")
+                            .size;
                         if self.compositor.update_transform(
                             content,
                             transform_around(
@@ -783,7 +783,9 @@ impl WidgetTree {
                     }
                     active |= controller.is_active();
                     if let Some(content) = layers.content() {
-                        let size = self.renders.get(_render.0).expect("live").size;
+                        let size = self
+                            .render_live(_render, "retained render must remain live")
+                            .size;
                         if self.compositor.update_transform(
                             content,
                             transform_around_alignment(
@@ -801,10 +803,16 @@ impl WidgetTree {
                 RenderKind::FittedBox { fit, alignment } => {
                     if let (Some(content), Some(&child)) = (
                         layers.content(),
-                        self.renders.get(_render.0).expect("live").children.first(),
+                        self.render_live(_render, "retained render must remain live")
+                            .children
+                            .first(),
                     ) {
-                        let size = self.renders.get(_render.0).expect("live").size;
-                        let child_size = self.renders.get(child.0).expect("live").size;
+                        let size = self
+                            .render_live(_render, "retained render must remain live")
+                            .size;
+                        let child_size = self
+                            .render_live(child, "retained render must remain live")
+                            .size;
                         if self.compositor.update_transform(
                             content,
                             fitted_transform(child_size, size, fit, alignment),
@@ -967,8 +975,14 @@ impl WidgetTree {
         // transfers only boundary remainder to an outer scroll viewport.
         let mut viewports = Vec::new();
         loop {
-            let render = self.elements.get(element.0).expect("live element").render;
-            match &self.renders.get(render.0).expect("live render").object.kind {
+            let render = self
+                .element_live(element, "scroll ancestor element must remain live")
+                .render;
+            match &self
+                .render_live(render, "scroll ancestor render must remain live")
+                .object
+                .kind
+            {
                 RenderKind::Scroll {
                     controller,
                     axis,
@@ -1035,19 +1049,22 @@ impl WidgetTree {
         let Some(render) = self.render_id(id) else {
             return false;
         };
-        let (controller, reverse, physics) =
-            match &self.renders.get(render.0).expect("live").object.kind {
-                RenderKind::Scroll {
-                    controller,
-                    axis: _,
-                    reverse,
-                    physics,
-                } => (controller.clone(), *reverse, *physics),
-                RenderKind::SliverViewport { config } => {
-                    (config.controller.clone(), config.reverse, config.physics)
-                }
-                _ => return false,
-            };
+        let (controller, reverse, physics) = match &self
+            .render_live(render, "retained render must remain live")
+            .object
+            .kind
+        {
+            RenderKind::Scroll {
+                controller,
+                axis: _,
+                reverse,
+                physics,
+            } => (controller.clone(), *reverse, *physics),
+            RenderKind::SliverViewport { config } => {
+                (config.controller.clone(), config.reverse, config.physics)
+            }
+            _ => return false,
+        };
         let page_extent = physics
             .snap_extent(controller.viewport_extent())
             .unwrap_or_else(|| controller.viewport_extent());
@@ -1082,12 +1099,7 @@ impl WidgetTree {
                         render,
                         grab_offset: grab.clamp(0., geometry.thumb.size.height),
                     });
-                    self.renders
-                        .get_mut(render.0)
-                        .expect("live")
-                        .scroll_state_mut()
-                        .expect("scrollbar target must own scroll state")
-                        .dragging = true;
+                    self.scroll_state_live_mut(render).dragging = true;
                 } else {
                     let delta = if point.y < geometry.thumb.origin.y {
                         -controller.viewport_extent()
@@ -1096,9 +1108,7 @@ impl WidgetTree {
                     };
                     let _ = controller.scroll_by(delta);
                 }
-                self.renders
-                    .get_mut(render.0)
-                    .expect("live")
+                self.render_live_mut(render, "scrollbar target render must remain live")
                     .dirty
                     .insert(DirtyFlags::PAINT);
                 true
@@ -1117,9 +1127,7 @@ impl WidgetTree {
                     if changed {
                         self.diagnostics.scroll_events += 1;
                     }
-                    self.renders
-                        .get_mut(drag.render.0)
-                        .expect("live")
+                    self.render_live_mut(drag.render, "scrollbar drag render must remain live")
                         .dirty
                         .insert(DirtyFlags::PAINT);
                     return true;
@@ -1132,7 +1140,7 @@ impl WidgetTree {
                     .map(|(raw, _)| RenderObjectId(raw))
                     .collect::<Vec<_>>();
                 for render in ids {
-                    let node = self.renders.get_mut(render.0).expect("live");
+                    let node = self.render_live_mut(render, "retained render must remain live");
                     let is_hovered = hovered == Some(render);
                     let Some(scroll) = node.scroll_state_mut() else {
                         continue;
@@ -1149,10 +1157,9 @@ impl WidgetTree {
                 let Some(drag) = self.scrollbar_drag.take() else {
                     return false;
                 };
-                let node = self.renders.get_mut(drag.render.0).expect("live");
-                node.scroll_state_mut()
-                    .expect("scrollbar drag target must own scroll state")
-                    .dragging = false;
+                self.scroll_state_live_mut(drag.render).dragging = false;
+                let node =
+                    self.render_live_mut(drag.render, "scrollbar drag render must remain live");
                 node.dirty.insert(DirtyFlags::PAINT);
                 true
             }

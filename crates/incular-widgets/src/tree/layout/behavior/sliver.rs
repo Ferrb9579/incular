@@ -93,24 +93,26 @@ impl WidgetTree {
                         return (size, Vec::new());
                     }
                     let materialized = self
-                        .renders
-                        .get(id.0)
-                        .expect("sliver viewport render")
+                        .render_live(id, "sliver viewport render must remain live")
                         .children
                         .clone();
                     let mut pass_changed = false;
                     for (child, layout) in materialized.into_iter().zip(&sliver_layout.children) {
                         self.layout_render(child, layout.constraints);
-                        let measured = config
-                            .axis
-                            .main_extent(self.renders.get(child.0).expect("sliver child").size);
-                        pass_changed |= config.delegate.set_child_extent(layout.id, measured);
-                        let child = self.renders.get_mut(child.0).expect("sliver child");
-                        child.offset = config.axis.offset(layout.offset, layout.cross_offset);
-                        self.compositor.update_transform(
-                            child.object.layers.root,
-                            CoreTransform::translation(child.offset),
+                        let measured = config.axis.main_extent(
+                            self.render_live(child, "sliver child render must remain live")
+                                .size,
                         );
+                        pass_changed |= config.delegate.set_child_extent(layout.id, measured);
+                        let offset = config.axis.offset(layout.offset, layout.cross_offset);
+                        let layer = {
+                            let child =
+                                self.render_live_mut(child, "sliver child render must remain live");
+                            child.offset = offset;
+                            child.object.layers.root
+                        };
+                        self.compositor
+                            .update_transform(layer, CoreTransform::translation(offset));
                     }
                     if !pass_changed {
                         break;

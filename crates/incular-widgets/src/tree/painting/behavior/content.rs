@@ -12,7 +12,10 @@ impl WidgetTree {
             RenderKind::Text {
                 style, overflow, ..
             } => {
-                if let Some(layout) = self.renders.get(id.0).expect("live").text_layout_cloned() {
+                if let Some(layout) = self
+                    .render_live(id, "retained render must remain live")
+                    .text_layout_cloned()
+                {
                     if overflow == TextOverflow::Clip {
                         cache.push(PaintCommand::PushClip {
                             rect: Rect::from_origin_size(Offset::ZERO, size),
@@ -36,7 +39,8 @@ impl WidgetTree {
                     .element_for_render(id)
                     .and_then(|element| self.static_selection_range(element));
                 if let (Some(layout), Some(selection)) = (
-                    self.renders.get(id.0).expect("live").text_layout_cloned(),
+                    self.render_live(id, "retained render must remain live")
+                        .text_layout_cloned(),
                     selection,
                 ) {
                     for rect in selection_rects(&layout, selection, 0., 0., 0.) {
@@ -53,8 +57,9 @@ impl WidgetTree {
                             });
                         }
                     }
-                } else if let Some(layout) =
-                    self.renders.get(id.0).expect("live").text_layout_cloned()
+                } else if let Some(layout) = self
+                    .render_live(id, "retained render must remain live")
+                    .text_layout_cloned()
                 {
                     for line in layout.lines.iter() {
                         for run in line.runs.iter() {
@@ -118,10 +123,8 @@ impl WidgetTree {
                 ..
             } => {
                 let (layout, focused, scroll_x, scroll_y) = {
-                    let node = self.renders.get(id.0).expect("live");
-                    let state = node
-                        .text_field_state()
-                        .expect("text-field render must own text-field state");
+                    let node = self.render_live(id, "retained render must remain live");
+                    let state = self.text_field_state_live(id);
                     (
                         node.text_layout_cloned(),
                         state.focused,
@@ -224,10 +227,7 @@ impl WidgetTree {
                         }
                     }
                 }
-                let node = self.renders.get_mut(id.0).expect("live");
-                let state = node
-                    .text_field_state_mut()
-                    .expect("text-field render must own text-field state");
+                let state = self.text_field_state_live_mut(id);
                 state.scroll_x = active_scroll_x;
                 state.scroll_y = active_scroll_y;
             }

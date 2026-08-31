@@ -51,6 +51,8 @@ fn four_thousand_level_retained_lifecycle_is_stack_safe_and_leak_free() {
     let root = tree
         .mount(deep_padding(DEPTH, Widget::text("leaf")))
         .expect("deep tree must mount");
+    tree.verify_invariants()
+        .expect("deep mounted tree invariants must hold");
 
     assert_eq!(tree.element_count(), DEPTH + 1);
     assert_eq!(tree.render_object_count(), DEPTH + 1);
@@ -62,12 +64,16 @@ fn four_thousand_level_retained_lifecycle_is_stack_safe_and_leak_free() {
 
     tree.update(root, deep_padding(DEPTH, Widget::text("updated")))
         .expect("deep compatible update must succeed");
+    tree.verify_invariants()
+        .expect("deep updated tree invariants must hold");
     assert_eq!(tree.element_count(), DEPTH + 1);
     assert_eq!(tree.render_object_count(), DEPTH + 1);
 
     // Replacing the root forces post-order teardown of every retained node.
     tree.mount(Widget::box_(Size::new(1.0, 1.0), Color::WHITE))
         .expect("replacement root must mount");
+    tree.verify_invariants()
+        .expect("deep replacement invariants must hold");
     assert_eq!(tree.element_count(), 1);
     assert_eq!(tree.render_object_count(), 1);
     assert_eq!(tree.compositor_diagnostics().layers, baseline_layers + 2);
@@ -88,6 +94,8 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
         .expect("environment root must mount");
     tree.try_layout(constraints)
         .expect("deep environment child must materialize and layout");
+    tree.verify_invariants()
+        .expect("generated child invariants must hold after initial materialization");
     let stable_elements = tree.element_count();
     let stable_renders = tree.render_object_count();
 
@@ -98,6 +106,8 @@ fn deep_environment_propagation_and_generated_child_replacement_are_stack_safe()
     .expect("environment update must propagate without recursive bookkeeping");
     tree.try_layout(constraints)
         .expect("updated environment child must remain layoutable");
+    tree.verify_invariants()
+        .expect("generated child invariants must hold after replacement");
 
     assert_eq!(tree.element_count(), stable_elements);
     assert_eq!(tree.render_object_count(), stable_renders);

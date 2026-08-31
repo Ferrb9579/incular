@@ -12,7 +12,10 @@ impl WidgetTree {
             RenderKind::Translate { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
@@ -23,7 +26,10 @@ impl WidgetTree {
             | RenderKind::Rotation { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
@@ -35,7 +41,9 @@ impl WidgetTree {
                         child,
                         Constraints::new(0., f32::INFINITY, 0., f32::INFINITY),
                     );
-                    let child_size = self.renders.get(child.0).expect("live").size;
+                    let child_size = self
+                        .render_live(child, "retained render must remain live")
+                        .size;
                     (constraints.constrain(child_size), vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
@@ -44,7 +52,10 @@ impl WidgetTree {
             RenderKind::Opacity { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
@@ -61,7 +72,10 @@ impl WidgetTree {
             | RenderKind::Follower { .. } => {
                 if let Some(&child) = children.first() {
                     self.layout_render(child, constraints.loosen());
-                    let size = constraints.constrain(self.renders.get(child.0).expect("live").size);
+                    let size = constraints.constrain(
+                        self.render_live(child, "retained render must remain live")
+                            .size,
+                    );
                     (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())

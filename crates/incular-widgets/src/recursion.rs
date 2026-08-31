@@ -219,6 +219,21 @@ impl RecursionDiagnostics {
         }
     }
 
+    /// Failure-only snapshot used by retained invariant diagnostics. The
+    /// success path of invariant accessors does not call this or allocate.
+    pub(crate) fn invariant_context(&self) -> (Option<FramePhase>, Vec<String>) {
+        let state = self.inner.state.borrow();
+        (
+            state.active.last().map(|node| node.phase),
+            state
+                .active
+                .iter()
+                .filter(|node| node.id.is_some())
+                .map(format_node)
+                .collect(),
+        )
+    }
+
     fn fail(&self, node: DiagnosticNode, reason: String, repeated_at: Option<usize>) -> ! {
         let mut report = {
             let state = self.inner.state.borrow();

@@ -106,9 +106,7 @@ impl WidgetTree {
         Option<SemanticCollectionContext>,
     )> {
         let _node_guard = self.guard_element(FramePhase::Semantics, element);
-        let Some(entry) = self.elements.get(element.0) else {
-            return Vec::new();
-        };
+        let entry = self.element_live(element, "semantic traversal element must remain live");
         if entry.widget.semantics.hidden
             || matches!(
                 entry.widget.kind,
@@ -117,10 +115,8 @@ impl WidgetTree {
         {
             return Vec::new();
         }
-        let render = match self.renders.get(entry.render.0) {
-            Some(render) => render,
-            None => return Vec::new(),
-        };
+        let render_id = entry.render;
+        let render = self.render_live(render_id, "semantic render must remain live");
         // IndexedSemantics is a transparent render object. Its explicit index
         // wins over an automatically supplied sliver index and is carried
         // through transparent wrappers until the first semantic node emits.
@@ -158,10 +154,7 @@ impl WidgetTree {
                     None,
                     SemanticState {
                         enabled: spec.enabled,
-                        focused: render
-                            .button_state()
-                            .expect("button render must own button state")
-                            .focused,
+                        focused: self.button_state_live(render_id).focused,
                         focusable: spec.enabled || spec.focusable_when_disabled,
                         ..SemanticState::default()
                     },
@@ -184,10 +177,7 @@ impl WidgetTree {
                     None,
                     SemanticState {
                         focusable: true,
-                        focused: render
-                            .selectable_text_state()
-                            .expect("selectable-text render must own selectable state")
-                            .focused,
+                        focused: self.selectable_text_state_live(render_id).focused,
                         ..SemanticState::default()
                     },
                     vec![SemanticActionKind::Focus],
@@ -216,10 +206,7 @@ impl WidgetTree {
                         Some(value.text),
                         SemanticState {
                             enabled: spec.enabled,
-                            focused: render
-                                .text_field_state()
-                                .expect("text-field render must own text-field state")
-                                .focused,
+                            focused: self.text_field_state_live(render_id).focused,
                             focusable: spec.enabled,
                             editable: spec.enabled && !spec.read_only,
                             multiline: spec.multiline,

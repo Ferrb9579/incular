@@ -302,6 +302,11 @@ impl LayerTree {
     pub fn root(&self) -> Option<LayerId> {
         self.root
     }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn contains(&self, id: LayerId) -> bool {
+        self.layers.contains(id.0)
+    }
     pub fn set_root(&mut self, root: LayerId) {
         self.root = Some(root);
     }
