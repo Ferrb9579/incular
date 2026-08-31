@@ -2,6 +2,23 @@
 
 use std::{collections::HashSet, fs, path::Path};
 
+fn rust_sources_under(root: &Path) -> String {
+    let mut pending = vec![root.to_path_buf()];
+    let mut source = String::new();
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                source.push_str(&fs::read_to_string(path).unwrap());
+                source.push('\n');
+            }
+        }
+    }
+    source
+}
+
 #[test]
 fn widgets_root_has_no_globbed_retained_or_layout_surface() {
     let source = fs::read_to_string(
@@ -20,21 +37,13 @@ fn widgets_root_has_no_globbed_retained_or_layout_surface() {
 
 #[test]
 fn widget_transport_keeps_retained_taxonomy_private() {
-    let tree = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/tree.rs"),
-    )
-    .unwrap();
-    let widget = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/tree/widget.rs"),
-    )
-    .unwrap();
-    let internal = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/internal.rs"),
-    )
-    .unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let specs = fs::read_to_string(root.join("crates/incular-widgets/src/tree/specs.rs")).unwrap();
+    let widget = rust_sources_under(&root.join("crates/incular-widgets/src/tree/widget"));
+    let internal = fs::read_to_string(root.join("crates/incular-widgets/src/internal.rs")).unwrap();
 
-    assert!(tree.contains("pub(crate) enum WidgetKind"));
-    assert!(!tree.contains("pub enum WidgetKind"));
+    assert!(specs.contains("pub(crate) enum WidgetKind"));
+    assert!(!specs.contains("pub enum WidgetKind"));
     assert!(!internal.contains("pub use crate::tree::*"));
     assert!(!widget.contains("impl Deref for Widget"));
     assert!(!widget.contains("impl DerefMut for Widget"));
@@ -154,20 +163,10 @@ fn material_and_widgets_do_not_duplicate_canonical_primitives() {
         );
     }
 
-    let material_sources = [
-        "crates/incular-material/src/foundation.rs",
-        "crates/incular-material/src/foundation/surfaces.rs",
-        "crates/incular-material/src/components.rs",
-    ];
-    let material_struct_count = material_sources
-        .iter()
-        .map(|path| {
-            fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
-                .unwrap()
-                .matches("pub struct Material")
-                .count()
-        })
-        .sum::<usize>();
+    let material_sources = rust_sources_under(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-material/src"),
+    );
+    let material_struct_count = material_sources.matches("pub struct Material {").count();
     assert_eq!(
         material_struct_count, 1,
         "Material surface must have one implementation; components should reuse foundation"

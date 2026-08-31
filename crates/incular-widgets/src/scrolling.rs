@@ -26,6 +26,7 @@ const DEFAULT_SLIVER_CACHE_EXTENT: f32 = WidgetDefaults::DEFAULT.sliver_cache_ex
 mod geometry;
 mod layout;
 mod notifications;
+mod reorderable;
 mod scroll_views;
 mod sliver_descriptors;
 mod sliver_lists;
@@ -47,6 +48,9 @@ use layout::{
 };
 
 pub use notifications::*;
+pub use reorderable::{
+    ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
+};
 pub use scroll_views::*;
 pub use sliver_descriptors::*;
 pub use sliver_lists::*;

@@ -1,12 +1,7 @@
+use super::reorderable;
 use super::*;
 
 use crate::GestureDetector;
-
-#[path = "../reorderable.rs"]
-mod reorderable;
-pub use reorderable::{
-    ReorderableDelayedDragStartListener, ReorderableDragStartListener, ReorderableList,
-};
 
 /// Retained state for a reorderable sliver. The order stores logical item
 /// identities rather than visible slots, so moving an item preserves its

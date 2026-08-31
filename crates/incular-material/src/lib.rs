@@ -7,7 +7,6 @@
 
 mod app_shell;
 mod buttons;
-#[path = "components.rs"]
 mod component_impl;
 mod extras;
 mod feedback;

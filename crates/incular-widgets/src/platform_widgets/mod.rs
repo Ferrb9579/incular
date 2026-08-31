@@ -1,13 +1,17 @@
 //! Platform-integrated widget descriptors.
+//!
+//! This module owns platform-facing widget configuration and the delegate
+//! contracts used to hand serializable state to a native shell. Native menu
+//! resources and OS event-loop ownership remain in the platform crates; this
+//! layer retains only framework callbacks and declarative menu state.
 
 use crate::{SizedBox, Widget};
 
 mod menu;
 
 pub use menu::{
-    MemoryPlatformMenuDelegate, MenuDispatchResult, MenuItemId, MenuOwnerId,
-    NoopPlatformMenuDelegate, PlatformMenu, PlatformMenuBar, PlatformMenuBarController,
-    PlatformMenuBuildError, PlatformMenuCommand, PlatformMenuDelegate, PlatformMenuEntry,
-    PlatformMenuItem, PlatformMenuItemGroup, PlatformMenuShortcut, PlatformMenuSnapshot,
-    PlatformMenuSnapshotNode, PlatformMenuUpdate, ShortcutModifiers,
+    MenuDispatchResult, MenuItemId, MenuOwnerId, NoopPlatformMenuDelegate, PlatformMenu,
+    PlatformMenuBar, PlatformMenuBarController, PlatformMenuBuildError, PlatformMenuDelegate,
+    PlatformMenuEntry, PlatformMenuItem, PlatformMenuItemGroup, PlatformMenuShortcut,
+    PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate, ShortcutModifiers,
 };

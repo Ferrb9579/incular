@@ -6,19 +6,12 @@
 //! lower layers.  The module is kept separate from `lib.rs` so the public
 //! re-export policy can evolve without changing the widget primitives.
 
-#[path = "components/app_shell.rs"]
 mod app_shell;
-#[path = "components/chips.rs"]
 mod chips;
-#[path = "components/common.rs"]
 mod common;
-#[path = "components/list_items.rs"]
 mod list_items;
-#[path = "components/navigation.rs"]
 mod navigation;
-#[path = "components/progress.rs"]
 mod progress;
-#[path = "components/surfaces.rs"]
 mod surfaces;
 
 pub use app_shell::{AppBar, Scaffold, SliverAppBar};

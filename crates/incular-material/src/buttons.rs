@@ -7,13 +7,9 @@
 //! moving Material policy into `incular-widgets` or duplicating the controls
 //! event implementation.
 
-#[path = "buttons/common.rs"]
 mod common;
-#[path = "buttons/icon_floating.rs"]
 mod icon_floating;
-#[path = "buttons/style.rs"]
 mod style;
-#[path = "buttons/variants.rs"]
 mod variants;
 
 pub use icon_floating::{FloatingActionButton, IconButton};

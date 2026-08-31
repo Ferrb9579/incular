@@ -3,36 +3,14 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use incular_config::RuntimeEnvironment;
 use incular_core::{Color, Rect, RestorationBackend, RestorationKey, RestorationScope, Size};
 use incular_widgets::{
-    CheckedModeBanner, Directionality, ErrorWidget, Localizations, MediaQuery, SizedBox,
-    Visibility, Widget,
-};
-
-#[path = "../src/app_shell/app.rs"]
-mod app;
-#[path = "../src/platform_widgets/menu.rs"]
-// Source-inclusion parity harnesses compile the whole production module but
-// deliberately exercise only the behavior under test.
-#[allow(dead_code)]
-mod menu;
-#[path = "../src/app_shell/router.rs"]
-#[allow(dead_code)]
-mod router;
-#[path = "../src/app_shell/title.rs"]
-#[allow(dead_code)]
-mod title;
-#[path = "../src/app_shell/view.rs"]
-mod view;
-
-use app::{ApplicationBootstrapHost, WidgetsApp};
-use menu::{
-    MemoryPlatformMenuDelegate, MenuDispatchResult, PlatformMenu, PlatformMenuBarController,
-    PlatformMenuItem, PlatformMenuUpdate,
-};
-use router::*;
-use title::*;
-use view::{
-    AuxiliaryViewError, AuxiliaryViewHandle, AuxiliaryViewHost, AuxiliaryViewOutcome,
-    AuxiliaryViewRequest, ViewAnchorController, ViewController, ViewId, ViewLifecycle, ViewMetrics,
+    ApplicationBootstrapHost, ApplicationBootstrapSpec, AuxiliaryViewError, AuxiliaryViewHandle,
+    AuxiliaryViewHost, AuxiliaryViewOutcome, AuxiliaryViewRequest, BasicRouterDelegate,
+    ErrorWidget, MemoryRouteInformationProvider, MenuDispatchResult, MenuItemId, MenuOwnerId,
+    NoopPlatformMenuDelegate, PlatformMenu, PlatformMenuBarController, PlatformMenuDelegate,
+    PlatformMenuItem, PlatformMenuSnapshot, PlatformMenuUpdate, RootBackButtonDispatcher, Router,
+    RouterConfig, RouterDelegate, SizedBox, StringRouteInformationParser, TitleController,
+    TitleError, ViewAnchorController, ViewController, ViewId, ViewLifecycle, ViewMetrics, Widget,
+    WidgetsApp, WindowChromeSink,
 };
 
 #[derive(Default)]
@@ -128,7 +106,7 @@ fn widgets_app_expands_deep_links_and_bootstraps_defaults() {
 
         fn create_application(
             &self,
-            specification: app::ApplicationBootstrapSpec,
+            specification: ApplicationBootstrapSpec,
         ) -> Result<Self::Handle, Self::Error> {
             Ok((
                 specification.options.title,
@@ -171,7 +149,7 @@ fn title_retains_updates_and_rejects_transparency() {
     assert_eq!(sink.colors.borrow().len(), 2);
     assert_eq!(
         controller.set_color(Color::rgba(1, 2, 3, 0)),
-        Err(title::TitleError::TransparentColor)
+        Err(TitleError::TransparentColor)
     );
 }
 
@@ -206,6 +184,96 @@ impl AuxiliaryViewHost for AuxiliaryState {
     fn dispose(&self, handle: AuxiliaryViewHandle) {
         self.disposed.borrow_mut().push(handle);
     }
+}
+
+#[derive(Default)]
+struct PlatformMenuState {
+    owner: RefCell<Option<MenuOwnerId>>,
+    snapshot: RefCell<Option<PlatformMenuSnapshot>>,
+    invoked: RefCell<Vec<MenuItemId>>,
+}
+
+impl PlatformMenuDelegate for PlatformMenuState {
+    fn acquire(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        let mut current = self.owner.borrow_mut();
+        match *current {
+            None => {
+                *current = Some(owner);
+                PlatformMenuUpdate::Applied
+            }
+            Some(active) if active == owner => PlatformMenuUpdate::Applied,
+            Some(_) => PlatformMenuUpdate::RejectedOwnedByOther,
+        }
+    }
+
+    fn set_menus(&self, owner: MenuOwnerId, snapshot: PlatformMenuSnapshot) -> PlatformMenuUpdate {
+        if *self.owner.borrow() != Some(owner) {
+            return PlatformMenuUpdate::RejectedOwnedByOther;
+        }
+        let mut current = self.snapshot.borrow_mut();
+        if current.as_ref() == Some(&snapshot) {
+            return PlatformMenuUpdate::Unchanged;
+        }
+        *current = Some(snapshot);
+        PlatformMenuUpdate::Applied
+    }
+
+    fn clear_menus(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        if *self.owner.borrow() != Some(owner) {
+            return PlatformMenuUpdate::RejectedOwnedByOther;
+        }
+        self.snapshot.borrow_mut().take();
+        PlatformMenuUpdate::Applied
+    }
+
+    fn release(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        let mut current = self.owner.borrow_mut();
+        if *current != Some(owner) {
+            return PlatformMenuUpdate::RejectedOwnedByOther;
+        }
+        *current = None;
+        PlatformMenuUpdate::Applied
+    }
+
+    fn invoke(&self, owner: MenuOwnerId, id: MenuItemId) -> PlatformMenuUpdate {
+        if *self.owner.borrow() != Some(owner) {
+            return PlatformMenuUpdate::RejectedOwnedByOther;
+        }
+        self.invoked.borrow_mut().push(id);
+        PlatformMenuUpdate::Applied
+    }
+}
+
+#[test]
+fn platform_menu_delegate_owns_commands_and_noop_is_explicit() {
+    let selected = Rc::new(RefCell::new(0_u32));
+    let selected_for_item = selected.clone();
+    let menu = PlatformMenu::with_items(
+        "File",
+        vec![
+            PlatformMenuItem::new("Open")
+                .id("open")
+                .on_selected(move || *selected_for_item.borrow_mut() += 1),
+        ],
+    );
+    let delegate = Rc::new(PlatformMenuState::default());
+    let controller = PlatformMenuBarController::new(delegate.clone());
+    assert_eq!(controller.install(&[menu]), Ok(PlatformMenuUpdate::Applied));
+    assert_eq!(
+        controller.dispatch(&"open".into()),
+        MenuDispatchResult::Handled
+    );
+    assert_eq!(*selected.borrow(), 1);
+    assert_eq!(*delegate.owner.borrow(), Some(controller.owner()));
+    assert_eq!(delegate.invoked.borrow().as_slice(), &["open".into()]);
+    assert!(matches!(controller.detach(), PlatformMenuUpdate::Applied));
+    assert!(delegate.owner.borrow().is_none());
+
+    let unsupported = PlatformMenuBarController::new(Rc::new(NoopPlatformMenuDelegate));
+    assert_eq!(
+        unsupported.install(&[]),
+        Ok(PlatformMenuUpdate::NoOpUnsupported)
+    );
 }
 
 #[test]
@@ -247,35 +315,4 @@ fn view_controller_and_anchor_own_metrics_lifecycle_and_auxiliary_disposal() {
     assert_eq!(host.created.borrow().len(), 1);
     assert!(anchor.detach());
     assert_eq!(host.disposed.borrow().len(), 1);
-}
-
-#[test]
-fn platform_menu_delegate_owns_commands_and_noop_is_explicit() {
-    let selected = Rc::new(RefCell::new(0_u32));
-    let selected_for_item = selected.clone();
-    let menu = PlatformMenu::with_items(
-        "File",
-        vec![
-            PlatformMenuItem::new("Open")
-                .id("open")
-                .on_selected(move || *selected_for_item.borrow_mut() += 1),
-        ],
-    );
-    let delegate = MemoryPlatformMenuDelegate::new();
-    let controller = PlatformMenuBarController::new(Rc::new(delegate.clone()));
-    assert_eq!(controller.install(&[menu]), Ok(PlatformMenuUpdate::Applied));
-    assert_eq!(
-        controller.dispatch(&"open".into()),
-        MenuDispatchResult::Handled
-    );
-    assert_eq!(*selected.borrow(), 1);
-    assert_eq!(delegate.owner(), Some(controller.owner()));
-    assert!(matches!(controller.detach(), PlatformMenuUpdate::Applied));
-    assert!(delegate.owner().is_none());
-
-    let unsupported = PlatformMenuBarController::new(Rc::new(menu::NoopPlatformMenuDelegate));
-    assert_eq!(
-        unsupported.install(&[]),
-        Ok(PlatformMenuUpdate::NoOpUnsupported)
-    );
 }

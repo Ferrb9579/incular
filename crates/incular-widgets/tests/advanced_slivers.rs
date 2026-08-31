@@ -1,14 +1,4 @@
-#![allow(clippy::float_cmp, dead_code, unused_imports)]
-
-mod internal {
-    pub use incular_widgets::internal::*;
-}
-
-// The production facade wiring is intentionally outside this specialist's
-// write scope. Including the focused module here keeps its public protocol
-// and renderer behavior testable until the facade integration patch lands.
-#[path = "../src/advanced_slivers/mod.rs"]
-mod advanced_slivers;
+#![allow(clippy::float_cmp)]
 
 use std::{
     cell::RefCell,
@@ -16,15 +6,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use advanced_slivers::{
-    AnimatedGrid, AnimatedItemPhase, AnimatedList, AutomaticKeepAlive, KeepAlive, KeepAliveHandle,
-    KeepAliveNotification, KeepAliveRegistry, SliverAnimatedGrid, TreeRowAnimation, TreeSliver,
-    TreeSliverIndentation, TreeSliverNode,
-};
 use incular_config::Axis;
 use incular_core::{Color, Size};
 use incular_scroll::SliverConstraints;
-use incular_widgets::internal::{Sliver, SliverGridDelegate, Widget};
+use incular_widgets::{
+    AnimatedGrid, AnimatedItemPhase, AnimatedList, AnimatedListController, AutomaticKeepAlive,
+    KeepAlive, KeepAliveHandle, KeepAliveNotification, KeepAliveRegistry, SliverAnimatedGrid,
+    TreeRowAnimation, TreeSliver, TreeSliverIndentation, TreeSliverNode,
+};
+use incular_widgets::{Sliver, SliverGridDelegate, Widget};
 
 fn constraints() -> SliverConstraints {
     SliverConstraints::new(
@@ -105,8 +95,7 @@ fn tree_sliver_flattens_active_hierarchy_with_stable_semantics_and_indent() {
 
 #[test]
 fn animated_list_keeps_physical_slots_until_removal_completes_and_reuses_ids() {
-    let controller =
-        advanced_slivers::AnimatedListController::with_duration(3, Duration::from_millis(100));
+    let controller = AnimatedListController::with_duration(3, Duration::from_millis(100));
     let list = AnimatedList::animated(3, |_index, _item| fixed_child(100.0, 20.0))
         .controller(controller.clone());
     let mut render = list.create_render_sliver(&Default::default(), Axis::Vertical, false);

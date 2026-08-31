@@ -48,6 +48,7 @@ mod layout;
 mod navigation;
 mod navigation_scopes;
 mod painting_effects;
+mod platform_widgets;
 mod radio_selection;
 mod raw_input;
 mod raw_tooltip;
@@ -183,6 +184,12 @@ pub use painting_effects::{
     BoxBorder, BoxDecoration, BoxShadow, BoxShape, ClipRSuperellipse, CustomPainter,
     DecorationImage, GridPaper, ImageFiltered, ImageIcon, Radius, RawImage, SnapshotWidget,
     TileMode,
+};
+pub use platform_widgets::{
+    MenuDispatchResult, MenuItemId, MenuOwnerId, NoopPlatformMenuDelegate, PlatformMenu,
+    PlatformMenuBar, PlatformMenuBarController, PlatformMenuBuildError, PlatformMenuDelegate,
+    PlatformMenuEntry, PlatformMenuItem, PlatformMenuItemGroup, PlatformMenuShortcut,
+    PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate, ShortcutModifiers,
 };
 pub use radio_selection::{RadioGroup, RawRadio, SelectableRegion};
 pub use raw_input::{

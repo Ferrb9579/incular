@@ -1,28 +1,23 @@
 #![allow(clippy::float_cmp)]
-#![allow(dead_code)]
-
-#[path = "../src/advanced_scrolling/mod.rs"]
-mod advanced_scrolling;
-
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use incular_config::{Axis, AxisDirection, Clip};
 use incular_core::{Offset, Size};
 use incular_scroll::ScrollController;
 
-use advanced_scrolling::{
+use incular_widgets::{
     CacheExtentStyle, ChildVicinity, DiagonalDragBehavior, TwoDimensionalChildDelegate,
     TwoDimensionalScrollView,
 };
-use advanced_scrolling::{
+use incular_widgets::{
     ChangeReportingBehavior, FixedExtentScrollController, ListWheelViewport, WheelChildDelegate,
     WheelProjection,
 };
-use advanced_scrolling::{
+use incular_widgets::{
     DraggableScrollableActuator, DraggableScrollableController, DraggableScrollableState,
     DraggableSnap,
 };
-use advanced_scrolling::{RawScrollbar, RawScrollbarOrientation, RawScrollbarStyle};
+use incular_widgets::{RawScrollbar, RawScrollbarOrientation, RawScrollbarStyle};
 
 #[test]
 fn wheel_projects_children_and_selects_by_fixed_extent() {
