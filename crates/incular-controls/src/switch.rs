@@ -136,11 +136,12 @@ impl Root {
                 .color(Color::TRANSPARENT)
                 .disabled_color(theme.colors.disabled_surface)
                 .enabled(self.enabled && !self.read_only);
-            if let Some(callback) = self.on_change.clone() {
-                if self.enabled && !self.read_only {
-                    let checked = self.checked;
-                    button = button.on_click(move || callback(!checked));
-                }
+            if let Some(callback) = self.on_change.clone()
+                && self.enabled
+                && !self.read_only
+            {
+                let checked = self.checked;
+                button = button.on_click(move || callback(!checked));
             }
             let raw: Widget = button.into();
             return raw.semantics(

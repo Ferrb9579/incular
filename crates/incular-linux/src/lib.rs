@@ -184,16 +184,16 @@ pub fn devtools_ui_candidates(current_exe: Option<PathBuf>) -> Vec<PathBuf> {
     if let Some(explicit) = std::env::var_os("INCULAR_DEVTOOLS_UI") {
         candidates.push(PathBuf::from(explicit));
     }
-    if let Some(executable) = current_exe {
-        if let Some(directory) = executable.parent() {
-            candidates.push(directory.join(ui_binary));
-            // Cargo examples live under target/{profile}/examples while the
-            // DevTools binary lives one directory above them.
-            if directory.file_name().and_then(|name| name.to_str()) == Some("examples")
-                && let Some(profile_directory) = directory.parent()
-            {
-                candidates.push(profile_directory.join(ui_binary));
-            }
+    if let Some(executable) = current_exe
+        && let Some(directory) = executable.parent()
+    {
+        candidates.push(directory.join(ui_binary));
+        // Cargo examples live under target/{profile}/examples while the
+        // DevTools binary lives one directory above them.
+        if directory.file_name().and_then(|name| name.to_str()) == Some("examples")
+            && let Some(profile_directory) = directory.parent()
+        {
+            candidates.push(profile_directory.join(ui_binary));
         }
     }
     candidates
@@ -570,17 +570,14 @@ impl<F: FnMut(ActionId)> App<F> {
         }
         if let (Some(runtime), Some(accessibility)) =
             (self.runtime.as_ref(), self.accessibility.as_mut())
+            && accessibility.active
+            && let Some(update) = accessibility
+                .projection
+                .sync(runtime.tree().semantics(), metrics.scale_factor)
         {
-            if accessibility.active {
-                if let Some(update) = accessibility
-                    .projection
-                    .sync(runtime.tree().semantics(), metrics.scale_factor)
-                {
-                    accessibility
-                        .adapter
-                        .update_if_active(|| update.into_accesskit());
-                }
-            }
+            accessibility
+                .adapter
+                .update_if_active(|| update.into_accesskit());
         }
         self.apply_text_input_commands();
     }
@@ -805,13 +802,12 @@ impl MultiApp {
 
     fn request_frame_if_needed(&mut self, id: IncularWindowId) {
         self.apply_text_input_commands(id);
-        if self.application.frame_requested(id) {
-            if let Some(native_id) = self.native_ids.get(&id).copied() {
-                if let Some(state) = self.windows.get(&native_id) {
-                    state.window.request_redraw();
-                    self.application.note_frame_requested(id);
-                }
-            }
+        if self.application.frame_requested(id)
+            && let Some(native_id) = self.native_ids.get(&id).copied()
+            && let Some(state) = self.windows.get(&native_id)
+        {
+            state.window.request_redraw();
+            self.application.note_frame_requested(id);
         }
     }
 
@@ -997,16 +993,15 @@ impl MultiApp {
                     });
             }
         }
-        if state.accessibility.active {
-            if let Some(update) = self
+        if state.accessibility.active
+            && let Some(update) = self
                 .application
                 .sync_accessibility(id, &mut state.accessibility.projection)
-            {
-                state
-                    .accessibility
-                    .adapter
-                    .update_if_active(|| update.into_accesskit());
-            }
+        {
+            state
+                .accessibility
+                .adapter
+                .update_if_active(|| update.into_accesskit());
         }
         self.application
             .set_accessibility_diagnostics(id, state.accessibility.projection.diagnostics());

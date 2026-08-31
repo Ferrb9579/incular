@@ -425,10 +425,10 @@ impl Root {
             if (next - drag_value.get()).abs() <= f32::EPSILON {
                 return;
             }
-            if !drag_started_for_update.replace(true) {
-                if let Some(callback) = &drag_start_callback {
-                    callback(next);
-                }
+            if !drag_started_for_update.replace(true)
+                && let Some(callback) = &drag_start_callback
+            {
+                callback(next);
             }
             drag_value.set(next);
             drag_revision.set(drag_revision.get().wrapping_add(1));

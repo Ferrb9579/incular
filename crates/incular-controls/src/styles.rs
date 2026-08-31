@@ -323,65 +323,65 @@ impl<T> StateTable<T> {
 impl<T: Clone> StateTable<T> {
     #[must_use]
     pub fn resolve(&self, state: ControlState) -> T {
-        if state.is_disabled() {
-            if let Some(value) = &self.disabled {
-                return value.clone();
-            }
+        if state.is_disabled()
+            && let Some(value) = &self.disabled
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::INVALID) {
-            if let Some(value) = &self.invalid {
-                return value.clone();
-            }
+        if state.contains(ControlState::INVALID)
+            && let Some(value) = &self.invalid
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::EXPANDED) {
-            if let Some(value) = &self.expanded {
-                return value.clone();
-            }
+        if state.contains(ControlState::EXPANDED)
+            && let Some(value) = &self.expanded
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::OPEN) {
-            if let Some(value) = &self.open {
-                return value.clone();
-            }
+        if state.contains(ControlState::OPEN)
+            && let Some(value) = &self.open
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::READ_ONLY) {
-            if let Some(value) = &self.read_only {
-                return value.clone();
-            }
+        if state.contains(ControlState::READ_ONLY)
+            && let Some(value) = &self.read_only
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::DRAGGING) {
-            if let Some(value) = &self.dragging {
-                return value.clone();
-            }
+        if state.contains(ControlState::DRAGGING)
+            && let Some(value) = &self.dragging
+        {
+            return value.clone();
         }
-        if state.contains(ControlState::FOCUS_VISIBLE) {
-            if let Some(value) = &self.focus_visible {
-                return value.clone();
-            }
+        if state.contains(ControlState::FOCUS_VISIBLE)
+            && let Some(value) = &self.focus_visible
+        {
+            return value.clone();
         }
-        if state.is_pressed() {
-            if let Some(value) = &self.pressed {
-                return value.clone();
-            }
+        if state.is_pressed()
+            && let Some(value) = &self.pressed
+        {
+            return value.clone();
         }
-        if state.is_checked() {
-            if let Some(value) = &self.checked {
-                return value.clone();
-            }
+        if state.is_checked()
+            && let Some(value) = &self.checked
+        {
+            return value.clone();
         }
-        if state.is_selected() {
-            if let Some(value) = &self.selected {
-                return value.clone();
-            }
+        if state.is_selected()
+            && let Some(value) = &self.selected
+        {
+            return value.clone();
         }
-        if state.is_focused() {
-            if let Some(value) = &self.focused {
-                return value.clone();
-            }
+        if state.is_focused()
+            && let Some(value) = &self.focused
+        {
+            return value.clone();
         }
-        if state.is_hovered() {
-            if let Some(value) = &self.hovered {
-                return value.clone();
-            }
+        if state.is_hovered()
+            && let Some(value) = &self.hovered
+        {
+            return value.clone();
         }
         self.normal.clone()
     }

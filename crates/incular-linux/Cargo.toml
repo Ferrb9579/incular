@@ -22,7 +22,6 @@ incular-config = { workspace = true }
 incular-platform = { workspace = true }
 incular-runtime = { workspace = true }
 incular-wgpu = { workspace = true }
-incular-layout = { workspace = true }
 incular-widgets = { workspace = true }
 incular-rendering = { workspace = true }
 accesskit_winit = { workspace = true }

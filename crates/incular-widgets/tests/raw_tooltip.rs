@@ -9,6 +9,10 @@ pub use incular_widgets::{
 };
 
 #[path = "../src/raw_tooltip.rs"]
+// This harness intentionally includes the complete production module while
+// exercising a focused subset of its API. Unused public aliases here are not
+// dead production code; they are simply outside this integration test's scope.
+#[allow(dead_code)]
 mod raw_tooltip;
 
 use raw_tooltip::{

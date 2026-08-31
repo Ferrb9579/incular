@@ -151,11 +151,11 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
             let mut button = ActionSurface::with_child(child.clone())
                 .color(Color::TRANSPARENT)
                 .enabled(self.enabled);
-            if let Some(callback) = self.on_change.clone() {
-                if self.enabled {
-                    let value = self.value.clone();
-                    button = button.on_click(move || callback(value.clone()));
-                }
+            if let Some(callback) = self.on_change.clone()
+                && self.enabled
+            {
+                let value = self.value.clone();
+                button = button.on_click(move || callback(value.clone()));
             }
             let raw: Widget = button.into();
             return raw.semantics(
@@ -190,10 +190,10 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
                 .border_color(side.top.color)
                 .border_width(side.top.width);
         }
-        if self.enabled {
-            if let Some(callback) = self.on_change.clone() {
-                radio = radio.on_changed(move |value| callback(value));
-            }
+        if self.enabled
+            && let Some(callback) = self.on_change.clone()
+        {
+            radio = radio.on_changed(move |value| callback(value));
         }
         radio.into()
     }

@@ -148,11 +148,11 @@ async fn apply_message<S>(
             payload: Ok(ResponsePayload::NodeDetails(details)),
             ..
         } => {
-            if let Ok(mut state) = model.lock() {
-                if state.selected == Some(details.id) && state.active_window == Some(details.window)
-                {
-                    state.details = Some(*details);
-                }
+            if let Ok(mut state) = model.lock()
+                && state.selected == Some(details.id)
+                && state.active_window == Some(details.window)
+            {
+                state.details = Some(*details);
             }
         }
         Message::Response {
@@ -279,10 +279,10 @@ async fn apply_message<S>(
             deltas,
             tree_revision,
         }) => {
-            if let Ok(mut state) = model.lock() {
-                if state.active_window == Some(window) {
-                    state.apply_tree(tree_revision, deltas);
-                }
+            if let Ok(mut state) = model.lock()
+                && state.active_window == Some(window)
+            {
+                state.apply_tree(tree_revision, deltas);
             }
         }
         Message::Event(TargetEvent::WidgetSelectedByUser { window, id }) => {

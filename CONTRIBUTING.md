@@ -10,20 +10,29 @@ focused changes with clear tests are especially valuable.
 3. Update an example simulation when the change affects application behavior.
 4. Update the relevant crate README or `docs/` note when an ownership boundary
    or public API changes.
-5. Run the workspace checks from the repository root:
+5. Install the repository's two optional dependency-audit tools when working on
+   dependency, release, or open-source readiness changes:
+
+   ```text
+   cargo install cargo-deny --locked
+   cargo install cargo-machete --locked
+   ```
+
+6. Run the relevant repository checks from the repository root:
 
    ```text
    cargo fmt --all -- --check
-   cargo check --workspace --all-targets
-   cargo test-constrained
    cargo clippy --workspace --all-targets --all-features -- -D warnings
+   cargo test --workspace --all-features
+   cargo doc --workspace --all-features --no-deps
    ```
 
-   `cargo test-constrained` preserves Cargo's normal build parallelism while
-   running the stock test harness on one test thread.
+   Run the documentation command with `RUSTDOCFLAGS=-D warnings`. For dependency
+   policy changes, also run `cargo deny check -W unmaintained` and
+   `cargo machete --with-metadata`.
 
-   For documentation changes, also run `cargo doc --workspace --no-deps` with
-   `RUSTDOCFLAGS=-D warnings`.
+   See [`docs/QUALITY.md`](docs/QUALITY.md) for the supported toolchain/MSRV,
+   unsafe policy, dependency policy, and validation matrix.
 
 Keep renderer-independent APIs out of `incular-wgpu`, keep platform-specific
 code in its platform crate, and avoid dependency cycles. Prefer explicit error

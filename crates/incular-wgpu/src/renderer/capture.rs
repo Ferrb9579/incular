@@ -132,7 +132,7 @@ impl WgpuRenderer {
             .map_err(|_| "capture row size does not fit in usize".to_owned())?;
         for row in mapped.chunks(padded_row_bytes).take(height as usize) {
             if is_bgra {
-                for pixel in row[..row_bytes].chunks_exact(4) {
+                for pixel in row[..row_bytes].as_chunks::<4>().0 {
                     rgba8.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
                 }
             } else {

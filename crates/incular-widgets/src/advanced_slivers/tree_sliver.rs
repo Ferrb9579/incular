@@ -449,10 +449,8 @@ impl<T> TreeSliverController<T> {
         let Some((changed, callback)) = result else {
             return false;
         };
-        if changed {
-            if let Some(callback) = callback {
-                callback(node);
-            }
+        if changed && let Some(callback) = callback {
+            callback(node);
         }
         changed
     }

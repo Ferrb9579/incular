@@ -528,15 +528,15 @@ impl FocusBehavior {
     fn trigger_highlight_callbacks(&self) {
         let focus_after = self.focus_highlight_visible();
         let hover_after = self.hover_highlight_visible();
-        if self.focus_highlight_visible.replace(focus_after) != focus_after {
-            if let Some(callback) = &self.on_show_focus_highlight {
-                callback(focus_after);
-            }
+        if self.focus_highlight_visible.replace(focus_after) != focus_after
+            && let Some(callback) = &self.on_show_focus_highlight
+        {
+            callback(focus_after);
         }
-        if self.hover_highlight_visible.replace(hover_after) != hover_after {
-            if let Some(callback) = &self.on_show_hover_highlight {
-                callback(hover_after);
-            }
+        if self.hover_highlight_visible.replace(hover_after) != hover_after
+            && let Some(callback) = &self.on_show_hover_highlight
+        {
+            callback(hover_after);
         }
     }
 }

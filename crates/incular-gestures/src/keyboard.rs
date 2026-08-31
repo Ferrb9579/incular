@@ -47,11 +47,11 @@ impl GestureCallbacks {
                 callback(event.clone());
                 handled = true;
             }
-            if event.repeat {
-                if let Some(callback) = &self.on_key_repeat {
-                    callback(event);
-                    handled = true;
-                }
+            if event.repeat
+                && let Some(callback) = &self.on_key_repeat
+            {
+                callback(event);
+                handled = true;
             }
             handled
         } else if let Some(callback) = &self.on_key_up {

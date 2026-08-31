@@ -456,10 +456,10 @@ impl TextField {
     /// conversion used by the existing renderer-neutral controls.
     #[must_use]
     pub fn input_decoration(mut self, decoration: InputDecoration) -> Self {
-        if self.placeholder.is_empty() {
-            if let Some(hint) = decoration.hint_text.clone() {
-                self.placeholder = hint;
-            }
+        if self.placeholder.is_empty()
+            && let Some(hint) = decoration.hint_text.clone()
+        {
+            self.placeholder = hint;
         }
         self.semantic_label = decoration.label_text.clone();
         self.helper_text = decoration.helper_text.clone();
@@ -863,10 +863,10 @@ impl From<TextField> for Widget {
                 for formatter in &formatters {
                     next = formatter.format_edit_update(&old, &next);
                 }
-                if let Some(limit) = limit {
-                    if next.text.chars().count() > limit {
-                        next.text = next.text.chars().take(limit).collect();
-                    }
+                if let Some(limit) = limit
+                    && next.text.chars().count() > limit
+                {
+                    next.text = next.text.chars().take(limit).collect();
                 }
                 if next != *current {
                     normalizing.set(true);

@@ -17,24 +17,24 @@ impl MouseRegion {
         Self::default()
     }
     pub fn enter(&self, position: Offset) {
-        if !self.inside.replace(true) {
-            if let Some(callback) = &self.on_enter {
-                callback(position);
-            }
+        if !self.inside.replace(true)
+            && let Some(callback) = &self.on_enter
+        {
+            callback(position);
         }
     }
     pub fn hover(&self, position: Offset) {
-        if self.inside.get() {
-            if let Some(callback) = &self.on_hover {
-                callback(position);
-            }
+        if self.inside.get()
+            && let Some(callback) = &self.on_hover
+        {
+            callback(position);
         }
     }
     pub fn exit(&self, position: Offset) {
-        if self.inside.replace(false) {
-            if let Some(callback) = &self.on_exit {
-                callback(position);
-            }
+        if self.inside.replace(false)
+            && let Some(callback) = &self.on_exit
+        {
+            callback(position);
         }
     }
     #[must_use]

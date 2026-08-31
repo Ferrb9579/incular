@@ -740,39 +740,39 @@ impl WidgetTree {
         layers.update_layout_geometry(&mut self.compositor, &kind, size, transform);
         self.diagnostics.layouts += 1;
         #[cfg(feature = "devtools")]
-        if let Some(element) = self.element_for_render(id) {
-            if let Some(element) = self.elements.get_mut(element.0) {
-                element.dev.layouts += 1;
-                if let Some((old_constraints, old_size)) = old_layout
-                    && (old_constraints != Some(constraints) || old_size != size)
-                {
-                    if old_constraints != Some(constraints) {
-                        element
-                            .dev
-                            .layout_reason
-                            .get_or_insert_with(|| "incoming constraints changed".into());
-                    }
+        if let Some(element) = self.element_for_render(id)
+            && let Some(element) = self.elements.get_mut(element.0)
+        {
+            element.dev.layouts += 1;
+            if let Some((old_constraints, old_size)) = old_layout
+                && (old_constraints != Some(constraints) || old_size != size)
+            {
+                if old_constraints != Some(constraints) {
                     element
                         .dev
-                        .paint_reason
-                        .get_or_insert_with(|| "layout result invalidated paint".into());
-                    const MAX_LAYOUT_HISTORY: usize = 64;
-                    if element.dev.layout_history.len() == MAX_LAYOUT_HISTORY {
-                        element.dev.layout_history.remove(0);
-                    }
-                    element.dev.layout_history.push(LayoutHistoryRecord {
-                        sequence: element.dev.layouts,
-                        old_constraints,
-                        new_constraints: constraints,
-                        old_size,
-                        new_size: size,
-                        cause: element
-                            .dev
-                            .last_cause
-                            .as_ref()
-                            .map(InvalidationCause::summary),
-                    });
+                        .layout_reason
+                        .get_or_insert_with(|| "incoming constraints changed".into());
                 }
+                element
+                    .dev
+                    .paint_reason
+                    .get_or_insert_with(|| "layout result invalidated paint".into());
+                const MAX_LAYOUT_HISTORY: usize = 64;
+                if element.dev.layout_history.len() == MAX_LAYOUT_HISTORY {
+                    element.dev.layout_history.remove(0);
+                }
+                element.dev.layout_history.push(LayoutHistoryRecord {
+                    sequence: element.dev.layouts,
+                    old_constraints,
+                    new_constraints: constraints,
+                    old_size,
+                    new_size: size,
+                    cause: element
+                        .dev
+                        .last_cause
+                        .as_ref()
+                        .map(InvalidationCause::summary),
+                });
             }
         }
         #[cfg(feature = "devtools")]

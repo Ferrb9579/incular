@@ -1801,8 +1801,6 @@ name = "incular-android"
 version = "0.1.0"
 dependencies = [
  "incular-accessibility",
- "incular-core",
- "incular-platform",
 ]
 
 [[package]]
@@ -1832,10 +1830,8 @@ dependencies = [
 name = "incular-controls"
 version = "0.1.0"
 dependencies = [
- "incular-animation",
  "incular-config",
  "incular-core",
- "incular-gestures",
  "incular-rendering",
  "incular-scroll",
  "incular-semantics",
@@ -1862,10 +1858,8 @@ dependencies = [
  "directories",
  "futures-util",
  "getrandom 0.3.4",
- "incular-core",
  "incular-devtools-protocol",
  "incular-runtime",
- "incular-widgets",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
@@ -1913,8 +1907,6 @@ name = "incular-ios"
 version = "0.1.0"
 dependencies = [
  "incular-accessibility",
- "incular-core",
- "incular-platform",
 ]
 
 [[package]]
@@ -1936,7 +1928,6 @@ dependencies = [
  "incular-core",
  "incular-devtools",
  "incular-devtools-protocol",
- "incular-layout",
  "incular-platform",
  "incular-rendering",
  "incular-runtime",
@@ -2011,7 +2002,6 @@ dependencies = [
  "directories",
  "incular-config",
  "incular-core",
- "keyboard-types",
  "raw-window-handle",
  "winit",
 ]
@@ -2033,12 +2023,9 @@ dependencies = [
  "accesskit",
  "criterion",
  "incular-accessibility",
- "incular-animation",
- "incular-assets",
  "incular-config",
  "incular-core",
  "incular-devtools-protocol",
- "incular-layout",
  "incular-platform",
  "incular-rendering",
  "incular-scroll",
@@ -2098,9 +2085,6 @@ dependencies = [
  "incular-text",
  "kurbo",
  "lyon_tessellation",
- "naga",
- "pollster",
- "raw-window-handle",
  "wgpu",
  "wgpu-profiler",
 ]
@@ -2112,7 +2096,6 @@ dependencies = [
  "criterion",
  "icu_segmenter",
  "incular-animation",
- "incular-assets",
  "incular-config",
  "incular-core",
  "incular-devtools-protocol",

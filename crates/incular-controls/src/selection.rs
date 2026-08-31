@@ -476,15 +476,15 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
             .color(Color::TRANSPARENT)
             .enabled(self.enabled);
 
-        if self.enabled {
-            if let Some(cb) = self.on_changed.clone() {
-                let toggleable = self.toggleable;
-                button = button.on_click(move || {
-                    if !is_selected || toggleable {
-                        cb(target_val.clone());
-                    }
-                });
-            }
+        if self.enabled
+            && let Some(cb) = self.on_changed.clone()
+        {
+            let toggleable = self.toggleable;
+            button = button.on_click(move || {
+                if !is_selected || toggleable {
+                    cb(target_val.clone());
+                }
+            });
         }
 
         let raw: Widget = button.into();

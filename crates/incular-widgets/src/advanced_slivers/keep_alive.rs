@@ -159,15 +159,14 @@ impl KeepAliveRegistry {
                 }
                 removed
             };
-            if removed {
-                if let (Some(handle), Some(listener_id)) =
+            if removed
+                && let (Some(handle), Some(listener_id)) =
                     (weak_handle.upgrade(), *listener_id_for_callback.borrow())
-                {
-                    handle
-                        .borrow_mut()
-                        .listeners
-                        .retain(|(id, _)| *id != listener_id);
-                }
+            {
+                handle
+                    .borrow_mut()
+                    .listeners
+                    .retain(|(id, _)| *id != listener_id);
             }
         });
         let Some(listener_id) = handle.add_listener(listener) else {

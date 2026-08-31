@@ -201,7 +201,7 @@ fn page_storage_uses_ordered_key_chains_and_exposes_the_ambient_bucket() {
     assert_eq!(bucket.len(), 1);
     assert!(
         bucket
-            .remove_state(&PageStorageKey::new("missing"))
+            .remove_state(PageStorageKey::new("missing"))
             .is_none()
     );
 

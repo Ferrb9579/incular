@@ -161,7 +161,7 @@ impl Page {
 /// A declarative route: an application name and the widget it displays.
 #[derive(Clone, TypedBuilder)]
 pub struct Route {
-    /// Session-local identity assigned by [`Navigator::push`].
+    /// Session-local identity assigned when a navigator pushes this presentation.
     #[builder(default = RouteId(0), setter(skip))]
     pub id: RouteId,
     #[builder(setter(into))]

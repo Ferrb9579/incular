@@ -19,6 +19,5 @@ path = "src/lib.rs"
 directories = { workspace = true }
 incular-config = { workspace = true }
 incular-core = { workspace = true }
-keyboard-types = { workspace = true }
 winit = { workspace = true }
 raw-window-handle = { workspace = true }

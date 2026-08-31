@@ -115,14 +115,12 @@ impl PointerGestureRecognizer {
                         kind: self.kind,
                     });
                 }
-                if is_double_tap {
-                    if let Some(callback) = &self.callbacks.on_double_tap_down {
-                        callback(TapDownDetails {
-                            global_position: event.position,
-                            local_position: event.position,
-                            kind: self.kind,
-                        });
-                    }
+                if is_double_tap && let Some(callback) = &self.callbacks.on_double_tap_down {
+                    callback(TapDownDetails {
+                        global_position: event.position,
+                        local_position: event.position,
+                        kind: self.kind,
+                    });
                 }
                 let pan_down = DragDownDetails {
                     global_position: event.position,
@@ -157,15 +155,16 @@ impl PointerGestureRecognizer {
                         });
                     }
                 }
-                if self.long_press_started && !self.pan_started {
-                    if let Some(callback) = &self.callbacks.on_long_press_move_update {
-                        callback(LongPressMoveUpdateDetails {
-                            global_position: event.position,
-                            local_position: event.position,
-                            offset_from_origin: delta,
-                            local_offset_from_origin: delta,
-                        });
-                    }
+                if self.long_press_started
+                    && !self.pan_started
+                    && let Some(callback) = &self.callbacks.on_long_press_move_update
+                {
+                    callback(LongPressMoveUpdateDetails {
+                        global_position: event.position,
+                        local_position: event.position,
+                        offset_from_origin: delta,
+                        local_offset_from_origin: delta,
+                    });
                 }
                 if !self.pan_started && delta.x.hypot(delta.y) >= Self::PAN_SLOP {
                     self.pan_action = if delta.x.abs() >= delta.y.abs() {
@@ -521,15 +520,15 @@ impl DragGestureDetector {
                         callback(start.position);
                     }
                 }
-                if self.started {
-                    if let Some(callback) = &self.callbacks.on_update {
-                        callback(DragUpdateDetails {
-                            global_position: event.position,
-                            local_position: event.position,
-                            delta: event.position - previous.position,
-                            total_delta,
-                        });
-                    }
+                if self.started
+                    && let Some(callback) = &self.callbacks.on_update
+                {
+                    callback(DragUpdateDetails {
+                        global_position: event.position,
+                        local_position: event.position,
+                        delta: event.position - previous.position,
+                        total_delta,
+                    });
                 }
                 true
             }

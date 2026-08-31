@@ -277,7 +277,7 @@ impl Navigator {
     }
 
     /// Returns the restorable metadata for the current live route, if it was
-    /// pushed through [`RouteRegistry::navigate_restorable`].
+    /// pushed through the route registry's restorable navigation API.
     #[must_use]
     pub fn current_restorable_route(&self) -> Option<RestorableRoute> {
         self.state

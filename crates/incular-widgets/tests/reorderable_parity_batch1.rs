@@ -239,7 +239,7 @@ fn delayed_listener_rejects_early_motion_and_starts_after_long_press() {
 #[test]
 fn box_reorderable_list_requires_an_enabled_listener_for_a_drag() {
     let order = {
-        let list = ReorderableList::new(2, |index| row(index))
+        let list = ReorderableList::new(2, row)
             .item_extent(40.)
             .with_reorder_controller(incular_widgets::internal::SliverReorderController::new(2));
         let order = list.reorder_controller();

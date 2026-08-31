@@ -279,10 +279,10 @@ impl Button {
             .disabled_color(disabled_bg)
             .enabled(effective_enabled)
             .focusable_when_disabled(self.focusable_when_disabled || self.loading);
-        if let Some(cb) = self.on_click.clone() {
-            if effective_enabled {
-                raw = raw.on_click(move || cb());
-            }
+        if let Some(cb) = self.on_click.clone()
+            && effective_enabled
+        {
+            raw = raw.on_click(move || cb());
         }
         let semantic_label = self
             .label

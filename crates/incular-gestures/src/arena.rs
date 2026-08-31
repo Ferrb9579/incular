@@ -83,10 +83,10 @@ impl GestureArena {
             .collect()
     }
     pub fn reject(&mut self, key: GestureArenaKey, member: GestureArenaMember) {
-        if let Some(entries) = self.streams.get_mut(&key) {
-            if let Some(entry) = entries.iter_mut().find(|e| e.0 == member) {
-                entry.2 = GestureDisposition::Rejected;
-            }
+        if let Some(entries) = self.streams.get_mut(&key)
+            && let Some(entry) = entries.iter_mut().find(|e| e.0 == member)
+        {
+            entry.2 = GestureDisposition::Rejected;
         }
     }
     pub fn cancel(&mut self, key: GestureArenaKey) -> Vec<GestureArenaEntry> {

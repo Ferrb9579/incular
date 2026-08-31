@@ -94,7 +94,7 @@ impl From<PointerEvent> for RawPointerEvent {
     }
 }
 
-/// A renderer-independent cursor preference for a [`MouseRegion`].
+/// A renderer-independent cursor preference consumed by higher-level mouse-region widgets.
 ///
 /// `Defer` asks the retained hit-test route to continue behind the current
 /// region. Concrete platform adapters map the remaining values to native
@@ -188,7 +188,7 @@ pub struct LongPressEndDetails {
     pub velocity: Velocity,
 }
 
-/// Callbacks understood by [`PointerGestureRecognizer`].
+/// Callbacks understood by Incular's retained pointer gesture recognizer.
 #[derive(Clone, Default)]
 pub struct GestureCallbacks {
     pub on_tap: Option<Rc<dyn Fn()>>,
@@ -252,7 +252,7 @@ pub struct GestureCallbacks {
     pub shortcut_scope: Option<Rc<ErasedShortcutScope>>,
     /// A typed action scope used by descendant shortcut scopes.
     pub action_scope: Option<Rc<ErasedActionScope>>,
-    /// Lifetime token for an [`ActionListener`] registration.
+    /// Lifetime token for a higher-level action-listener registration.
     pub action_listener: Option<Rc<ActionListenerSubscription>>,
     /// Lifetime token for an action invocation listener installed by a
     /// retained `ActionListener` widget.
@@ -271,7 +271,7 @@ pub struct GestureCallbacks {
 
 /// The callback action selected after a recognizer has claimed its arena.
 /// This is public so retained adapters can defer callbacks until arbitration
-/// has completed while [`GestureDetector::handle`] remains source-compatible.
+/// has completed while the higher-level gesture detector remains source-compatible.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GestureAction {
     Tap,

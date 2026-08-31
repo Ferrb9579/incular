@@ -290,10 +290,10 @@ impl WidgetTree {
             }
             self.diagnostics.paints += 1;
             #[cfg(feature = "devtools")]
-            if let Some(element) = self.element_for_render(id) {
-                if let Some(element) = self.elements.get_mut(element.0) {
-                    element.dev.paints += 1;
-                }
+            if let Some(element) = self.element_for_render(id)
+                && let Some(element) = self.elements.get_mut(element.0)
+            {
+                element.dev.paints += 1;
             }
         }
         output.push(PaintCommand::PushTransform {

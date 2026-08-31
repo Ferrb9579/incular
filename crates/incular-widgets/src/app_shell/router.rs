@@ -1072,14 +1072,12 @@ impl<T: 'static> RouterRuntime<T> {
             )
         };
 
-        if let Some(restoration) = restoration {
-            if let Some(value) = restoration.scope.get_json(&restoration.key) {
-                if let Ok(information) = RouteInformation::from_json(&value) {
-                    if Self::apply_route(runtime, information, RouteApplyKind::Restored).is_ok() {
-                        return;
-                    }
-                }
-            }
+        if let Some(restoration) = restoration
+            && let Some(value) = restoration.scope.get_json(&restoration.key)
+            && let Ok(information) = RouteInformation::from_json(&value)
+            && Self::apply_route(runtime, information, RouteApplyKind::Restored).is_ok()
+        {
+            return;
         }
 
         if let (Some(provider), Some(_parser)) = (provider, parser) {

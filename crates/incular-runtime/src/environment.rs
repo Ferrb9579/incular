@@ -594,8 +594,8 @@ impl<T: 'static> Signal<T> {
     }
     /// Replaces the value and invalidates dependents when it changed.
     ///
-    /// Reactive state must be changed from an event callback, [`Effect`], or
-    /// [`Action`]. Mutating a signal while a widget builder is running is
+    /// Reactive state must be changed from an event callback, effect, or
+    /// action. Mutating a signal while a widget builder is running is
     /// rejected because builders must remain side-effect free.
     pub fn set(&self, value: T) -> bool
     where
@@ -764,10 +764,8 @@ impl<T: 'static> Signal<T> {
                 let mut queue = queue.borrow_mut();
                 for (node_id, weak_node) in nodes {
                     let newly_queued = queue.enqueue_node(node_id, weak_node.clone());
-                    if newly_queued {
-                        if let Some(node) = weak_node.upgrade() {
-                            node.mark_dirty();
-                        }
+                    if newly_queued && let Some(node) = weak_node.upgrade() {
+                        node.mark_dirty();
                     }
                 }
             }

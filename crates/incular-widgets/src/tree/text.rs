@@ -42,10 +42,8 @@ impl WidgetTree {
                 .expect("text field state")
                 .focused = focused;
             node.dirty.insert(DirtyFlags::PAINT);
-            if focused {
-                if let RenderKind::TextField { controller, .. } = &node.object.kind {
-                    controller.reset_caret(now);
-                }
+            if focused && let RenderKind::TextField { controller, .. } = &node.object.kind {
+                controller.reset_caret(now);
             }
         }
         if node

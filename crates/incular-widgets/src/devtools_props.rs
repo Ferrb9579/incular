@@ -67,10 +67,10 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             callback, child, ..
         } => {
             out.push(prop("enabled", DebugValue::Bool(callback.is_some())));
-            if let Some(child) = child.as_ref() {
-                if let Some(label) = child.text_if_any() {
-                    out.push(prop("label", DebugValue::Str(truncate(&label, 48))));
-                }
+            if let Some(child) = child.as_ref()
+                && let Some(label) = child.text_if_any()
+            {
+                out.push(prop("label", DebugValue::Str(truncate(&label, 48))));
             }
         }
         WidgetKind::SelectionArea { controller, child } => {

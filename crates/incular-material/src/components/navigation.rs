@@ -313,10 +313,10 @@ impl From<NavigationBar> for Widget {
                 icon
             };
             let mut button = TextButton::with_child(child).enabled(item.enabled);
-            if item.enabled {
-                if let Some(callback) = callback.clone() {
-                    button = button.on_click(move || callback(index));
-                }
+            if item.enabled
+                && let Some(callback) = callback.clone()
+            {
+                button = button.on_click(move || callback(index));
             }
             Widget::from(button)
         });

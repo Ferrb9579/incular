@@ -778,26 +778,27 @@ impl AccessKitProjection {
             node.set_scroll_y_min(0.0);
             node.set_scroll_y_max(maximum);
         }
-        if semantic.state.editable && !semantic.state.obscured {
-            if let Some(value) = semantic.value.as_deref() {
-                node.set_character_lengths(
-                    value
-                        .chars()
-                        .map(|character| character.len_utf8() as u8)
-                        .collect::<Vec<_>>(),
-                );
-                if let Some(selection) = semantic.state.selection {
-                    node.set_text_selection(AccessKitSelection {
-                        anchor: TextPosition {
-                            node: native_id,
-                            character_index: character_offset(value, selection.base),
-                        },
-                        focus: TextPosition {
-                            node: native_id,
-                            character_index: character_offset(value, selection.extent),
-                        },
-                    });
-                }
+        if semantic.state.editable
+            && !semantic.state.obscured
+            && let Some(value) = semantic.value.as_deref()
+        {
+            node.set_character_lengths(
+                value
+                    .chars()
+                    .map(|character| character.len_utf8() as u8)
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(selection) = semantic.state.selection {
+                node.set_text_selection(AccessKitSelection {
+                    anchor: TextPosition {
+                        node: native_id,
+                        character_index: character_offset(value, selection.base),
+                    },
+                    focus: TextPosition {
+                        node: native_id,
+                        character_index: character_offset(value, selection.extent),
+                    },
+                });
             }
         }
         for action in &semantic.actions {

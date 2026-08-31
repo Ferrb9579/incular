@@ -23,7 +23,6 @@ incular-rendering = { workspace = true }
 incular-platform = { workspace = true }
 wgpu = { workspace = true }
 wgpu-profiler = { workspace = true }
-raw-window-handle = { workspace = true }
 bytemuck = { workspace = true }
 fontdue = { workspace = true }
 lyon_tessellation = { workspace = true }
@@ -31,8 +30,6 @@ kurbo = { workspace = true }
 
 [dev-dependencies]
 incular-text = { workspace = true }
-naga = { workspace = true, features = ["wgsl-in"] }
-pollster = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

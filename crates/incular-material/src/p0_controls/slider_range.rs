@@ -832,10 +832,10 @@ impl From<RangeSlider> for Widget {
                         let on_end = on_end.clone();
                         let began = start_began.clone();
                         move |_| {
-                            if began.replace(false) {
-                                if let Some(callback) = on_end.as_ref() {
-                                    callback(current.get());
-                                }
+                            if began.replace(false)
+                                && let Some(callback) = on_end.as_ref()
+                            {
+                                callback(current.get());
                             }
                         }
                     })
@@ -876,10 +876,10 @@ impl From<RangeSlider> for Widget {
                         let on_end = on_end.clone();
                         let began = end_began.clone();
                         move |_| {
-                            if began.replace(false) {
-                                if let Some(callback) = on_end.as_ref() {
-                                    callback(current.get());
-                                }
+                            if began.replace(false)
+                                && let Some(callback) = on_end.as_ref()
+                            {
+                                callback(current.get());
                             }
                         }
                     })

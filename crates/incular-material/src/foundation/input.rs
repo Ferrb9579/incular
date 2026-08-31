@@ -855,15 +855,14 @@ impl InputDecorator {
                 .unwrap_or_else(|| EdgeInsets::symmetric(12.0, 8.0))
         };
         let mut content = Vec::with_capacity(5);
-        if let Some(label) = decoration.label_text {
-            if self.is_focused
+        if let Some(label) = decoration.label_text
+            && (self.is_focused
                 || !self.is_empty
-                || decoration.floating_label_behavior == Some(FloatingLabelBehavior::Always)
-            {
-                content.push(Widget::from(
-                    Text::new(label).style(decoration.label_style.clone().unwrap_or_default()),
-                ));
-            }
+                || decoration.floating_label_behavior == Some(FloatingLabelBehavior::Always))
+        {
+            content.push(Widget::from(
+                Text::new(label).style(decoration.label_style.clone().unwrap_or_default()),
+            ));
         }
         let mut row = Vec::with_capacity(5);
         if let Some(icon) = decoration.prefix_icon {

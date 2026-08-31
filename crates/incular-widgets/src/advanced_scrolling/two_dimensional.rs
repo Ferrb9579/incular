@@ -580,10 +580,10 @@ impl<T> TwoDimensionalViewport<T> {
         for y_index in row_range.clone() {
             for x_index in column_range.clone() {
                 let vicinity = ChildVicinity::new(x_index, y_index);
-                if !self.cache.contains_key(&vicinity) {
-                    if let Some(child) = self.delegate.child_at(vicinity) {
-                        self.cache.insert(vicinity, child);
-                    }
+                if !self.cache.contains_key(&vicinity)
+                    && let Some(child) = self.delegate.child_at(vicinity)
+                {
+                    self.cache.insert(vicinity, child);
                 }
                 let Some(child) = self.cache.get(&vicinity).cloned() else {
                     continue;

@@ -227,5 +227,5 @@ fn keep_alive_notifications_bubble_and_release_only_their_own_retention() {
 
     let keep_alive = KeepAlive::new(true, fixed_child(100.0, 20.0));
     assert!(keep_alive.keep_alive());
-    assert_eq!(keep_alive.request().keep_alive, true);
+    assert!(keep_alive.request().keep_alive);
 }

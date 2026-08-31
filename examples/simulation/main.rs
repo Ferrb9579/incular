@@ -123,7 +123,7 @@ fn run_simulation(simulation: Simulation) {
 fn write_ppm(path: &Path, screenshot: &incular::testing::Screenshot) -> std::io::Result<()> {
     let mut bytes =
         format!("P6\n{} {}\n255\n", screenshot.width(), screenshot.height()).into_bytes();
-    for pixel in screenshot.pixels().chunks_exact(4) {
+    for pixel in screenshot.pixels().as_chunks::<4>().0 {
         bytes.extend_from_slice(&pixel[..3]);
     }
     fs::write(path, bytes)

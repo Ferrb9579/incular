@@ -33,19 +33,20 @@ incremental = false
 incremental = false
 
 [dev-dependencies]
-incular = { path = "crates/incular", default-features = false, features = ["material"] }
+incular = { path = "crates/incular", version = "0.1.0", default-features = false, features = ["material"] }
 serde_json = { workspace = true }
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/Ferrb9579/incular"
 homepage = "https://github.com/Ferrb9579/incular"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

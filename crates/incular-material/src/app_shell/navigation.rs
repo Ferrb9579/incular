@@ -180,10 +180,10 @@ impl NavigationRail {
                 icon
             };
             let mut button = TextButton::with_child(content).enabled(item.enabled);
-            if item.enabled {
-                if let Some(callback) = self.on_destination_selected.clone() {
-                    button = button.on_click(move || callback(index));
-                }
+            if item.enabled
+                && let Some(callback) = self.on_destination_selected.clone()
+            {
+                button = button.on_click(move || callback(index));
             }
             button.into()
         });
@@ -376,10 +376,10 @@ impl NavigationDrawer {
                 .cross_axis_alignment(CrossAxisAlignment::Center)
                 .into();
             let mut button = TextButton::with_child(content).enabled(item.enabled);
-            if item.enabled {
-                if let Some(callback) = self.on_destination_selected.clone() {
-                    button = button.on_click(move || callback(index));
-                }
+            if item.enabled
+                && let Some(callback) = self.on_destination_selected.clone()
+            {
+                button = button.on_click(move || callback(index));
             }
             button.into()
         }));

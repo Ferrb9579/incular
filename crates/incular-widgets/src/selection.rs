@@ -322,7 +322,7 @@ impl SelectionAreaController {
     }
 }
 
-/// The concrete retained delegate used by [`SelectionContainer`].
+/// The concrete retained delegate used by the higher-level selection container widget.
 #[derive(Clone)]
 pub struct SelectionContainerDelegate {
     controller: SelectionAreaController,

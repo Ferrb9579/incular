@@ -118,10 +118,10 @@ impl SnackBarAction {
             .focused_color(Color::TRANSPARENT)
             .disabled_color(Color::TRANSPARENT)
             .enabled(self.enabled);
-        if let Some(callback) = self.on_pressed.clone() {
-            if self.enabled {
-                surface = surface.on_click(move || callback());
-            }
+        if let Some(callback) = self.on_pressed.clone()
+            && self.enabled
+        {
+            surface = surface.on_click(move || callback());
         }
         let mut semantics = Semantics::new(surface)
             .role(SemanticRole::Button)
@@ -132,10 +132,10 @@ impl SnackBarAction {
             )
             .enabled(self.enabled)
             .action(SemanticAction::Activate);
-        if self.enabled {
-            if let Some(callback) = self.on_pressed.clone() {
-                semantics = semantics.on_tap(move || callback());
-            }
+        if self.enabled
+            && let Some(callback) = self.on_pressed.clone()
+        {
+            semantics = semantics.on_tap(move || callback());
         }
         if !self.enabled {
             semantics = semantics.state(SemanticState {

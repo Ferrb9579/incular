@@ -99,7 +99,7 @@ impl std::fmt::Display for WindowError {
 
 /// Application-defined identity for a window that should survive a restart.
 /// It is intentionally unrelated to the session-local generational
-/// [`WindowId`].
+/// window ID.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WindowRestorationId(pub(crate) RestorationKey);
 

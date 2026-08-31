@@ -215,12 +215,11 @@ impl WidgetTree {
                         }
                     }
                     RetainedGestureKind::Scale => {
-                        if let Some(scale) = self.scale_gestures.get_mut(&candidate.element) {
-                            if let Some(details) = scale.observe(event)
-                                && disposition == GestureDisposition::Accepted
-                            {
-                                scale_updates.push((candidate.element, details));
-                            }
+                        if let Some(scale) = self.scale_gestures.get_mut(&candidate.element)
+                            && let Some(details) = scale.observe(event)
+                            && disposition == GestureDisposition::Accepted
+                        {
+                            scale_updates.push((candidate.element, details));
                         }
                     }
                 }
@@ -335,10 +334,10 @@ impl WidgetTree {
                 else {
                     continue;
                 };
-                if active.cancelled_elements.insert(candidate.element) {
-                    if let Some(callback) = &candidate.on_cancel {
-                        callbacks.push(callback.clone());
-                    }
+                if active.cancelled_elements.insert(candidate.element)
+                    && let Some(callback) = &candidate.on_cancel
+                {
+                    callbacks.push(callback.clone());
                 }
             }
         }
@@ -441,11 +440,11 @@ impl WidgetTree {
         if let Some((_, target)) = active.target.take() {
             target.leave();
         }
-        if let Some((element, target)) = next {
-            if target.enter() {
-                target.update(position);
-                active.target = Some((element, target));
-            }
+        if let Some((element, target)) = next
+            && target.enter()
+        {
+            target.update(position);
+            active.target = Some((element, target));
         }
     }
     pub(super) fn finish_drag(&mut self, key: GestureArenaKey, cancelled: bool, position: Offset) {

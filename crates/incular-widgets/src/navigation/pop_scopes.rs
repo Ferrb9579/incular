@@ -446,16 +446,16 @@ impl From<BackButtonListener> for Widget {
         let registration = Rc::new(RefCell::new(None::<BackRegistration>));
         let registration_state = registration.clone();
         Widget::layout_builder(move |_| {
-            if registration_state.borrow().is_none() {
-                if let (Some(callback), Some(dispatcher)) = (
+            if registration_state.borrow().is_none()
+                && let (Some(callback), Some(dispatcher)) = (
                     callback.clone(),
                     explicit_dispatcher
                         .clone()
                         .or_else(crate::tree::current_build_environment::<BackButtonDispatcher>),
-                ) {
-                    *registration_state.borrow_mut() =
-                        Some(dispatcher.add_callback(move || callback()));
-                }
+                )
+            {
+                *registration_state.borrow_mut() =
+                    Some(dispatcher.add_callback(move || callback()));
             }
             child.clone()
         })

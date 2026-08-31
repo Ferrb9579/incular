@@ -332,10 +332,10 @@ impl TextEngine {
     /// thrashed under large-document workloads (Task 15 profiling).
     fn store(&mut self, key: LayoutKey, layout: Arc<TextLayout>) {
         const LAYOUT_CACHE_CAPACITY: usize = 2048;
-        if self.order.len() == LAYOUT_CACHE_CAPACITY {
-            if let Some(old) = self.order.pop_front() {
-                self.cache.remove(&old);
-            }
+        if self.order.len() == LAYOUT_CACHE_CAPACITY
+            && let Some(old) = self.order.pop_front()
+        {
+            self.cache.remove(&old);
         }
         self.order.push_back(key.clone());
         self.cache.insert(key, layout);
@@ -568,10 +568,10 @@ impl TextEngine {
                 Cow::Owned(settings.to_string()),
             )));
         }
-        if let Some(line_height) = style.line_height {
-            if let Some(parley_lh) = line_height.to_parley(style.size) {
-                builder.push_default(StyleProperty::LineHeight(parley_lh));
-            }
+        if let Some(line_height) = style.line_height
+            && let Some(parley_lh) = line_height.to_parley(style.size)
+        {
+            builder.push_default(StyleProperty::LineHeight(parley_lh));
         }
 
         let mut layout: Layout<()> = builder.build(text);

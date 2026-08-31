@@ -253,7 +253,7 @@ impl Runtime {
         Ok(runtime)
     }
     /// Starts work owned by this retained root. Component code should prefer
-    /// [`BuildContext::spawn`] so completion lifetime follows its owner.
+    /// the build context's spawn API so completion lifetime follows its owner.
     #[must_use]
     pub fn spawner(&self) -> RuntimeSpawner {
         self.window_id.map_or_else(
@@ -278,7 +278,7 @@ impl Runtime {
     }
 
     /// Returns the owning normalized window when this runtime is managed by a
-    /// multi-window [`Application`]. Standalone runtimes remain windowless.
+    /// multi-window application. Standalone runtimes remain windowless.
     #[must_use]
     pub const fn window_id(&self) -> Option<WindowId> {
         self.window_id
@@ -481,14 +481,14 @@ impl Runtime {
         let changed = environment_change_mask(&previous, &environment);
         *self.environment.borrow_mut() = environment;
         self.environment_generation = self.environment_generation.wrapping_add(1);
-        if self.environment_dependencies.get() & changed != 0 {
-            if let Some(root) = self.application_root {
-                #[cfg(feature = "devtools")]
-                self.tree
-                    .note_invalidation(root, InvalidationCause::EnvironmentChanged);
-                let _ = self.rebuild_from_builder(root);
-                self.frame_requested = true;
-            }
+        if self.environment_dependencies.get() & changed != 0
+            && let Some(root) = self.application_root
+        {
+            #[cfg(feature = "devtools")]
+            self.tree
+                .note_invalidation(root, InvalidationCause::EnvironmentChanged);
+            let _ = self.rebuild_from_builder(root);
+            self.frame_requested = true;
         }
         true
     }
@@ -1039,11 +1039,11 @@ impl Runtime {
                         .set_button_interaction(element, None, Some(false), None);
                 }
                 if let Some((element, action)) = valid {
-                    if let Some(action) = action {
-                        if let Some(callback) = self.handlers.get(&action).cloned() {
-                            callback();
-                            self.frame_requested = true;
-                        }
+                    if let Some(action) = action
+                        && let Some(callback) = self.handlers.get(&action).cloned()
+                    {
+                        callback();
+                        self.frame_requested = true;
                     }
                     Some(EventTarget { element, action })
                 } else {
@@ -1498,11 +1498,11 @@ impl Runtime {
         let build_span = profiling::PhaseSpan::start();
         let mut updated = 0;
         while let Some(id) = self.order.pop_front() {
-            if let Some(widget) = self.pending.remove(&id) {
-                if self.tree.element_exists(id) {
-                    self.tree.update(id, widget)?;
-                    updated += 1;
-                }
+            if let Some(widget) = self.pending.remove(&id)
+                && self.tree.element_exists(id)
+            {
+                self.tree.update(id, widget)?;
+                updated += 1;
             }
         }
         loop {

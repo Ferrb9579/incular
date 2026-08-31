@@ -422,10 +422,10 @@ impl<T> DropdownButtonFormField<T> {
 impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget {
     fn from(value: DropdownButtonFormField<T>) -> Self {
         let mut children = Vec::new();
-        if let Some(decoration) = value.decoration.as_ref() {
-            if let Some(label) = decoration.label_text.clone() {
-                children.push(Text::new(label).into());
-            }
+        if let Some(decoration) = value.decoration.as_ref()
+            && let Some(label) = decoration.label_text.clone()
+        {
+            children.push(Text::new(label).into());
         }
         children.push(Widget::from(value.dropdown.clone()));
         let error = value.error_text.clone().or_else(|| {
@@ -436,10 +436,10 @@ impl<T: Clone + PartialEq + 'static> From<DropdownButtonFormField<T>> for Widget
         });
         if let Some(error) = error {
             children.push(Text::new(error).into());
-        } else if let Some(decoration) = value.decoration.as_ref() {
-            if let Some(helper) = decoration.helper_text.clone() {
-                children.push(Text::new(helper).into());
-            }
+        } else if let Some(decoration) = value.decoration.as_ref()
+            && let Some(helper) = decoration.helper_text.clone()
+        {
+            children.push(Text::new(helper).into());
         }
         let _ = value.on_saved;
         Column::new(children)

@@ -16,8 +16,8 @@ use typed_builder::TypedBuilder;
 
 /// A Material dialog surface.
 ///
-/// `Dialog` only describes the surface itself.  Use [`show_dialog`] and
-/// [`DialogHandle::present`] when a retained overlay presentation is desired;
+/// `Dialog` only describes the surface itself. Use the dialog presentation
+/// helpers when a retained overlay presentation is desired;
 /// navigation and application-shell policy remain outside this type.
 #[derive(Clone, TypedBuilder)]
 pub struct Dialog {
@@ -43,7 +43,7 @@ pub struct Dialog {
 
 /// A Material alert dialog with the common title/content/actions slots.
 ///
-/// The modal mechanics are intentionally provided by [`DialogHandle`]; this
+/// The modal mechanics are intentionally provided by the dialog handle; this
 /// type only composes the Material surface.  Keeping the slots as ordinary
 /// widgets makes it possible to use custom controls without introducing a
 /// second route or focus implementation.
@@ -495,10 +495,10 @@ impl SimpleDialogOption {
             .focused_color(Color::TRANSPARENT)
             .disabled_color(Color::TRANSPARENT)
             .enabled(self.enabled);
-        if let Some(callback) = self.on_pressed.clone() {
-            if self.enabled {
-                surface = surface.on_click(move || callback());
-            }
+        if let Some(callback) = self.on_pressed.clone()
+            && self.enabled
+        {
+            surface = surface.on_click(move || callback());
         }
         let mut semantics = Semantics::new(surface)
             .role(SemanticRole::Button)

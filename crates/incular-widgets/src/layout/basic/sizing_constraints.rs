@@ -135,27 +135,27 @@ impl From<SizedBox> for Widget {
         });
         let mut constraints = Constraints::unbounded();
         let mut has_constraints = false;
-        if let Some(w_val) = w {
-            if w_val.is_finite() {
-                has_constraints = true;
-                constraints = Constraints::new(
-                    w_val.max(0.0),
-                    w_val.max(0.0),
-                    constraints.min_height,
-                    constraints.max_height,
-                );
-            }
+        if let Some(w_val) = w
+            && w_val.is_finite()
+        {
+            has_constraints = true;
+            constraints = Constraints::new(
+                w_val.max(0.0),
+                w_val.max(0.0),
+                constraints.min_height,
+                constraints.max_height,
+            );
         }
-        if let Some(h_val) = h {
-            if h_val.is_finite() {
-                has_constraints = true;
-                constraints = Constraints::new(
-                    constraints.min_width,
-                    constraints.max_width,
-                    h_val.max(0.0),
-                    h_val.max(0.0),
-                );
-            }
+        if let Some(h_val) = h
+            && h_val.is_finite()
+        {
+            has_constraints = true;
+            constraints = Constraints::new(
+                constraints.min_width,
+                constraints.max_width,
+                h_val.max(0.0),
+                h_val.max(0.0),
+            );
         }
         if has_constraints {
             ConstrainedBox::new(constraints, child).into()

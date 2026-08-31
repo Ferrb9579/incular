@@ -397,10 +397,8 @@ impl MenuItemButton {
         let close_on_activate = self.close_on_activate;
         if on_pressed.is_some() || (close_on_activate && close.is_some()) {
             button = button.on_click(move || {
-                if close_on_activate {
-                    if let Some(close) = close.as_ref() {
-                        close();
-                    }
+                if close_on_activate && let Some(close) = close.as_ref() {
+                    close();
                 }
                 if let Some(callback) = on_pressed.as_ref() {
                     callback();

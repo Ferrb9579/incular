@@ -9,6 +9,27 @@ publish = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+
+[package.metadata.cargo-machete]
+# The package compiles the shared desktop runner via `#[path = ...]` from the
+# Linux crate. cargo-machete intentionally does not scan source outside this
+# package root, so these dependencies are real even though it cannot see their
+# references.
+ignored = [
+    "accesskit_winit",
+    "arboard",
+    "incular-accessibility",
+    "incular-config",
+    "incular-core",
+    "incular-devtools",
+    "incular-devtools-protocol",
+    "incular-layout",
+    "incular-platform",
+    "incular-rendering",
+    "incular-wgpu",
+    "pollster",
+    "winit",
+]
 [lints]
 workspace = true
 

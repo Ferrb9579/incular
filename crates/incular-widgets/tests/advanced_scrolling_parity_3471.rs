@@ -170,7 +170,7 @@ fn draggable_sheet_resizes_hands_off_and_actuator_resets() {
 
 #[test]
 fn two_dimensional_viewport_keeps_axis_ranges_cache_and_hit_tests_independent() {
-    let delegate = TwoDimensionalChildDelegate::new(10, 12, |vicinity| Some(vicinity));
+    let delegate = TwoDimensionalChildDelegate::new(10, 12, Some);
     let mut view = TwoDimensionalScrollView::new(delegate, 20.0, 30.0);
     view.viewport_mut()
         .set_cache_extent(0.0, CacheExtentStyle::Pixels);

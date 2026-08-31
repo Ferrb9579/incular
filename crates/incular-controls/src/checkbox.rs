@@ -237,16 +237,17 @@ impl Root {
                 .color(Color::TRANSPARENT)
                 .disabled_color(theme.colors.disabled_surface)
                 .enabled(self.enabled && !self.read_only);
-            if let Some(callback) = self.on_change.clone() {
-                if self.enabled && !self.read_only {
-                    button = button.on_click(move || {
-                        callback(if state.is_checked() {
-                            CheckedState::Unchecked
-                        } else {
-                            CheckedState::Checked
-                        })
-                    });
-                }
+            if let Some(callback) = self.on_change.clone()
+                && self.enabled
+                && !self.read_only
+            {
+                button = button.on_click(move || {
+                    callback(if state.is_checked() {
+                        CheckedState::Unchecked
+                    } else {
+                        CheckedState::Checked
+                    })
+                });
             }
             let raw: Widget = button.into();
             return raw.semantics(

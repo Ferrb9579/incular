@@ -351,10 +351,10 @@ impl WidgetsAppController {
                 state.generate_route.clone(),
             )
         };
-        if route_path(information.location()) == "/" {
-            if let Some(home) = home {
-                return Some(home());
-            }
+        if route_path(information.location()) == "/"
+            && let Some(home) = home
+        {
+            return Some(home());
         }
         if let Some(route) = route {
             return Some(route());
@@ -381,21 +381,20 @@ impl WidgetsAppController {
                 state.initial_route.clone(),
             )
         };
-        if let Some(restoration) = restoration {
-            if let Some(value) = restoration.scope.get_json(&restoration.key) {
-                if let Some(array) = value.as_array() {
-                    let restored = array
-                        .iter()
-                        .filter_map(|value| RouteInformation::from_json(value).ok())
-                        .collect::<Vec<_>>();
-                    if !restored.is_empty() {
-                        let mut state = inner.borrow_mut();
-                        state.stack = restored;
-                        state.initialized = true;
-                        state.revision.set(state.revision.get().wrapping_add(1));
-                        return;
-                    }
-                }
+        if let Some(restoration) = restoration
+            && let Some(value) = restoration.scope.get_json(&restoration.key)
+            && let Some(array) = value.as_array()
+        {
+            let restored = array
+                .iter()
+                .filter_map(|value| RouteInformation::from_json(value).ok())
+                .collect::<Vec<_>>();
+            if !restored.is_empty() {
+                let mut state = inner.borrow_mut();
+                state.stack = restored;
+                state.initialized = true;
+                state.revision.set(state.revision.get().wrapping_add(1));
+                return;
             }
         }
         let target = initial_route
@@ -868,11 +867,11 @@ impl WidgetsApp {
         if let Some(builder) = self.builder.as_ref() {
             child = builder(child);
         }
-        if let Some(catalog) = self.catalog.as_ref() {
-            if let Some(locale) = locale.clone() {
-                child = Localizations::new(locale.clone(), SharedCatalog(catalog.clone()), child)
-                    .into();
-            }
+        if let Some(catalog) = self.catalog.as_ref()
+            && let Some(locale) = locale.clone()
+        {
+            child =
+                Localizations::new(locale.clone(), SharedCatalog(catalog.clone()), child).into();
         }
         let direction = locale
             .as_ref()

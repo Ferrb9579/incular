@@ -193,20 +193,20 @@ impl From<AnimatedModalBarrier> for Widget {
                 barrier = Widget::absorb_pointer(true, barrier);
             }
 
-            if let Some(label) = &semantics_label {
-                if semantics_dismissible {
-                    let mut semantics = Semantics::new(barrier).label(label.clone());
-                    if let Some(hint) = &semantics_hint {
-                        semantics = semantics.description(hint.clone());
-                    }
-                    if dismissible {
-                        semantics = semantics.on_tap({
-                            let dismiss = dismiss.clone();
-                            move || dismiss()
-                        });
-                    }
-                    barrier = semantics.into();
+            if let Some(label) = &semantics_label
+                && semantics_dismissible
+            {
+                let mut semantics = Semantics::new(barrier).label(label.clone());
+                if let Some(hint) = &semantics_hint {
+                    semantics = semantics.description(hint.clone());
                 }
+                if dismissible {
+                    semantics = semantics.on_tap({
+                        let dismiss = dismiss.clone();
+                        move || dismiss()
+                    });
+                }
+                barrier = semantics.into();
             }
             barrier = barrier.block_semantics();
 

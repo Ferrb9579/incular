@@ -187,6 +187,10 @@ impl SharedGpuContext {
     /// the temporary surface is dropped before this method returns.
     pub async fn new(handles: RawWindowHandles) -> Result<Self, RendererError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        // SAFETY: `RawWindowHandles` is captured from a live native window by
+        // the platform runner. The temporary surface is used only while that
+        // window remains alive to select a compatible adapter, then dropped
+        // before this function returns.
         let surface = unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: handles.display,
@@ -287,6 +291,9 @@ impl SharedGpuContext {
         &self,
         handles: RawWindowHandles,
     ) -> Result<wgpu::Surface<'static>, RendererError> {
+        // SAFETY: the platform runner guarantees that both raw handles remain
+        // valid for the lifetime of the renderer/surface. `WgpuRenderer` owns
+        // no native window handle and is torn down before the platform window.
         unsafe {
             self.inner
                 .instance

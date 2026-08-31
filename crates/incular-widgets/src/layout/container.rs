@@ -195,10 +195,10 @@ impl From<Container> for Widget {
         }
 
         // 2. Padding
-        if let Some(padding) = value.padding {
-            if !padding.is_zero() {
-                current = Padding::new(padding, current).into();
-            }
+        if let Some(padding) = value.padding
+            && !padding.is_zero()
+        {
+            current = Padding::new(padding, current).into();
         }
 
         // 3. Decoration (Color, Brush, Border, Radius)
@@ -242,10 +242,10 @@ impl From<Container> for Widget {
         }
 
         // 5. Margin (outer padding)
-        if let Some(margin) = value.margin {
-            if !margin.is_zero() {
-                current = Padding::new(margin, current).into();
-            }
+        if let Some(margin) = value.margin
+            && !margin.is_zero()
+        {
+            current = Padding::new(margin, current).into();
         }
 
         // 6. Transform

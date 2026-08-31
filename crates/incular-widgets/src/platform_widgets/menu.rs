@@ -639,21 +639,11 @@ impl fmt::Display for PlatformMenuBuildError {
 
 impl std::error::Error for PlatformMenuBuildError {}
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct MenuCallbackSet {
     selected: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
     opened: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
     closed: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
-}
-
-impl Default for MenuCallbackSet {
-    fn default() -> Self {
-        Self {
-            selected: BTreeMap::new(),
-            opened: BTreeMap::new(),
-            closed: BTreeMap::new(),
-        }
-    }
 }
 
 struct PlatformMenuBarState {
@@ -1007,10 +997,10 @@ fn build_item_node(
         .clone()
         .unwrap_or_else(|| MenuItemId::generated(path));
     insert_id(ids, id.clone())?;
-    if item.enabled {
-        if let Some(callback) = item.on_selected.clone() {
-            callbacks.selected.insert(id.clone(), callback);
-        }
+    if item.enabled
+        && let Some(callback) = item.on_selected.clone()
+    {
+        callbacks.selected.insert(id.clone(), callback);
     }
     Ok(PlatformMenuSnapshotNode {
         id,

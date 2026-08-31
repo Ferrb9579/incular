@@ -164,7 +164,7 @@ impl BuildContext {
     }
 
     /// Alias matching the common `cx.restored_signal("count", 0)` pattern.
-    /// The returned [`Restorable`] wraps a normal [`Signal`]; write via its
+    /// The returned [`Restorable`] wraps a normal reactive signal; write via its
     /// `set`/`update` methods so a mutation is captured for persistence.
     #[must_use]
     pub fn restored_signal<T>(&self, key: RestorationKey, default: T) -> Option<Restorable<T>>

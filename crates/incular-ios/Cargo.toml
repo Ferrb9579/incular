@@ -17,5 +17,3 @@ path = "src/lib.rs"
 
 [dependencies]
 incular-accessibility = { workspace = true }
-incular-core = { workspace = true }
-incular-platform = { workspace = true }

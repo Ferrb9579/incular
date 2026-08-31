@@ -732,10 +732,10 @@ impl<T> ListWheelViewport<T> {
     }
 
     fn report_selection_if_needed(&mut self, selected: Option<usize>) {
-        if self.change_reporting_behavior == ChangeReportingBehavior::OnScrollUpdate {
-            if let Some(index) = selected {
-                self.report_selection(index, false);
-            }
+        if self.change_reporting_behavior == ChangeReportingBehavior::OnScrollUpdate
+            && let Some(index) = selected
+        {
+            self.report_selection(index, false);
         }
     }
 

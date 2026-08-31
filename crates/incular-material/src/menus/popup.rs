@@ -740,10 +740,10 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
         };
         let selected = self.on_selected.clone();
         let select = Rc::new(move |value: Option<T>| {
-            if let Some(value) = value {
-                if let Some(callback) = selected.as_ref() {
-                    callback(value);
-                }
+            if let Some(value) = value
+                && let Some(callback) = selected.as_ref()
+            {
+                callback(value);
             }
         }) as Rc<dyn Fn(Option<T>) + 'static>;
         let children = (self.item_builder)()

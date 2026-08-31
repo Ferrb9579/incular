@@ -311,7 +311,7 @@ fn write_ppm(path: &Path, screenshot: &incular::testing::Screenshot) -> io::Resu
         screenshot.width(),
         screenshot.height()
     )?;
-    for pixel in screenshot.pixels().chunks_exact(4) {
+    for pixel in screenshot.pixels().as_chunks::<4>().0 {
         file.write_all(&pixel[..3])?;
     }
     file.flush()

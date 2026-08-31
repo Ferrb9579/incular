@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-/// Stable identity for a route in a [`Navigator`].
+/// Stable identity for a route in a navigator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RouteId(pub(crate) u64);
 
@@ -18,7 +18,7 @@ pub const NAVIGATOR_SNAPSHOT_FORMAT_VERSION: u32 = 1;
 /// restoration.
 ///
 /// This is not [`RouteId`]: `RouteId` is a session-local, generational
-/// identity used by a live [`Navigator`]. `RestorableRouteId` is persisted and
+/// identity used by a live navigator. `RestorableRouteId` is persisted and
 /// therefore must remain stable across application versions which support the
 /// route. It is normalized using the same rules as a registry location.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -164,7 +164,7 @@ impl std::error::Error for RouteScopeKeyError {}
 /// Serializable state for one restorable navigator entry.
 ///
 /// It contains only declarative data. In particular it never contains the
-/// closure used to build a page, the resulting [`Widget`], or a live
+/// closure used to build a page, the resulting widget, or a live
 /// [`RouteId`]. The registered route builder receives `arguments`; `state` is
 /// application-owned serializable route state that can be placed below the
 /// route's restoration scope.
@@ -190,7 +190,7 @@ pub struct RestorableRoute {
 }
 impl RestorableRoute {
     /// Creates serializable state for a route registered in a
-    /// [`RouteRegistry`].
+    /// route registry.
     #[must_use]
     pub fn new(route_id: RestorableRouteId, arguments: Value) -> Self {
         Self {

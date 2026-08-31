@@ -70,7 +70,7 @@ pub enum PaintStyle {
 ///
 /// `Paint` is deliberately a small immutable builder around the authoritative
 /// [`Brush`], [`Stroke`], [`BlendMode`], and [`ColorFilter`] types. It does not
-/// introduce a second display command model; [`Canvas::draw_path`] lowers it
+/// introduce a second display command model; the canvas path API lowers it
 /// directly to the existing fill/stroke commands.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Paint {

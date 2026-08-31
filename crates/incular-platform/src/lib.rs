@@ -155,10 +155,9 @@ impl WindowOptions {
         }
         if let (Some(minimum), Some(maximum)) =
             (self.minimum_logical_size, self.maximum_logical_size)
+            && (minimum.width > maximum.width || minimum.height > maximum.height)
         {
-            if minimum.width > maximum.width || minimum.height > maximum.height {
-                return Err(WindowOptionsError::MinimumExceedsMaximum);
-            }
+            return Err(WindowOptionsError::MinimumExceedsMaximum);
         }
         if self
             .minimum_logical_size

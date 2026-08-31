@@ -9,10 +9,15 @@ use incular_widgets::{
 #[path = "../src/app_shell/app.rs"]
 mod app;
 #[path = "../src/platform_widgets/menu.rs"]
+// Source-inclusion parity harnesses compile the whole production module but
+// deliberately exercise only the behavior under test.
+#[allow(dead_code)]
 mod menu;
 #[path = "../src/app_shell/router.rs"]
+#[allow(dead_code)]
 mod router;
 #[path = "../src/app_shell/title.rs"]
+#[allow(dead_code)]
 mod title;
 #[path = "../src/app_shell/view.rs"]
 mod view;

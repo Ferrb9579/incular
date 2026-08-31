@@ -325,6 +325,7 @@ impl RenderLayers {
         }
     }
 
+    #[cfg(feature = "devtools")]
     pub(crate) fn clip(&self) -> Option<LayerId> {
         match self.attachment {
             LayerAttachment::Clip { clip, .. } => Some(clip),
