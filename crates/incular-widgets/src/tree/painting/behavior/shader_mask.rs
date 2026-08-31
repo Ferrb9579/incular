@@ -13,7 +13,7 @@ impl WidgetTree {
                 if let Some(layer) = self
                     .renders
                     .get(id.0)
-                    .and_then(|node| node.object.layers.shader_mask)
+                    .and_then(|node| node.object.layers.shader_mask())
                 {
                     self.compositor.update_shader_mask(
                         layer,

@@ -670,61 +670,18 @@ impl WidgetTree {
             node.object.layers.root,
             CoreTransform::translation(node.offset),
         );
-        if let Some(clip) = node.object.layers.clip {
-            self.compositor
-                .update_clip(clip, Rect::from_origin_size(Offset::ZERO, node.size));
-        }
-        // Static affine wrappers and FittedBox receive their initial retained
-        // transform during layout. Later controller changes are handled by
-        // `update_compositor` without revisiting this path.
-        let (content_layer, transform) = {
-            let node = self.renders.get(id.0).expect("live");
-            (node.object.layers.content, self.content_transform(id))
-        };
-        if let (Some(content), Some(transform)) = (content_layer, transform) {
-            self.compositor.update_transform(content, transform);
-        }
-        let (kind, layer_ids) = {
+        // Static affine wrappers, clips, and geometry-sensitive effect layers
+        // receive their initial retained geometry during layout. Later
+        // controller changes are handled by `update_compositor`.
+        let (layers, kind, transform) = {
             let node = self.renders.get(id.0).expect("live");
             (
+                node.object.layers.clone(),
                 node.object.kind.clone(),
-                (
-                    node.object.layers.annotation,
-                    node.object.layers.leader,
-                    node.object.layers.follower,
-                ),
+                self.content_transform(id),
             )
         };
-        match (kind, layer_ids) {
-            (RenderKind::AnnotatedRegion { annotation, sized }, (Some(layer), _, _)) => {
-                self.compositor
-                    .update_annotated_region(layer, annotation, sized, size);
-            }
-            (RenderKind::Leader { .. }, (_, Some(layer), _)) => {
-                self.compositor.update_leader_size(layer, size);
-            }
-            (
-                RenderKind::Follower {
-                    link,
-                    show_when_unlinked,
-                    offset,
-                    target_anchor,
-                    follower_anchor,
-                },
-                (_, _, Some(layer)),
-            ) => {
-                self.compositor.update_follower(
-                    layer,
-                    link,
-                    show_when_unlinked,
-                    offset,
-                    target_anchor,
-                    follower_anchor,
-                    size,
-                );
-            }
-            _ => {}
-        }
+        layers.update_layout_geometry(&mut self.compositor, &kind, size, transform);
         self.diagnostics.layouts += 1;
         #[cfg(feature = "devtools")]
         if let Some(element) = self.element_for_render(id) {

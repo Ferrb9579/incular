@@ -604,38 +604,13 @@ impl WidgetTree {
                 (
                     RenderObjectId(id),
                     node.object.kind.clone(),
-                    node.object.layers.content,
-                    node.object.layers.opacity,
-                    node.object.layers.blur,
-                    node.object.layers.shadow,
-                    node.object.layers.color_filter,
-                    node.object.layers.blend,
-                    node.object.layers.shader_mask,
-                    node.object.layers.backdrop_filter,
-                    node.object.layers.annotation,
-                    node.object.layers.leader,
-                    node.object.layers.follower,
+                    node.object.layers.clone(),
                 )
             })
             .collect::<Vec<_>>();
         let mut changed = false;
         let mut active = false;
-        for (
-            _render,
-            kind,
-            content_layer,
-            opacity_layer,
-            blur_layer,
-            shadow_layer,
-            color_filter_layer,
-            blend_layer,
-            shader_mask_layer,
-            backdrop_filter_layer,
-            _annotation_layer,
-            _leader_layer,
-            _follower_layer,
-        ) in nodes
-        {
+        for (_render, kind, layers) in nodes {
             let constraints = self
                 .renders
                 .get(_render.0)
@@ -650,7 +625,7 @@ impl WidgetTree {
                     reverse,
                     ..
                 } => {
-                    if let Some(content) = content_layer
+                    if let Some(content) = layers.content()
                         && self.compositor.update_transform(
                             content,
                             CoreTransform::translation(scroll_translation(
@@ -683,7 +658,7 @@ impl WidgetTree {
                         );
                     }
                     active |= config.delegate.is_animating();
-                    if let Some(content) = content_layer
+                    if let Some(content) = layers.content()
                         && self.compositor.update_transform(
                             content,
                             CoreTransform::translation(scroll_translation(
@@ -741,7 +716,7 @@ impl WidgetTree {
                         reverse,
                         pinned,
                     );
-                    if let Some(content) = content_layer
+                    if let Some(content) = layers.content()
                         && self
                             .compositor
                             .update_transform(content, CoreTransform::translation(offset))
@@ -758,7 +733,7 @@ impl WidgetTree {
                     active |= controller.is_active();
                     // Layout placement lives on `layer`; the inner retained
                     // transform carries only the compositor-only movement.
-                    if let Some(content) = content_layer
+                    if let Some(content) = layers.content()
                         && self.compositor.update_transform(
                             content,
                             CoreTransform::translation(controller.offset()),
@@ -769,7 +744,7 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::Transform { transform, origin } => {
-                    if let Some(content) = content_layer {
+                    if let Some(content) = layers.content() {
                         let size = self.renders.get(_render.0).expect("live").size;
                         if self
                             .compositor
@@ -785,7 +760,7 @@ impl WidgetTree {
                         self.diagnostics.animation_ticks += 1;
                     }
                     active |= controller.is_active();
-                    if let Some(content) = content_layer {
+                    if let Some(content) = layers.content() {
                         let size = self.renders.get(_render.0).expect("live").size;
                         if self.compositor.update_transform(
                             content,
@@ -809,7 +784,7 @@ impl WidgetTree {
                         self.diagnostics.animation_ticks += 1;
                     }
                     active |= controller.is_active();
-                    if let Some(content) = content_layer {
+                    if let Some(content) = layers.content() {
                         let size = self.renders.get(_render.0).expect("live").size;
                         if self.compositor.update_transform(
                             content,
@@ -827,7 +802,7 @@ impl WidgetTree {
                 }
                 RenderKind::FittedBox { fit, alignment } => {
                     if let (Some(content), Some(&child)) = (
-                        content_layer,
+                        layers.content(),
                         self.renders.get(_render.0).expect("live").children.first(),
                     ) {
                         let size = self.renders.get(_render.0).expect("live").size;
@@ -847,7 +822,7 @@ impl WidgetTree {
                             self.diagnostics.animation_ticks += 1;
                         }
                         active |= controller.is_active();
-                        if let Some(opacity) = opacity_layer
+                        if let Some(opacity) = layers.opacity()
                             && self
                                 .compositor
                                 .update_opacity(opacity, controller.opacity())
@@ -855,7 +830,7 @@ impl WidgetTree {
                             changed = true;
                             self.diagnostics.compositor_only_updates += 1;
                         }
-                    } else if let Some(opacity) = opacity_layer
+                    } else if let Some(opacity) = layers.opacity()
                         && self.compositor.update_opacity(opacity, alpha)
                     {
                         changed = true;
@@ -877,7 +852,7 @@ impl WidgetTree {
                         sigma_x = controller.sigma();
                         sigma_y = sigma_x;
                     }
-                    if let Some(layer) = blur_layer
+                    if let Some(layer) = layers.blur()
                         && self
                             .compositor
                             .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y))
@@ -905,7 +880,7 @@ impl WidgetTree {
                             controller.color(),
                         );
                     }
-                    if let Some(layer) = shadow_layer
+                    if let Some(layer) = layers.shadow()
                         && self.compositor.update_drop_shadow(layer, shadow)
                     {
                         changed = true;
@@ -921,7 +896,7 @@ impl WidgetTree {
                         active |= controller.is_active();
                         filter = controller.filter();
                     }
-                    if let Some(layer) = color_filter_layer
+                    if let Some(layer) = layers.color_filter()
                         && self.compositor.update_color_filter(layer, filter)
                     {
                         changed = true;
@@ -929,7 +904,7 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::Blend { mode } => {
-                    if let Some(layer) = blend_layer
+                    if let Some(layer) = layers.blend()
                         && self.compositor.update_blend(layer, mode)
                     {
                         changed = true;
@@ -937,7 +912,7 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::ShaderMask { blend_mode, .. } => {
-                    if let Some(layer) = shader_mask_layer
+                    if let Some(layer) = layers.shader_mask()
                         && self.compositor.update_shader_mask_blend(layer, blend_mode)
                     {
                         changed = true;
@@ -949,7 +924,7 @@ impl WidgetTree {
                     blend_mode,
                     enabled,
                 } => {
-                    if let Some(layer) = backdrop_filter_layer
+                    if let Some(layer) = layers.backdrop_filter()
                         && self
                             .compositor
                             .update_backdrop_filter(layer, blur, blend_mode, enabled)

@@ -416,12 +416,12 @@ impl WidgetTree {
             .and_then(|render| self.renders.get(render.0))
             .is_some_and(|render| {
                 render.object.layers.picture.is_some()
-                    || render.object.layers.clip.is_some()
-                    || render.object.layers.opacity.is_some()
-                    || render.object.layers.blur.is_some()
-                    || render.object.layers.shadow.is_some()
-                    || render.object.layers.color_filter.is_some()
-                    || render.object.layers.blend.is_some()
+                    || render.object.layers.clip().is_some()
+                    || render.object.layers.opacity().is_some()
+                    || render.object.layers.blur().is_some()
+                    || render.object.layers.shadow().is_some()
+                    || render.object.layers.color_filter().is_some()
+                    || render.object.layers.blend().is_some()
             })
     }
 
@@ -524,7 +524,7 @@ impl WidgetTree {
                 return false;
             };
             *alpha = value;
-            render_node.object.layers.opacity
+            render_node.object.layers.opacity()
         };
         if let Some(layer) = opacity_layer {
             let _ = self.compositor.update_opacity(layer, value);

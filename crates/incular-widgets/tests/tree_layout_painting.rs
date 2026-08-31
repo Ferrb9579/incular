@@ -1028,3 +1028,44 @@ fn color_filter_and_blend_updates_stay_in_the_retained_compositor() {
     assert!(debug.contains("ColorFilter"));
     assert!(debug.contains("Blend"));
 }
+
+#[test]
+fn replacing_effect_families_releases_the_old_attachment_subtree() {
+    fn effect(index: usize) -> Widget {
+        let child = Widget::box_(Size::new(20., 20.), Color::WHITE);
+        match index % 5 {
+            0 => Widget::opacity(0.5, child),
+            1 => Widget::blur(4., child),
+            2 => Widget::drop_shadow(Offset::new(2., 3.), 5., Color::rgba(0, 0, 0, 120), child),
+            3 => Widget::color_filtered(ColorFilter::sepia(0.75), child),
+            _ => Widget::blend(BlendMode::Multiply, child),
+        }
+        .with_key(incular_widgets::internal::Key::Value(7))
+    }
+
+    fn root(index: usize) -> Widget {
+        Widget::column(vec![effect(index)])
+    }
+
+    let mut tree = WidgetTree::new();
+    let root_id = tree.mount(root(0)).expect("mount effect root");
+    tree.layout(Constraints::tight(Size::new(100., 100.)));
+    let _ = tree.paint();
+    let stable_layers = tree.compositor_diagnostics().layers;
+
+    for index in 1..100 {
+        tree.update(root_id, root(index))
+            .expect("replace keyed effect");
+        tree.layout(Constraints::tight(Size::new(100., 100.)));
+        let _ = tree.paint();
+        assert_eq!(
+            tree.compositor_diagnostics().layers,
+            stable_layers,
+            "effect replacement leaked a retained attachment at iteration {index}"
+        );
+    }
+
+    tree.mount(Widget::box_(Size::new(1., 1.), Color::WHITE))
+        .expect("replace root");
+    assert_eq!(tree.compositor_diagnostics().layers, 2);
+}

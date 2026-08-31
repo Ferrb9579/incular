@@ -106,407 +106,7 @@ impl WidgetTree {
             compose_environment(environment_override.clone(), inherited_environment)
         };
         self.check_keys_borrowed(widget.children_refs())?;
-        let layer = self
-            .compositor
-            .create_transform(CoreTransform::translation(Offset::ZERO));
-        let picture = matches!(
-            widget.kind,
-            WidgetKind::Box { .. }
-                | WidgetKind::Shape { .. }
-                | WidgetKind::CustomPaint { .. }
-                | WidgetKind::RepaintBoundary { .. }
-                | WidgetKind::Decorated { .. }
-                | WidgetKind::Banner { .. }
-                | WidgetKind::Button { .. }
-                | WidgetKind::Text { .. }
-                | WidgetKind::SelectableText { .. }
-                | WidgetKind::TextField { .. }
-                | WidgetKind::Image { .. }
-                | WidgetKind::Scroll { .. }
-                | WidgetKind::SliverViewport { .. }
-        )
-        .then(|| {
-            self.compositor.create_picture(
-                DisplayList::new(),
-                Rect::from_origin_size(Offset::ZERO, Size::ZERO),
-            )
-        });
-        let focus_picture = match &widget.kind {
-            WidgetKind::Button {
-                color,
-                focused_color: Some(_),
-                ..
-            } if color.alpha == 0 => Some(self.compositor.create_picture(
-                DisplayList::new(),
-                Rect::from_origin_size(Offset::ZERO, Size::ZERO),
-            )),
-            _ => None,
-        };
-        let (
-            clip_layer,
-            content_layer,
-            opacity_layer,
-            blur_layer,
-            shadow_layer,
-            color_filter_layer,
-            blend_layer,
-            shader_mask_layer,
-            backdrop_filter_layer,
-            annotation_layer,
-            leader_layer,
-            follower_layer,
-        ) = match &widget.kind {
-            WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. } => {
-                let clip = self
-                    .compositor
-                    .create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
-                let content = self
-                    .compositor
-                    .create_transform(CoreTransform::translation(Offset::ZERO));
-                self.compositor
-                    .set_children(layer, std::iter::once(clip).chain(picture).collect());
-                self.compositor.set_children(clip, vec![content]);
-                (
-                    Some(clip),
-                    Some(content),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::PersistentHeader { .. } => {
-                // Keep the pinning transform below static flow placement. The
-                // header still occupies its normal sliver extent in layout.
-                let content = self
-                    .compositor
-                    .create_transform(CoreTransform::translation(Offset::ZERO));
-                self.compositor.set_children(layer, vec![content]);
-                (
-                    None,
-                    Some(content),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Translate { .. } => {
-                // Keep dynamic movement structurally below static layout
-                // placement: parent -> layout transform -> animated transform
-                // -> normal child tree. This is also what lets animation avoid
-                // repainting local picture commands.
-                let content = self
-                    .compositor
-                    .create_transform(CoreTransform::translation(Offset::ZERO));
-                self.compositor.set_children(layer, vec![content]);
-                (
-                    None,
-                    Some(content),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Transform { .. }
-            | WidgetKind::Scale { .. }
-            | WidgetKind::Rotation { .. }
-            | WidgetKind::FittedBox { .. } => {
-                let content = self.compositor.create_transform(CoreTransform::IDENTITY);
-                self.compositor.set_children(layer, vec![content]);
-                (
-                    None,
-                    Some(content),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Opacity { alpha, .. } => {
-                let opacity = self.compositor.create_opacity(*alpha);
-                self.compositor.set_children(layer, vec![opacity]);
-                (
-                    None,
-                    None,
-                    Some(opacity),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Blur {
-                sigma_x, sigma_y, ..
-            } => {
-                let blur = self
-                    .compositor
-                    .create_blur(GaussianBlur::new(*sigma_x, *sigma_y));
-                self.compositor.set_children(layer, vec![blur]);
-                (
-                    None,
-                    None,
-                    None,
-                    Some(blur),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::DropShadow {
-                offset,
-                sigma_x,
-                sigma_y,
-                color,
-                ..
-            } => {
-                let shadow = self
-                    .compositor
-                    .create_drop_shadow(DropShadowEffect::asymmetric(
-                        *offset, *sigma_x, *sigma_y, *color,
-                    ));
-                self.compositor.set_children(layer, vec![shadow]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(shadow),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Banner { shadow, .. } => {
-                let sigma = crate::utilities::banner_shadow_sigma(shadow.blur_radius);
-                let shadow_layer =
-                    self.compositor
-                        .create_drop_shadow(DropShadowEffect::asymmetric(
-                            shadow.offset,
-                            sigma,
-                            sigma,
-                            shadow.color,
-                        ));
-                self.compositor.set_children(layer, vec![shadow_layer]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(shadow_layer),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::ColorFiltered { filter, .. } => {
-                let color_filter = self.compositor.create_color_filter(*filter);
-                self.compositor.set_children(layer, vec![color_filter]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(color_filter),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::Blend { mode, .. } => {
-                let blend = self.compositor.create_blend(*mode);
-                self.compositor.set_children(layer, vec![blend]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(blend),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::ShaderMask { blend_mode, .. } => {
-                let shader_mask = self.compositor.create_shader_mask(
-                    Brush::Solid(Color::WHITE),
-                    *blend_mode,
-                    Size::ZERO,
-                    CoreTransform::IDENTITY,
-                );
-                self.compositor.set_children(layer, vec![shader_mask]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(shader_mask),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::BackdropFilter {
-                blur,
-                blend_mode,
-                enabled,
-                ..
-            } => {
-                let backdrop = self
-                    .compositor
-                    .create_backdrop_filter(*blur, *blend_mode, *enabled);
-                self.compositor.set_children(layer, vec![backdrop]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(backdrop),
-                    None,
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::AnnotatedRegion {
-                annotation, sized, ..
-            } => {
-                let annotation_layer =
-                    self.compositor
-                        .create_annotated_region(annotation.clone(), *sized, Size::ZERO);
-                self.compositor.set_children(layer, vec![annotation_layer]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(annotation_layer),
-                    None,
-                    None,
-                )
-            }
-            WidgetKind::CompositedTransformTarget { link, .. } => {
-                let leader = self.compositor.create_leader(link.clone(), Size::ZERO);
-                self.compositor.set_children(layer, vec![leader]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(leader),
-                    None,
-                )
-            }
-            WidgetKind::CompositedTransformFollower {
-                link,
-                show_when_unlinked,
-                offset,
-                target_anchor,
-                follower_anchor,
-                ..
-            } => {
-                let follower = self.compositor.create_follower(
-                    link.clone(),
-                    *show_when_unlinked,
-                    *offset,
-                    *target_anchor,
-                    *follower_anchor,
-                    Size::ZERO,
-                );
-                self.compositor.set_children(layer, vec![follower]);
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(follower),
-                )
-            }
-            _ => {
-                let mut layers = picture.into_iter().collect::<Vec<_>>();
-                layers.extend(focus_picture);
-                self.compositor.set_children(layer, layers);
-                (
-                    None, None, None, None, None, None, None, None, None, None, None, None,
-                )
-            }
-        };
+        let layers = RenderLayers::create(&mut self.compositor, &widget.kind);
         let kind = render_kind(&widget, environment.as_ref());
         let render = self.renders.insert(RenderNode {
             parent: None,
@@ -518,26 +118,7 @@ impl WidgetTree {
                 baseline: None,
             },
             dirty: DirtyFlags::LAYOUT | DirtyFlags::PAINT,
-            object: RenderObjectPayload::new(
-                kind,
-                LegacyRenderLayers {
-                    root: layer,
-                    picture,
-                    focus_picture,
-                    clip: clip_layer,
-                    content: content_layer,
-                    opacity: opacity_layer,
-                    blur: blur_layer,
-                    shadow: shadow_layer,
-                    color_filter: color_filter_layer,
-                    blend: blend_layer,
-                    shader_mask: shader_mask_layer,
-                    backdrop_filter: backdrop_filter_layer,
-                    annotation: annotation_layer,
-                    leader: leader_layer,
-                    follower: follower_layer,
-                },
-            ),
+            object: RenderObjectPayload::new(kind, layers),
         });
         let id = ElementId(self.elements.insert(Element {
             parent,
@@ -710,177 +291,39 @@ impl WidgetTree {
         carry_replaced_transition(&old_kind, &new_kind);
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
+        let mut layer_structure_changed = false;
         if old_kind != new_kind {
+            layer_structure_changed = self
+                .renders
+                .get_mut(render.0)
+                .expect("present")
+                .object
+                .layers
+                .reconcile_structure(&mut self.compositor, &widget.kind);
             let invalidation = self
                 .renders
                 .get_mut(render.0)
                 .expect("present")
                 .object
                 .update_kind(new_kind.clone());
-            if let RenderKind::Banner { shadow, .. } = &new_kind
-                && let Some(layer) = self
-                    .renders
-                    .get(render.0)
-                    .and_then(|node| node.object.layers.shadow)
-            {
-                let sigma = crate::utilities::banner_shadow_sigma(shadow.blur_radius);
-                self.compositor.update_drop_shadow(
-                    layer,
-                    DropShadowEffect::asymmetric(shadow.offset, sigma, sigma, shadow.color),
-                );
-            }
+            let (layers, size) = {
+                let node = self.renders.get(render.0).expect("present");
+                (node.object.layers.clone(), node.size)
+            };
+            let world_transform = self.render_world_transform(render);
+            let content_transform = self.content_transform(render);
+            layers.update_from_kind(
+                &mut self.compositor,
+                &new_kind,
+                size,
+                world_transform,
+                content_transform,
+            );
             if invalidation.contains(RenderInvalidation::COMPOSITE) {
                 self.diagnostics.compositor_only_updates += 1;
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.2 = Some("retained compositor property changed".into());
-                }
-                match new_kind.clone() {
-                    RenderKind::Opacity { alpha, .. } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.opacity)
-                        {
-                            self.compositor.update_opacity(layer, alpha);
-                        }
-                    }
-                    RenderKind::Blur {
-                        sigma_x, sigma_y, ..
-                    } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|n| n.object.layers.blur)
-                        {
-                            self.compositor
-                                .update_blur(layer, GaussianBlur::new(sigma_x, sigma_y));
-                        }
-                    }
-                    RenderKind::DropShadow {
-                        offset,
-                        sigma_x,
-                        sigma_y,
-                        color,
-                        ..
-                    } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|n| n.object.layers.shadow)
-                        {
-                            self.compositor.update_drop_shadow(
-                                layer,
-                                DropShadowEffect::asymmetric(offset, sigma_x, sigma_y, color),
-                            );
-                        }
-                    }
-                    RenderKind::ColorFiltered { filter, .. } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.color_filter)
-                        {
-                            self.compositor.update_color_filter(layer, filter);
-                        }
-                    }
-                    RenderKind::Blend { mode } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.blend)
-                        {
-                            self.compositor.update_blend(layer, mode);
-                        }
-                    }
-                    RenderKind::ShaderMask { shader, blend_mode } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.shader_mask)
-                        {
-                            let size = self.renders.get(render.0).expect("present").size;
-                            self.compositor.update_shader_mask(
-                                layer,
-                                shader.call(Rect::from_origin_size(Offset::ZERO, size)),
-                                blend_mode,
-                                size,
-                                self.render_world_transform(render),
-                            );
-                        }
-                    }
-                    RenderKind::BackdropFilter {
-                        blur,
-                        blend_mode,
-                        enabled,
-                    } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.backdrop_filter)
-                        {
-                            self.compositor
-                                .update_backdrop_filter(layer, blur, blend_mode, enabled);
-                        }
-                    }
-                    RenderKind::AnnotatedRegion { annotation, sized } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.annotation)
-                        {
-                            let size = self.renders.get(render.0).expect("present").size;
-                            self.compositor
-                                .update_annotated_region(layer, annotation, sized, size);
-                        }
-                    }
-                    RenderKind::Leader { link } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.leader)
-                        {
-                            let size = self.renders.get(render.0).expect("present").size;
-                            self.compositor.update_leader(layer, link, size);
-                        }
-                    }
-                    RenderKind::Follower {
-                        link,
-                        show_when_unlinked,
-                        offset,
-                        target_anchor,
-                        follower_anchor,
-                    } => {
-                        if let Some(layer) = self
-                            .renders
-                            .get(render.0)
-                            .and_then(|node| node.object.layers.follower)
-                        {
-                            let size = self.renders.get(render.0).expect("present").size;
-                            self.compositor.update_follower(
-                                layer,
-                                link,
-                                show_when_unlinked,
-                                offset,
-                                target_anchor,
-                                follower_anchor,
-                                size,
-                            );
-                        }
-                    }
-                    RenderKind::Transform { .. }
-                    | RenderKind::Scale { .. }
-                    | RenderKind::Rotation { .. } => {
-                        if let (Some(layer), Some(transform)) = (
-                            self.renders
-                                .get(render.0)
-                                .and_then(|node| node.object.layers.content),
-                            self.content_transform(render),
-                        ) {
-                            self.compositor.update_transform(layer, transform);
-                        }
-                    }
-                    _ => {}
                 }
             } else if invalidation.contains(RenderInvalidation::PAINT)
                 && !invalidation.contains(RenderInvalidation::LAYOUT)
@@ -909,6 +352,9 @@ impl WidgetTree {
                 element.layout_builder_constraints = None;
             }
             element.dirty.remove(DirtyFlags::BUILD);
+        }
+        if layer_structure_changed {
+            self.sync_render_children(id);
         }
         if environment_changed {
             self.propagate_environment(id);
@@ -1570,49 +1016,7 @@ impl WidgetTree {
             self.unmount_element(child);
         }
         if let Some(render) = self.renders.remove(element.render.0) {
-            if let Some(picture) = render.object.layers.picture {
-                self.compositor.remove(picture);
-            }
-            if let Some(picture) = render.object.layers.focus_picture {
-                self.compositor.remove(picture);
-            }
-            if let Some(layer) = render.object.layers.clip {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.content {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.opacity {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.blur {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.shadow {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.color_filter {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.blend {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.shader_mask {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.backdrop_filter {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.annotation {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.leader {
-                self.compositor.remove(layer);
-            }
-            if let Some(layer) = render.object.layers.follower {
-                self.compositor.remove(layer);
-            }
-            self.compositor.remove(render.object.layers.root);
+            render.object.layers.remove(&mut self.compositor);
         }
         self.unmounted.push(id);
         self.diagnostics.unmounts += 1;
@@ -1647,41 +1051,9 @@ impl WidgetTree {
             }
             changed
         };
-        let (
-            layer,
-            picture,
-            focus_picture,
-            content_layer,
-            opacity_layer,
-            blur_layer,
-            shadow_layer,
-            color_filter_layer,
-            blend_layer,
-            shader_mask_layer,
-            backdrop_filter_layer,
-            annotation_layer,
-            leader_layer,
-            follower_layer,
-            kind,
-        ) = {
+        let (layers, kind) = {
             let node = self.renders.get(render.0).expect("mounted");
-            (
-                node.object.layers.root,
-                node.object.layers.picture,
-                node.object.layers.focus_picture,
-                node.object.layers.content,
-                node.object.layers.opacity,
-                node.object.layers.blur,
-                node.object.layers.shadow,
-                node.object.layers.color_filter,
-                node.object.layers.blend,
-                node.object.layers.shader_mask,
-                node.object.layers.backdrop_filter,
-                node.object.layers.annotation,
-                node.object.layers.leader,
-                node.object.layers.follower,
-                node.object.kind.clone(),
-            )
+            (node.object.layers.clone(), node.object.kind.clone())
         };
         let mut child_layers = render_children
             .iter()
@@ -1713,57 +1085,7 @@ impl WidgetTree {
                 .filter_map(|index| child_layers.get(index).copied())
                 .collect();
         }
-        if let RenderKind::Banner { .. } = kind {
-            let mut banner_layers =
-                Vec::with_capacity(child_layers.len() + usize::from(picture.is_some()));
-            banner_layers.extend(child_layers);
-            if let (Some(shadow), Some(picture)) = (shadow_layer, picture) {
-                self.compositor.set_children(shadow, vec![picture]);
-                banner_layers.push(shadow);
-            } else {
-                banner_layers.extend(picture);
-            }
-            self.compositor.set_children(layer, banner_layers);
-        } else if let Some(opacity) = opacity_layer {
-            self.compositor.set_children(opacity, child_layers);
-            self.compositor.set_children(layer, vec![opacity]);
-        } else if let Some(blur) = blur_layer {
-            self.compositor.set_children(blur, child_layers);
-            self.compositor.set_children(layer, vec![blur]);
-        } else if let Some(shadow) = shadow_layer {
-            self.compositor.set_children(shadow, child_layers);
-            self.compositor.set_children(layer, vec![shadow]);
-        } else if let Some(color_filter) = color_filter_layer {
-            self.compositor.set_children(color_filter, child_layers);
-            self.compositor.set_children(layer, vec![color_filter]);
-        } else if let Some(blend) = blend_layer {
-            self.compositor.set_children(blend, child_layers);
-            self.compositor.set_children(layer, vec![blend]);
-        } else if let Some(shader_mask) = shader_mask_layer {
-            self.compositor.set_children(shader_mask, child_layers);
-            self.compositor.set_children(layer, vec![shader_mask]);
-        } else if let Some(backdrop) = backdrop_filter_layer {
-            self.compositor.set_children(backdrop, child_layers);
-            self.compositor.set_children(layer, vec![backdrop]);
-        } else if let Some(annotation) = annotation_layer {
-            self.compositor.set_children(annotation, child_layers);
-            self.compositor.set_children(layer, vec![annotation]);
-        } else if let Some(leader) = leader_layer {
-            self.compositor.set_children(leader, child_layers);
-            self.compositor.set_children(layer, vec![leader]);
-        } else if let Some(follower) = follower_layer {
-            self.compositor.set_children(follower, child_layers);
-            self.compositor.set_children(layer, vec![follower]);
-        } else if let Some(content) = content_layer {
-            self.compositor.set_children(content, child_layers);
-        } else {
-            let mut layers =
-                Vec::with_capacity(child_layers.len() + 1 + usize::from(focus_picture.is_some()));
-            layers.extend(picture);
-            layers.extend(child_layers);
-            layers.extend(focus_picture);
-            self.compositor.set_children(layer, layers);
-        }
+        layers.set_render_children(&mut self.compositor, &kind, child_layers);
         for child in render_children {
             self.renders.get_mut(child.0).expect("mounted").parent = Some(render);
         }

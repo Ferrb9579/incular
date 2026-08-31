@@ -12,7 +12,7 @@ use std::{
 
 use incular_config::Constraints;
 use incular_core::{DirtyFlags, Offset, Size};
-use incular_rendering::{DisplayList, LayerId};
+use incular_rendering::DisplayList;
 use incular_text::TextLayout;
 
 use crate::{
@@ -22,7 +22,9 @@ use crate::{
     tree::{ButtonState, RenderKind, RenderObjectId, Widget},
 };
 
+mod layers;
 mod update;
+pub(crate) use layers::RenderLayers;
 pub(crate) use update::RenderInvalidation;
 
 /// Geometry that is meaningful for every retained render node.
@@ -193,37 +195,16 @@ impl RenderFeatureState {
     }
 }
 
-/// Temporary named representation of compositor IDs while Plan 3 replaces it
-/// with typed attachments. It is intentionally contained inside the payload.
-#[derive(Clone, Debug)]
-pub(crate) struct LegacyRenderLayers {
-    pub(crate) root: LayerId,
-    pub(crate) picture: Option<LayerId>,
-    pub(crate) focus_picture: Option<LayerId>,
-    pub(crate) clip: Option<LayerId>,
-    pub(crate) content: Option<LayerId>,
-    pub(crate) opacity: Option<LayerId>,
-    pub(crate) blur: Option<LayerId>,
-    pub(crate) shadow: Option<LayerId>,
-    pub(crate) color_filter: Option<LayerId>,
-    pub(crate) blend: Option<LayerId>,
-    pub(crate) shader_mask: Option<LayerId>,
-    pub(crate) backdrop_filter: Option<LayerId>,
-    pub(crate) annotation: Option<LayerId>,
-    pub(crate) leader: Option<LayerId>,
-    pub(crate) follower: Option<LayerId>,
-}
-
 /// One typed payload owned by a retained render node.
 pub(crate) struct RenderObjectPayload {
     pub(crate) kind: RenderKind,
     pub(crate) feature: RenderFeatureState,
     pub(crate) cache: DisplayList,
-    pub(crate) layers: LegacyRenderLayers,
+    pub(crate) layers: RenderLayers,
 }
 
 impl RenderObjectPayload {
-    pub(crate) fn new(kind: RenderKind, layers: LegacyRenderLayers) -> Self {
+    pub(crate) fn new(kind: RenderKind, layers: RenderLayers) -> Self {
         let feature = RenderFeatureState::for_kind(&kind);
         Self {
             kind,
