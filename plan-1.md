@@ -160,7 +160,7 @@ The refactor must not regress the main retained hot paths beyond normal benchmar
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 cargo bench -p incular-widgets --bench layout
 cargo bench -p incular-widgets --bench reconciliation
 ```

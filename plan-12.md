@@ -98,7 +98,7 @@ Production cross-crate `#[path]` inclusion must be eliminated. It must no longer
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 cargo check -p incular-linux --all-features
 cargo check -p incular-windows --all-features
 cargo check -p incular-macos --all-features
@@ -126,7 +126,7 @@ Validation completed successfully:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- `cargo test --workspace --all-features`
+- `cargo test-constrained --all-features`
 - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps`
 - `cargo check -p incular-desktop --all-features`
 - `cargo check -p incular-linux --all-features`

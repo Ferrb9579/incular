@@ -16,7 +16,7 @@ locked dependency graph and then updating `workspace.package.rust-version`.
 
 - formatting (`cargo fmt --all -- --check`);
 - all-target/all-feature Clippy with `-D warnings`;
-- workspace tests (`cargo test --workspace --all-features`);
+- workspace tests (`cargo test-constrained --all-features`);
 - warning-free public rustdoc;
 - meaningful feature combinations for the facade crate;
 - deterministic retained-performance contracts;
@@ -103,7 +103,7 @@ The open-source readiness baseline is the following direct command set:
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
 cargo +1.88.0 check --workspace --all-features

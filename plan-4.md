@@ -146,7 +146,7 @@ Where practical, use `catch_unwind` only in tests to assert that user-error case
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 rg -n "panic!|unwrap\(|expect\(" crates -g "*.rs"
 ```
 

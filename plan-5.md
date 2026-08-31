@@ -138,7 +138,7 @@ The exact stack size should be documented and chosen from supported platform con
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-material
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 cargo miri test -p incular-material
 ```
 

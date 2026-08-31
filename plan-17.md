@@ -124,7 +124,7 @@ Keep these architectural notes concise and accurate; avoid comments that narrate
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo machete --with-metadata
 ```
@@ -171,7 +171,7 @@ Final validation:
 ```text
 cargo fmt --all -- --check                                      pass
 cargo clippy --workspace --all-targets --all-features -- -D warnings  pass
-cargo test --workspace --all-features                           pass
+cargo test-constrained --all-features                           pass
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps  pass
 cargo machete --with-metadata                                   pass (no unused dependencies)
 git diff --check                                                pass

@@ -120,7 +120,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 ```
 
 ## Completion report
@@ -169,7 +169,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
-cargo test --workspace --all-features --quiet
+cargo test-constrained --all-features --quiet
 git diff --check
 ```
 
@@ -226,7 +226,7 @@ cargo clippy -p incular-widgets --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features --quiet
+cargo test-constrained --all-features --quiet
 git diff --check
 ```
 
@@ -255,7 +255,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-widgets --test tree_error_policy --all-features
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
-cargo test --workspace --all-features --quiet
+cargo test-constrained --all-features --quiet
 git diff --check
 ```
 

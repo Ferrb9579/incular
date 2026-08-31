@@ -110,7 +110,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-scroll --all-features
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 ```
 
 ## Completion report
@@ -169,7 +169,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --test advanced_scrolling_retained_integration --all-features
 cargo test -p incular-widgets --all-features
 cargo test -p incular-scroll --all-features
-cargo test --workspace --all-features --quiet
+cargo test-constrained --all-features --quiet
 git diff --check
 ```
 

@@ -163,7 +163,7 @@ If using a registry macro, add compile-time coverage so a new variant cannot sil
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 cargo bench -p incular-widgets --bench reconciliation
 cargo bench -p incular-widgets --bench layout
 ```

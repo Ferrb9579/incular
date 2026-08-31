@@ -104,7 +104,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-runtime --all-features
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 ```
 
 ## Completion report
@@ -136,7 +136,7 @@ cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-widgets --all-features
 cargo test -p incular-runtime --all-features
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 git diff --check
 ```

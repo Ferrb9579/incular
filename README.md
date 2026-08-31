@@ -39,8 +39,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
-`cargo test-constrained` preserves Cargo's normal build parallelism and runs
-the stock test harness with one test thread.
+`cargo test-constrained` caps compilation at four jobs and runs the stock test
+harness with one test thread. Use it for full-workspace test runs; focused
+crate or test-target commands can continue to use `cargo test -p ...`.
 
 Windows PowerShell uses `$env:RUSTDOCFLAGS='-D warnings'` for the final command.
 

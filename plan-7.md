@@ -203,7 +203,7 @@ At minimum the canonical command must cover equivalents of:
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
@@ -234,7 +234,7 @@ documented Cargo commands rather than repository automation.
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo test -p incular-widgets --test tree_performance_contracts --all-features
 cargo +1.88.0 check --workspace --all-features

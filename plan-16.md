@@ -114,7 +114,7 @@ The extension model must not force every internal built-in representation to bec
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 ```
 
@@ -176,7 +176,7 @@ let view: Widget = SingleChildScrollView::new(Column::new([
 
 - `cargo fmt --all -- --check` - pass.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` - pass.
-- `cargo test --workspace --all-features` - pass, including the public API/boundary tests and the crate rustdoc example.
+- `cargo test-constrained --all-features` - pass, including the public API/boundary tests and the crate rustdoc example.
 - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps` - pass.
 - `git diff --check` - pass.
 - Visibility audits found no direct `WidgetKind`, `.kind()`, or `ptr_eq()` use in `incular-widgets` integration tests/benches or in Controls/Material.

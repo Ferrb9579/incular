@@ -151,7 +151,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test -p incular-rendering
 cargo test -p incular-widgets
-cargo test --workspace --all-features
+cargo test-constrained --all-features
 ```
 
 ## Completion report
