@@ -106,6 +106,3 @@ Run the local example contract tests with:
 ```text
 cargo test -p incular --example counter -- --test-threads=1
 ```
-
-`examples/REPORT.md` records the review matrix, screenshot evidence, and any
-example-specific limitations.

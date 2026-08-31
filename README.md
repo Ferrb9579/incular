@@ -49,8 +49,8 @@ Windows PowerShell uses `$env:RUSTDOCFLAGS='-D warnings'` for the final command.
 
 The Linux desktop path is the primary native verification target. Windows and
 macOS share the platform runner contract, while Android and iOS integration
-are still being developed. See the crate documentation, `docs/`, and
-`examples/REPORT.md` for current implementation coverage and known limits.
+are still being developed. The platform table below summarizes the current
+implementation coverage and known limits.
 
 | Capability | Linux | Windows | macOS | Android | iOS |
 | --- | --- | --- | --- | --- | --- |

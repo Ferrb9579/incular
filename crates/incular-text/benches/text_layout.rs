@@ -188,8 +188,8 @@ fn extended_bench(c: &mut Criterion) {
     });
 
     // Width change: reports current behavior (width participates in the
-    // layout key, so this reshapes; keep the low-memory benchmark policy in
-    // MEMORY.md.
+    // layout key, so this reshapes; keep this benchmark intentionally small
+    // enough for normal local runs.
     group.bench_function("document_300_width_change", |b| {
         let mut engine = TextEngine::new();
         let doc = document(300);
