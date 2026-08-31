@@ -90,7 +90,7 @@ impl std::fmt::Display for WindowError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Options(error) => write!(formatter, "invalid window options: {error}"),
-            Self::Tree(error) => write!(formatter, "window root could not mount: {error:?}"),
+            Self::Tree(error) => write!(formatter, "window tree error: {error}"),
             Self::Restoration(error) => write!(formatter, "invalid restoration window: {error}"),
             Self::ApplicationStopped => formatter.write_str("the Incular application has stopped"),
         }

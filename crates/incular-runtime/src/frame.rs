@@ -1534,7 +1534,7 @@ impl Runtime {
         drop(build_guard);
         let _layout_guard = tracing::info_span!("incular.layout").entered();
         let layout_span = profiling::PhaseSpan::start();
-        self.tree.layout(constraints);
+        self.tree.try_layout(constraints)?;
         let layout = layout_span.elapsed_us();
         drop(_layout_guard);
         for (action, handler) in self.tree.take_pending_handlers() {

@@ -21,6 +21,11 @@ impl WidgetTree {
         parent: Option<ElementId>,
         widget: Widget,
     ) -> Result<ElementId, TreeError> {
+        // Mount is intentionally transactional for application-authored
+        // configuration errors. Validate the complete immutable description
+        // before allocating any retained elements, render nodes, layers, or
+        // subscriptions.
+        self.validate_widget_subtree(&widget, parent)?;
         enum MountWork {
             Create {
                 parent: Option<ElementId>,
@@ -105,7 +110,7 @@ impl WidgetTree {
         } else {
             compose_environment(environment_override.clone(), inherited_environment)
         };
-        self.check_keys_borrowed(widget.children_refs())?;
+        self.check_keys_borrowed(None, widget.children_refs())?;
         let layers = RenderLayers::create(&mut self.compositor, &widget.kind);
         let kind = render_kind(&widget, environment.as_ref());
         let render = self.renders.insert(RenderNode {
@@ -284,7 +289,7 @@ impl WidgetTree {
             widget.type_(),
             "only compatible elements may update"
         );
-        self.check_keys_borrowed(widget.children_refs())?;
+        self.check_keys_borrowed(Some(id), widget.children_refs())?;
         let render = self.elements.get(id.0).expect("present").render;
         let old_kind = render_kind(&old, old_environment.as_ref());
         let new_kind = render_kind(widget, new_environment.as_ref());
@@ -429,7 +434,7 @@ impl WidgetTree {
         previous: Vec<ElementId>,
         desired: &[&Widget],
     ) -> Result<Vec<ElementId>, TreeError> {
-        self.check_keys_borrowed(desired.iter().copied())?;
+        self.check_keys_borrowed(Some(parent), desired.iter().copied())?;
         self.diagnostics.child_list_scans += 1;
         let mut start = 0;
         let mut old_end = previous.len();
@@ -533,10 +538,18 @@ impl WidgetTree {
         id: RenderObjectId,
         config: &SliverViewportConfig,
         layout: &SliverViewportLayout,
-    ) {
+    ) -> Result<(), TreeError> {
         let element_id = self
             .element_for_render(id)
             .expect("sliver viewport element");
+        for child in &layout.children {
+            self.validate_widget_subtree(&child.widget, Some(element_id))
+                .map_err(|source| TreeError::InvalidGeneratedChild {
+                    owner: element_id,
+                    child: GeneratedChildIdentity::Sliver(format!("{:?}", child.id)),
+                    source: Box::new(source),
+                })?;
+        }
         let (old_ids, old_children) = {
             let element = self
                 .elements
@@ -560,7 +573,11 @@ impl WidgetTree {
                 .filter(|existing| self.compatible(*existing, &child.widget))
             {
                 self.update_existing(existing, &child.widget)
-                    .expect("sliver child update must remain valid");
+                    .map_err(|source| TreeError::InvalidGeneratedChild {
+                        owner: element_id,
+                        child: GeneratedChildIdentity::Sliver(format!("{child_id:?}")),
+                        source: Box::new(source),
+                    })?;
                 existing
             } else {
                 // A stable sliver item ID does not guarantee that the widget
@@ -579,13 +596,15 @@ impl WidgetTree {
                     action
                 });
                 self.diagnostics.items_built += 1;
-                match self.mount_element(Some(element_id), widget) {
-                    Ok(child) => {
-                        self.diagnostics.items_mounted += 1;
-                        child
-                    }
-                    Err(error) => panic!("sliver child {child_id:?} could not mount: {error:?}"),
-                }
+                let child = self
+                    .mount_element(Some(element_id), widget)
+                    .map_err(|source| TreeError::InvalidGeneratedChild {
+                        owner: element_id,
+                        child: GeneratedChildIdentity::Sliver(format!("{child_id:?}")),
+                        source: Box::new(source),
+                    })?;
+                self.diagnostics.items_mounted += 1;
+                child
             };
             if child.pinned {
                 pinned.insert(child_id);
@@ -619,6 +638,7 @@ impl WidgetTree {
         element.sliver_delegate_revision = config.delegate.revision();
         element.sliver_scroll_revision = config.controller.revision();
         self.sync_render_children(element_id);
+        Ok(())
     }
 
     /// Reconciles children materialized by one of the renderer-independent
@@ -629,7 +649,15 @@ impl WidgetTree {
         &mut self,
         element_id: ElementId,
         desired: Vec<(AdvancedChildKey, Widget)>,
-    ) {
+    ) -> Result<(), TreeError> {
+        for (key, widget) in &desired {
+            self.validate_widget_subtree(widget, Some(element_id))
+                .map_err(|source| TreeError::InvalidGeneratedChild {
+                    owner: element_id,
+                    child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
+                    source: Box::new(source),
+                })?;
+        }
         let (old_keys, old_children) = {
             let element = self
                 .elements
@@ -654,8 +682,13 @@ impl WidgetTree {
                 .copied()
                 .filter(|existing| self.compatible(*existing, &widget))
             {
-                self.update_existing(existing, &widget)
-                    .expect("advanced child update must remain valid");
+                self.update_existing(existing, &widget).map_err(|source| {
+                    TreeError::InvalidGeneratedChild {
+                        owner: element_id,
+                        child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
+                        source: Box::new(source),
+                    }
+                })?;
                 existing
             } else {
                 let handlers = &mut self.pending_handlers;
@@ -667,15 +700,15 @@ impl WidgetTree {
                     action
                 });
                 self.diagnostics.items_built += 1;
-                match self.mount_element(Some(element_id), widget) {
-                    Ok(child) => {
-                        self.diagnostics.items_mounted += 1;
-                        child
-                    }
-                    Err(error) => {
-                        panic!("advanced child {key:?} could not mount: {error:?}")
-                    }
-                }
+                let child = self
+                    .mount_element(Some(element_id), widget)
+                    .map_err(|source| TreeError::InvalidGeneratedChild {
+                        owner: element_id,
+                        child: GeneratedChildIdentity::Advanced(format!("{key:?}")),
+                        source: Box::new(source),
+                    })?;
+                self.diagnostics.items_mounted += 1;
+                child
             };
             retained.insert(child);
             next_keys.push(key);
@@ -701,23 +734,24 @@ impl WidgetTree {
         element.sliver_child_semantic_indices.clear();
         element.sliver_pinned_ids.clear();
         self.sync_render_children(element_id);
+        Ok(())
     }
 
     pub(super) fn materialize_layout_builder(
         &mut self,
         id: RenderObjectId,
         constraints: Constraints,
-    ) {
+    ) -> Result<(), TreeError> {
         stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || {
-            self.materialize_layout_builder_inner(id, constraints);
-        });
+            self.materialize_layout_builder_inner(id, constraints)
+        })
     }
 
     pub(super) fn materialize_layout_builder_inner(
         &mut self,
         id: RenderObjectId,
         constraints: Constraints,
-    ) {
+    ) -> Result<(), TreeError> {
         let element_id = self.element_for_render(id).expect("layout builder element");
         let _build_guard = self.guard_element(FramePhase::Build, element_id);
         let (
@@ -739,7 +773,7 @@ impl WidgetTree {
                 ..
             } = &element.widget.kind
             else {
-                return;
+                return Ok(());
             };
             (
                 builder.clone(),
@@ -755,7 +789,7 @@ impl WidgetTree {
             && previous_revision == revision_value
             && previous_children.len() == 1
         {
-            return;
+            return Ok(());
         }
         let environment = self
             .elements
@@ -774,9 +808,19 @@ impl WidgetTree {
             handlers.push((action, callback));
             action
         });
+        self.validate_widget_subtree(&child, Some(element_id))
+            .map_err(|source| TreeError::InvalidGeneratedChild {
+                owner: element_id,
+                child: GeneratedChildIdentity::LayoutBuilder,
+                source: Box::new(source),
+            })?;
         let children = self
             .reconcile_children(element_id, previous_children, &[&child])
-            .expect("layout builder child must have unique sibling keys");
+            .map_err(|source| TreeError::InvalidGeneratedChild {
+                owner: element_id,
+                child: GeneratedChildIdentity::LayoutBuilder,
+                source: Box::new(source),
+            })?;
         let element = self
             .elements
             .get_mut(element_id.0)
@@ -785,6 +829,7 @@ impl WidgetTree {
         element.layout_builder_constraints = Some(constraints);
         element.layout_builder_revision = revision_value;
         self.sync_render_children(element_id);
+        Ok(())
     }
     /// Returns whether the current retained sliver children still cover the
     /// viewport's requested cache window. A small scroll can therefore stay a
@@ -1023,13 +1068,37 @@ impl WidgetTree {
     }
     pub(super) fn check_keys_borrowed<'a>(
         &self,
+        parent: Option<ElementId>,
         widgets: impl IntoIterator<Item = &'a Widget>,
     ) -> Result<(), TreeError> {
         let mut keys: HashSet<&Key> = HashSet::new();
         for key in widgets.into_iter().filter_map(Widget::key) {
             if !keys.insert(key) {
-                return Err(TreeError::DuplicateKey(key.clone()));
+                return Err(TreeError::DuplicateKey {
+                    key: key.clone(),
+                    parent,
+                });
             }
+        }
+        Ok(())
+    }
+
+    /// Validates immutable widget topology without allocating retained state.
+    /// Generated builders use this before reconciliation so malformed output
+    /// cannot leave half-mounted elements or compositor layers behind.
+    pub(super) fn validate_widget_subtree(
+        &self,
+        widget: &Widget,
+        parent: Option<ElementId>,
+    ) -> Result<(), TreeError> {
+        let mut stack = vec![(widget, parent)];
+        while let Some((current, owner)) = stack.pop() {
+            let children = current.children_refs();
+            self.check_keys_borrowed(owner, children.iter().copied())?;
+            // Descendants do not have retained IDs yet. Their duplicate-key
+            // error remains structured; the generated-child wrapper supplies
+            // the live owner at the materialization boundary.
+            stack.extend(children.into_iter().map(|child| (child, None)));
         }
         Ok(())
     }

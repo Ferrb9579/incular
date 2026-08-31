@@ -36,7 +36,10 @@ fn duplicate_local_keys_are_rejected() {
     let mut tree = WidgetTree::new();
     assert_eq!(
         tree.mount(Widget::row(vec![box_(1), box_(1)])).unwrap_err(),
-        TreeError::DuplicateKey(Key::Value(1))
+        TreeError::DuplicateKey {
+            key: Key::Value(1),
+            parent: None,
+        }
     );
 }
 

@@ -18,13 +18,13 @@ use incular_runtime::*;
 use incular_semantics::{Role as SemanticRole, SemanticAction};
 use incular_text::TextStyle;
 use incular_widgets::internal::{
-    ActionId, Diagnostics, ElementId, GestureCallbacks, Key, PointerEvent, TextEditingController,
-    TextRange, TextSelection, TreeError, WidgetTree,
+    ActionId, Diagnostics, ElementId, GeneratedChildIdentity, GestureCallbacks, Key, PointerEvent,
+    TextEditingController, TextRange, TextSelection, TreeError, WidgetTree,
 };
 use incular_widgets::{
     Align, BorderRadius, BoxDecoration, Container, CustomScrollView, DecoratedBox,
     DefaultTextStyle, FocusScopeNode, FocusScopeSubscription, GestureDetector, KeyboardListener,
-    SliverFixedExtentList, Text, TextInputActionHint, TextInputTypeHint, Widget,
+    LayoutBuilder, SliverFixedExtentList, Text, TextInputActionHint, TextInputTypeHint, Widget,
     internal::ActionSurface,
 };
 use std::time::{Duration, Instant};
@@ -79,6 +79,30 @@ fn key_down(code: Code) -> KeyboardEvent {
         KeyboardKey::Named(incular_core::NamedKey::Unidentified),
         code,
     )
+}
+
+#[test]
+fn runtime_frame_propagates_layout_builder_configuration_error() {
+    let invalid = || {
+        Widget::column(vec![
+            Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(11_u64),
+            Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(11_u64),
+        ])
+    };
+    let mut runtime = Runtime::new(LayoutBuilder::new(move |_| invalid()).into())
+        .expect("layout builder root mounts before generated output exists");
+
+    let error = runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .expect_err("runtime must surface generated layout error");
+
+    assert!(matches!(
+        error,
+        TreeError::InvalidGeneratedChild {
+            child: GeneratedChildIdentity::LayoutBuilder,
+            ..
+        }
+    ));
 }
 
 fn shortcut_key_down(code: Code) -> KeyboardEvent {

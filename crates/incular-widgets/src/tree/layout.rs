@@ -13,7 +13,16 @@ impl WidgetTree {
         self.mark_render_dirty(render, DirtyFlags::PAINT, false);
         Ok(())
     }
+    /// Compatibility layout entry point. Recoverable application-authored
+    /// errors are recorded in [`Self::last_tree_error`] instead of panicking.
+    /// Runtime/frame code should prefer [`Self::try_layout`].
     pub fn layout(&mut self, constraints: Constraints) {
+        let _ = self.try_layout(constraints);
+    }
+
+    pub fn try_layout(&mut self, constraints: Constraints) -> Result<(), TreeError> {
+        self.pending_tree_error = None;
+        self.last_tree_error = None;
         let _phase_guard = self.guard_phase_root(FramePhase::Layout);
         self.refresh_text_fields();
         self.refresh_sliver_ranges();
@@ -23,6 +32,27 @@ impl WidgetTree {
         }
         self.refresh_selection_states();
         self.refresh_notification_listeners();
+        if let Some(error) = self.pending_tree_error.take() {
+            self.last_tree_error = Some(error.clone());
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_tree_error(&mut self, error: TreeError) {
+        if self.pending_tree_error.is_none() {
+            self.pending_tree_error = Some(error);
+        }
+    }
+
+    pub(super) fn record_tree_result(&mut self, result: Result<(), TreeError>) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                self.record_tree_error(error);
+                false
+            }
+        }
     }
 
     /// Marks local-state layout builders dirty before the normal retained
@@ -75,9 +105,9 @@ impl WidgetTree {
 
     /// Materializes the child window owned by an advanced scrolling model
     /// before the normal retained layout pass snapshots its children.
-    fn prepare_advanced_children(&mut self, id: RenderObjectId, constraints: Constraints) {
+    fn prepare_advanced_children(&mut self, id: RenderObjectId, constraints: Constraints) -> bool {
         let Some(element_id) = self.element_for_render(id) else {
-            return;
+            return true;
         };
         let kind = self
             .renders
@@ -96,10 +126,13 @@ impl WidgetTree {
                     Some(child.as_ref().clone())
                 });
                 if let Some(child) = child {
-                    self.materialize_advanced_children(
+                    let result = self.materialize_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::RawScrollbar, child)],
                     );
+                    if !self.record_tree_result(result) {
+                        return false;
+                    }
                 }
             }
             RenderKind::ListWheelScrollView { view } => {
@@ -115,7 +148,10 @@ impl WidgetTree {
                     .iter()
                     .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
                     .collect();
-                self.materialize_advanced_children(element_id, desired);
+                let result = self.materialize_advanced_children(element_id, desired);
+                if !self.record_tree_result(result) {
+                    return false;
+                }
                 self.renders
                     .get_mut(id.0)
                     .expect("wheel render")
@@ -135,7 +171,10 @@ impl WidgetTree {
                     .iter()
                     .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
                     .collect();
-                self.materialize_advanced_children(element_id, desired);
+                let result = self.materialize_advanced_children(element_id, desired);
+                if !self.record_tree_result(result) {
+                    return false;
+                }
                 self.renders
                     .get_mut(id.0)
                     .expect("wheel render")
@@ -159,10 +198,13 @@ impl WidgetTree {
                         .draggable_sheet_state_mut()
                         .expect("draggable-sheet render must own draggable state")
                         .state = Some(state.clone());
-                    self.materialize_advanced_children(
+                    let result = self.materialize_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::Sheet, child)],
                     );
+                    if !self.record_tree_result(result) {
+                        return false;
+                    }
                     state
                 };
                 state.set_parent_height(viewport_size.height);
@@ -181,10 +223,13 @@ impl WidgetTree {
                     Some(child.as_ref().clone())
                 });
                 if let Some(child) = child {
-                    self.materialize_advanced_children(
+                    let result = self.materialize_advanced_children(
                         element_id,
                         vec![(AdvancedChildKey::Actuator, child)],
                     );
+                    if !self.record_tree_result(result) {
+                        return false;
+                    }
                 }
             }
             RenderKind::TwoDimensionalScrollView { view } => {
@@ -205,7 +250,10 @@ impl WidgetTree {
                         )
                     })
                     .collect();
-                self.materialize_advanced_children(element_id, desired);
+                let result = self.materialize_advanced_children(element_id, desired);
+                if !self.record_tree_result(result) {
+                    return false;
+                }
                 self.renders
                     .get_mut(id.0)
                     .expect("two-dimensional render")
@@ -230,7 +278,10 @@ impl WidgetTree {
                         )
                     })
                     .collect();
-                self.materialize_advanced_children(element_id, desired);
+                let result = self.materialize_advanced_children(element_id, desired);
+                if !self.record_tree_result(result) {
+                    return false;
+                }
                 self.renders
                     .get_mut(id.0)
                     .expect("two-dimensional render")
@@ -240,6 +291,7 @@ impl WidgetTree {
             }
             _ => {}
         }
+        true
     }
 
     fn ancestor_scroll_controllers(&self, element_id: ElementId) -> Vec<ScrollController> {
@@ -631,7 +683,10 @@ impl WidgetTree {
             self.renders.get(id.0).expect("live").object.kind,
             RenderKind::LayoutBuilder
         ) {
-            self.materialize_layout_builder(id, constraints);
+            let result = self.materialize_layout_builder(id, constraints);
+            if !self.record_tree_result(result) {
+                return;
+            }
         }
         if self.renders.get(id.0).is_some_and(|render| {
             matches!(
@@ -644,8 +699,9 @@ impl WidgetTree {
                     | RenderKind::TwoDimensionalScrollView { .. }
                     | RenderKind::TwoDimensionalViewport { .. }
             )
-        }) {
-            self.prepare_advanced_children(id, constraints);
+        }) && !self.prepare_advanced_children(id, constraints)
+        {
+            return;
         }
         let (kind, children) = {
             let n = self.renders.get(id.0).expect("live");

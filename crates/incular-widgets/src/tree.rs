@@ -2204,12 +2204,67 @@ pub struct Diagnostics {
     /// BUILD/LAYOUT/PAINT entirely.
     pub compositor_only_updates: u64,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedChildIdentity {
+    Sliver(String),
+    Advanced(String),
+    LayoutBuilder,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TreeError {
     MissingElement(ElementId),
-    DuplicateKey(Key),
+    DuplicateKey {
+        key: Key,
+        parent: Option<ElementId>,
+    },
+    InvalidGeneratedChild {
+        owner: ElementId,
+        child: GeneratedChildIdentity,
+        source: Box<TreeError>,
+    },
+    InvalidWidgetConfiguration {
+        widget: &'static str,
+        reason: String,
+    },
     /// No live window record matched the requested window identity.
     WindowUnknown,
+}
+
+impl std::fmt::Display for TreeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingElement(id) => write!(formatter, "element {id:?} is not mounted"),
+            Self::DuplicateKey { key, parent } => {
+                write!(formatter, "duplicate sibling key {key:?}")?;
+                if let Some(parent) = parent {
+                    write!(formatter, " under parent {parent:?}")?;
+                }
+                Ok(())
+            }
+            Self::InvalidGeneratedChild {
+                owner,
+                child,
+                source,
+            } => write!(
+                formatter,
+                "generated child {child:?} for owner {owner:?} is invalid: {source}"
+            ),
+            Self::InvalidWidgetConfiguration { widget, reason } => {
+                write!(formatter, "invalid {widget} configuration: {reason}")
+            }
+            Self::WindowUnknown => formatter.write_str("window is not mounted"),
+        }
+    }
+}
+
+impl std::error::Error for TreeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidGeneratedChild { source, .. } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -2832,6 +2887,8 @@ pub struct WidgetTree {
     semantic_ids: HashMap<ElementId, SemanticNodeId>,
     static_selections: HashMap<ElementId, StaticSelection>,
     environment: RuntimeEnvironment,
+    pending_tree_error: Option<TreeError>,
+    last_tree_error: Option<TreeError>,
     recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,

@@ -41,6 +41,8 @@ impl WidgetTree {
             semantic_ids: HashMap::new(),
             static_selections: HashMap::new(),
             environment: RuntimeEnvironment::default(),
+            pending_tree_error: None,
+            last_tree_error: None,
             recursion_diagnostics: RecursionDiagnostics::new(),
             #[cfg(feature = "devtools")]
             deep_trace: None,
@@ -261,6 +263,17 @@ impl WidgetTree {
     #[must_use]
     pub fn diagnostics(&self) -> Diagnostics {
         self.diagnostics
+    }
+    /// Most recent recoverable tree/frame error observed by a compatibility
+    /// API such as [`Self::layout`]. Prefer [`Self::try_layout`] when the caller
+    /// can propagate errors directly.
+    #[must_use]
+    pub fn last_tree_error(&self) -> Option<&TreeError> {
+        self.last_tree_error.as_ref()
+    }
+
+    pub fn take_last_tree_error(&mut self) -> Option<TreeError> {
+        self.last_tree_error.take()
     }
     /// Retained, renderer-independent semantic tree. It reflects meaningful
     /// controls, rather than paint commands or compositor pictures.
