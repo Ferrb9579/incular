@@ -1,8 +1,8 @@
 # incular-windows
 
-Windows platform integration for Incular. Window lifecycle, input, display
-scaling, menus, accessibility, and Windows-specific resource access will be
-implemented here.
+Windows adapter for Incular's shared desktop shell. `incular-desktop` owns the
+common Winit/WGPU/AccessKit runner; this crate owns Windows-specific lifecycle
+hooks and native services.
 
 The desktop runner installs a process crash handler while an application is
 active. If native or dependency code reaches Windows stack-overflow exception

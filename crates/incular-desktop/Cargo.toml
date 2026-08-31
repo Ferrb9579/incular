@@ -1,0 +1,37 @@
+[package]
+name = "incular-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared desktop shell integration for Incular"
+publish = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+incular-accessibility = { workspace = true }
+incular-core = { workspace = true }
+incular-config = { workspace = true }
+incular-platform = { workspace = true }
+incular-runtime = { workspace = true }
+incular-wgpu = { workspace = true }
+incular-widgets = { workspace = true }
+incular-rendering = { workspace = true }
+accesskit_winit = { workspace = true }
+incular-devtools = { workspace = true, optional = true }
+incular-devtools-protocol = { workspace = true, optional = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+arboard = { workspace = true }
+
+[features]
+default = []
+devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools"]

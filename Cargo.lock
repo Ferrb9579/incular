@@ -1852,6 +1852,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "incular-desktop"
+version = "0.1.0"
+dependencies = [
+ "accesskit_winit",
+ "arboard",
+ "incular-accessibility",
+ "incular-config",
+ "incular-core",
+ "incular-devtools",
+ "incular-devtools-protocol",
+ "incular-platform",
+ "incular-rendering",
+ "incular-runtime",
+ "incular-wgpu",
+ "incular-widgets",
+ "pollster",
+ "winit",
+]
+
+[[package]]
 name = "incular-devtools"
 version = "0.1.0"
 dependencies = [
@@ -1921,41 +1941,14 @@ dependencies = [
 name = "incular-linux"
 version = "0.1.0"
 dependencies = [
- "accesskit_winit",
- "arboard",
- "incular-accessibility",
- "incular-config",
- "incular-core",
- "incular-devtools",
- "incular-devtools-protocol",
- "incular-platform",
- "incular-rendering",
- "incular-runtime",
- "incular-wgpu",
- "incular-widgets",
- "pollster",
- "winit",
+ "incular-desktop",
 ]
 
 [[package]]
 name = "incular-macos"
 version = "0.1.0"
 dependencies = [
- "accesskit_winit",
- "arboard",
- "incular-accessibility",
- "incular-config",
- "incular-core",
- "incular-devtools",
- "incular-devtools-protocol",
- "incular-layout",
- "incular-platform",
- "incular-rendering",
- "incular-runtime",
- "incular-wgpu",
- "incular-widgets",
- "pollster",
- "winit",
+ "incular-desktop",
 ]
 
 [[package]]
@@ -2116,23 +2109,11 @@ dependencies = [
 name = "incular-windows"
 version = "0.1.0"
 dependencies = [
- "accesskit_winit",
- "arboard",
  "crash-handler",
- "incular-accessibility",
- "incular-config",
- "incular-core",
- "incular-devtools",
- "incular-devtools-protocol",
- "incular-layout",
- "incular-platform",
- "incular-rendering",
+ "incular-desktop",
  "incular-runtime",
- "incular-wgpu",
  "incular-widgets",
  "minidump-writer",
- "pollster",
- "winit",
 ]
 
 [[package]]

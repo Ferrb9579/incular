@@ -1,13 +1,11 @@
-//! Windows desktop backend using Incular's shared winit/wgpu runner contract.
+//! Windows desktop adapter for Incular's shared desktop shell.
 mod crash_reporter;
-#[path = "../../incular-linux/src/lib.rs"]
-mod desktop_runner;
 
-pub use desktop_runner::RunError;
+pub use incular_desktop::RunError;
 
 pub fn run_application(application: incular_runtime::Application) -> Result<(), RunError> {
     let _crash_handler = crash_reporter::install();
-    desktop_runner::run_application(application)
+    incular_desktop::run_application(application)
 }
 
 pub fn run_window(
@@ -15,8 +13,10 @@ pub fn run_window(
     on_action: impl FnMut(incular_widgets::internal::ActionId) + 'static,
 ) -> Result<(), RunError> {
     let _crash_handler = crash_reporter::install();
-    desktop_runner::run_window(runtime, on_action)
+    incular_desktop::run_window(runtime, on_action)
 }
 
 #[cfg(feature = "devtools")]
-pub use desktop_runner::devtools_runner;
+pub use incular_desktop::{
+    DevToolsLaunchMode, devtools_launch_mode_from, devtools_runner, devtools_ui_candidates,
+};

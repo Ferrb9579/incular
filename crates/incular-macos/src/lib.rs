@@ -1,7 +1,8 @@
-//! macOS desktop backend using Incular's shared winit/wgpu runner contract.
-#[path = "../../incular-linux/src/lib.rs"]
-mod desktop_runner;
-pub use desktop_runner::{RunError, run_application, run_window};
+//! macOS desktop adapter for Incular's shared desktop shell.
+
+pub use incular_desktop::{RunError, run_application, run_window};
 
 #[cfg(feature = "devtools")]
-pub use desktop_runner::devtools_runner;
+pub use incular_desktop::{
+    DevToolsLaunchMode, devtools_launch_mode_from, devtools_runner, devtools_ui_candidates,
+};

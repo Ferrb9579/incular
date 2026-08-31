@@ -1,6 +1,6 @@
 #![cfg(feature = "devtools")]
 
-use incular_linux::{DevToolsLaunchMode, devtools_launch_mode_from, devtools_ui_candidates};
+use incular_desktop::{DevToolsLaunchMode, devtools_launch_mode_from, devtools_ui_candidates};
 use std::path::PathBuf;
 
 #[test]
