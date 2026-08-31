@@ -261,7 +261,7 @@ impl MaterialApp {
                 .unwrap_or_else(ThemeData::dark_shared),
             ThemeMode::System => self.theme.clone(),
         };
-        let text_style = theme.text_theme.body_medium.clone();
+        let text_style = theme.core().text_theme.body_medium.clone();
         let themed: Widget = Theme::scope_shared(theme, child);
         // MaterialApp supplies the ambient body style just like Flutter's
         // WidgetsApp/MaterialApp. Plain `Text::new` remains intentionally

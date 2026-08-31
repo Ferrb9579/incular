@@ -222,7 +222,7 @@ fn main() {
         );
         let scaffold = Scaffold::new(
             Container::new()
-                .color(theme.scaffold_background_color)
+                .color(theme.colors().scaffold_background_color)
                 .padding(EdgeInsets::all(24.0))
                 .child(body),
         )

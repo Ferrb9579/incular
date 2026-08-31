@@ -485,7 +485,7 @@ impl Scaffold {
             children.push(app_bar.build(theme));
         }
         let scaffold_background = Theme::of_shared().map_or(theme.colors.background, |theme| {
-            theme.scaffold_background_color
+            theme.colors().scaffold_background_color
         });
         let body = Expanded::new(
             Material::new(self.body.clone()).color(self.background.unwrap_or(scaffold_background)),

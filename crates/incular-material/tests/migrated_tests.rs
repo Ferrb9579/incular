@@ -182,7 +182,7 @@ mod button_tests {
     fn material_default_constraints_follow_tap_target_policy() {
         let theme = ThemeData::light().with_tap_target_size(MaterialTapTargetSize::Padded);
         assert_eq!(
-            theme.material_tap_target_size,
+            theme.core().material_tap_target_size,
             MaterialTapTargetSize::Padded
         );
         assert_eq!(
@@ -240,8 +240,8 @@ mod foundation_tests {
             use_material3: Some(false),
             ..ThemeDataPatch::default()
         });
-        assert!(!theme.use_material3);
-        assert_eq!(theme.color_scheme, ColorScheme::light());
+        assert!(!theme.core().use_material3);
+        assert_eq!(theme.core().color_scheme, ColorScheme::light());
     }
 }
 

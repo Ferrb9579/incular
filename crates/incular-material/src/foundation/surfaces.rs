@@ -197,7 +197,7 @@ impl Material {
 impl From<Material> for Widget {
     fn from(value: Material) -> Self {
         let text_style = Theme::of_shared().map_or_else(TextStyle::default, |theme| {
-            theme.text_theme.body_medium.clone()
+            theme.core().text_theme.body_medium.clone()
         });
         let child: Widget = DefaultTextStyle::new(text_style, value.child).into();
         let mut surface_color = value.color;

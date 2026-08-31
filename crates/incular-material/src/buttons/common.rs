@@ -115,16 +115,16 @@ impl ButtonSpec {
         // The legacy ButtonTheme style is the lowest explicit Material theme
         // layer. Component theme values then override it, and the widget's
         // sparse style is applied last.
-        if let Some(style) = &theme.button_theme.style {
+        if let Some(style) = &theme.buttons().button_theme.style {
             resolved = resolved.merge(style);
         }
         let component = match self.kind {
-            ButtonKind::Elevated => &theme.elevated_button_theme,
-            ButtonKind::Filled | ButtonKind::FilledTonal => &theme.filled_button_theme,
-            ButtonKind::Outlined => &theme.outlined_button_theme,
-            ButtonKind::Text => &theme.text_button_theme,
-            ButtonKind::Icon => &theme.icon_button_theme,
-            ButtonKind::Floating => &theme.floating_action_button_theme,
+            ButtonKind::Elevated => &theme.buttons().elevated_button_theme,
+            ButtonKind::Filled | ButtonKind::FilledTonal => &theme.buttons().filled_button_theme,
+            ButtonKind::Outlined => &theme.buttons().outlined_button_theme,
+            ButtonKind::Text => &theme.buttons().text_button_theme,
+            ButtonKind::Icon => &theme.buttons().icon_button_theme,
+            ButtonKind::Floating => &theme.buttons().floating_action_button_theme,
         };
         apply_component_theme(&mut resolved, component);
 
@@ -134,26 +134,26 @@ impl ButtonSpec {
         {
             resolved.background_states = Some(
                 incular_controls::StateColor::new(Color::TRANSPARENT)
-                    .hovered(theme.color_scheme.surface_container_high)
-                    .pressed(theme.color_scheme.surface_container_highest)
-                    .focused(theme.color_scheme.surface_container_high),
+                    .hovered(theme.core().color_scheme.surface_container_high)
+                    .pressed(theme.core().color_scheme.surface_container_highest)
+                    .focused(theme.core().color_scheme.surface_container_high),
             );
             if resolved.border.is_none() && resolved.side.is_none() {
-                resolved.border = Some(Border::new(1.0, theme.color_scheme.outline));
+                resolved.border = Some(Border::new(1.0, theme.core().color_scheme.outline));
             }
         }
 
         if self.kind == ButtonKind::FilledTonal {
             if resolved.background.is_none() {
-                resolved.background = Some(theme.color_scheme.secondary_container);
+                resolved.background = Some(theme.core().color_scheme.secondary_container);
             }
             if resolved.foreground.is_none() {
-                resolved.foreground = Some(theme.color_scheme.on_secondary_container);
+                resolved.foreground = Some(theme.core().color_scheme.on_secondary_container);
             }
         }
 
         if resolved.text_style.is_none() {
-            resolved.text_style = Some(theme.text_theme.label_large.clone());
+            resolved.text_style = Some(theme.core().text_theme.label_large.clone());
         }
 
         resolved.merge(&self.style)
@@ -265,9 +265,9 @@ fn apply_constraints(
     theme: &ThemeData,
 ) -> Widget {
     let density = style.visual_density.unwrap_or_else(|| {
-        if theme.visual_density == crate::foundation::VisualDensity::COMPACT {
+        if theme.core().visual_density == crate::foundation::VisualDensity::COMPACT {
             incular_controls::ControlDensity::Compact
-        } else if theme.visual_density == crate::foundation::VisualDensity::COMFORTABLE {
+        } else if theme.core().visual_density == crate::foundation::VisualDensity::COMFORTABLE {
             incular_controls::ControlDensity::Comfortable
         } else {
             incular_controls::ControlDensity::Standard
@@ -279,7 +279,9 @@ fn apply_constraints(
         incular_controls::ControlDensity::Comfortable => 8.0,
     };
     let target = style.tap_target_size.unwrap_or_else(|| {
-        if theme.material_tap_target_size == crate::foundation::MaterialTapTargetSize::ShrinkWrap {
+        if theme.core().material_tap_target_size
+            == crate::foundation::MaterialTapTargetSize::ShrinkWrap
+        {
             incular_controls::TapTargetSize::ShrinkWrap
         } else {
             incular_controls::TapTargetSize::Padded

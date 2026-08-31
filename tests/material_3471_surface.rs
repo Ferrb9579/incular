@@ -31,9 +31,9 @@ fn material_surface_exposes_state_theme_and_component_families() {
             duration: Duration::from_millis(200),
             reduced_motion: false,
         });
-    assert!(theme.use_material3);
+    assert!(theme.core().use_material3);
     assert_eq!(
-        theme.material_tap_target_size,
+        theme.core().material_tap_target_size,
         MaterialTapTargetSize::Padded
     );
 

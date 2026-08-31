@@ -42,17 +42,10 @@ pub struct PageTransitionsTheme {
     pub reduced_motion: bool,
 }
 
-/// Central Material theme. Component fields are present even when a component
-/// has no explicit override, matching Flutter's resolved-theme shape.
+/// Core Material policy and typography.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ThemeData {
+pub struct CoreThemeData {
     pub brightness: Brightness,
-    /// Optional Cupertino bridge payload. The Cupertino crate is deliberately
-    /// not a dependency of Material, so applications can carry an opaque
-    /// extension value here and let the platform adapter interpret it.
-    pub cupertino_override_theme: Option<ThemeExtensionValue>,
-    /// Application-defined adaptive policies keyed by their Rust type name.
-    pub adaptation_map: BTreeMap<String, ThemeExtensionValue>,
     pub color_scheme: ColorScheme,
     pub text_theme: TextTheme,
     pub primary_text_theme: TextTheme,
@@ -64,6 +57,11 @@ pub struct ThemeData {
     pub page_transitions_theme: PageTransitionsTheme,
     pub splash_factory: SplashFactory,
     pub apply_elevation_overlay_color: bool,
+}
+
+/// Legacy color aliases retained for Flutter-compatible Material APIs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LegacyThemeColors {
     pub canvas_color: Color,
     pub card_color: Color,
     pub disabled_color: Color,
@@ -82,57 +80,122 @@ pub struct ThemeData {
     pub unselected_widget_color: Color,
     pub dialog_background_color: Color,
     pub indicator_color: Color,
+}
+
+/// Application-defined theme extension and adaptation payloads.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ThemeExtensions {
+    /// Optional Cupertino bridge payload. The Cupertino crate is deliberately
+    /// not a dependency of Material, so applications can carry an opaque
+    /// extension value here and let the platform adapter interpret it.
+    pub cupertino_override_theme: Option<ThemeExtensionValue>,
+    /// Application-defined adaptive policies keyed by their Rust type name.
+    pub adaptation_map: BTreeMap<String, ThemeExtensionValue>,
+    pub extensions: BTreeMap<String, ThemeExtensionValue>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IconAndInputThemes {
     pub icon_theme: IconThemeData,
     pub primary_icon_theme: IconThemeData,
     pub input_decoration_theme: InputDecorationThemeData,
     pub action_icon_theme: Option<ActionIconThemeData>,
-    pub app_bar_theme: AppBarThemeData,
-    pub badge_theme: BadgeThemeData,
-    pub banner_theme: BannerThemeData,
-    pub bottom_app_bar_theme: BottomAppBarThemeData,
-    pub bottom_navigation_bar_theme: BottomNavigationBarThemeData,
-    pub bottom_sheet_theme: BottomSheetThemeData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ButtonComponentThemes {
     pub button_theme: ButtonThemeData,
-    pub card_theme: CardThemeData,
-    pub carousel_view_theme: CarouselViewThemeData,
-    pub checkbox_theme: CheckboxThemeData,
-    pub chip_theme: ChipThemeData,
-    pub data_table_theme: DataTableThemeData,
-    pub date_picker_theme: DatePickerThemeData,
-    pub dialog_theme: DialogThemeData,
-    pub divider_theme: DividerThemeData,
-    pub drawer_theme: DrawerThemeData,
-    pub dropdown_menu_theme: crate::menus::DropdownMenuThemeData,
     pub elevated_button_theme: ElevatedButtonThemeData,
-    pub expansion_tile_theme: ExpansionTileThemeData,
     pub filled_button_theme: FilledButtonThemeData,
     pub floating_action_button_theme: FloatingActionButtonThemeData,
     pub icon_button_theme: IconButtonThemeData,
-    pub list_tile_theme: ListTileThemeData,
-    pub menu_bar_theme: MenuBarThemeData,
-    pub menu_button_theme: MenuButtonThemeData,
-    pub menu_theme: crate::menus::MenuThemeData,
+    pub outlined_button_theme: OutlinedButtonThemeData,
+    pub segmented_button_theme: SegmentedButtonThemeData,
+    pub text_button_theme: TextButtonThemeData,
+    pub toggle_buttons_theme: ToggleButtonsThemeData,
+    pub button_bar_theme: Option<ButtonBarThemeData>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NavigationComponentThemes {
+    pub app_bar_theme: AppBarThemeData,
+    pub bottom_app_bar_theme: BottomAppBarThemeData,
+    pub bottom_navigation_bar_theme: BottomNavigationBarThemeData,
+    pub drawer_theme: DrawerThemeData,
     pub navigation_bar_theme: NavigationBarThemeData,
     pub navigation_drawer_theme: NavigationDrawerThemeData,
     pub navigation_rail_theme: NavigationRailThemeData,
-    pub outlined_button_theme: OutlinedButtonThemeData,
-    pub popup_menu_theme: crate::menus::PopupMenuThemeData,
-    pub progress_indicator_theme: crate::feedback::ProgressIndicatorThemeData,
+    pub tab_bar_theme: crate::p0_controls::TabBarThemeData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SelectionControlThemes {
+    pub checkbox_theme: CheckboxThemeData,
     pub radio_theme: RadioThemeData,
+    pub slider_theme: crate::p0_controls::SliderThemeData,
+    pub switch_theme: SwitchThemeData,
+    pub text_selection_theme: TextSelectionThemeData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SurfaceComponentThemes {
+    pub badge_theme: BadgeThemeData,
+    pub banner_theme: BannerThemeData,
+    pub bottom_sheet_theme: BottomSheetThemeData,
+    pub card_theme: CardThemeData,
+    pub carousel_view_theme: CarouselViewThemeData,
+    pub chip_theme: ChipThemeData,
+    pub dialog_theme: DialogThemeData,
+    pub divider_theme: DividerThemeData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ContentComponentThemes {
+    pub data_table_theme: DataTableThemeData,
+    pub date_picker_theme: DatePickerThemeData,
+    pub expansion_tile_theme: ExpansionTileThemeData,
+    pub list_tile_theme: ListTileThemeData,
     pub search_bar_theme: SearchBarThemeData,
     pub search_view_theme: SearchViewThemeData,
-    pub segmented_button_theme: SegmentedButtonThemeData,
-    pub slider_theme: crate::p0_controls::SliderThemeData,
-    pub snack_bar_theme: SnackBarThemeData,
-    pub switch_theme: SwitchThemeData,
-    pub tab_bar_theme: crate::p0_controls::TabBarThemeData,
-    pub text_button_theme: TextButtonThemeData,
-    pub text_selection_theme: TextSelectionThemeData,
     pub time_picker_theme: TimePickerThemeData,
-    pub toggle_buttons_theme: ToggleButtonsThemeData,
     pub tooltip_theme: TooltipThemeData,
-    pub button_bar_theme: Option<ButtonBarThemeData>,
-    pub extensions: BTreeMap<String, ThemeExtensionValue>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MenuComponentThemes {
+    pub dropdown_menu_theme: crate::menus::DropdownMenuThemeData,
+    pub menu_bar_theme: MenuBarThemeData,
+    pub menu_button_theme: MenuButtonThemeData,
+    pub menu_theme: crate::menus::MenuThemeData,
+    pub popup_menu_theme: crate::menus::PopupMenuThemeData,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FeedbackComponentThemes {
+    pub progress_indicator_theme: crate::feedback::ProgressIndicatorThemeData,
+    pub snack_bar_theme: SnackBarThemeData,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ThemeDataInner {
+    core: Rc<CoreThemeData>,
+    colors: Rc<LegacyThemeColors>,
+    extensions: Rc<ThemeExtensions>,
+    icons_and_input: Rc<IconAndInputThemes>,
+    buttons: Rc<ButtonComponentThemes>,
+    navigation: Rc<NavigationComponentThemes>,
+    selection_controls: Rc<SelectionControlThemes>,
+    surfaces: Rc<SurfaceComponentThemes>,
+    content: Rc<ContentComponentThemes>,
+    menus: Rc<MenuComponentThemes>,
+    feedback: Rc<FeedbackComponentThemes>,
+}
+
+/// Central Material theme. The public value is a cheap shared handle; coherent
+/// subgroups use copy-on-write when deriving a modified theme.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThemeData {
+    inner: Rc<ThemeDataInner>,
 }
 
 /// The fields that are most commonly changed when deriving a theme.
@@ -200,15 +263,11 @@ impl ThemeData {
         Self::from_color_scheme(ColorScheme::dark())
     }
 
-    /// Creates a light theme directly in shared heap storage. ThemeData is a
-    /// deliberately rich compatibility descriptor; keeping this constructor
-    /// shared avoids moving its large value through the native UI stack.
     #[must_use]
     pub fn light_shared() -> Rc<Self> {
         Self::from_color_scheme_shared(ColorScheme::light())
     }
 
-    /// Creates a dark theme directly in shared heap storage.
     #[must_use]
     pub fn dark_shared() -> Rc<Self> {
         Self::from_color_scheme_shared(ColorScheme::dark())
@@ -224,385 +283,343 @@ impl ThemeData {
         Self::from_color_scheme(ColorScheme::from_seed(seed_color))
     }
 
-    /// Creates a seeded theme directly in shared heap storage.
     #[must_use]
     pub fn from_seed_shared(seed_color: Color) -> Rc<Self> {
         Self::from_color_scheme_shared(ColorScheme::from_seed(seed_color))
     }
 
-    /// Heap-backed counterpart to [`Self::from_color_scheme`]. Each field is
-    /// written into the allocation so no full ThemeData temporary is needed
-    /// on the caller's stack.
     #[must_use]
     pub fn from_color_scheme_shared(color_scheme: ColorScheme) -> Rc<Self> {
-        let brightness = color_scheme.brightness;
-        let text_theme = match brightness {
-            Brightness::Light => TextTheme::light(),
-            Brightness::Dark => TextTheme::dark(),
-        };
-        let control_theme = ControlTheme::default();
-        let mut shared = Rc::<Self>::new_uninit();
-        let ptr = Rc::get_mut(&mut shared)
-            .expect("new theme allocation has one owner")
-            .as_mut_ptr();
-        macro_rules! write_field {
-            ($field:ident, $value:expr) => {
-                // `shared` is a unique, uninitialized allocation and every
-                // field is written exactly once before assume_init below.
-                unsafe { std::ptr::addr_of_mut!((*ptr).$field).write($value) };
-            };
-        }
-        write_field!(brightness, brightness);
-        write_field!(cupertino_override_theme, None);
-        write_field!(adaptation_map, BTreeMap::new());
-        write_field!(color_scheme, color_scheme);
-        write_field!(text_theme, text_theme.clone());
-        write_field!(primary_text_theme, text_theme);
-        write_field!(typography, Typography::default());
-        write_field!(use_material3, true);
-        write_field!(visual_density, VisualDensity::default());
-        write_field!(material_tap_target_size, MaterialTapTargetSize::default());
-        write_field!(platform, TargetPlatform::default());
-        write_field!(page_transitions_theme, PageTransitionsTheme::default());
-        write_field!(splash_factory, SplashFactory::Ripple);
-        write_field!(
-            apply_elevation_overlay_color,
-            brightness == Brightness::Dark
-        );
-        write_field!(canvas_color, color_scheme.surface);
-        write_field!(card_color, color_scheme.surface_container_low);
-        write_field!(disabled_color, alpha(color_scheme.on_surface, 0.38));
-        write_field!(divider_color, color_scheme.outline_variant);
-        write_field!(focus_color, alpha(color_scheme.primary, 0.12));
-        write_field!(highlight_color, alpha(color_scheme.primary, 0.12));
-        write_field!(hint_color, color_scheme.on_surface_variant);
-        write_field!(hover_color, alpha(color_scheme.primary, 0.08));
-        write_field!(primary_color, color_scheme.primary);
-        write_field!(primary_color_dark, color_scheme.primary_container);
-        write_field!(primary_color_light, color_scheme.primary_fixed);
-        write_field!(scaffold_background_color, color_scheme.surface);
-        write_field!(secondary_header_color, color_scheme.secondary_container);
-        write_field!(shadow_color, color_scheme.shadow);
-        write_field!(splash_color, alpha(color_scheme.primary, 0.16));
-        write_field!(unselected_widget_color, color_scheme.on_surface_variant);
-        write_field!(dialog_background_color, color_scheme.surface_container_high);
-        write_field!(indicator_color, color_scheme.primary);
-        write_field!(icon_theme, ComponentThemeData::default());
-        write_field!(primary_icon_theme, ComponentThemeData::default());
-        write_field!(input_decoration_theme, InputDecorationThemeData::default());
-        write_field!(action_icon_theme, None);
-        write_field!(app_bar_theme, ComponentThemeData::default());
-        write_field!(badge_theme, ComponentThemeData::default());
-        write_field!(banner_theme, ComponentThemeData::default());
-        write_field!(bottom_app_bar_theme, ComponentThemeData::default());
-        write_field!(bottom_navigation_bar_theme, ComponentThemeData::default());
-        write_field!(bottom_sheet_theme, ComponentThemeData::default());
-        write_field!(button_theme, ButtonThemeData::default());
-        write_field!(card_theme, ComponentThemeData::default());
-        write_field!(carousel_view_theme, ComponentThemeData::default());
-        write_field!(checkbox_theme, ComponentThemeData::default());
-        write_field!(chip_theme, ComponentThemeData::default());
-        write_field!(data_table_theme, ComponentThemeData::default());
-        write_field!(date_picker_theme, ComponentThemeData::default());
-        write_field!(dialog_theme, ComponentThemeData::default());
-        write_field!(divider_theme, ComponentThemeData::default());
-        write_field!(drawer_theme, ComponentThemeData::default());
-        write_field!(
-            dropdown_menu_theme,
-            crate::menus::DropdownMenuThemeData::default()
-        );
-        write_field!(elevated_button_theme, ComponentThemeData::default());
-        write_field!(expansion_tile_theme, ComponentThemeData::default());
-        write_field!(filled_button_theme, ComponentThemeData::default());
-        write_field!(floating_action_button_theme, ComponentThemeData::default());
-        write_field!(icon_button_theme, ComponentThemeData::default());
-        write_field!(list_tile_theme, ComponentThemeData::default());
-        write_field!(menu_bar_theme, ComponentThemeData::default());
-        write_field!(menu_button_theme, ComponentThemeData::default());
-        write_field!(menu_theme, crate::menus::MenuThemeData::default());
-        write_field!(navigation_bar_theme, ComponentThemeData::default());
-        write_field!(navigation_drawer_theme, ComponentThemeData::default());
-        write_field!(navigation_rail_theme, ComponentThemeData::default());
-        write_field!(outlined_button_theme, ComponentThemeData::default());
-        write_field!(
-            popup_menu_theme,
-            crate::menus::PopupMenuThemeData::default()
-        );
-        write_field!(
-            progress_indicator_theme,
-            crate::feedback::ProgressIndicatorThemeData::default()
-        );
-        write_field!(radio_theme, ComponentThemeData::default());
-        write_field!(search_bar_theme, ComponentThemeData::default());
-        write_field!(search_view_theme, ComponentThemeData::default());
-        write_field!(segmented_button_theme, ComponentThemeData::default());
-        write_field!(slider_theme, crate::p0_controls::SliderThemeData::default());
-        write_field!(snack_bar_theme, ComponentThemeData::default());
-        write_field!(switch_theme, ComponentThemeData::default());
-        write_field!(
-            tab_bar_theme,
-            crate::p0_controls::TabBarThemeData::default()
-        );
-        write_field!(text_button_theme, ComponentThemeData::default());
-        write_field!(text_selection_theme, ComponentThemeData::default());
-        write_field!(time_picker_theme, ComponentThemeData::default());
-        write_field!(toggle_buttons_theme, ComponentThemeData::default());
-        write_field!(tooltip_theme, ComponentThemeData::default());
-        write_field!(button_bar_theme, None);
-        write_field!(extensions, BTreeMap::new());
-        let mut shared = unsafe { shared.assume_init() };
-        Rc::get_mut(&mut shared)
-            .expect("new theme allocation remains uniquely owned")
-            .with_control_defaults(control_theme);
-        shared
+        Rc::new(Self::from_color_scheme(color_scheme))
     }
 
     #[must_use]
     pub fn from_color_scheme(color_scheme: ColorScheme) -> Self {
-        let brightness = color_scheme.brightness;
-        let text_theme = match brightness {
-            Brightness::Light => TextTheme::light(),
-            Brightness::Dark => TextTheme::dark(),
-        };
-        let control_theme = ControlTheme::default();
-        let mut theme = Self {
-            brightness,
-            cupertino_override_theme: None,
-            adaptation_map: BTreeMap::new(),
-            primary_text_theme: text_theme.clone(),
-            text_theme,
-            typography: Typography::default(),
-            use_material3: true,
-            visual_density: VisualDensity::default(),
-            material_tap_target_size: MaterialTapTargetSize::default(),
-            platform: TargetPlatform::default(),
-            page_transitions_theme: PageTransitionsTheme::default(),
-            splash_factory: SplashFactory::Ripple,
-            apply_elevation_overlay_color: brightness == Brightness::Dark,
-            canvas_color: color_scheme.surface,
-            card_color: color_scheme.surface_container_low,
-            disabled_color: alpha(color_scheme.on_surface, 0.38),
-            divider_color: color_scheme.outline_variant,
-            focus_color: alpha(color_scheme.primary, 0.12),
-            highlight_color: alpha(color_scheme.primary, 0.12),
-            hint_color: color_scheme.on_surface_variant,
-            hover_color: alpha(color_scheme.primary, 0.08),
-            primary_color: color_scheme.primary,
-            primary_color_dark: color_scheme.primary_container,
-            primary_color_light: color_scheme.primary_fixed,
-            scaffold_background_color: color_scheme.surface,
-            secondary_header_color: color_scheme.secondary_container,
-            shadow_color: color_scheme.shadow,
-            splash_color: alpha(color_scheme.primary, 0.16),
-            unselected_widget_color: color_scheme.on_surface_variant,
-            dialog_background_color: color_scheme.surface_container_high,
-            indicator_color: color_scheme.primary,
-            color_scheme,
-            icon_theme: ComponentThemeData::default(),
-            primary_icon_theme: ComponentThemeData::default(),
-            input_decoration_theme: InputDecorationThemeData::default(),
-            action_icon_theme: None,
-            app_bar_theme: ComponentThemeData::default(),
-            badge_theme: ComponentThemeData::default(),
-            banner_theme: ComponentThemeData::default(),
-            bottom_app_bar_theme: ComponentThemeData::default(),
-            bottom_navigation_bar_theme: ComponentThemeData::default(),
-            bottom_sheet_theme: ComponentThemeData::default(),
-            button_theme: ButtonThemeData::default(),
-            card_theme: ComponentThemeData::default(),
-            carousel_view_theme: ComponentThemeData::default(),
-            checkbox_theme: ComponentThemeData::default(),
-            chip_theme: ComponentThemeData::default(),
-            data_table_theme: ComponentThemeData::default(),
-            date_picker_theme: ComponentThemeData::default(),
-            dialog_theme: ComponentThemeData::default(),
-            divider_theme: ComponentThemeData::default(),
-            drawer_theme: ComponentThemeData::default(),
-            dropdown_menu_theme: crate::menus::DropdownMenuThemeData::default(),
-            elevated_button_theme: ComponentThemeData::default(),
-            expansion_tile_theme: ComponentThemeData::default(),
-            filled_button_theme: ComponentThemeData::default(),
-            floating_action_button_theme: ComponentThemeData::default(),
-            icon_button_theme: ComponentThemeData::default(),
-            list_tile_theme: ComponentThemeData::default(),
-            menu_bar_theme: ComponentThemeData::default(),
-            menu_button_theme: ComponentThemeData::default(),
-            menu_theme: crate::menus::MenuThemeData::default(),
-            navigation_bar_theme: ComponentThemeData::default(),
-            navigation_drawer_theme: ComponentThemeData::default(),
-            navigation_rail_theme: ComponentThemeData::default(),
-            outlined_button_theme: ComponentThemeData::default(),
-            popup_menu_theme: crate::menus::PopupMenuThemeData::default(),
-            progress_indicator_theme: crate::feedback::ProgressIndicatorThemeData::default(),
-            radio_theme: ComponentThemeData::default(),
-            search_bar_theme: ComponentThemeData::default(),
-            search_view_theme: ComponentThemeData::default(),
-            segmented_button_theme: ComponentThemeData::default(),
-            slider_theme: crate::p0_controls::SliderThemeData::default(),
-            snack_bar_theme: ComponentThemeData::default(),
-            switch_theme: ComponentThemeData::default(),
-            tab_bar_theme: crate::p0_controls::TabBarThemeData::default(),
-            text_button_theme: ComponentThemeData::default(),
-            text_selection_theme: ComponentThemeData::default(),
-            time_picker_theme: ComponentThemeData::default(),
-            toggle_buttons_theme: ComponentThemeData::default(),
-            tooltip_theme: ComponentThemeData::default(),
-            button_bar_theme: None,
-            extensions: BTreeMap::new(),
-        };
-        theme.with_control_defaults(control_theme);
-        theme
+        Self {
+            inner: Rc::new(defaults_from_color_scheme(color_scheme)),
+        }
     }
 
-    fn with_control_defaults(&mut self, control_theme: ControlTheme) {
-        self.elevated_button_theme.elevation = Some(control_theme.elevation.popup.min(6.0));
-        self.card_theme.elevation = Some(control_theme.elevation.popup.min(1.0));
+    #[must_use]
+    pub fn core(&self) -> &CoreThemeData {
+        &self.inner.core
+    }
+
+    #[must_use]
+    pub fn colors(&self) -> &LegacyThemeColors {
+        &self.inner.colors
+    }
+
+    #[must_use]
+    pub fn extensions(&self) -> &ThemeExtensions {
+        &self.inner.extensions
+    }
+
+    #[must_use]
+    pub fn icons_and_input(&self) -> &IconAndInputThemes {
+        &self.inner.icons_and_input
+    }
+
+    #[must_use]
+    pub fn buttons(&self) -> &ButtonComponentThemes {
+        &self.inner.buttons
+    }
+
+    #[must_use]
+    pub fn navigation(&self) -> &NavigationComponentThemes {
+        &self.inner.navigation
+    }
+
+    #[must_use]
+    pub fn selection_controls(&self) -> &SelectionControlThemes {
+        &self.inner.selection_controls
+    }
+
+    #[must_use]
+    pub fn surfaces(&self) -> &SurfaceComponentThemes {
+        &self.inner.surfaces
+    }
+
+    #[must_use]
+    pub fn content(&self) -> &ContentComponentThemes {
+        &self.inner.content
+    }
+
+    #[must_use]
+    pub fn menus(&self) -> &MenuComponentThemes {
+        &self.inner.menus
+    }
+
+    #[must_use]
+    pub fn feedback(&self) -> &FeedbackComponentThemes {
+        &self.inner.feedback
     }
 
     #[must_use]
     pub fn copy_with(mut self, patch: ThemeDataPatch) -> Self {
-        if let Some(value) = patch.brightness {
-            self.brightness = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        if patch.brightness.is_some()
+            || patch.color_scheme.is_some()
+            || patch.text_theme.is_some()
+            || patch.primary_text_theme.is_some()
+            || patch.use_material3.is_some()
+            || patch.visual_density.is_some()
+            || patch.material_tap_target_size.is_some()
+            || patch.platform.is_some()
+            || patch.page_transitions_theme.is_some()
+            || patch.splash_factory.is_some()
+        {
+            let core = Rc::make_mut(&mut inner.core);
+            if let Some(value) = patch.brightness {
+                core.brightness = value;
+            }
+            if let Some(value) = patch.color_scheme {
+                core.brightness = value.brightness;
+                core.color_scheme = value;
+            }
+            if let Some(value) = patch.text_theme {
+                core.text_theme = value;
+            }
+            if let Some(value) = patch.primary_text_theme {
+                core.primary_text_theme = value;
+            }
+            if let Some(value) = patch.use_material3 {
+                core.use_material3 = value;
+            }
+            if let Some(value) = patch.visual_density {
+                core.visual_density = value;
+            }
+            if let Some(value) = patch.material_tap_target_size {
+                core.material_tap_target_size = value;
+            }
+            if let Some(value) = patch.platform {
+                core.platform = value;
+            }
+            if let Some(value) = patch.page_transitions_theme {
+                core.page_transitions_theme = value;
+            }
+            if let Some(value) = patch.splash_factory {
+                core.splash_factory = value;
+            }
         }
-        if let Some(value) = patch.cupertino_override_theme {
-            self.cupertino_override_theme = Some(value);
+        if patch.cupertino_override_theme.is_some() || patch.adaptation_map.is_some() {
+            let extensions = Rc::make_mut(&mut inner.extensions);
+            if let Some(value) = patch.cupertino_override_theme {
+                extensions.cupertino_override_theme = Some(value);
+            }
+            if let Some(value) = patch.adaptation_map {
+                extensions.adaptation_map = value;
+            }
         }
-        if let Some(value) = patch.adaptation_map {
-            self.adaptation_map = value;
+        if patch.icon_theme.is_some()
+            || patch.primary_icon_theme.is_some()
+            || patch.input_decoration_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.icons_and_input);
+            if let Some(value) = patch.icon_theme {
+                group.icon_theme = value;
+            }
+            if let Some(value) = patch.primary_icon_theme {
+                group.primary_icon_theme = value;
+            }
+            if let Some(value) = patch.input_decoration_theme {
+                group.input_decoration_theme = value;
+            }
         }
-        if let Some(value) = patch.color_scheme {
-            self.brightness = value.brightness;
-            self.color_scheme = value;
+        if patch.elevated_button_theme.is_some()
+            || patch.filled_button_theme.is_some()
+            || patch.floating_action_button_theme.is_some()
+            || patch.icon_button_theme.is_some()
+            || patch.outlined_button_theme.is_some()
+            || patch.text_button_theme.is_some()
+            || patch.button_bar_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.buttons);
+            macro_rules! patch_button {
+                ($field:ident) => {
+                    if let Some(value) = patch.$field {
+                        group.$field = value;
+                    }
+                };
+            }
+            patch_button!(elevated_button_theme);
+            patch_button!(filled_button_theme);
+            patch_button!(floating_action_button_theme);
+            patch_button!(icon_button_theme);
+            patch_button!(outlined_button_theme);
+            patch_button!(text_button_theme);
+            if let Some(value) = patch.button_bar_theme {
+                group.button_bar_theme = value;
+            }
         }
-        if let Some(value) = patch.text_theme {
-            self.text_theme = value;
+        if patch.app_bar_theme.is_some()
+            || patch.bottom_app_bar_theme.is_some()
+            || patch.bottom_navigation_bar_theme.is_some()
+            || patch.drawer_theme.is_some()
+            || patch.navigation_bar_theme.is_some()
+            || patch.navigation_drawer_theme.is_some()
+            || patch.navigation_rail_theme.is_some()
+            || patch.tab_bar_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.navigation);
+            macro_rules! patch_navigation {
+                ($field:ident) => {
+                    if let Some(value) = patch.$field {
+                        group.$field = value;
+                    }
+                };
+            }
+            patch_navigation!(app_bar_theme);
+            patch_navigation!(bottom_app_bar_theme);
+            patch_navigation!(bottom_navigation_bar_theme);
+            patch_navigation!(drawer_theme);
+            patch_navigation!(navigation_bar_theme);
+            patch_navigation!(navigation_drawer_theme);
+            patch_navigation!(navigation_rail_theme);
+            patch_navigation!(tab_bar_theme);
         }
-        if let Some(value) = patch.primary_text_theme {
-            self.primary_text_theme = value;
+        if patch.checkbox_theme.is_some()
+            || patch.radio_theme.is_some()
+            || patch.slider_theme.is_some()
+            || patch.switch_theme.is_some()
+            || patch.text_selection_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.selection_controls);
+            macro_rules! patch_selection {
+                ($field:ident) => {
+                    if let Some(value) = patch.$field {
+                        group.$field = value;
+                    }
+                };
+            }
+            patch_selection!(checkbox_theme);
+            patch_selection!(radio_theme);
+            patch_selection!(slider_theme);
+            patch_selection!(switch_theme);
+            patch_selection!(text_selection_theme);
         }
-        if let Some(value) = patch.icon_theme {
-            self.icon_theme = value;
+        if patch.badge_theme.is_some()
+            || patch.card_theme.is_some()
+            || patch.dialog_theme.is_some()
+            || patch.divider_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.surfaces);
+            macro_rules! patch_surface {
+                ($field:ident) => {
+                    if let Some(value) = patch.$field {
+                        group.$field = value;
+                    }
+                };
+            }
+            patch_surface!(badge_theme);
+            patch_surface!(card_theme);
+            patch_surface!(dialog_theme);
+            patch_surface!(divider_theme);
         }
-        if let Some(value) = patch.primary_icon_theme {
-            self.primary_icon_theme = value;
+        if patch.list_tile_theme.is_some() || patch.tooltip_theme.is_some() {
+            let group = Rc::make_mut(&mut inner.content);
+            if let Some(value) = patch.list_tile_theme {
+                group.list_tile_theme = value;
+            }
+            if let Some(value) = patch.tooltip_theme {
+                group.tooltip_theme = value;
+            }
         }
-        if let Some(value) = patch.text_selection_theme {
-            self.text_selection_theme = value;
+        if patch.dropdown_menu_theme.is_some()
+            || patch.menu_bar_theme.is_some()
+            || patch.menu_button_theme.is_some()
+            || patch.menu_theme.is_some()
+            || patch.popup_menu_theme.is_some()
+        {
+            let group = Rc::make_mut(&mut inner.menus);
+            macro_rules! patch_menu {
+                ($field:ident) => {
+                    if let Some(value) = patch.$field {
+                        group.$field = value;
+                    }
+                };
+            }
+            patch_menu!(dropdown_menu_theme);
+            patch_menu!(menu_bar_theme);
+            patch_menu!(menu_button_theme);
+            patch_menu!(menu_theme);
+            patch_menu!(popup_menu_theme);
         }
-        if let Some(value) = patch.use_material3 {
-            self.use_material3 = value;
-        }
-        if let Some(value) = patch.visual_density {
-            self.visual_density = value;
-        }
-        if let Some(value) = patch.material_tap_target_size {
-            self.material_tap_target_size = value;
-        }
-        if let Some(value) = patch.platform {
-            self.platform = value;
-        }
-        if let Some(value) = patch.page_transitions_theme {
-            self.page_transitions_theme = value;
-        }
-        if let Some(value) = patch.splash_factory {
-            self.splash_factory = value;
-        }
-        if let Some(value) = patch.input_decoration_theme {
-            self.input_decoration_theme = value;
-        }
-        macro_rules! component_patch {
-            ($field:ident) => {
-                if let Some(value) = patch.$field {
-                    self.$field = value;
-                }
-            };
-        }
-        component_patch!(badge_theme);
-        component_patch!(app_bar_theme);
-        component_patch!(bottom_app_bar_theme);
-        component_patch!(bottom_navigation_bar_theme);
-        component_patch!(card_theme);
-        component_patch!(checkbox_theme);
-        component_patch!(dialog_theme);
-        component_patch!(divider_theme);
-        component_patch!(drawer_theme);
-        component_patch!(dropdown_menu_theme);
-        component_patch!(elevated_button_theme);
-        component_patch!(filled_button_theme);
-        component_patch!(floating_action_button_theme);
-        component_patch!(icon_button_theme);
-        component_patch!(list_tile_theme);
-        component_patch!(menu_bar_theme);
-        component_patch!(menu_button_theme);
-        component_patch!(menu_theme);
-        component_patch!(navigation_bar_theme);
-        component_patch!(navigation_drawer_theme);
-        component_patch!(navigation_rail_theme);
-        component_patch!(outlined_button_theme);
-        component_patch!(popup_menu_theme);
-        component_patch!(progress_indicator_theme);
-        component_patch!(radio_theme);
-        component_patch!(slider_theme);
-        component_patch!(snack_bar_theme);
-        component_patch!(switch_theme);
-        component_patch!(tab_bar_theme);
-        component_patch!(text_button_theme);
-        component_patch!(tooltip_theme);
-        if let Some(value) = patch.button_bar_theme {
-            self.button_bar_theme = value;
+        if patch.progress_indicator_theme.is_some() || patch.snack_bar_theme.is_some() {
+            let group = Rc::make_mut(&mut inner.feedback);
+            if let Some(value) = patch.progress_indicator_theme {
+                group.progress_indicator_theme = value;
+            }
+            if let Some(value) = patch.snack_bar_theme {
+                group.snack_bar_theme = value;
+            }
         }
         self
     }
 
     #[must_use]
     pub fn with_color_scheme(mut self, value: ColorScheme) -> Self {
-        self.brightness = value.brightness;
-        self.color_scheme = value;
+        let inner = Rc::make_mut(&mut self.inner);
+        let core = Rc::make_mut(&mut inner.core);
+        core.brightness = value.brightness;
+        core.color_scheme = value;
         self
     }
+
     #[must_use]
     pub fn with_use_material3(mut self, value: bool) -> Self {
-        self.use_material3 = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).use_material3 = value;
         self
     }
+
     #[must_use]
     pub fn with_visual_density(mut self, value: VisualDensity) -> Self {
-        self.visual_density = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).visual_density = value;
         self
     }
+
     #[must_use]
     pub fn with_tap_target_size(mut self, value: MaterialTapTargetSize) -> Self {
-        self.material_tap_target_size = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).material_tap_target_size = value;
         self
     }
+
     #[must_use]
     pub fn with_platform(mut self, value: TargetPlatform) -> Self {
-        self.platform = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).platform = value;
         self
     }
+
     #[must_use]
     pub fn with_page_transitions_theme(mut self, value: PageTransitionsTheme) -> Self {
-        self.page_transitions_theme = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).page_transitions_theme = value;
         self
     }
+
     #[must_use]
     pub fn with_splash_factory(mut self, value: SplashFactory) -> Self {
-        self.splash_factory = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).core).splash_factory = value;
         self
     }
+
     #[must_use]
     pub fn with_input_decoration_theme(mut self, value: InputDecorationThemeData) -> Self {
-        self.input_decoration_theme = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).icons_and_input).input_decoration_theme =
+            value;
         self
     }
+
     #[must_use]
     pub fn with_button_bar_theme(mut self, value: Option<ButtonBarThemeData>) -> Self {
-        self.button_bar_theme = value;
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).buttons).button_bar_theme = value;
         self
     }
+
     #[must_use]
     pub fn with_extension(mut self, key: impl Into<String>, value: ThemeExtensionValue) -> Self {
-        self.extensions.insert(key.into(), value);
+        Rc::make_mut(&mut Rc::make_mut(&mut self.inner).extensions)
+            .extensions
+            .insert(key.into(), value);
         self
     }
 
@@ -610,15 +627,22 @@ impl ThemeData {
     pub fn lerp(&self, other: &Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
         let mut result = if t < 0.5 { self.clone() } else { other.clone() };
-        result.brightness = if t < 0.5 {
-            self.brightness
+        let core = Rc::make_mut(&mut Rc::make_mut(&mut result.inner).core);
+        core.brightness = if t < 0.5 {
+            self.core().brightness
         } else {
-            other.brightness
+            other.core().brightness
         };
-        result.color_scheme = self.color_scheme.lerp(other.color_scheme, t);
-        result.text_theme = self.text_theme.lerp(&other.text_theme, t);
-        result.primary_text_theme = self.primary_text_theme.lerp(&other.primary_text_theme, t);
-        result.visual_density = self.visual_density.lerp(other.visual_density, t);
+        core.color_scheme = self.core().color_scheme.lerp(other.core().color_scheme, t);
+        core.text_theme = self.core().text_theme.lerp(&other.core().text_theme, t);
+        core.primary_text_theme = self
+            .core()
+            .primary_text_theme
+            .lerp(&other.core().primary_text_theme, t);
+        core.visual_density = self
+            .core()
+            .visual_density
+            .lerp(other.core().visual_density, t);
         result
     }
 
@@ -626,55 +650,55 @@ impl ThemeData {
     /// the only bridge from Material defaults to headless control behavior.
     #[must_use]
     pub fn control_theme(&self) -> ControlTheme {
-        let mut controls = if self.brightness == Brightness::Light {
+        let core = self.core();
+        let colors = self.colors();
+        let selection = self.selection_controls();
+        let mut controls = if core.brightness == Brightness::Light {
             ControlTheme::light()
         } else {
             ControlTheme::dark()
         };
         controls = controls.with_palette(incular_controls::ControlColors {
-            background: self.scaffold_background_color,
-            surface: self.color_scheme.surface,
-            surface_variant: self.color_scheme.surface_container,
-            surface_elevated: self.color_scheme.surface_container_high,
-            surface_active: self.color_scheme.surface_container_highest,
-            foreground: self.color_scheme.on_surface,
-            foreground_muted: self.color_scheme.on_surface_variant,
-            foreground_disabled: self.disabled_color,
-            accent: self.color_scheme.primary,
-            accent_hover: alpha(self.color_scheme.primary, 0.92),
-            accent_active: self.color_scheme.primary_container,
-            accent_foreground: self.color_scheme.on_primary,
-            border: self.color_scheme.outline,
-            border_subtle: self.color_scheme.outline_variant,
-            border_strong: self.color_scheme.outline,
-            hover_overlay: self.hover_color,
-            pressed_overlay: self.splash_color,
-            focus_ring: self.focus_color,
-            selection: alpha(self.color_scheme.primary, 0.24),
-            disabled_surface: self.color_scheme.surface_container_highest,
-            disabled_foreground: self.disabled_color,
-            error: self.color_scheme.error,
+            background: colors.scaffold_background_color,
+            surface: core.color_scheme.surface,
+            surface_variant: core.color_scheme.surface_container,
+            surface_elevated: core.color_scheme.surface_container_high,
+            surface_active: core.color_scheme.surface_container_highest,
+            foreground: core.color_scheme.on_surface,
+            foreground_muted: core.color_scheme.on_surface_variant,
+            foreground_disabled: colors.disabled_color,
+            accent: core.color_scheme.primary,
+            accent_hover: alpha(core.color_scheme.primary, 0.92),
+            accent_active: core.color_scheme.primary_container,
+            accent_foreground: core.color_scheme.on_primary,
+            border: core.color_scheme.outline,
+            border_subtle: core.color_scheme.outline_variant,
+            border_strong: core.color_scheme.outline,
+            hover_overlay: colors.hover_color,
+            pressed_overlay: colors.splash_color,
+            focus_ring: colors.focus_color,
+            selection: alpha(core.color_scheme.primary, 0.24),
+            disabled_surface: core.color_scheme.surface_container_highest,
+            disabled_foreground: colors.disabled_color,
+            error: core.color_scheme.error,
             warning: Color::rgba(160, 100, 0, 255),
             success: Color::rgba(30, 120, 60, 255),
-            info: self.color_scheme.primary,
+            info: core.color_scheme.primary,
         });
-        controls.density = if self.visual_density == VisualDensity::COMPACT {
+        controls.density = if core.visual_density == VisualDensity::COMPACT {
             incular_controls::ControlDensity::Compact
-        } else if self.visual_density == VisualDensity::COMFORTABLE {
+        } else if core.visual_density == VisualDensity::COMFORTABLE {
             incular_controls::ControlDensity::Comfortable
         } else {
             incular_controls::ControlDensity::Standard
         };
-        // Slider mechanics stay in `incular-controls`; Material's sparse
-        // slider theme supplies the dimensions and common state colors used
-        // by that shared renderer.
-        if let Some(height) = self.slider_theme.track_height {
+        if let Some(height) = selection.slider_theme.track_height {
             controls.slider.track_height = height.max(1.0);
         }
-        if let Some(size) = self.slider_theme.thumb_size {
+        if let Some(size) = selection.slider_theme.thumb_size {
             controls.slider.thumb_size = size.max(1.0);
         }
-        if let Some(color) = self
+        if let Some(color) = selection
             .slider_theme
             .active_track_color
             .as_ref()
@@ -682,7 +706,7 @@ impl ThemeData {
         {
             controls.colors.accent = color;
         }
-        if let Some(color) = self
+        if let Some(color) = selection
             .slider_theme
             .inactive_track_color
             .as_ref()
@@ -690,25 +714,25 @@ impl ThemeData {
         {
             controls.colors.border_strong = color;
         }
-        if let Some(color) = self.slider_theme.disabled_active_track_color {
+        if let Some(color) = selection.slider_theme.disabled_active_track_color {
             controls.colors.disabled_foreground = color;
         }
-        if let Some(size) = self.checkbox_theme.icon_size {
+        if let Some(size) = selection.checkbox_theme.icon_size {
             controls.checkbox.indicator_size = size.max(1.0);
         }
-        if let Some(size) = self.radio_theme.icon_size {
+        if let Some(size) = selection.radio_theme.icon_size {
             controls.radio.indicator_size = size.max(1.0);
         }
-        if let Some(width) = self.switch_theme.minimum_size.map(|size| size.width) {
+        if let Some(width) = selection.switch_theme.minimum_size.map(|size| size.width) {
             controls.switch.width = width.max(1.0);
         }
-        if let Some(height) = self.switch_theme.minimum_size.map(|size| size.height) {
+        if let Some(height) = selection.switch_theme.minimum_size.map(|size| size.height) {
             controls.switch.height = height.max(1.0);
         }
-        if let Some(size) = self.switch_theme.thumb_size {
+        if let Some(size) = selection.switch_theme.thumb_size {
             controls.switch.thumb_size = size.max(1.0);
         }
-        if let Some(fill) = self
+        if let Some(fill) = selection
             .checkbox_theme
             .fill_color
             .as_ref()
@@ -716,7 +740,7 @@ impl ThemeData {
         {
             controls.colors.accent = fill;
         }
-        if let Some(check) = self
+        if let Some(check) = selection
             .checkbox_theme
             .check_color
             .as_ref()
@@ -726,6 +750,103 @@ impl ThemeData {
         }
         controls
     }
+}
+
+fn defaults_from_color_scheme(color_scheme: ColorScheme) -> ThemeDataInner {
+    ThemeDataInner {
+        core: default_core_theme(color_scheme),
+        colors: default_legacy_colors(color_scheme),
+        extensions: Rc::new(ThemeExtensions::default()),
+        icons_and_input: default_icons_and_input(),
+        buttons: default_button_themes(),
+        navigation: default_navigation_themes(),
+        selection_controls: default_selection_control_themes(),
+        surfaces: default_surface_themes(),
+        content: default_content_themes(),
+        menus: default_menu_themes(),
+        feedback: default_feedback_themes(),
+    }
+}
+
+fn default_core_theme(color_scheme: ColorScheme) -> Rc<CoreThemeData> {
+    let brightness = color_scheme.brightness;
+    let text_theme = match brightness {
+        Brightness::Light => TextTheme::light(),
+        Brightness::Dark => TextTheme::dark(),
+    };
+    Rc::new(CoreThemeData {
+        brightness,
+        color_scheme,
+        primary_text_theme: text_theme.clone(),
+        text_theme,
+        typography: Typography::default(),
+        use_material3: true,
+        visual_density: VisualDensity::default(),
+        material_tap_target_size: MaterialTapTargetSize::default(),
+        platform: TargetPlatform::default(),
+        page_transitions_theme: PageTransitionsTheme::default(),
+        splash_factory: SplashFactory::Ripple,
+        apply_elevation_overlay_color: brightness == Brightness::Dark,
+    })
+}
+
+fn default_legacy_colors(color_scheme: ColorScheme) -> Rc<LegacyThemeColors> {
+    Rc::new(LegacyThemeColors {
+        canvas_color: color_scheme.surface,
+        card_color: color_scheme.surface_container_low,
+        disabled_color: alpha(color_scheme.on_surface, 0.38),
+        divider_color: color_scheme.outline_variant,
+        focus_color: alpha(color_scheme.primary, 0.12),
+        highlight_color: alpha(color_scheme.primary, 0.12),
+        hint_color: color_scheme.on_surface_variant,
+        hover_color: alpha(color_scheme.primary, 0.08),
+        primary_color: color_scheme.primary,
+        primary_color_dark: color_scheme.primary_container,
+        primary_color_light: color_scheme.primary_fixed,
+        scaffold_background_color: color_scheme.surface,
+        secondary_header_color: color_scheme.secondary_container,
+        shadow_color: color_scheme.shadow,
+        splash_color: alpha(color_scheme.primary, 0.16),
+        unselected_widget_color: color_scheme.on_surface_variant,
+        dialog_background_color: color_scheme.surface_container_high,
+        indicator_color: color_scheme.primary,
+    })
+}
+
+fn default_icons_and_input() -> Rc<IconAndInputThemes> {
+    Rc::new(IconAndInputThemes::default())
+}
+
+fn default_button_themes() -> Rc<ButtonComponentThemes> {
+    let mut themes = ButtonComponentThemes::default();
+    themes.elevated_button_theme.elevation = Some(ControlTheme::default().elevation.popup.min(6.0));
+    Rc::new(themes)
+}
+
+fn default_navigation_themes() -> Rc<NavigationComponentThemes> {
+    Rc::new(NavigationComponentThemes::default())
+}
+
+fn default_selection_control_themes() -> Rc<SelectionControlThemes> {
+    Rc::new(SelectionControlThemes::default())
+}
+
+fn default_surface_themes() -> Rc<SurfaceComponentThemes> {
+    let mut themes = SurfaceComponentThemes::default();
+    themes.card_theme.elevation = Some(ControlTheme::default().elevation.popup.min(1.0));
+    Rc::new(themes)
+}
+
+fn default_content_themes() -> Rc<ContentComponentThemes> {
+    Rc::new(ContentComponentThemes::default())
+}
+
+fn default_menu_themes() -> Rc<MenuComponentThemes> {
+    Rc::new(MenuComponentThemes::default())
+}
+
+fn default_feedback_themes() -> Rc<FeedbackComponentThemes> {
+    Rc::new(FeedbackComponentThemes::default())
 }
 
 impl Default for ThemeData {
@@ -770,7 +891,7 @@ impl Theme {
     /// Installs one shared theme descriptor plus the derived control scopes.
     pub(crate) fn scope_shared(data: Rc<ThemeData>, child: Widget) -> Widget {
         let controls = data.control_theme();
-        let input_decoration = data.input_decoration_theme.clone();
+        let input_decoration = data.icons_and_input().input_decoration_theme.clone();
         Widget::environment_scope(
             data,
             Widget::environment_scope(input_decoration, Widget::environment_scope(controls, child)),

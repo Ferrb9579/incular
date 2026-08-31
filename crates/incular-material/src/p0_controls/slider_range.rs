@@ -427,7 +427,7 @@ impl From<Slider> for Widget {
             root = root.semantic_value(label);
         }
         if let Some(theme) = Theme::of_shared() {
-            let slider_theme = &theme.slider_theme;
+            let slider_theme = &theme.selection_controls().slider_theme;
             let state = if value.enabled {
                 WidgetStates::default()
             } else {

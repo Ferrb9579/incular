@@ -17,7 +17,7 @@ fn material_menu_opens_in_an_application_frame_without_recursing() {
     let app =
         Application::new_with_options(WindowOptions::new("Material menu regression"), move |_cx| {
             let body: Widget = Container::new()
-                .color(light_theme.scaffold_background_color)
+                .color(light_theme.colors().scaffold_background_color)
                 .padding(EdgeInsets::all(24.0))
                 .child(SingleChildScrollView::new(
                     Column::new([Widget::from(

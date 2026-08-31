@@ -24,7 +24,7 @@ use incular::widgets::internal::TextEditingController;
 
 fn heading(text: impl Into<String>, theme: &ThemeData) -> Widget {
     Text::new(text)
-        .style(theme.text_theme.title_large.clone())
+        .style(theme.core().text_theme.title_large.clone())
         .into()
 }
 
@@ -379,13 +379,13 @@ fn main() {
         );
         let body =
             Container::new()
-                .color(theme.scaffold_background_color)
+                .color(theme.colors().scaffold_background_color)
                 .padding(EdgeInsets::all(28.0))
                 .child(
                     ListView::new([
                         heading("Material 3.47.1", theme.as_ref()),
                         Text::new("Retained widgets, stateful controls, and theme-driven defaults")
-                            .style(theme.text_theme.body_large.clone())
+                            .style(theme.core().text_theme.body_large.clone())
                             .into(),
                         buttons,
                         selection,

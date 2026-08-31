@@ -55,8 +55,8 @@ fn p0_theme_precedence_and_material_surfaces_remain_sparse() {
         card_theme: Some(ComponentThemeData::new().elevation(9.0)),
         ..ThemeDataPatch::default()
     });
-    assert_eq!(theme.elevated_button_theme, theme_override);
-    assert_eq!(theme.card_theme.elevation, Some(9.0));
+    assert_eq!(theme.buttons().elevated_button_theme, theme_override);
+    assert_eq!(theme.surfaces().card_theme.elevation, Some(9.0));
     assert!(ButtonStyle::new().background.is_none());
     assert!(ButtonStyle::new().padding.is_none());
 
