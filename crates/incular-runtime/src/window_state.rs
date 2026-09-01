@@ -619,10 +619,11 @@ impl WindowManager {
             .filter_map(|slot| slot.record.as_ref())
             .filter_map(|record| {
                 let metadata = record.restoration.as_ref()?;
-                // Content-driven expansion is transient presentation state
-                // (for example, an open menu). Persist the stable application
-                // baseline instead; explicit SetLogicalSize updates that
-                // baseline before synchronization reaches this point.
+                // Content-driven expansion is derived presentation state.
+                // Persist the stable application baseline instead; transient
+                // overlays are a separate surface concern and never contribute
+                // to top-level content sizing. Explicit SetLogicalSize updates
+                // the baseline before synchronization reaches this point.
                 let logical = if record.options.size_policy == WindowSizePolicy::Content {
                     record.options.initial_logical_size
                 } else {

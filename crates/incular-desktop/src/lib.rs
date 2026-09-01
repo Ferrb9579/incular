@@ -793,23 +793,42 @@ impl MultiApp {
             }
             return;
         }
-        let Some(state) = self.windows.get_mut(&native_id) else {
-            return;
-        };
-        match command.operation {
-            WindowOperation::SetTitle(title) => state.window.set_title(&title),
-            WindowOperation::SetVisible(visible) => state.window.set_visible(visible),
-            WindowOperation::SetLogicalSize(size) => {
-                let _ = state
-                    .window
-                    .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height));
+        let mut synchronous_resize = None;
+        {
+            let Some(state) = self.windows.get_mut(&native_id) else {
+                return;
+            };
+            match command.operation {
+                WindowOperation::SetTitle(title) => state.window.set_title(&title),
+                WindowOperation::SetVisible(visible) => state.window.set_visible(visible),
+                WindowOperation::SetLogicalSize(size) => {
+                    synchronous_resize = state
+                        .window
+                        .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height))
+                        .map(|physical| {
+                            (
+                                PhysicalSize::new(physical.width, physical.height),
+                                state.window.scale_factor(),
+                            )
+                        });
+                }
+                WindowOperation::SetContentSensitivity(sensitivity) => {
+                    let _ = state.content_sensitivity.apply(sensitivity);
+                }
+                WindowOperation::RequestFocus => state.window.focus_window(),
+                WindowOperation::RequestRedraw => state.window.request_redraw(),
+                WindowOperation::Close => unreachable!(),
             }
-            WindowOperation::SetContentSensitivity(sensitivity) => {
-                let _ = state.content_sensitivity.apply(sensitivity);
-            }
-            WindowOperation::RequestFocus => state.window.focus_window(),
-            WindowOperation::RequestRedraw => state.window.request_redraw(),
-            WindowOperation::Close => unreachable!(),
+        }
+        // Some native backends, notably Wayland, can acknowledge a requested
+        // inner size synchronously and are then not required to emit a later
+        // `WindowEvent::Resized`. Treat that acknowledgment exactly like the
+        // native event so metrics, WGPU, runtime viewport state, and capture
+        // dimensions advance atomically while preserving this window's native
+        // identity and compositor placement. Backends returning `None` remain
+        // asynchronous and are handled by the ordinary `Resized` event path.
+        if let Some((physical_size, scale_factor)) = synchronous_resize {
+            self.resize_window(command.window_id, physical_size, scale_factor);
         }
     }
 
@@ -831,13 +850,23 @@ impl MultiApp {
         let Some(state) = self.windows.get_mut(&native_id) else {
             return;
         };
-        state.metrics = WindowMetrics::new(size, scale_factor);
-        state.renderer.resize(size);
-        self.application
-            .handle_window_event(IncularWindowEvent::platform(
-                id,
-                PlatformEvent::Metrics(state.metrics),
-            ));
+        let metrics = WindowMetrics::new(size, scale_factor);
+        let metrics_changed = state.metrics != metrics;
+        let surface_size_changed = state.renderer.physical_size() != size;
+        if !metrics_changed && !surface_size_changed {
+            return;
+        }
+        state.metrics = metrics;
+        if surface_size_changed {
+            state.renderer.resize(size);
+        }
+        if metrics_changed {
+            self.application
+                .handle_window_event(IncularWindowEvent::platform(
+                    id,
+                    PlatformEvent::Metrics(metrics),
+                ));
+        }
         if !size.is_zero() {
             state.window.request_redraw();
             self.application.note_frame_requested(id);

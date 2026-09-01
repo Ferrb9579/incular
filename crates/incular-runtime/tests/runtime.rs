@@ -634,6 +634,88 @@ fn take_resize_requests(application: &mut Application) -> Vec<Size> {
         .collect()
 }
 
+fn take_resize_commands(application: &mut Application) -> Vec<(WindowId, Size)> {
+    application
+        .take_native_window_commands()
+        .into_iter()
+        .filter_map(|command| match command {
+            NativeWindowCommand::Operate(WindowCommand {
+                window_id,
+                operation: WindowOperation::SetLogicalSize(size),
+            }) => Some((window_id, size)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn explicit_programmatic_resize_keeps_window_identity_and_waits_for_native_metrics() {
+    let mut application =
+        Application::new(|_| Widget::box_(Size::new(1., 1.), Color::WHITE)).expect("application");
+    let handle = application
+        .open_window(
+            test_window_options("resize-target", 184., 54.),
+            Widget::box_(Size::new(184., 54.), Color::WHITE),
+        )
+        .expect("resize target");
+    let id = handle.id();
+    let _ = application.take_native_window_commands();
+
+    assert!(application.contains_window(id));
+    assert!(handle.request_logical_size(Size::new(184., 154.)));
+    assert_eq!(
+        take_resize_commands(&mut application),
+        [(id, Size::new(184., 154.))]
+    );
+    assert!(application.contains_window(id));
+    assert_eq!(
+        application.window_diagnostics(id).unwrap().logical_size,
+        Size::new(184., 54.),
+        "runtime metrics remain native-authoritative until the desktop adapter applies the resize"
+    );
+
+    application.handle_window_event(WindowEvent::platform(
+        id,
+        PlatformEvent::Metrics(WindowMetrics::new(
+            incular_platform::PhysicalSize::new(184, 154),
+            1.,
+        )),
+    ));
+    let generation = application
+        .window_diagnostics(id)
+        .expect("same window remains active")
+        .surface_generation;
+    assert_eq!(
+        application.window_diagnostics(id).unwrap().logical_size,
+        Size::new(184., 154.)
+    );
+
+    // A backend may still deliver the native Resized notification after a
+    // synchronous request_inner_size acknowledgement. The duplicate is a
+    // no-op and must not create a second surface generation.
+    application.handle_window_event(WindowEvent::platform(
+        id,
+        PlatformEvent::Metrics(WindowMetrics::new(
+            incular_platform::PhysicalSize::new(184, 154),
+            1.,
+        )),
+    ));
+    assert_eq!(
+        application
+            .window_diagnostics(id)
+            .unwrap()
+            .surface_generation,
+        generation
+    );
+
+    assert!(handle.request_logical_size(Size::new(184., 54.)));
+    assert_eq!(
+        take_resize_commands(&mut application),
+        [(id, Size::new(184., 54.))]
+    );
+    assert!(application.contains_window(id));
+}
+
 #[test]
 fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
     use incular_config::WindowSizePolicy;
@@ -642,26 +724,26 @@ fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
     let settings_open = Signal::new(false);
     let observed = settings_open.clone();
     let options = WindowOptions {
-        initial_logical_size: Size::new(100., 200.),
+        initial_logical_size: Size::new(184., 54.),
         decorations: false,
         size_policy: WindowSizePolicy::Content,
         ..WindowOptions::default()
     };
     let mut application = Application::new_with_options(options, move |_| {
         let base_size = if observed.get() {
-            Size::new(420., 560.)
+            Size::new(184., 154.)
         } else {
-            Size::new(100., 200.)
+            Size::new(184., 54.)
         };
         let base = Widget::box_(base_size, Color::WHITE);
         // Paint/layout overflow outside the primary root extent is not window
         // content sizing. This models a transient overlay/menu that must be
         // presented independently rather than making the top-level chase it.
-        let panel: Widget = Positioned::new(Widget::box_(Size::new(100., 120.), Color::BLACK))
+        let panel: Widget = Positioned::new(Widget::box_(Size::new(120., 80.), Color::BLACK))
             .left(0.)
             .top(base_size.height)
-            .width(100.)
-            .height(120.)
+            .width(120.)
+            .height(80.)
             .into();
         Stack::new([base, panel]).into()
     })
@@ -670,49 +752,37 @@ fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
     let _ = application.take_native_window_commands();
 
     application
-        .run_window_frame_at(
-            id,
-            Constraints::tight(Size::new(100., 200.)),
-            Instant::now(),
-        )
+        .run_window_frame_at(id, Constraints::tight(Size::new(184., 54.)), Instant::now())
         .unwrap();
     assert!(take_resize_requests(&mut application).is_empty());
 
     assert!(settings_open.set(true));
     application
-        .run_window_frame_at(
-            id,
-            Constraints::tight(Size::new(100., 200.)),
-            Instant::now(),
-        )
+        .run_window_frame_at(id, Constraints::tight(Size::new(184., 54.)), Instant::now())
         .unwrap();
     assert_eq!(
         take_resize_requests(&mut application),
-        [Size::new(420., 560.)]
+        [Size::new(184., 154.)]
     );
 
     // The native resize is asynchronous. Re-rendering before a metrics event
     // must not flood the event loop with the same request.
     application
-        .run_window_frame_at(
-            id,
-            Constraints::tight(Size::new(100., 200.)),
-            Instant::now(),
-        )
+        .run_window_frame_at(id, Constraints::tight(Size::new(184., 54.)), Instant::now())
         .unwrap();
     assert!(take_resize_requests(&mut application).is_empty());
 
     application.handle_window_event(WindowEvent::platform(
         id,
         PlatformEvent::Metrics(WindowMetrics::new(
-            incular_platform::PhysicalSize::new(420, 560),
+            incular_platform::PhysicalSize::new(184, 154),
             1.,
         )),
     ));
     application
         .run_window_frame_at(
             id,
-            Constraints::tight(Size::new(420., 560.)),
+            Constraints::tight(Size::new(184., 154.)),
             Instant::now(),
         )
         .unwrap();
@@ -722,13 +792,13 @@ fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
     application
         .run_window_frame_at(
             id,
-            Constraints::tight(Size::new(420., 560.)),
+            Constraints::tight(Size::new(184., 154.)),
             Instant::now(),
         )
         .unwrap();
     assert_eq!(
         take_resize_requests(&mut application),
-        [Size::new(100., 200.)]
+        [Size::new(184., 54.)]
     );
 }
 

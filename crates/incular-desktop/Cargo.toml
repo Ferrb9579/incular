@@ -35,3 +35,8 @@ arboard = { workspace = true }
 [features]
 default = []
 devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools"]
+
+[[test]]
+name = "in_place_resize"
+path = "tests/in_place_resize.rs"
+harness = false
