@@ -45,3 +45,8 @@ harness = false
 name = "window_control"
 path = "tests/window_control.rs"
 harness = false
+
+[[test]]
+name = "pointer_input_native"
+path = "tests/pointer_input_native.rs"
+harness = false

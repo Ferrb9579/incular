@@ -76,6 +76,20 @@ the shared desktop runner installs an `arboard` system-clipboard bridge with a
 safe in-memory fallback and publishes whether native clipboard interop is
 actually available for the current session.
 
+Pointer input has one metadata-rich representation. Mouse events carry a stable
+process-local device ID, the complete pressed-button chord, and the button that
+changed on Down/Up; primary, secondary, middle, back, forward, and representable
+extra buttons use distinct portable bits. Touch uses the same event shape with
+stable contact/device identity. `PointerPhase::Enter`/`Exit` represent native
+surface crossings without fabricating a local coordinate on enter.
+
+Native cursor policy is separate from cursor styling. `CursorGrabMode` and
+validated `LogicalWindowPosition` back result-bearing window operations for
+grab/lock, visibility, and cursor warping. `AdvancedInputCapabilities` reports
+icons, visibility, position, confinement, and locking independently. Optional
+Wayland pointer-constraints support remains `Unknown` until the actual Winit
+operation reports success or a typed unsupported/native failure.
+
 The scroll convention is positive logical `delta.y` increasing the controller
 offset (content moves upward). Winit `LineDelta` is scaled by 40 logical px;
 `PixelDelta` is converted through DPI and normalized to natural content

@@ -45,6 +45,9 @@ impl WidgetTree {
             pointer: event.pointer,
         };
         self.dispatch_mouse_regions(window, event);
+        if matches!(event.phase, PointerPhase::Enter | PointerPhase::Exit) {
+            return None;
+        }
         self.dispatch_listeners(key, event);
 
         let tap_target = self.dispatch_tap_regions(event);
@@ -54,7 +57,10 @@ impl WidgetTree {
             return Some(target);
         }
         if self.consumed_tap_pointers.contains(&key) {
-            if matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
+            let primary_up = event.phase == PointerPhase::Up
+                && (event.button.is_none()
+                    || event.button == Some(incular_core::PRIMARY_POINTER_BUTTON));
+            if event.phase == PointerPhase::Cancel || primary_up {
                 self.consumed_tap_pointers.remove(&key);
             }
             return None;
@@ -69,10 +75,30 @@ impl WidgetTree {
     pub fn mouse_cursor_at(&self, point: Offset) -> MouseCursor {
         self.raw_hit_elements(point)
             .into_iter()
-            .filter_map(|id| self.mouse_region_config(id))
-            .map(|(_, cursor, _, _)| cursor)
+            .filter_map(|id| self.cursor_for_raw_input(id))
             .find(|cursor| *cursor != MouseCursor::Defer)
             .unwrap_or(MouseCursor::Defer)
+    }
+
+    fn cursor_for_raw_input(&self, element: ElementId) -> Option<MouseCursor> {
+        match self.raw_input_kind(element)? {
+            RawInputKind::MouseRegion { cursor, .. } => Some(*cursor),
+            RawInputKind::WindowResizeRegion { direction } => Some(match direction {
+                incular_core::WindowResizeDirection::East
+                | incular_core::WindowResizeDirection::West => MouseCursor::ResizeHorizontal,
+                incular_core::WindowResizeDirection::North
+                | incular_core::WindowResizeDirection::South => MouseCursor::ResizeVertical,
+                incular_core::WindowResizeDirection::NorthWest
+                | incular_core::WindowResizeDirection::SouthEast => {
+                    MouseCursor::ResizeUpLeftDownRight
+                }
+                incular_core::WindowResizeDirection::NorthEast
+                | incular_core::WindowResizeDirection::SouthWest => {
+                    MouseCursor::ResizeUpRightDownLeft
+                }
+            }),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -250,10 +276,19 @@ impl WidgetTree {
             && !self.raw_pointer_routes.contains_key(&key);
         let route = match event.phase {
             PointerPhase::Down => {
-                self.raw_pointer_routes.insert(key, current.clone());
-                current.clone()
+                if let Some(route) = self.raw_pointer_routes.get(&key) {
+                    route.clone()
+                } else {
+                    self.raw_pointer_routes.insert(key, current.clone());
+                    current.clone()
+                }
             }
             PointerPhase::Move => self
+                .raw_pointer_routes
+                .get(&key)
+                .cloned()
+                .unwrap_or_default(),
+            PointerPhase::Up if event.buttons != 0 => self
                 .raw_pointer_routes
                 .get(&key)
                 .cloned()
@@ -261,6 +296,7 @@ impl WidgetTree {
             PointerPhase::Up | PointerPhase::Cancel => {
                 self.raw_pointer_routes.remove(&key).unwrap_or_default()
             }
+            PointerPhase::Enter | PointerPhase::Exit => Vec::new(),
         };
         let callbacks = route
             .iter()
@@ -288,6 +324,7 @@ impl WidgetTree {
                         callback(event);
                     }
                 }
+                PointerPhase::Enter | PointerPhase::Exit => {}
             }
         }
         if hover_event {
@@ -310,6 +347,27 @@ impl WidgetTree {
             window,
             pointer: event.pointer,
         };
+        if event.phase == PointerPhase::Enter {
+            // Winit's CursorEntered carries no position. Waiting for the first
+            // CursorMoved avoids firing an enter callback for stale coordinates
+            // from a previous surface visit.
+            return;
+        }
+        if event.phase == PointerPhase::Exit {
+            let previous = self.mouse_hover.remove(&key).unwrap_or_default();
+            let exit_callbacks = previous
+                .into_iter()
+                .filter(|id| self.elements.contains(id.0))
+                .filter_map(|id| {
+                    self.mouse_region_config(id)
+                        .and_then(|(callbacks, ..)| callbacks.on_exit)
+                })
+                .collect::<Vec<_>>();
+            for callback in exit_callbacks {
+                callback(event);
+            }
+            return;
+        }
         let next = self
             .raw_hit_elements(event.position)
             .into_iter()
@@ -432,6 +490,14 @@ impl WidgetTree {
         if !matches!(event.phase, PointerPhase::Down | PointerPhase::Up) {
             return None;
         }
+        // TapRegion is an ordinary primary-tap boundary, not a raw all-button
+        // listener. Secondary/middle/extra transitions stay available through
+        // Listener/RawGestureDetector and context-menu APIs without becoming a
+        // synthetic primary tap. Legacy adapters without changed-button
+        // metadata retain their historical primary semantics.
+        if event.button.is_some() && event.button != Some(incular_core::PRIMARY_POINTER_BUTTON) {
+            return None;
+        }
         let hit = self.raw_hit_elements(event.position);
         let surfaces = hit
             .iter()
@@ -527,7 +593,7 @@ impl WidgetTree {
         key: GestureArenaKey,
         event: RawPointerEvent,
     ) -> Option<ElementId> {
-        if event.phase == PointerPhase::Down {
+        if event.phase == PointerPhase::Down && !self.raw_gesture_streams.contains_key(&key) {
             self.cancel_raw_gesture_stream(key, true);
             let elements = self.raw_gesture_elements(event.position);
             let element = elements.first().copied()?;
@@ -617,7 +683,9 @@ impl WidgetTree {
             }
         }
         let element = self.raw_gesture_streams.get(&key)?.element;
-        if matches!(event.phase, PointerPhase::Up | PointerPhase::Cancel) {
+        if event.phase == PointerPhase::Cancel
+            || (event.phase == PointerPhase::Up && event.buttons == 0)
+        {
             if event.phase == PointerPhase::Cancel {
                 self.cancel_raw_gesture_stream(key, true);
             } else {

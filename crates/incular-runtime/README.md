@@ -117,6 +117,21 @@ Moving a window between displays continues through the ordinary native metrics
 event path, so scale-factor/environment changes occur on the existing
 generational `WindowId` and renderer surface rather than replacing the window.
 
+Desktop pointer routing preserves raw information without changing ordinary UI
+semantics. `Listener` and raw recognizers receive every representable mouse
+button plus the complete chord/changed-button metadata. Ordinary buttons,
+`GestureDetector`, text editing, scrollbars, custom window chrome, and
+`TapRegion` remain primary-button interactions; pressing or releasing a
+secondary button during a primary drag does not restart or finish that primary
+sequence. Native surface exit clears retained hover deterministically without
+blurring focused editors.
+
+The runtime resolves one effective `MouseCursor` from the retained hit route and
+the desktop adapter applies it only when it changes. `WindowHandle` exposes
+result-bearing `set_cursor_grab`, `set_cursor_visible`, and
+`set_cursor_position` operations so enqueue success is never mistaken for
+native cursor-control success.
+
 `Signal` subscriptions are retained per root. A shared signal rebuilds only
 the roots that read it; a signal read only by one window leaves every other
 window idle. Physical metrics, DPI, safe/view insets, and native activation are

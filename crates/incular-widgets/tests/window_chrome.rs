@@ -1,7 +1,7 @@
 use incular_core::{Offset, Size, WindowResizeDirection};
 use incular_layout::Constraints;
 use incular_widgets::internal::{WidgetTree, WindowInteraction};
-use incular_widgets::{Color, GestureDetector, WindowDragRegion, WindowResizeRegion};
+use incular_widgets::{Color, GestureDetector, MouseCursor, WindowDragRegion, WindowResizeRegion};
 
 fn layout(tree: &mut WidgetTree, root: impl Into<incular_widgets::Widget>) {
     tree.mount(root.into()).expect("mount custom chrome");
@@ -71,6 +71,42 @@ fn every_resize_direction_survives_descriptor_lowering() {
             .window_interaction_at(Offset::new(1., 1.))
             .expect("resize annotation");
         assert_eq!(interaction, WindowInteraction::Resize(direction));
+    }
+}
+
+#[test]
+fn resize_regions_supply_axis_and_diagonal_native_cursor_intent() {
+    for (direction, cursor) in [
+        (WindowResizeDirection::East, MouseCursor::ResizeHorizontal),
+        (WindowResizeDirection::West, MouseCursor::ResizeHorizontal),
+        (WindowResizeDirection::North, MouseCursor::ResizeVertical),
+        (WindowResizeDirection::South, MouseCursor::ResizeVertical),
+        (
+            WindowResizeDirection::NorthWest,
+            MouseCursor::ResizeUpLeftDownRight,
+        ),
+        (
+            WindowResizeDirection::SouthEast,
+            MouseCursor::ResizeUpLeftDownRight,
+        ),
+        (
+            WindowResizeDirection::NorthEast,
+            MouseCursor::ResizeUpRightDownLeft,
+        ),
+        (
+            WindowResizeDirection::SouthWest,
+            MouseCursor::ResizeUpRightDownLeft,
+        ),
+    ] {
+        let mut tree = WidgetTree::new();
+        layout(
+            &mut tree,
+            WindowResizeRegion::new(
+                direction,
+                incular_widgets::Widget::box_(Size::new(120., 40.), Color::WHITE),
+            ),
+        );
+        assert_eq!(tree.mouse_cursor_at(Offset::new(20., 20.)), cursor);
     }
 }
 

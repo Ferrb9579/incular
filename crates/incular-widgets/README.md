@@ -75,6 +75,16 @@ raw pointer listeners, and local draggables—take precedence before the window
 annotation is considered. This lets an entire title-bar row be draggable while
 its controls remain ordinary widgets.
 
+Raw desktop pointer widgets consume the same metadata-rich event shape as the
+native adapter. `Listener`/`RawGestureDetector` can inspect secondary, middle,
+navigation, and extra buttons plus multi-button chords. `TapRegion` remains a
+primary-tap abstraction and does not reinterpret a secondary press as a tap.
+`MouseRegion` uses explicit native enter/exit boundaries: an enter waits for the
+first positioned move before resolving hover, and exit clears the retained
+hover route exactly once. Deferred cursor values continue through ancestor raw
+regions; `WindowResizeRegion` contributes the correct horizontal, vertical, or
+diagonal resize cursor without changing hit testing.
+
 ## Vector painting
 
 `DecoratedBox`, `CustomPaint`, `Icon`, `ImageIcon`, and the decoration/value

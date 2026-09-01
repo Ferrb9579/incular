@@ -101,7 +101,11 @@ pub struct ApplicationServiceCapabilities {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AdvancedInputCapabilities {
     pub pointer_metadata: CapabilitySupport,
-    pub cursor_control: CapabilitySupport,
+    pub cursor_icons: CapabilitySupport,
+    pub cursor_visibility: CapabilitySupport,
+    pub cursor_position: CapabilitySupport,
+    pub cursor_confine: CapabilitySupport,
+    pub cursor_lock: CapabilitySupport,
     pub stylus: CapabilitySupport,
     pub trackpad_gestures: CapabilitySupport,
 }
@@ -177,7 +181,11 @@ impl PlatformCapabilities {
             },
             advanced_input: AdvancedInputCapabilities {
                 pointer_metadata: unsupported,
-                cursor_control: unsupported,
+                cursor_icons: unsupported,
+                cursor_visibility: unsupported,
+                cursor_position: unsupported,
+                cursor_confine: unsupported,
+                cursor_lock: unsupported,
                 stylus: unsupported,
                 trackpad_gestures: unsupported,
             },

@@ -96,6 +96,7 @@ impl PointerGestureRecognizer {
     /// recognizer. Direct users should normally keep using [`Self::handle`].
     pub fn observe(&mut self, event: PointerEvent) -> GestureDecision {
         match event.phase {
+            PointerPhase::Enter | PointerPhase::Exit => GestureDecision::Reject,
             PointerPhase::Down => {
                 let is_double_tap = self.last_tap.is_some_and(|tap| {
                     event.time.saturating_duration_since(tap) <= Self::DOUBLE_TAP_TIMEOUT
@@ -502,6 +503,7 @@ impl DragGestureDetector {
     }
     pub fn handle(&mut self, event: PointerEvent) -> bool {
         match event.phase {
+            PointerPhase::Enter | PointerPhase::Exit => false,
             PointerPhase::Down => {
                 self.active = Some(event);
                 self.previous = Some(event);

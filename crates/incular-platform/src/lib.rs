@@ -16,6 +16,7 @@ mod capabilities;
 mod content_sensitivity;
 mod display;
 mod operation;
+mod pointer;
 mod window_control;
 
 pub use capabilities::{
@@ -36,6 +37,9 @@ pub use incular_config::{TransparencyMode, WindowSizePolicy};
 pub use operation::{
     NativeOperationCompletion, NativeRequestId, PlatformOperationError, PlatformOperationErrorKind,
     PlatformOperationResult,
+};
+pub use pointer::{
+    CursorGrabMode, LogicalWindowPosition, LogicalWindowPositionError, PointerMetadata,
 };
 pub use window_control::{
     LogicalSizeLimits, LogicalSizeLimitsError, UserAttentionType, WindowIcon, WindowIconError,
@@ -331,6 +335,9 @@ pub enum WindowOperation {
     SetWindowLevel(WindowLevel),
     SetWindowIcon(Option<WindowIcon>),
     RequestUserAttention(Option<UserAttentionType>),
+    SetCursorGrab(CursorGrabMode),
+    SetCursorVisible(bool),
+    SetCursorPosition(LogicalWindowPosition),
     /// Applies the retained tree's effective capture-protection policy.
     SetContentSensitivity(incular_config::ContentSensitivity),
     RequestFocus,
@@ -728,6 +735,44 @@ pub fn pointer_event(
         position: normalize_cursor(position, metrics),
     })
 }
+
+/// Converts one native pointer sample into the metadata-rich Incular path.
+///
+/// `buttons` is the complete chord after this native event has been applied;
+/// `button` identifies the button that changed on Down/Up. Keeping both values
+/// prevents a secondary press during a primary drag from masquerading as
+/// another primary press.
+#[must_use]
+pub fn pointer_event_with_metadata(
+    metadata: PointerMetadata,
+    position: winit::dpi::PhysicalPosition<f64>,
+    metrics: WindowMetrics,
+) -> PlatformEvent {
+    PlatformEvent::Input(InputEvent::PointerWithMetadata {
+        pointer: metadata.pointer,
+        device: metadata.device,
+        kind: metadata.kind,
+        buttons: metadata.buttons,
+        button: metadata.button,
+        phase: metadata.phase,
+        position: normalize_cursor(position, metrics),
+    })
+}
+
+/// Portable bit assigned to one Winit mouse button.
+#[must_use]
+pub const fn mouse_button_mask(button: winit::event::MouseButton) -> Option<u32> {
+    match button {
+        winit::event::MouseButton::Left => Some(incular_core::PRIMARY_POINTER_BUTTON),
+        winit::event::MouseButton::Right => Some(incular_core::SECONDARY_POINTER_BUTTON),
+        winit::event::MouseButton::Middle => Some(incular_core::TERTIARY_POINTER_BUTTON),
+        winit::event::MouseButton::Back => Some(incular_core::BACK_POINTER_BUTTON),
+        winit::event::MouseButton::Forward => Some(incular_core::FORWARD_POINTER_BUTTON),
+        winit::event::MouseButton::Other(index) => {
+            incular_core::additional_pointer_button_mask(index)
+        }
+    }
+}
 /// Converts an identified platform contact into logical coordinates. Native
 /// touch/pen adapters should call this rather than collapsing contacts into
 /// the mouse-compatible pointer `0` path above.
@@ -755,6 +800,46 @@ pub fn touch_event(touch: winit::event::Touch, metrics: WindowMetrics) -> Platfo
         winit::event::TouchPhase::Cancelled => PointerPhase::Cancel,
     };
     identified_pointer_event(touch.id, phase, touch.location, metrics)
+}
+
+/// Converts a Winit touch contact to the metadata-rich pointer path while a
+/// caller-supplied stable device ID preserves source identity.
+#[must_use]
+pub fn touch_event_with_device(
+    touch: winit::event::Touch,
+    device: u64,
+    metrics: WindowMetrics,
+) -> PlatformEvent {
+    let (phase, buttons, button) = match touch.phase {
+        winit::event::TouchPhase::Started => (
+            PointerPhase::Down,
+            incular_core::PRIMARY_POINTER_BUTTON,
+            Some(incular_core::PRIMARY_POINTER_BUTTON),
+        ),
+        winit::event::TouchPhase::Moved => (
+            PointerPhase::Move,
+            incular_core::PRIMARY_POINTER_BUTTON,
+            None,
+        ),
+        winit::event::TouchPhase::Ended => (
+            PointerPhase::Up,
+            0,
+            Some(incular_core::PRIMARY_POINTER_BUTTON),
+        ),
+        winit::event::TouchPhase::Cancelled => (PointerPhase::Cancel, 0, None),
+    };
+    pointer_event_with_metadata(
+        PointerMetadata {
+            pointer: touch.id,
+            device,
+            kind: incular_core::PointerDeviceKind::Touch,
+            buttons,
+            button,
+            phase,
+        },
+        touch.location,
+        metrics,
+    )
 }
 /// Converts wheel motion into Incular's content-offset convention. Winit's
 /// positive wheel Y denotes upward wheel motion, whereas a positive vertical

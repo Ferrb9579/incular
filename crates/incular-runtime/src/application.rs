@@ -33,7 +33,7 @@ use incular_platform::{
 };
 use incular_rendering::DisplayList;
 use incular_widgets::Widget;
-use incular_widgets::internal::{Key, TreeError};
+use incular_widgets::internal::{Key, MouseCursor, TreeError};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -316,6 +316,18 @@ impl Application {
     #[must_use]
     pub fn window_handle(&self, window_id: WindowId) -> Option<WindowHandle> {
         self.manager.handle(window_id)
+    }
+
+    /// Effective retained cursor for the window's current hover position.
+    /// Native adapters use this after input and frame updates; applications
+    /// should normally express cursor intent through `MouseRegion` instead.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn window_mouse_cursor(&self, window_id: WindowId) -> Option<MouseCursor> {
+        self.registry
+            .borrow()
+            .get(window_id)
+            .map(|record| record.runtime.effective_mouse_cursor())
     }
 
     /// Returns the latest backend capability snapshot for application-level
@@ -1664,6 +1676,9 @@ impl Application {
                                 record.options.window_icon = icon.clone();
                             }
                             WindowOperation::RequestUserAttention(_) => {}
+                            WindowOperation::SetCursorGrab(_)
+                            | WindowOperation::SetCursorVisible(_)
+                            | WindowOperation::SetCursorPosition(_) => {}
                             WindowOperation::SetContentSensitivity(sensitivity) => {
                                 record.last_content_sensitivity = Some(*sensitivity);
                             }

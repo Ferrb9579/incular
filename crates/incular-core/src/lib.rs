@@ -19,8 +19,10 @@ pub use geometry::{
     Transform,
 };
 pub use input::{
-    Code, ImeEvent, InputEvent, Key as KeyboardKey, KeyState, KeyboardEvent, Location, Modifiers,
-    NamedKey, PRIMARY_POINTER_BUTTON, PointerDeviceKind, PointerPhase, WindowResizeDirection,
+    BACK_POINTER_BUTTON, Code, FORWARD_POINTER_BUTTON, ImeEvent, InputEvent, Key as KeyboardKey,
+    KeyState, KeyboardEvent, Location, Modifiers, NamedKey, PRIMARY_POINTER_BUTTON,
+    PointerDeviceKind, PointerPhase, SECONDARY_POINTER_BUTTON, TERTIARY_POINTER_BUTTON,
+    WindowResizeDirection, additional_pointer_button_mask,
 };
 pub use key::{Key, KeyHandle, KeyId, KeyObject, LocalKey, StringKey, UniqueKey, ValueKey};
 pub use restoration::{RestorationBackend, RestorationKey, RestorationKeyError, RestorationScope};

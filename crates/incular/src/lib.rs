@@ -71,11 +71,13 @@ pub mod prelude {
         WrapCrossAlignment,
     };
     pub use incular_core::{
-        ChangeImpact, Code, Color, DirtyFlags, HslColor, HsvColor, ImeEvent, InputEvent,
-        Invalidation, Key, KeyState, KeyboardEvent, KeyboardKey, Lerp, LocalKey, Location,
-        Modifiers, NamedKey, Offset, PointerPhase, Rect, RestorationKey, RestorationKeyError,
-        RestorationScope, Size, Transform as AffineTransform, UniqueKey, ValueKey,
-        WindowResizeDirection,
+        BACK_POINTER_BUTTON, ChangeImpact, Code, Color, DirtyFlags, FORWARD_POINTER_BUTTON,
+        HslColor, HsvColor, ImeEvent, InputEvent, Invalidation, Key, KeyState, KeyboardEvent,
+        KeyboardKey, Lerp, LocalKey, Location, Modifiers, NamedKey, Offset, PRIMARY_POINTER_BUTTON,
+        PointerDeviceKind, PointerPhase, Rect, RestorationKey, RestorationKeyError,
+        RestorationScope, SECONDARY_POINTER_BUTTON, Size, TERTIARY_POINTER_BUTTON,
+        Transform as AffineTransform, UniqueKey, ValueKey, WindowResizeDirection,
+        additional_pointer_button_mask,
     };
     pub use incular_image::{
         AssetImage, DecodedImage, FileImage, ImageCache, ImageCacheDiagnostics, ImageConfiguration,
@@ -94,14 +96,15 @@ pub mod prelude {
     pub use incular_platform::{
         AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
         ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
-        ContentSensitivityOutcome, DataTransferCapabilities, DisplayId, DisplayPlacementArea,
-        DisplayPlacementCapabilities, DisplaySnapshot, Fullscreen, LogicalDisplayPosition,
-        LogicalScreenPosition, LogicalScreenRect, LogicalSizeLimits, LogicalSizeLimitsError,
+        ContentSensitivityOutcome, CursorGrabMode, DataTransferCapabilities, DisplayId,
+        DisplayPlacementArea, DisplayPlacementCapabilities, DisplaySnapshot, Fullscreen,
+        LogicalDisplayPosition, LogicalScreenPosition, LogicalScreenRect, LogicalSizeLimits,
+        LogicalSizeLimitsError, LogicalWindowPosition, LogicalWindowPositionError,
         MemoryContentSensitivityBackend, MemoryTextInputAdapter, NativeMenuCapabilities,
         NativeOperationCompletion, NativeRequestId, NoopContentSensitivityBackend,
         PhysicalDisplayPosition, PhysicalScreenPosition, PhysicalScreenRect, PlatformCapabilities,
         PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
-        TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
+        PointerMetadata, TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
         TextInputConfiguration, TextInputState, TextInputType, TransientSurfaceCapabilities,
         UserAttentionType, WindowCommand, WindowControlCapabilities, WindowEvent, WindowEventKind,
         WindowIcon, WindowIconError, WindowId, WindowLevel, WindowLifecycle, WindowObservedState,

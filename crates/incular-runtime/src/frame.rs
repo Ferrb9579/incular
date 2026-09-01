@@ -33,8 +33,8 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 #[cfg(feature = "devtools")]
 use incular_widgets::internal::InvalidationCause;
 use incular_widgets::internal::{
-    ActionId, Diagnostics, ElementId, PointerDeviceKind, PointerEvent, RawPointerEvent, TextRange,
-    TextSelection, TreeError, WidgetTree, WindowInteraction,
+    ActionId, Diagnostics, ElementId, MouseCursor, PointerDeviceKind, PointerEvent,
+    RawPointerEvent, TextRange, TextSelection, TreeError, WidgetTree, WindowInteraction,
 };
 use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
@@ -93,6 +93,8 @@ pub struct Runtime {
     /// contacts still reach retained gesture regions for scale/pan input.
     pub(crate) legacy_pointer: Option<u64>,
     pub(crate) last_pointer: Offset,
+    pub(crate) pointer_inside: bool,
+    pub(crate) pointer_position_known: bool,
     pub(crate) focused: Option<ElementId>,
     pub(crate) captured_text_field: Option<ElementId>,
     pub(crate) captured_selectable_text: Option<ElementId>,
@@ -137,10 +139,11 @@ pub(crate) fn diagnostic_input_trigger(event: &InputEvent) -> String {
             device,
             kind,
             buttons,
+            button,
             phase,
             position,
         } => format!(
-            "pointer({pointer}, device={device}, {kind:?}, buttons={buttons:#x}, {phase:?}, {:.1}, {:.1})",
+            "pointer({pointer}, device={device}, {kind:?}, buttons={buttons:#x}, changed={button:?}, {phase:?}, {:.1}, {:.1})",
             position.x, position.y
         ),
         InputEvent::Scroll { delta } => format!("scroll({:.1}, {:.1})", delta.x, delta.y),
@@ -219,6 +222,8 @@ impl Runtime {
             pressed_button: None,
             legacy_pointer: None,
             last_pointer: Offset::ZERO,
+            pointer_inside: false,
+            pointer_position_known: false,
             focused: None,
             captured_text_field: None,
             captured_selectable_text: None,
@@ -864,23 +869,42 @@ impl Runtime {
         self.tree.set_diagnostic_trigger(trigger);
     }
     fn handle_input_inner(&mut self, event: InputEvent) -> Option<EventTarget> {
-        let (pointer, device, kind, buttons, phase, position) = match event {
-            InputEvent::Pointer { phase, position } => {
-                (0, 0, PointerDeviceKind::Mouse, 0, phase, position)
-            }
+        let (pointer, device, kind, buttons, button, phase, position, metadata_rich) = match event {
+            InputEvent::Pointer { phase, position } => (
+                0,
+                0,
+                PointerDeviceKind::Mouse,
+                0,
+                None,
+                phase,
+                position,
+                false,
+            ),
             InputEvent::PointerWithId {
                 pointer,
                 phase,
                 position,
-            } => (pointer, 0, PointerDeviceKind::Mouse, 0, phase, position),
+            } => (
+                pointer,
+                0,
+                PointerDeviceKind::Mouse,
+                0,
+                None,
+                phase,
+                position,
+                false,
+            ),
             InputEvent::PointerWithMetadata {
                 pointer,
                 device,
                 kind,
                 buttons,
+                button,
                 phase,
                 position,
-            } => (pointer, device, kind, buttons, phase, position),
+            } => (
+                pointer, device, kind, buttons, button, phase, position, true,
+            ),
             event => {
                 match event {
                     InputEvent::Scroll { delta } => {
@@ -907,50 +931,90 @@ impl Runtime {
                 return None;
             }
         };
-        let legacy_pointer = match phase {
-            PointerPhase::Down if self.legacy_pointer.is_none() => {
-                self.legacy_pointer = Some(pointer);
-                true
+        let hover_capable = matches!(kind, PointerDeviceKind::Mouse | PointerDeviceKind::Trackpad);
+        if hover_capable {
+            match phase {
+                PointerPhase::Enter => {
+                    self.pointer_inside = true;
+                    self.pointer_position_known = false;
+                }
+                PointerPhase::Exit => {
+                    self.pointer_inside = false;
+                    self.pointer_position_known = false;
+                }
+                _ => {
+                    self.pointer_inside = true;
+                    self.pointer_position_known = true;
+                }
             }
-            PointerPhase::Move if pointer == 0 && self.legacy_pointer.is_none() => true,
-            _ => self.legacy_pointer == Some(pointer),
-        };
-        if legacy_pointer {
+        }
+        if phase != PointerPhase::Enter {
             self.last_pointer = position;
         }
         let gesture_window = self.window_id.map_or(0, |window| {
             (u64::from(window.index()) << 32) | u64::from(window.generation())
         });
-        if let Some(element) = self.tree.dispatch_raw_pointer_in_window(
+        let raw_target = self.tree.dispatch_raw_pointer_in_window(
             gesture_window,
             RawPointerEvent {
                 pointer,
                 device,
                 kind,
                 buttons,
+                button,
                 position,
                 phase,
                 time: Instant::now(),
             },
-        ) {
+        );
+        if matches!(phase, PointerPhase::Enter | PointerPhase::Exit) {
+            if phase == PointerPhase::Exit {
+                self.set_hover(None);
+                if self.tree.scrollbar_pointer(PointerPhase::Exit, position) {
+                    self.frame_requested = true;
+                }
+            }
+            return None;
+        }
+
+        let primary_changed = !metadata_rich || button == Some(PRIMARY_POINTER_BUTTON);
+        let active_primary = self.legacy_pointer == Some(pointer);
+        let legacy_pointer = match phase {
+            PointerPhase::Down if primary_changed && self.legacy_pointer.is_none() => {
+                self.legacy_pointer = Some(pointer);
+                true
+            }
+            PointerPhase::Down => primary_changed && active_primary,
+            PointerPhase::Move => {
+                active_primary || (hover_capable && self.legacy_pointer.is_none())
+            }
+            PointerPhase::Up => primary_changed && active_primary,
+            PointerPhase::Cancel => active_primary,
+            PointerPhase::Enter | PointerPhase::Exit => false,
+        };
+
+        if let Some(element) = raw_target {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase);
+            self.release_legacy_pointer(pointer, phase, primary_changed);
             return Some(EventTarget {
                 element,
                 action: None,
             });
         }
-        if let Some(element) = self.tree.dispatch_gesture_in_window(
-            gesture_window,
-            PointerEvent {
-                pointer,
-                position,
-                phase,
-                time: Instant::now(),
-            },
-        ) {
+        let ordinary_gesture_allowed = legacy_pointer || !metadata_rich || !hover_capable;
+        if ordinary_gesture_allowed
+            && let Some(element) = self.tree.dispatch_gesture_in_window(
+                gesture_window,
+                PointerEvent {
+                    pointer,
+                    position,
+                    phase,
+                    time: Instant::now(),
+                },
+            )
+        {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase);
+            self.release_legacy_pointer(pointer, phase, primary_changed);
             return Some(EventTarget {
                 element,
                 action: None,
@@ -963,7 +1027,7 @@ impl Runtime {
         }
         if self.tree.scrollbar_pointer(phase, position) {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase);
+            self.release_legacy_pointer(pointer, phase, primary_changed);
             return None;
         }
         let text_target = self.tree.text_field_at(position);
@@ -974,6 +1038,9 @@ impl Runtime {
             .and_then(|render| self.tree.element_for_render(render))
             .and_then(|element| self.tree.button_ancestor(element));
         let result = match phase {
+            PointerPhase::Enter | PointerPhase::Exit => {
+                unreachable!("pointer boundary handled above")
+            }
             PointerPhase::Move => {
                 if let Some(field) = self.captured_text_field {
                     self.tree
@@ -1012,9 +1079,7 @@ impl Runtime {
                         });
                     }
                 }
-                let primary_press = buttons == 0 || buttons & PRIMARY_POINTER_BUTTON != 0;
-                if primary_press
-                    && selectable_target.is_none()
+                if selectable_target.is_none()
                     && text_target.is_none()
                     && target.is_none()
                     && let Some((element, interaction)) = self.tree.window_interaction_at(position)
@@ -1028,7 +1093,7 @@ impl Runtime {
                         }
                     };
                     if manager.send_window_operation(window_id, operation) {
-                        self.release_legacy_pointer(pointer, phase);
+                        self.release_legacy_pointer(pointer, phase, primary_changed);
                         return Some(EventTarget {
                             element,
                             action: None,
@@ -1101,14 +1166,27 @@ impl Runtime {
                 None
             }
         };
-        self.release_legacy_pointer(pointer, phase);
+        self.release_legacy_pointer(pointer, phase, primary_changed);
         result
     }
-    fn release_legacy_pointer(&mut self, pointer: u64, phase: PointerPhase) {
-        if matches!(phase, PointerPhase::Up | PointerPhase::Cancel)
+    fn release_legacy_pointer(&mut self, pointer: u64, phase: PointerPhase, primary_changed: bool) {
+        if (phase == PointerPhase::Cancel || (phase == PointerPhase::Up && primary_changed))
             && self.legacy_pointer == Some(pointer)
         {
             self.legacy_pointer = None;
+        }
+    }
+
+    /// Cursor selected by the current retained hover route. `Defer` is resolved
+    /// to the ordinary platform cursor before crossing the native boundary.
+    #[must_use]
+    pub fn effective_mouse_cursor(&self) -> MouseCursor {
+        if !self.pointer_inside || !self.pointer_position_known {
+            return MouseCursor::Basic;
+        }
+        match self.tree.mouse_cursor_at(self.last_pointer) {
+            MouseCursor::Defer => MouseCursor::Basic,
+            cursor => cursor,
         }
     }
     fn set_focus(&mut self, next: Option<ElementId>) {

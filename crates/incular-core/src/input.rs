@@ -11,10 +11,15 @@ pub use keyboard_types::{Code, Key, KeyState, KeyboardEvent, Location, Modifiers
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerPhase {
+    /// A hover-capable pointer entered the native surface. No widget-local
+    /// position is implied until a subsequent [`Self::Move`] arrives.
+    Enter,
     Move,
     Down,
     Up,
     Cancel,
+    /// A hover-capable pointer left the native surface.
+    Exit,
 }
 
 /// Physical device category for pointer input shared by platform adapters and
@@ -51,7 +56,31 @@ pub enum WindowResizeDirection {
 /// Raw pointer metadata follows Flutter's button-mask convention so the value
 /// is stable across platform adapters. Zero remains valid for legacy adapters
 /// that do not publish button metadata.
-pub const PRIMARY_POINTER_BUTTON: u32 = 1;
+pub const PRIMARY_POINTER_BUTTON: u32 = 1 << 0;
+/// Secondary/right mouse button.
+pub const SECONDARY_POINTER_BUTTON: u32 = 1 << 1;
+/// Tertiary/middle mouse button.
+pub const TERTIARY_POINTER_BUTTON: u32 = 1 << 2;
+/// Conventional browser/navigation back button.
+pub const BACK_POINTER_BUTTON: u32 = 1 << 3;
+/// Conventional browser/navigation forward button.
+pub const FORWARD_POINTER_BUTTON: u32 = 1 << 4;
+
+/// Returns the portable mask for an additional mouse button.
+///
+/// `index == 0` is the first button beyond primary/secondary/tertiary/back/
+/// forward. The `u32` event mask has room for 27 such buttons; larger native
+/// button indices are intentionally unrepresentable instead of colliding with
+/// an existing bit.
+#[must_use]
+pub const fn additional_pointer_button_mask(index: u16) -> Option<u32> {
+    let bit = 5_u32 + index as u32;
+    if bit < u32::BITS {
+        Some(1_u32 << bit)
+    } else {
+        None
+    }
+}
 
 /// IME composition is separate from committed text. Byte ranges always refer
 /// to valid UTF-8 boundaries in the preedit string when supplied.
@@ -91,6 +120,10 @@ pub enum InputEvent {
         kind: PointerDeviceKind,
         /// Pressed-button bit mask; zero is used for hover.
         buttons: u32,
+        /// Button whose state changed for a Down/Up event. `None` is used for
+        /// movement, surface enter/exit, cancellation, and adapters that do not
+        /// expose the changed native button.
+        button: Option<u32>,
         phase: PointerPhase,
         position: Offset,
     },

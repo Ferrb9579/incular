@@ -36,3 +36,9 @@ scopes work without threading a theme through every constructor. Compound
 parts live in the `checkbox`, `switch`, `radio`, `field`, `tabs`, `menu`,
 `dialog`, `popover`, `tooltip`, `select`, and `overlay` modules. The repository
 README and this crate README are the durable architecture overview.
+
+`context_menu::Trigger` is a secondary-button trigger built directly on the
+Widgets `Listener` metadata path. It receives the original `RawPointerEvent`
+(including local position and button chord) and never converts a right click
+into a primary tap. Menu open state and overlay presentation remain owned by the
+normal popup/menu model rather than by a second pointer recognizer.

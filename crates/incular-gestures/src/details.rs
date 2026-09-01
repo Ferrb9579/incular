@@ -40,6 +40,9 @@ pub struct RawPointerEvent {
     /// Flutter-compatible button bit mask. Zero is used for hover and for
     /// adapters that do not expose button state.
     pub buttons: u32,
+    /// Button whose state changed for a Down/Up event, when the source can
+    /// identify it independently from the complete pressed-button chord.
+    pub button: Option<u32>,
     pub position: Offset,
     pub phase: PointerPhase,
     pub time: Instant,
@@ -61,10 +64,18 @@ impl RawPointerEvent {
             device,
             kind,
             buttons,
+            button: None,
             position,
             phase,
             time,
         }
+    }
+
+    /// Records the button whose state changed for a Down/Up transition.
+    #[must_use]
+    pub const fn with_button(mut self, button: Option<u32>) -> Self {
+        self.button = button;
+        self
     }
 
     /// Converts to the legacy gesture event while retaining the raw event as
@@ -87,6 +98,7 @@ impl From<PointerEvent> for RawPointerEvent {
             device: 0,
             kind: PointerDeviceKind::Mouse,
             buttons: 0,
+            button: None,
             position: event.position,
             phase: event.phase,
             time: event.time,
@@ -113,6 +125,10 @@ pub enum MouseCursor {
     NotAllowed,
     ResizeHorizontal,
     ResizeVertical,
+    /// North-west / south-east diagonal resize.
+    ResizeUpLeftDownRight,
+    /// North-east / south-west diagonal resize.
+    ResizeUpRightDownLeft,
 }
 
 pub use incular_core::PointerDeviceKind;

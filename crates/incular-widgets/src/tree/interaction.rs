@@ -1084,6 +1084,7 @@ impl WidgetTree {
     /// pages one viewport toward the pointer.
     pub fn scrollbar_pointer(&mut self, phase: incular_core::PointerPhase, point: Offset) -> bool {
         match phase {
+            incular_core::PointerPhase::Enter => false,
             incular_core::PointerPhase::Down => {
                 let Some(render) = self.scrollbar_at(point) else {
                     return false;
@@ -1163,6 +1164,26 @@ impl WidgetTree {
                     self.render_live_mut(drag.render, "scrollbar drag render must remain live");
                 node.dirty.insert(DirtyFlags::PAINT);
                 true
+            }
+            incular_core::PointerPhase::Exit => {
+                let mut changed = false;
+                let ids = self
+                    .renders
+                    .iter()
+                    .map(|(raw, _)| RenderObjectId(raw))
+                    .collect::<Vec<_>>();
+                for render in ids {
+                    let node = self.render_live_mut(render, "retained render must remain live");
+                    let Some(scroll) = node.scroll_state_mut() else {
+                        continue;
+                    };
+                    if scroll.hovered {
+                        scroll.hovered = false;
+                        node.dirty.insert(DirtyFlags::PAINT);
+                        changed = true;
+                    }
+                }
+                changed
             }
         }
     }

@@ -71,6 +71,7 @@ impl ScaleGestureDetector {
     }
     pub fn handle(&mut self, event: PointerEvent) -> bool {
         let handled = match event.phase {
+            PointerPhase::Enter | PointerPhase::Exit => false,
             PointerPhase::Down => true,
             PointerPhase::Move => self.pointers.contains_key(&event.pointer),
             PointerPhase::Up | PointerPhase::Cancel => self.pointers.contains_key(&event.pointer),
@@ -85,6 +86,7 @@ impl ScaleGestureDetector {
     /// arena before exposing any scale updates.
     pub fn observe(&mut self, event: PointerEvent) -> Option<ScaleUpdateDetails> {
         match event.phase {
+            PointerPhase::Enter | PointerPhase::Exit => None,
             PointerPhase::Down => {
                 self.pointers.insert(event.pointer, event.position);
                 self.reset_initial_distance();

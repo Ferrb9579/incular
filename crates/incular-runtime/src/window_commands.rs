@@ -3,10 +3,11 @@ use crate::context::BuildContext;
 use crate::tasks::RuntimeWake;
 use crate::window_state::WindowManager;
 use incular_platform::{
-    CapabilitySupport, DisplayPlacementArea, DisplaySnapshot, Fullscreen, LogicalSizeLimits,
-    NativeRequestId, PhysicalScreenPosition, PlatformCapabilities, PlatformOperationError,
-    PlatformOperationResult, UserAttentionType, WindowCommand, WindowIcon, WindowId, WindowLevel,
-    WindowObservedState, WindowOperation, WindowOptions,
+    CapabilitySupport, CursorGrabMode, DisplayPlacementArea, DisplaySnapshot, Fullscreen,
+    LogicalSizeLimits, LogicalWindowPosition, NativeRequestId, PhysicalScreenPosition,
+    PlatformCapabilities, PlatformOperationError, PlatformOperationResult, UserAttentionType,
+    WindowCommand, WindowIcon, WindowId, WindowLevel, WindowObservedState, WindowOperation,
+    WindowOptions,
 };
 use incular_widgets::Widget;
 use std::{
@@ -393,6 +394,35 @@ impl WindowHandle {
 
     pub fn cancel_user_attention(&self) -> Result<(), WindowCommandEnqueueError> {
         self.send(WindowOperation::RequestUserAttention(None))
+    }
+
+    /// Requests native cursor confinement/locking. The returned request
+    /// completes with a typed platform result; the runtime does not claim a
+    /// grab succeeded merely because the command was enqueued.
+    pub fn set_cursor_grab(
+        &self,
+        mode: CursorGrabMode,
+    ) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
+        self.bridge
+            .request(self.id, WindowOperation::SetCursorGrab(mode))
+    }
+
+    /// Shows or hides the native cursor for this window.
+    pub fn set_cursor_visible(
+        &self,
+        visible: bool,
+    ) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
+        self.bridge
+            .request(self.id, WindowOperation::SetCursorVisible(visible))
+    }
+
+    /// Warps the native cursor to a validated logical client-area position.
+    pub fn set_cursor_position(
+        &self,
+        position: LogicalWindowPosition,
+    ) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
+        self.bridge
+            .request(self.id, WindowOperation::SetCursorPosition(position))
     }
 
     /// Requests the window's normalized content-capture policy. The command

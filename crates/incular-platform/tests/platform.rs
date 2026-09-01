@@ -1,5 +1,7 @@
 use incular_core::{
-    Code, Color, InputEvent, KeyboardEvent, KeyboardKey, NamedKey, Offset, PointerPhase, Size,
+    BACK_POINTER_BUTTON, Code, Color, FORWARD_POINTER_BUTTON, InputEvent, KeyboardEvent,
+    KeyboardKey, NamedKey, Offset, PRIMARY_POINTER_BUTTON, PointerPhase, SECONDARY_POINTER_BUTTON,
+    Size, TERTIARY_POINTER_BUTTON, additional_pointer_button_mask,
 };
 use incular_platform::*;
 
@@ -157,6 +159,50 @@ fn platform_operation_errors_have_stable_categories_not_native_types() {
     assert_eq!(error.kind(), PlatformOperationErrorKind::RejectedByPlatform);
     assert_eq!(error.context(), Some("window manager declined request"));
     assert!(error.to_string().contains("rejected by the platform"));
+}
+
+#[test]
+fn native_mouse_buttons_map_to_distinct_portable_bits() {
+    use winit::event::MouseButton;
+
+    assert_eq!(
+        mouse_button_mask(MouseButton::Left),
+        Some(PRIMARY_POINTER_BUTTON)
+    );
+    assert_eq!(
+        mouse_button_mask(MouseButton::Right),
+        Some(SECONDARY_POINTER_BUTTON)
+    );
+    assert_eq!(
+        mouse_button_mask(MouseButton::Middle),
+        Some(TERTIARY_POINTER_BUTTON)
+    );
+    assert_eq!(
+        mouse_button_mask(MouseButton::Back),
+        Some(BACK_POINTER_BUTTON)
+    );
+    assert_eq!(
+        mouse_button_mask(MouseButton::Forward),
+        Some(FORWARD_POINTER_BUTTON)
+    );
+    assert_eq!(
+        mouse_button_mask(MouseButton::Other(0)),
+        additional_pointer_button_mask(0)
+    );
+    assert_eq!(mouse_button_mask(MouseButton::Other(26)), Some(1 << 31));
+    assert_eq!(mouse_button_mask(MouseButton::Other(27)), None);
+}
+
+#[test]
+fn logical_cursor_positions_reject_non_finite_native_inputs() {
+    assert_eq!(
+        LogicalWindowPosition::new(12.5, -3.0)
+            .expect("finite position")
+            .x(),
+        12.5
+    );
+    assert!(LogicalWindowPosition::new(f64::NAN, 0.0).is_err());
+    assert!(LogicalWindowPosition::new(0.0, f64::INFINITY).is_err());
 }
 
 #[test]

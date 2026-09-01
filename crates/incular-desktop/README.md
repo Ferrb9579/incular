@@ -32,6 +32,21 @@ Winit's top-left physical coordinate model. The default service (including the
 current X11 adapter) reports work areas unsupported rather than guessing from
 full monitor bounds.
 
+Mouse input is normalized without a left-button shortcut. A process-local
+device registry preserves Winit `DeviceId` identity, each native window owns its
+pressed-button chord, and every representable mouse button reaches the runtime
+with both the complete chord and changed-button bit. Cursor enter/leave is
+forwarded explicitly, touch uses the same metadata-rich path, and multi-window
+button state cannot leak between windows.
+
+Retained cursor styling is synchronized back to Winit after input and frame
+updates through a deduplicating coordinator, including diagonal resize cursors.
+Cursor visibility, warping, confinement, and locking are semantic window
+operations with capability refinement and normalized native errors. Win32
+publishes all three movement/grab facilities as supported; AppKit and X11
+publish their Winit-supported subsets; Wayland leaves optional
+pointer-constraints operations unknown until execution.
+
 The native `winit::Window` remains alive for the full lifetime of the WGPU
 surface created from its raw handles. Per-window surfaces and presentation state
 remain local, while the renderer may share GPU resources across windows.

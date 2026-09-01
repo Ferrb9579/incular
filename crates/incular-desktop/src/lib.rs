@@ -1,6 +1,7 @@
 //! Shared desktop event-loop bridge for Incular.
 mod display;
 mod display_identity;
+mod pointer;
 
 pub use display::{DefaultDesktopPlatformServices, DesktopPlatformServices};
 
@@ -11,16 +12,19 @@ use incular_accessibility::AccessKitProjection;
 use incular_config::Constraints;
 #[cfg(feature = "devtools")]
 use incular_core::Offset;
-use incular_core::{PointerPhase, WindowResizeDirection};
+#[cfg(feature = "devtools")]
+use incular_core::PRIMARY_POINTER_BUTTON;
+use incular_core::{PointerDeviceKind, PointerPhase, WindowResizeDirection};
 use incular_platform::{
     CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
-    ContentSensitivityOutcome, NativeOperationCompletion, NativeWindowSystem,
+    ContentSensitivityOutcome, CursorGrabMode, NativeOperationCompletion, NativeWindowSystem,
     NoopContentSensitivityBackend, PhysicalScreenPosition, PhysicalSize, PlatformCapabilities,
-    PlatformEvent, PlatformOperationError, PlatformOperationErrorKind, TransparencyMode,
-    UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon,
-    WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState,
-    WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
-    native_window_system, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
+    PlatformEvent, PlatformOperationError, PlatformOperationErrorKind, PointerMetadata,
+    TransparencyMode, UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent,
+    WindowIcon, WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics,
+    WindowObservedState, WindowOperation, WindowOptions, apply_text_input_command, ime_event,
+    key_event, native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
+    touch_event_with_device, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
@@ -33,17 +37,18 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use std::{path::PathBuf, process::Command};
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalPosition,
-    event::{ElementState, MouseButton, WindowEvent},
+    dpi::{LogicalPosition, PhysicalPosition},
+    event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop},
     window::{
-        Icon as NativeWindowIcon, ResizeDirection as NativeResizeDirection,
-        UserAttentionType as NativeAttentionType, Window, WindowAttributes,
-        WindowId as NativeWindowId, WindowLevel as NativeWindowLevel,
+        CursorGrabMode as NativeCursorGrabMode, Icon as NativeWindowIcon,
+        ResizeDirection as NativeResizeDirection, UserAttentionType as NativeAttentionType, Window,
+        WindowAttributes, WindowId as NativeWindowId, WindowLevel as NativeWindowLevel,
     },
 };
 
 use crate::display::DesktopDisplayRegistry;
+use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
 
 #[derive(Debug)]
 pub enum RunError {
@@ -92,6 +97,9 @@ pub fn run_window(
         renderer: None,
         metrics: None,
         cursor: PhysicalPosition::new(0., 0.),
+        mouse_buttons: MouseButtonState::default(),
+        pointer_devices: PointerDeviceRegistry::default(),
+        native_cursor: NativeCursorCoordinator::default(),
         modifiers: winit::keyboard::ModifiersState::default(),
         on_action,
         accessibility_proxy: proxy,
@@ -301,6 +309,7 @@ pub fn run_application_with_services(
         frame_timestamp: Instant::now(),
         accessibility_proxy: proxy,
         displays: DesktopDisplayRegistry::default(),
+        pointer_devices: PointerDeviceRegistry::default(),
         platform_services: Box::new(platform_services),
         window_system: None,
         #[cfg(feature = "devtools")]
@@ -315,6 +324,9 @@ struct App<F: FnMut(ActionId)> {
     renderer: Option<WgpuRenderer>,
     metrics: Option<WindowMetrics>,
     cursor: PhysicalPosition<f64>,
+    mouse_buttons: MouseButtonState,
+    pointer_devices: PointerDeviceRegistry,
+    native_cursor: NativeCursorCoordinator,
     modifiers: winit::keyboard::ModifiersState,
     on_action: F,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
@@ -437,44 +449,33 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                         .request_redraw();
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+            } => {
                 self.cursor = position;
-                if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
-                    let event = match pointer_event(PointerPhase::Move, position, metrics) {
-                        PlatformEvent::Input(event) => event,
-                        _ => unreachable!(),
-                    };
-                    let _ = runtime.handle_input(event);
-                }
+                self.route_mouse_pointer(device_id, PointerPhase::Move, None);
+            }
+            WindowEvent::CursorEntered { device_id } => {
+                self.route_mouse_pointer(device_id, PointerPhase::Enter, None);
+            }
+            WindowEvent::CursorLeft { device_id } => {
+                self.route_mouse_pointer(device_id, PointerPhase::Exit, None);
             }
             WindowEvent::MouseInput {
+                device_id,
                 state,
-                button: MouseButton::Left,
-                ..
+                button,
             } => {
-                let phase = match state {
-                    ElementState::Pressed => PointerPhase::Down,
-                    ElementState::Released => PointerPhase::Up,
-                };
-                if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
-                    let event = match pointer_event(phase, self.cursor, metrics) {
-                        PlatformEvent::Input(event) => event,
-                        _ => unreachable!(),
-                    };
-                    if let Some(action) =
-                        runtime.handle_input(event).and_then(|target| target.action)
-                    {
-                        (self.on_action)(action);
-                        self.window
-                            .as_ref()
-                            .expect("window exists")
-                            .request_redraw();
-                    }
+                if let Some(transition) = self.mouse_buttons.transition(state, button) {
+                    self.route_mouse_pointer(device_id, transition.phase, Some(transition.button));
                 }
             }
+            WindowEvent::Focused(false) => self.cancel_mouse_pointer(),
             WindowEvent::Touch(touch) => {
                 if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
-                    let event = match touch_event(touch, metrics) {
+                    let device = self.pointer_devices.id(touch.device_id);
+                    let event = match touch_event_with_device(touch, device, metrics) {
                         PlatformEvent::Input(event) => event,
                         _ => unreachable!(),
                     };
@@ -555,6 +556,79 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
     }
 }
 impl<F: FnMut(ActionId)> App<F> {
+    fn route_mouse_pointer(
+        &mut self,
+        device_id: winit::event::DeviceId,
+        phase: PointerPhase,
+        button: Option<u32>,
+    ) {
+        let Some(metrics) = self.metrics else {
+            return;
+        };
+        let device = self.pointer_devices.id(device_id);
+        let PlatformEvent::Input(event) = pointer_event_with_metadata(
+            mouse_pointer_metadata(device, self.mouse_buttons.pressed(), button, phase),
+            self.cursor,
+            metrics,
+        ) else {
+            unreachable!()
+        };
+        if let Some(action) = self
+            .runtime
+            .as_mut()
+            .and_then(|runtime| runtime.handle_input(event))
+            .and_then(|target| target.action)
+        {
+            (self.on_action)(action);
+            self.window
+                .as_ref()
+                .expect("window exists")
+                .request_redraw();
+        }
+        self.sync_cursor();
+    }
+
+    fn cancel_mouse_pointer(&mut self) {
+        let Some(metrics) = self.metrics else {
+            return;
+        };
+        let had_pressed_buttons = self.mouse_buttons.cancel();
+        let Some(runtime) = self.runtime.as_mut() else {
+            return;
+        };
+        if had_pressed_buttons {
+            let PlatformEvent::Input(cancel) = pointer_event_with_metadata(
+                mouse_pointer_metadata(0, 0, None, PointerPhase::Cancel),
+                self.cursor,
+                metrics,
+            ) else {
+                unreachable!()
+            };
+            let _ = runtime.handle_input(cancel);
+        }
+        let PlatformEvent::Input(exit) = pointer_event_with_metadata(
+            mouse_pointer_metadata(0, 0, None, PointerPhase::Exit),
+            self.cursor,
+            metrics,
+        ) else {
+            unreachable!()
+        };
+        let _ = runtime.handle_input(exit);
+        self.sync_cursor();
+    }
+
+    fn sync_cursor(&mut self) {
+        let Some(cursor) = self.runtime.as_ref().map(Runtime::effective_mouse_cursor) else {
+            return;
+        };
+        let Some(native) = self.native_cursor.update(cursor) else {
+            return;
+        };
+        if let Some(window) = self.window.as_ref() {
+            window.set_cursor(native);
+        }
+    }
+
     fn resize(&mut self, size: PhysicalSize) {
         let scale = self.metrics.expect("metrics exist").scale_factor;
         self.metrics = Some(WindowMetrics::new(size, scale));
@@ -616,6 +690,7 @@ impl<F: FnMut(ActionId)> App<F> {
                 .update_if_active(|| update.into_accesskit());
         }
         self.apply_text_input_commands();
+        self.sync_cursor();
     }
 
     fn apply_text_input_commands(&mut self) {
@@ -674,6 +749,8 @@ struct NativeWindowState {
     renderer: WgpuRenderer,
     metrics: WindowMetrics,
     cursor: PhysicalPosition<f64>,
+    mouse_buttons: MouseButtonState,
+    native_cursor: NativeCursorCoordinator,
     modifiers: winit::keyboard::ModifiersState,
     accessibility: NativeAccessibilityState,
     content_sensitivity: NoopContentSensitivityBackend,
@@ -689,6 +766,7 @@ struct MultiApp {
     frame_timestamp: Instant,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
     displays: DesktopDisplayRegistry,
+    pointer_devices: PointerDeviceRegistry,
     platform_services: Box<dyn DesktopPlatformServices>,
     window_system: Option<NativeWindowSystem>,
     /// Debug overlays, Select Widget mode, and the DevTools agent pump.
@@ -864,6 +942,8 @@ impl MultiApp {
                 renderer,
                 metrics,
                 cursor: PhysicalPosition::new(0., 0.),
+                mouse_buttons: MouseButtonState::default(),
+                native_cursor: NativeCursorCoordinator::default(),
                 modifiers: winit::keyboard::ModifiersState::default(),
                 accessibility,
                 content_sensitivity: NoopContentSensitivityBackend,
@@ -1014,6 +1094,21 @@ impl MultiApp {
                         state
                             .window
                             .request_user_attention(attention.map(native_attention_type));
+                    }
+                    WindowOperation::SetCursorGrab(mode) => {
+                        operation_result = state
+                            .window
+                            .set_cursor_grab(native_cursor_grab_mode(mode))
+                            .map_err(map_external_error);
+                    }
+                    WindowOperation::SetCursorVisible(visible) => {
+                        state.window.set_cursor_visible(visible);
+                    }
+                    WindowOperation::SetCursorPosition(position) => {
+                        operation_result = state
+                            .window
+                            .set_cursor_position(LogicalPosition::new(position.x(), position.y()))
+                            .map_err(map_external_error);
                     }
                     WindowOperation::SetContentSensitivity(sensitivity) => {
                         operation_result = match state.content_sensitivity.apply(sensitivity) {
@@ -1292,6 +1387,11 @@ impl MultiApp {
         }
         self.application
             .set_accessibility_diagnostics(id, state.accessibility.projection.diagnostics());
+        if let Some(cursor) = self.application.window_mouse_cursor(id)
+            && let Some(native) = state.native_cursor.update(cursor)
+        {
+            state.window.set_cursor(native);
+        }
         self.apply_text_input_commands(id);
         #[cfg(feature = "devtools")]
         self.devtools_state.stream_tree_updates(&self.application);
@@ -1314,6 +1414,45 @@ impl MultiApp {
         if self.windows.contains_key(&native_id) {
             self.application.handle_window_event(event);
         }
+    }
+
+    fn sync_window_cursor(&mut self, id: IncularWindowId) {
+        let Some(cursor) = self.application.window_mouse_cursor(id) else {
+            return;
+        };
+        let Some(native_id) = self.native_ids.get(&id).copied() else {
+            return;
+        };
+        let Some(state) = self.windows.get_mut(&native_id) else {
+            return;
+        };
+        if let Some(native) = state.native_cursor.update(cursor) {
+            state.window.set_cursor(native);
+        }
+    }
+
+    fn cancel_window_mouse_pointer(&mut self, native_id: NativeWindowId, id: IncularWindowId) {
+        let (had_pressed_buttons, cursor, metrics) = {
+            let Some(state) = self.windows.get_mut(&native_id) else {
+                return;
+            };
+            (state.mouse_buttons.cancel(), state.cursor, state.metrics)
+        };
+        if had_pressed_buttons {
+            let cancel = pointer_event_with_metadata(
+                mouse_pointer_metadata(0, 0, None, PointerPhase::Cancel),
+                cursor,
+                metrics,
+            );
+            self.route_window_event(native_id, IncularWindowEvent::platform(id, cancel));
+        }
+        let exit = pointer_event_with_metadata(
+            mouse_pointer_metadata(0, 0, None, PointerPhase::Exit),
+            cursor,
+            metrics,
+        );
+        self.route_window_event(native_id, IncularWindowEvent::platform(id, exit));
+        self.sync_window_cursor(id);
     }
 
     fn route_accesskit_event(&mut self, event: AccessKitEvent) {
@@ -1395,6 +1534,12 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     capabilities.display.work_area = CapabilitySupport::Unknown;
     capabilities.display.query_window_position = CapabilitySupport::Unknown;
     capabilities.display.set_window_position = CapabilitySupport::Unknown;
+    capabilities.advanced_input.pointer_metadata = CapabilitySupport::Supported;
+    capabilities.advanced_input.cursor_icons = CapabilitySupport::Supported;
+    capabilities.advanced_input.cursor_visibility = CapabilitySupport::Supported;
+    capabilities.advanced_input.cursor_position = CapabilitySupport::Unknown;
+    capabilities.advanced_input.cursor_confine = CapabilitySupport::Unknown;
+    capabilities.advanced_input.cursor_lock = CapabilitySupport::Unknown;
     // Clipboard availability depends on whether the native clipboard service
     // can be opened for the concrete session/window, so creation refines it.
     capabilities.data_transfer.clipboard_text = CapabilitySupport::Unknown;
@@ -1418,6 +1563,9 @@ fn refine_window_capabilities(
             capabilities.display.display_bounds = CapabilitySupport::Supported;
             capabilities.display.query_window_position = CapabilitySupport::Supported;
             capabilities.display.set_window_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_confine = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_lock = CapabilitySupport::Supported;
         }
         NativeWindowSystem::AppKit => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Unsupported;
@@ -1427,6 +1575,9 @@ fn refine_window_capabilities(
             capabilities.display.display_bounds = CapabilitySupport::Supported;
             capabilities.display.query_window_position = CapabilitySupport::Supported;
             capabilities.display.set_window_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_confine = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.cursor_lock = CapabilitySupport::Supported;
         }
         NativeWindowSystem::X11 => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -1436,6 +1587,9 @@ fn refine_window_capabilities(
             capabilities.display.display_bounds = CapabilitySupport::Supported;
             capabilities.display.query_window_position = CapabilitySupport::Supported;
             capabilities.display.set_window_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_confine = CapabilitySupport::Supported;
+            capabilities.advanced_input.cursor_lock = CapabilitySupport::Unsupported;
         }
         NativeWindowSystem::Wayland => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -1451,6 +1605,11 @@ fn refine_window_capabilities(
             capabilities.display.work_area = CapabilitySupport::Unsupported;
             capabilities.display.query_window_position = CapabilitySupport::Unsupported;
             capabilities.display.set_window_position = CapabilitySupport::Unsupported;
+            // Pointer-constraints is an optional compositor protocol. Let the
+            // actual Winit operation decide and return a typed native result.
+            capabilities.advanced_input.cursor_position = CapabilitySupport::Unknown;
+            capabilities.advanced_input.cursor_confine = CapabilitySupport::Unknown;
+            capabilities.advanced_input.cursor_lock = CapabilitySupport::Unknown;
         }
         NativeWindowSystem::Other => {}
     }
@@ -1477,6 +1636,15 @@ fn operation_support(
         WindowOperation::SetWindowLevel(_) => capabilities.window.set_window_level,
         WindowOperation::SetWindowIcon(_) => capabilities.window.set_window_icon,
         WindowOperation::RequestUserAttention(_) => capabilities.window.request_user_attention,
+        WindowOperation::SetCursorGrab(CursorGrabMode::None) => CapabilitySupport::Supported,
+        WindowOperation::SetCursorGrab(CursorGrabMode::Confined) => {
+            capabilities.advanced_input.cursor_confine
+        }
+        WindowOperation::SetCursorGrab(CursorGrabMode::Locked) => {
+            capabilities.advanced_input.cursor_lock
+        }
+        WindowOperation::SetCursorVisible(_) => capabilities.advanced_input.cursor_visibility,
+        WindowOperation::SetCursorPosition(_) => capabilities.advanced_input.cursor_position,
         WindowOperation::SetContentSensitivity(_) => capabilities.window.content_sensitivity,
         WindowOperation::RequestFocus => capabilities.window.request_focus,
         WindowOperation::RequestRedraw => capabilities.window.request_redraw,
@@ -1567,6 +1735,30 @@ fn native_attention_type(attention: UserAttentionType) -> NativeAttentionType {
     }
 }
 
+fn mouse_pointer_metadata(
+    device: u64,
+    buttons: u32,
+    button: Option<u32>,
+    phase: PointerPhase,
+) -> PointerMetadata {
+    PointerMetadata {
+        pointer: 0,
+        device,
+        kind: PointerDeviceKind::Mouse,
+        buttons,
+        button,
+        phase,
+    }
+}
+
+fn native_cursor_grab_mode(mode: CursorGrabMode) -> NativeCursorGrabMode {
+    match mode {
+        CursorGrabMode::None => NativeCursorGrabMode::None,
+        CursorGrabMode::Confined => NativeCursorGrabMode::Confined,
+        CursorGrabMode::Locked => NativeCursorGrabMode::Locked,
+    }
+}
+
 fn native_window_icon(icon: &WindowIcon) -> Result<NativeWindowIcon, PlatformOperationError> {
     NativeWindowIcon::from_rgba(icon.rgba().to_vec(), icon.width(), icon.height()).map_err(
         |error| {
@@ -1642,25 +1834,43 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.refresh_displays(target);
                 self.publish_window_state(id);
             }
-            WindowEvent::Focused(focused) => self.route_window_event(
-                native_id,
-                IncularWindowEvent::lifecycle(
-                    id,
-                    if focused {
-                        WindowLifecycle::Focused
-                    } else {
-                        WindowLifecycle::Unfocused
-                    },
-                ),
-            ),
-            WindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    self.cancel_window_mouse_pointer(native_id, id);
+                }
+                self.route_window_event(
+                    native_id,
+                    IncularWindowEvent::lifecycle(
+                        id,
+                        if focused {
+                            WindowLifecycle::Focused
+                        } else {
+                            WindowLifecycle::Unfocused
+                        },
+                    ),
+                );
+            }
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+            } => {
+                let device = self.pointer_devices.id(device_id);
                 let event = {
                     let state = self
                         .windows
                         .get_mut(&native_id)
                         .expect("known native window");
                     state.cursor = position;
-                    pointer_event(PointerPhase::Move, position, state.metrics)
+                    pointer_event_with_metadata(
+                        mouse_pointer_metadata(
+                            device,
+                            state.mouse_buttons.pressed(),
+                            None,
+                            PointerPhase::Move,
+                        ),
+                        position,
+                        state.metrics,
+                    )
                 };
                 #[cfg(feature = "devtools")]
                 if self.devtools_state.inspect_pointer(
@@ -1675,26 +1885,58 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     return;
                 }
                 self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                self.sync_window_cursor(id);
+            }
+            WindowEvent::CursorEntered { device_id } | WindowEvent::CursorLeft { device_id } => {
+                let phase = if matches!(event, WindowEvent::CursorEntered { .. }) {
+                    PointerPhase::Enter
+                } else {
+                    PointerPhase::Exit
+                };
+                let device = self.pointer_devices.id(device_id);
+                let event = {
+                    let state = self.windows.get(&native_id).expect("known native window");
+                    pointer_event_with_metadata(
+                        mouse_pointer_metadata(device, state.mouse_buttons.pressed(), None, phase),
+                        state.cursor,
+                        state.metrics,
+                    )
+                };
+                self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                self.sync_window_cursor(id);
             }
             WindowEvent::MouseInput {
+                device_id,
                 state,
-                button: MouseButton::Left,
-                ..
+                button,
             } => {
+                let device = self.pointer_devices.id(device_id);
+                let Some(transition) = self
+                    .windows
+                    .get_mut(&native_id)
+                    .expect("known native window")
+                    .mouse_buttons
+                    .transition(state, button)
+                else {
+                    self.apply_window_commands(target);
+                    return;
+                };
                 let event = {
                     let state_ref = self.windows.get(&native_id).expect("known native window");
-                    pointer_event(
-                        if state == ElementState::Pressed {
-                            PointerPhase::Down
-                        } else {
-                            PointerPhase::Up
-                        },
+                    pointer_event_with_metadata(
+                        mouse_pointer_metadata(
+                            device,
+                            transition.buttons,
+                            Some(transition.button),
+                            transition.phase,
+                        ),
                         state_ref.cursor,
                         state_ref.metrics,
                     )
                 };
                 #[cfg(feature = "devtools")]
-                if state == ElementState::Pressed
+                if transition.phase == PointerPhase::Down
+                    && transition.button == PRIMARY_POINTER_BUTTON
                     && self.devtools_state.inspect_pointer(
                         &self.application,
                         id,
@@ -1712,8 +1954,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     return;
                 }
                 self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                self.sync_window_cursor(id);
             }
             WindowEvent::Touch(touch) => {
+                let device = self.pointer_devices.id(touch.device_id);
                 let metrics = self
                     .windows
                     .get(&native_id)
@@ -1721,7 +1965,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .metrics;
                 self.route_window_event(
                     native_id,
-                    IncularWindowEvent::platform(id, touch_event(touch, metrics)),
+                    IncularWindowEvent::platform(
+                        id,
+                        touch_event_with_device(touch, device, metrics),
+                    ),
                 );
             }
             WindowEvent::MouseWheel { delta, .. } => {
