@@ -20,12 +20,13 @@ use crate::window_commands::{WindowHandle, WindowOpener};
 use crate::window_state::WindowManager;
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_core::{
-    Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PointerPhase, Rect,
+    Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PRIMARY_POINTER_BUTTON,
+    PointerPhase, Rect,
 };
 use incular_platform::{
     Clipboard, MemoryClipboard, PlatformEvent, PlatformLifecycle, TextInputAction,
     TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
-    WindowId, WindowMetrics, WindowOptions,
+    WindowId, WindowMetrics, WindowOperation, WindowOptions,
 };
 use incular_rendering::DisplayList;
 use incular_semantics::{SemanticAction, SemanticNodeId};
@@ -33,7 +34,7 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 use incular_widgets::internal::InvalidationCause;
 use incular_widgets::internal::{
     ActionId, Diagnostics, ElementId, PointerDeviceKind, PointerEvent, RawPointerEvent, TextRange,
-    TextSelection, TreeError, WidgetTree,
+    TextSelection, TreeError, WidgetTree, WindowInteraction,
 };
 use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
@@ -318,6 +319,13 @@ impl Runtime {
             .as_ref()
             .cloned()
             .map(|manager| WindowOpener { manager })
+    }
+
+    /// Returns a command handle for this retained root's owning native window.
+    #[must_use]
+    pub fn window_handle(&self) -> Option<WindowHandle> {
+        let id = self.window_id?;
+        self.window_manager.as_ref()?.handle(id)
     }
 
     /// Returns the scope cancelled as soon as this window closes. Child
@@ -1000,6 +1008,29 @@ impl Runtime {
                         self.frame_requested = true;
                         return Some(EventTarget {
                             element: label,
+                            action: None,
+                        });
+                    }
+                }
+                let primary_press = buttons == 0 || buttons & PRIMARY_POINTER_BUTTON != 0;
+                if primary_press
+                    && selectable_target.is_none()
+                    && text_target.is_none()
+                    && target.is_none()
+                    && let Some((element, interaction)) = self.tree.window_interaction_at(position)
+                    && let (Some(window_id), Some(manager)) =
+                        (self.window_id, self.window_manager.as_ref())
+                {
+                    let operation = match interaction {
+                        WindowInteraction::Move => WindowOperation::BeginMoveDrag,
+                        WindowInteraction::Resize(direction) => {
+                            WindowOperation::BeginResizeDrag(direction)
+                        }
+                    };
+                    if manager.send_window_operation(window_id, operation) {
+                        self.release_legacy_pointer(pointer, phase);
+                        return Some(EventTarget {
+                            element,
                             action: None,
                         });
                     }

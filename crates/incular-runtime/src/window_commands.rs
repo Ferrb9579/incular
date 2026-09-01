@@ -3,8 +3,9 @@ use crate::context::BuildContext;
 use crate::tasks::RuntimeWake;
 use crate::window_state::WindowManager;
 use incular_platform::{
-    NativeRequestId, PlatformCapabilities, PlatformOperationError, PlatformOperationResult,
-    WindowCommand, WindowId, WindowOperation, WindowOptions,
+    Fullscreen, LogicalSizeLimits, NativeRequestId, PlatformCapabilities, PlatformOperationError,
+    PlatformOperationResult, UserAttentionType, WindowCommand, WindowIcon, WindowId, WindowLevel,
+    WindowOperation, WindowOptions,
 };
 use incular_widgets::Widget;
 use std::{
@@ -174,6 +175,74 @@ impl WindowHandle {
         size: incular_core::Size,
     ) -> Result<(), WindowCommandEnqueueError> {
         self.send(WindowOperation::SetLogicalSize(size))
+    }
+
+    /// Begins a compositor/window-manager-owned interactive move. The native
+    /// backend may require this call to follow a real primary-button press.
+    pub fn begin_move_drag(&self) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
+        self.bridge.request(self.id, WindowOperation::BeginMoveDrag)
+    }
+
+    /// Begins a compositor/window-manager-owned interactive resize from one
+    /// edge/corner. Incular never emulates this by changing global coordinates.
+    pub fn begin_resize_drag(
+        &self,
+        direction: incular_core::WindowResizeDirection,
+    ) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
+        self.bridge
+            .request(self.id, WindowOperation::BeginResizeDrag(direction))
+    }
+
+    pub fn set_minimized(&self, minimized: bool) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetMinimized(minimized))
+    }
+
+    pub fn set_maximized(&self, maximized: bool) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetMaximized(maximized))
+    }
+
+    pub fn set_fullscreen(
+        &self,
+        fullscreen: Option<Fullscreen>,
+    ) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetFullscreen(fullscreen))
+    }
+
+    pub fn set_resizable(&self, resizable: bool) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetResizable(resizable))
+    }
+
+    pub fn set_decorations(&self, decorations: bool) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetDecorations(decorations))
+    }
+
+    pub fn set_logical_size_limits(
+        &self,
+        limits: LogicalSizeLimits,
+    ) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetLogicalSizeLimits(limits))
+    }
+
+    pub fn set_window_level(&self, level: WindowLevel) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetWindowLevel(level))
+    }
+
+    pub fn set_window_icon(
+        &self,
+        icon: Option<WindowIcon>,
+    ) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetWindowIcon(icon))
+    }
+
+    pub fn request_user_attention(
+        &self,
+        attention: UserAttentionType,
+    ) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::RequestUserAttention(Some(attention)))
+    }
+
+    pub fn cancel_user_attention(&self) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::RequestUserAttention(None))
     }
 
     /// Requests the window's normalized content-capture policy. The command

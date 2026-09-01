@@ -75,6 +75,7 @@ pub mod prelude {
         Invalidation, Key, KeyState, KeyboardEvent, KeyboardKey, Lerp, LocalKey, Location,
         Modifiers, NamedKey, Offset, PointerPhase, Rect, RestorationKey, RestorationKeyError,
         RestorationScope, Size, Transform as AffineTransform, UniqueKey, ValueKey,
+        WindowResizeDirection,
     };
     pub use incular_image::{
         AssetImage, DecodedImage, FileImage, ImageCache, ImageCacheDiagnostics, ImageConfiguration,
@@ -94,14 +95,15 @@ pub mod prelude {
         AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
         ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
         ContentSensitivityOutcome, DataTransferCapabilities, DisplayPlacementCapabilities,
-        Fullscreen, MemoryContentSensitivityBackend, MemoryTextInputAdapter,
-        NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
+        Fullscreen, LogicalSizeLimits, LogicalSizeLimitsError, MemoryContentSensitivityBackend,
+        MemoryTextInputAdapter, NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
         NoopContentSensitivityBackend, PlatformCapabilities, PlatformOperationError,
         PlatformOperationErrorKind, PlatformOperationResult, TextInputAction, TextInputAdapter,
         TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
-        TransientSurfaceCapabilities, WindowCommand, WindowControlCapabilities, WindowEvent,
-        WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
-        WindowOptionsError,
+        TransientSurfaceCapabilities, UserAttentionType, WindowCommand, WindowControlCapabilities,
+        WindowEvent, WindowEventKind, WindowIcon, WindowIconError, WindowId, WindowLevel,
+        WindowLifecycle, WindowObservedState, WindowOperation, WindowOptions, WindowOptionsError,
+        WindowRequestedState,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -217,7 +219,8 @@ pub mod prelude {
         ViewAnchorSubscription, ViewController, ViewData, ViewEvent, ViewId, ViewLifecycle,
         ViewMetrics, ViewSubscription, Visibility, WheelChildDelegate, WheelChildLayout,
         WheelLayout, WheelMatrix, WheelProjection, Widget, WidgetOrderTraversalPolicy, WidgetsApp,
-        WidgetsAppController, WidgetsAppData, WindowChromeSink, Wrap, normalize_route_location,
+        WidgetsAppController, WidgetsAppData, WindowChromeSink, WindowDragRegion,
+        WindowResizeRegion, Wrap, normalize_route_location,
     };
 }
 

@@ -40,3 +40,8 @@ devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-ru
 name = "in_place_resize"
 path = "tests/in_place_resize.rs"
 harness = false
+
+[[test]]
+name = "window_control"
+path = "tests/window_control.rs"
+harness = false

@@ -29,6 +29,8 @@ fn window_options_use_the_shared_application_defaults() {
     assert_eq!(options.background_color, defaults.background_color);
     assert_eq!(options.maximized, defaults.maximized);
     assert!(options.fullscreen.is_none());
+    assert_eq!(options.window_level, WindowLevel::Normal);
+    assert!(options.window_icon.is_none());
 }
 
 #[test]
@@ -155,6 +157,90 @@ fn platform_operation_errors_have_stable_categories_not_native_types() {
     assert_eq!(error.kind(), PlatformOperationErrorKind::RejectedByPlatform);
     assert_eq!(error.context(), Some("window manager declined request"));
     assert!(error.to_string().contains("rejected by the platform"));
+}
+
+#[test]
+fn window_icons_validate_rgba_shape_before_the_native_boundary() {
+    let icon = WindowIcon::from_rgba(vec![255; 4 * 3 * 2], 3, 2).expect("valid RGBA icon");
+    assert_eq!(icon.width(), 3);
+    assert_eq!(icon.height(), 2);
+    assert_eq!(icon.rgba().len(), 24);
+
+    assert_eq!(
+        WindowIcon::from_rgba(Vec::new(), 0, 2),
+        Err(WindowIconError::ZeroDimension)
+    );
+    assert_eq!(
+        WindowIcon::from_rgba(vec![0; 7], 2, 1),
+        Err(WindowIconError::InvalidByteCount {
+            expected: 8,
+            actual: 7,
+        })
+    );
+}
+
+#[test]
+fn dynamic_logical_size_limits_reject_contradictory_constraints() {
+    let limits = LogicalSizeLimits::new(Some(Size::new(200., 100.)), Some(Size::new(800., 600.)))
+        .expect("valid limits");
+    assert_eq!(limits.minimum(), Some(Size::new(200., 100.)));
+    assert_eq!(limits.maximum(), Some(Size::new(800., 600.)));
+
+    assert_eq!(
+        LogicalSizeLimits::new(Some(Size::ZERO), None),
+        Err(LogicalSizeLimitsError::InvalidMinimum)
+    );
+    assert_eq!(
+        LogicalSizeLimits::new(Some(Size::new(900., 100.)), Some(Size::new(800., 600.)),),
+        Err(LogicalSizeLimitsError::MinimumExceedsMaximum)
+    );
+}
+
+#[test]
+fn requested_and_observed_window_state_are_distinct_contracts() {
+    let options = WindowOptions {
+        visible: false,
+        resizable: false,
+        decorations: false,
+        maximized: true,
+        fullscreen: Some(Fullscreen::Borderless),
+        window_level: WindowLevel::AlwaysOnTop,
+        minimum_logical_size: Some(Size::new(200., 100.)),
+        maximum_logical_size: Some(Size::new(900., 700.)),
+        initial_logical_size: Size::new(400., 300.),
+        ..WindowOptions::default()
+    };
+    options.validate().expect("valid options");
+    let requested = options.requested_state().expect("valid requested state");
+    assert!(!requested.visible);
+    assert!(!requested.resizable);
+    assert!(!requested.decorations);
+    assert!(requested.maximized);
+    assert_eq!(requested.fullscreen, Some(Fullscreen::Borderless));
+    assert_eq!(requested.level, WindowLevel::AlwaysOnTop);
+
+    let observed = WindowObservedState::default();
+    assert_eq!(observed.visible, None);
+    assert_eq!(observed.minimized, None);
+    assert_eq!(observed.maximized, None);
+    assert_eq!(observed.fullscreen, None);
+}
+
+#[test]
+fn state_changed_events_do_not_masquerade_as_legacy_platform_events() {
+    let window_id = WindowId::from_parts(2, 9);
+    let observed = WindowObservedState {
+        visible: Some(true),
+        minimized: None,
+        maximized: Some(false),
+        fullscreen: Some(false),
+        resizable: Some(true),
+        decorations: Some(false),
+    };
+    let event = WindowEvent::state_changed(window_id, observed);
+    assert_eq!(event.window_id, window_id);
+    assert_eq!(event.kind, WindowEventKind::StateChanged(observed));
+    assert!(event.platform_event().is_none());
 }
 
 #[test]

@@ -13,9 +13,17 @@ reuses a slot, allowing queued stale commands and handles to be rejected.
 
 `WindowOptions` contains the portable desktop creation subset: title, initial
 and minimum/maximum logical sizes, resizability, initial visibility,
-decorations, transparency request, maximized state, and borderless fullscreen.
-`validate` rejects contradictory or non-positive dimensions before native
-creation.
+decorations, transparency request, maximized state, borderless fullscreen,
+portable window level, and optional validated RGBA window icon. `validate`
+rejects contradictory or non-positive dimensions before native creation.
+
+Mutable native policy is expressed with semantic `WindowOperation` values:
+compositor-owned move/resize dragging, minimize/maximize/fullscreen,
+resizability/decorations, logical size limits, window level/icon, and user
+attention. `WindowRequestedState` is deliberately separate from
+`WindowObservedState`: enqueueing a setter records application intent, while a
+backend `StateChanged` event records only values the operating system can
+actually report. An unobservable state is `None`, never guessed from intent.
 
 `WindowCommand` pairs that ID with a data-only `WindowOperation`. Ordinary
 fire-and-observe operations carry no request identity; operations whose native
@@ -35,10 +43,10 @@ for session-dependent facilities such as Wayland placement and native desktop
 services.
 
 `WindowEvent` associates existing `PlatformEvent` input/metrics/close data
-with a normalized `WindowId`; `WindowLifecycle` and `RedrawRequested` provide
-the extra per-window state native adapters need without extending the legacy
-single-window event stream. Application lifecycle remains separate from window
-visibility and focus lifecycle.
+with a normalized `WindowId`; `WindowLifecycle`, `RedrawRequested`, and
+`StateChanged` provide the extra per-window state native adapters need without
+extending the legacy single-window event stream. Application lifecycle remains
+separate from window visibility and focus lifecycle.
 
 Keyboard navigation, printable text and IME composition are normalized into
 separate `InputEvent` variants. `TextInputConfiguration`, `TextInputState`, and

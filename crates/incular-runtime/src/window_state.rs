@@ -12,7 +12,7 @@ use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment, Window
 use incular_core::{RestorationKey, RestorationScope, Size};
 use incular_platform::{
     PlatformCapabilities, PlatformOperationError, WindowId, WindowLifecycle, WindowMetrics,
-    WindowOptions,
+    WindowObservedState, WindowOptions, WindowRequestedState,
 };
 use incular_widgets::Widget;
 use std::{
@@ -52,6 +52,11 @@ pub struct WindowDiagnostics {
     /// Most recent native operation failure, if any. The stable error category
     /// is suitable for diagnostics; no native error object is retained.
     pub last_platform_error: Option<PlatformOperationError>,
+    /// Last application-requested mutable native state.
+    pub requested_state: WindowRequestedState,
+    /// State most recently observed from the native backend. Unknown fields are
+    /// `None` rather than copied from requested state.
+    pub observed_state: WindowObservedState,
 }
 
 /// Aggregate lifecycle and stale-command diagnostics for an application.
@@ -86,6 +91,8 @@ pub(crate) struct WindowRecord {
     pub(crate) _restoration_scope_lease: Option<restoration::ScopeLease>,
     pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) last_platform_error: Option<PlatformOperationError>,
+    pub(crate) requested_state: WindowRequestedState,
+    pub(crate) observed_state: WindowObservedState,
 }
 
 /// Window-local negotiation state for content-driven native sizing.
@@ -345,6 +352,9 @@ impl WindowManager {
         let scope = tasks::TaskScheduler::spawner(&self.scheduler).scope();
         scope.bind_window(id);
         let metrics = initial_metrics(&options);
+        let requested_state = options
+            .requested_state()
+            .expect("WindowOptions were validated before requested-state construction");
         let mut runtime = Runtime::with_window(
             root,
             self.scheduler.clone(),
@@ -381,6 +391,8 @@ impl WindowManager {
                 _restoration_scope_lease: restoration_lease,
                 capabilities: capabilities.clone(),
                 last_platform_error: None,
+                requested_state,
+                observed_state: WindowObservedState::default(),
             },
         );
         self.sync_restorable_windows(true);
@@ -445,6 +457,9 @@ impl WindowManager {
         window_scope.bind_window(id);
         let root_scope = window_scope.child();
         let metrics = initial_metrics(&options);
+        let requested_state = options
+            .requested_state()
+            .expect("WindowOptions were validated before requested-state construction");
         let initial_environment = RuntimeEnvironment {
             viewport: metrics.logical_size(),
             physical_width: metrics.physical_size.width,
@@ -536,6 +551,8 @@ impl WindowManager {
                 _restoration_scope_lease: restoration_lease,
                 capabilities: capabilities.clone(),
                 last_platform_error: None,
+                requested_state,
+                observed_state: WindowObservedState::default(),
             },
         );
         self.sync_restorable_windows(true);
@@ -550,6 +567,29 @@ impl WindowManager {
             bridge: self.bridge.clone(),
             capabilities,
         })
+    }
+
+    pub(crate) fn handle(&self, id: WindowId) -> Option<WindowHandle> {
+        let registry = self.registry.upgrade()?;
+        let capabilities = {
+            let registry = registry.borrow();
+            registry.get(id)?.capabilities.clone()
+        };
+        Some(WindowHandle {
+            id,
+            bridge: self.bridge.clone(),
+            capabilities,
+        })
+    }
+
+    pub(crate) fn send_window_operation(
+        &self,
+        id: WindowId,
+        operation: incular_platform::WindowOperation,
+    ) -> bool {
+        self.bridge
+            .send(incular_platform::WindowCommand::new(id, operation))
+            .is_ok()
     }
 
     pub(crate) fn restoration_scope(

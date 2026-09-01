@@ -6,13 +6,15 @@ use incular_accessibility::AccessKitProjection;
 use incular_config::Constraints;
 #[cfg(feature = "devtools")]
 use incular_core::Offset;
-use incular_core::PointerPhase;
+use incular_core::{PointerPhase, WindowResizeDirection};
 use incular_platform::{
     CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
-    ContentSensitivityOutcome, NativeOperationCompletion, NoopContentSensitivityBackend,
-    PhysicalSize, PlatformCapabilities, PlatformEvent, PlatformOperationError, TransparencyMode,
-    WindowCommand, WindowEvent as IncularWindowEvent, WindowId as IncularWindowId, WindowLifecycle,
-    WindowMetrics, WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
+    ContentSensitivityOutcome, NativeOperationCompletion, NativeWindowSystem,
+    NoopContentSensitivityBackend, PhysicalSize, PlatformCapabilities, PlatformEvent,
+    PlatformOperationError, PlatformOperationErrorKind, TransparencyMode, UserAttentionType,
+    WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon, WindowId as IncularWindowId,
+    WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState, WindowOperation,
+    WindowOptions, apply_text_input_command, ime_event, key_event, native_window_system,
     pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{
@@ -29,7 +31,11 @@ use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowAttributes, WindowId as NativeWindowId},
+    window::{
+        Icon as NativeWindowIcon, ResizeDirection as NativeResizeDirection,
+        UserAttentionType as NativeAttentionType, Window, WindowAttributes,
+        WindowId as NativeWindowId, WindowLevel as NativeWindowLevel,
+    },
 };
 
 #[derive(Debug)]
@@ -695,7 +701,14 @@ impl MultiApp {
         if self.native_ids.contains_key(&id) || !self.application.contains_window(id) {
             return;
         }
-        let attributes = window_attributes(&options).with_visible(false);
+        let attributes = match window_attributes(&options) {
+            Ok(attributes) => attributes.with_visible(false),
+            Err(error) => {
+                let _ = self.application.record_platform_operation_error(id, error);
+                let _ = self.application.close_window(id);
+                return;
+            }
+        };
         let window = match target.create_window(attributes) {
             Ok(window) => window,
             Err(error) => {
@@ -754,10 +767,16 @@ impl MultiApp {
         };
         accessibility.projection.note_adapter_created();
         let clipboard = DesktopClipboard::new();
-        let mut capabilities = self.application.platform_capabilities();
+        let mut capabilities = refine_window_capabilities(
+            self.application.platform_capabilities(),
+            native_window_system(&window),
+        );
         capabilities.data_transfer.clipboard_text =
             CapabilitySupport::from_supported(clipboard.native_available());
         let _ = self.application.set_window_capabilities(id, capabilities);
+        if let Some(error) = unsupported_initial_window_policy(&options, &capabilities) {
+            let _ = self.application.record_platform_operation_error(id, error);
+        }
         self.application
             .set_window_clipboard(id, Box::new(clipboard));
         self.application
@@ -776,6 +795,7 @@ impl MultiApp {
             ));
         let native_id = window.id();
         window.set_visible(options.visible);
+        let observed_state = observed_window_state(&window);
         self.native_ids.insert(id, native_id);
         self.windows.insert(
             native_id,
@@ -790,6 +810,8 @@ impl MultiApp {
                 content_sensitivity: NoopContentSensitivityBackend,
             },
         );
+        self.application
+            .handle_window_event(IncularWindowEvent::state_changed(id, observed_state));
         self.request_frame_if_needed(id);
     }
 
@@ -820,6 +842,15 @@ impl MultiApp {
             }
             return;
         }
+        let publishes_state = matches!(
+            command.operation,
+            WindowOperation::SetVisible(_)
+                | WindowOperation::SetMinimized(_)
+                | WindowOperation::SetMaximized(_)
+                | WindowOperation::SetFullscreen(_)
+                | WindowOperation::SetResizable(_)
+                | WindowOperation::SetDecorations(_)
+        );
         let mut synchronous_resize = None;
         let mut operation_result = Ok(());
         {
@@ -835,36 +866,107 @@ impl MultiApp {
                 }
                 return;
             };
-            match command.operation {
-                WindowOperation::SetTitle(title) => state.window.set_title(&title),
-                WindowOperation::SetVisible(visible) => state.window.set_visible(visible),
-                WindowOperation::SetLogicalSize(size) => {
-                    synchronous_resize = state
-                        .window
-                        .request_inner_size(winit::dpi::LogicalSize::new(size.width, size.height))
-                        .map(|physical| {
-                            (
-                                PhysicalSize::new(physical.width, physical.height),
-                                state.window.scale_factor(),
-                            )
-                        });
+            let capabilities = self
+                .application
+                .window_capabilities(window_id)
+                .unwrap_or_default();
+            if operation_support(&capabilities, &command.operation)
+                == CapabilitySupport::Unsupported
+            {
+                operation_result = Err(PlatformOperationError::unsupported());
+            } else {
+                match command.operation {
+                    WindowOperation::SetTitle(title) => state.window.set_title(&title),
+                    WindowOperation::SetVisible(visible) => state.window.set_visible(visible),
+                    WindowOperation::SetLogicalSize(size) => {
+                        synchronous_resize = state
+                            .window
+                            .request_inner_size(winit::dpi::LogicalSize::new(
+                                size.width,
+                                size.height,
+                            ))
+                            .map(|physical| {
+                                (
+                                    PhysicalSize::new(physical.width, physical.height),
+                                    state.window.scale_factor(),
+                                )
+                            });
+                    }
+                    WindowOperation::BeginMoveDrag => {
+                        operation_result = state.window.drag_window().map_err(map_external_error);
+                    }
+                    WindowOperation::BeginResizeDrag(direction) => {
+                        operation_result = state
+                            .window
+                            .drag_resize_window(native_resize_direction(direction))
+                            .map_err(map_external_error);
+                    }
+                    WindowOperation::SetMinimized(minimized) => {
+                        state.window.set_minimized(minimized);
+                    }
+                    WindowOperation::SetMaximized(maximized) => {
+                        state.window.set_maximized(maximized);
+                    }
+                    WindowOperation::SetFullscreen(fullscreen) => {
+                        state.window.set_fullscreen(
+                            fullscreen.map(|_| winit::window::Fullscreen::Borderless(None)),
+                        );
+                    }
+                    WindowOperation::SetResizable(resizable) => {
+                        state.window.set_resizable(resizable);
+                    }
+                    WindowOperation::SetDecorations(decorations) => {
+                        state.window.set_decorations(decorations);
+                    }
+                    WindowOperation::SetLogicalSizeLimits(limits) => {
+                        state
+                            .window
+                            .set_min_inner_size(limits.minimum().map(|size| {
+                                winit::dpi::LogicalSize::new(
+                                    f64::from(size.width),
+                                    f64::from(size.height),
+                                )
+                            }));
+                        state
+                            .window
+                            .set_max_inner_size(limits.maximum().map(|size| {
+                                winit::dpi::LogicalSize::new(
+                                    f64::from(size.width),
+                                    f64::from(size.height),
+                                )
+                            }));
+                    }
+                    WindowOperation::SetWindowLevel(level) => {
+                        state.window.set_window_level(native_window_level(level));
+                    }
+                    WindowOperation::SetWindowIcon(icon) => {
+                        match icon.as_ref().map(native_window_icon).transpose() {
+                            Ok(icon) => state.window.set_window_icon(icon),
+                            Err(error) => operation_result = Err(error),
+                        }
+                    }
+                    WindowOperation::RequestUserAttention(attention) => {
+                        state
+                            .window
+                            .request_user_attention(attention.map(native_attention_type));
+                    }
+                    WindowOperation::SetContentSensitivity(sensitivity) => {
+                        operation_result = match state.content_sensitivity.apply(sensitivity) {
+                            ContentSensitivityOutcome::Applied { .. }
+                            | ContentSensitivityOutcome::NoOp {
+                                reason: ContentSensitivityNoOpReason::Unchanged,
+                                ..
+                            } => Ok(()),
+                            ContentSensitivityOutcome::NoOp {
+                                reason: ContentSensitivityNoOpReason::Unsupported,
+                                ..
+                            } => Err(PlatformOperationError::unsupported()),
+                        };
+                    }
+                    WindowOperation::RequestFocus => state.window.focus_window(),
+                    WindowOperation::RequestRedraw => state.window.request_redraw(),
+                    WindowOperation::Close => unreachable!(),
                 }
-                WindowOperation::SetContentSensitivity(sensitivity) => {
-                    operation_result = match state.content_sensitivity.apply(sensitivity) {
-                        ContentSensitivityOutcome::Applied { .. }
-                        | ContentSensitivityOutcome::NoOp {
-                            reason: ContentSensitivityNoOpReason::Unchanged,
-                            ..
-                        } => Ok(()),
-                        ContentSensitivityOutcome::NoOp {
-                            reason: ContentSensitivityNoOpReason::Unsupported,
-                            ..
-                        } => Err(PlatformOperationError::unsupported()),
-                    };
-                }
-                WindowOperation::RequestFocus => state.window.focus_window(),
-                WindowOperation::RequestRedraw => state.window.request_redraw(),
-                WindowOperation::Close => unreachable!(),
             }
         }
         // Some native backends, notably Wayland, can acknowledge a requested
@@ -877,6 +979,9 @@ impl MultiApp {
         if let Some((physical_size, scale_factor)) = synchronous_resize {
             self.resize_window(command.window_id, physical_size, scale_factor);
         }
+        if publishes_state {
+            self.publish_window_state(window_id);
+        }
         if let Some(request_id) = request_id {
             let _ = self
                 .application
@@ -885,7 +990,23 @@ impl MultiApp {
                     request_id,
                     operation_result,
                 ));
+        } else if let Err(error) = operation_result {
+            let _ = self
+                .application
+                .record_platform_operation_error(window_id, error);
         }
+    }
+
+    fn publish_window_state(&mut self, id: IncularWindowId) {
+        let Some(native_id) = self.native_ids.get(&id).copied() else {
+            return;
+        };
+        let Some(state) = self.windows.get(&native_id) else {
+            return;
+        };
+        let observed = observed_window_state(&state.window);
+        self.application
+            .handle_window_event(IncularWindowEvent::state_changed(id, observed));
     }
 
     fn request_frame_if_needed(&mut self, id: IncularWindowId) {
@@ -1162,6 +1283,35 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     capabilities.window.set_title = CapabilitySupport::Supported;
     capabilities.window.set_visibility = CapabilitySupport::Supported;
     capabilities.window.set_logical_size = CapabilitySupport::Supported;
+    capabilities.window.begin_move_drag = CapabilitySupport::Supported;
+    capabilities.window.begin_resize_drag = if cfg!(target_os = "macos") {
+        CapabilitySupport::Unsupported
+    } else {
+        CapabilitySupport::Supported
+    };
+    capabilities.window.minimize = CapabilitySupport::Supported;
+    capabilities.window.maximize = CapabilitySupport::Supported;
+    capabilities.window.fullscreen = CapabilitySupport::Supported;
+    capabilities.window.set_resizable = CapabilitySupport::Supported;
+    capabilities.window.set_decorations = CapabilitySupport::Supported;
+    capabilities.window.set_size_limits = CapabilitySupport::Supported;
+    capabilities.window.set_window_level = if cfg!(target_os = "linux") {
+        CapabilitySupport::Unknown
+    } else {
+        CapabilitySupport::Supported
+    };
+    capabilities.window.set_window_icon = if cfg!(target_os = "windows") {
+        CapabilitySupport::Supported
+    } else if cfg!(target_os = "macos") {
+        CapabilitySupport::Unsupported
+    } else {
+        CapabilitySupport::Unknown
+    };
+    capabilities.window.request_user_attention = if cfg!(target_os = "linux") {
+        CapabilitySupport::Unknown
+    } else {
+        CapabilitySupport::Supported
+    };
     capabilities.window.request_focus = CapabilitySupport::Supported;
     capabilities.window.request_redraw = CapabilitySupport::Supported;
     capabilities.window.close = CapabilitySupport::Supported;
@@ -1173,6 +1323,156 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     // can be opened for the concrete session/window, so creation refines it.
     capabilities.data_transfer.clipboard_text = CapabilitySupport::Unknown;
     capabilities
+}
+
+fn refine_window_capabilities(
+    mut capabilities: PlatformCapabilities,
+    system: NativeWindowSystem,
+) -> PlatformCapabilities {
+    match system {
+        NativeWindowSystem::Win32 => {
+            capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
+            capabilities.window.set_window_level = CapabilitySupport::Supported;
+            capabilities.window.set_window_icon = CapabilitySupport::Supported;
+            capabilities.window.request_user_attention = CapabilitySupport::Supported;
+        }
+        NativeWindowSystem::AppKit => {
+            capabilities.window.begin_resize_drag = CapabilitySupport::Unsupported;
+            capabilities.window.set_window_level = CapabilitySupport::Supported;
+            capabilities.window.set_window_icon = CapabilitySupport::Unsupported;
+            capabilities.window.request_user_attention = CapabilitySupport::Supported;
+        }
+        NativeWindowSystem::X11 => {
+            capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
+            capabilities.window.set_window_level = CapabilitySupport::Supported;
+            capabilities.window.set_window_icon = CapabilitySupport::Supported;
+            capabilities.window.request_user_attention = CapabilitySupport::Supported;
+        }
+        NativeWindowSystem::Wayland => {
+            capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
+            capabilities.window.set_window_level = CapabilitySupport::Unsupported;
+            capabilities.window.set_window_icon = CapabilitySupport::Unsupported;
+            // Winit can issue an xdg-activation request, but protocol availability
+            // is compositor/session dependent and is not queryable here.
+            capabilities.window.request_user_attention = CapabilitySupport::Unknown;
+        }
+        NativeWindowSystem::Other => {}
+    }
+    capabilities
+}
+
+fn operation_support(
+    capabilities: &PlatformCapabilities,
+    operation: &WindowOperation,
+) -> CapabilitySupport {
+    match operation {
+        WindowOperation::SetTitle(_) => capabilities.window.set_title,
+        WindowOperation::SetVisible(_) => capabilities.window.set_visibility,
+        WindowOperation::SetLogicalSize(_) => capabilities.window.set_logical_size,
+        WindowOperation::BeginMoveDrag => capabilities.window.begin_move_drag,
+        WindowOperation::BeginResizeDrag(_) => capabilities.window.begin_resize_drag,
+        WindowOperation::SetMinimized(_) => capabilities.window.minimize,
+        WindowOperation::SetMaximized(_) => capabilities.window.maximize,
+        WindowOperation::SetFullscreen(_) => capabilities.window.fullscreen,
+        WindowOperation::SetResizable(_) => capabilities.window.set_resizable,
+        WindowOperation::SetDecorations(_) => capabilities.window.set_decorations,
+        WindowOperation::SetLogicalSizeLimits(_) => capabilities.window.set_size_limits,
+        WindowOperation::SetWindowLevel(_) => capabilities.window.set_window_level,
+        WindowOperation::SetWindowIcon(_) => capabilities.window.set_window_icon,
+        WindowOperation::RequestUserAttention(_) => capabilities.window.request_user_attention,
+        WindowOperation::SetContentSensitivity(_) => capabilities.window.content_sensitivity,
+        WindowOperation::RequestFocus => capabilities.window.request_focus,
+        WindowOperation::RequestRedraw => capabilities.window.request_redraw,
+        WindowOperation::Close => capabilities.window.close,
+    }
+}
+
+fn unsupported_initial_window_policy(
+    options: &WindowOptions,
+    capabilities: &PlatformCapabilities,
+) -> Option<PlatformOperationError> {
+    let mut unsupported = Vec::new();
+    if options.window_icon.is_some()
+        && capabilities.window.set_window_icon == CapabilitySupport::Unsupported
+    {
+        unsupported.push("window icon");
+    }
+    if options.window_level != WindowLevel::Normal
+        && capabilities.window.set_window_level == CapabilitySupport::Unsupported
+    {
+        unsupported.push("window level");
+    }
+    (!unsupported.is_empty()).then(|| {
+        PlatformOperationError::with_context(
+            PlatformOperationErrorKind::Unsupported,
+            format!(
+                "initial native window policy is unsupported on this window system: {}",
+                unsupported.join(", ")
+            ),
+        )
+    })
+}
+
+fn observed_window_state(window: &Window) -> WindowObservedState {
+    WindowObservedState {
+        visible: window.is_visible(),
+        minimized: window.is_minimized(),
+        maximized: Some(window.is_maximized()),
+        fullscreen: Some(window.fullscreen().is_some()),
+        resizable: Some(window.is_resizable()),
+        decorations: Some(window.is_decorated()),
+    }
+}
+
+fn native_resize_direction(direction: WindowResizeDirection) -> NativeResizeDirection {
+    match direction {
+        WindowResizeDirection::East => NativeResizeDirection::East,
+        WindowResizeDirection::North => NativeResizeDirection::North,
+        WindowResizeDirection::NorthEast => NativeResizeDirection::NorthEast,
+        WindowResizeDirection::NorthWest => NativeResizeDirection::NorthWest,
+        WindowResizeDirection::South => NativeResizeDirection::South,
+        WindowResizeDirection::SouthEast => NativeResizeDirection::SouthEast,
+        WindowResizeDirection::SouthWest => NativeResizeDirection::SouthWest,
+        WindowResizeDirection::West => NativeResizeDirection::West,
+    }
+}
+
+fn native_window_level(level: WindowLevel) -> NativeWindowLevel {
+    match level {
+        WindowLevel::Normal => NativeWindowLevel::Normal,
+        WindowLevel::AlwaysOnTop => NativeWindowLevel::AlwaysOnTop,
+    }
+}
+
+fn native_attention_type(attention: UserAttentionType) -> NativeAttentionType {
+    match attention {
+        UserAttentionType::Informational => NativeAttentionType::Informational,
+        UserAttentionType::Critical => NativeAttentionType::Critical,
+    }
+}
+
+fn native_window_icon(icon: &WindowIcon) -> Result<NativeWindowIcon, PlatformOperationError> {
+    NativeWindowIcon::from_rgba(icon.rgba().to_vec(), icon.width(), icon.height()).map_err(
+        |error| {
+            PlatformOperationError::with_context(
+                PlatformOperationErrorKind::NativeFailure,
+                error.to_string(),
+            )
+        },
+    )
+}
+
+fn map_external_error(error: winit::error::ExternalError) -> PlatformOperationError {
+    match error {
+        winit::error::ExternalError::NotSupported(_) => PlatformOperationError::unsupported(),
+        winit::error::ExternalError::Ignored => {
+            PlatformOperationError::new(PlatformOperationErrorKind::RejectedByPlatform)
+        }
+        winit::error::ExternalError::Os(error) => PlatformOperationError::with_context(
+            PlatformOperationErrorKind::NativeFailure,
+            error.to_string(),
+        ),
+    }
 }
 
 impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
@@ -1208,6 +1508,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .metrics
                     .scale_factor;
                 self.resize_window(id, PhysicalSize::new(size.width, size.height), scale);
+                self.publish_window_state(id);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let size = self
@@ -1366,7 +1667,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
     }
 }
 
-fn window_attributes(options: &WindowOptions) -> WindowAttributes {
+fn window_attributes(options: &WindowOptions) -> Result<WindowAttributes, PlatformOperationError> {
     let initial = winit::dpi::LogicalSize::new(
         f64::from(options.initial_logical_size.width),
         f64::from(options.initial_logical_size.height),
@@ -1377,6 +1678,11 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
     let maximum = options
         .maximum_logical_size
         .map(|size| winit::dpi::LogicalSize::new(f64::from(size.width), f64::from(size.height)));
+    let icon = options
+        .window_icon
+        .as_ref()
+        .map(native_window_icon)
+        .transpose()?;
     let mut attributes = WindowAttributes::default()
         .with_title(options.title.clone())
         .with_inner_size(initial)
@@ -1385,6 +1691,8 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
         .with_decorations(options.decorations)
         .with_transparent(options.transparency_mode.is_transparent())
         .with_maximized(options.maximized)
+        .with_window_level(native_window_level(options.window_level))
+        .with_window_icon(icon)
         .with_fullscreen(
             options
                 .fullscreen
@@ -1392,7 +1700,7 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
         );
     attributes.min_inner_size = minimum.map(Into::into);
     attributes.max_inner_size = maximum.map(Into::into);
-    attributes
+    Ok(attributes)
 }
 
 fn environment_for(metrics: WindowMetrics) -> incular_config::RuntimeEnvironment {

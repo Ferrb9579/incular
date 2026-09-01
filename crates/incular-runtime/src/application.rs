@@ -308,6 +308,12 @@ impl Application {
         self.registry.borrow().ids()
     }
 
+    /// Returns a thread-safe command handle for one live Incular window.
+    #[must_use]
+    pub fn window_handle(&self, window_id: WindowId) -> Option<WindowHandle> {
+        self.manager.handle(window_id)
+    }
+
     /// Returns the latest backend capability snapshot for application-level
     /// services. Before a native backend attaches, fields are `Unknown`.
     #[must_use]
@@ -1036,7 +1042,25 @@ impl Application {
                 });
             }
             WindowEventKind::RedrawRequested => {}
+            WindowEventKind::StateChanged(state) => {
+                let _ = self.with_window_mut(window_id, |record| {
+                    record.observed_state = state;
+                });
+            }
         }
+    }
+
+    /// Records a backend failure for a user-driven operation that does not
+    /// have an explicit result consumer (for example a `WindowDragRegion`).
+    pub fn record_platform_operation_error(
+        &mut self,
+        window_id: WindowId,
+        error: PlatformOperationError,
+    ) -> bool {
+        self.with_window_mut(window_id, |record| {
+            record.last_platform_error = Some(error);
+        })
+        .is_some()
     }
 
     pub fn set_window_environment(
@@ -1523,6 +1547,7 @@ impl Application {
                             }
                             WindowOperation::SetVisible(visible) => {
                                 record.options.visible = *visible;
+                                record.requested_state.visible = *visible;
                                 record.lifecycle = if *visible {
                                     WindowLifecycle::Visible
                                 } else {
@@ -1541,6 +1566,41 @@ impl Application {
                                     return false;
                                 }
                             }
+                            WindowOperation::BeginMoveDrag
+                            | WindowOperation::BeginResizeDrag(_) => {}
+                            WindowOperation::SetMinimized(minimized) => {
+                                record.requested_state.minimized = *minimized;
+                            }
+                            WindowOperation::SetMaximized(maximized) => {
+                                record.options.maximized = *maximized;
+                                record.requested_state.maximized = *maximized;
+                            }
+                            WindowOperation::SetFullscreen(fullscreen) => {
+                                record.options.fullscreen = *fullscreen;
+                                record.requested_state.fullscreen = *fullscreen;
+                            }
+                            WindowOperation::SetResizable(resizable) => {
+                                record.options.resizable = *resizable;
+                                record.requested_state.resizable = *resizable;
+                            }
+                            WindowOperation::SetDecorations(decorations) => {
+                                record.options.decorations = *decorations;
+                                record.requested_state.decorations = *decorations;
+                            }
+                            WindowOperation::SetLogicalSizeLimits(limits) => {
+                                record.options.minimum_logical_size = limits.minimum();
+                                record.options.maximum_logical_size = limits.maximum();
+                                record.requested_state.size_limits = *limits;
+                                record.content_sizing.reset();
+                            }
+                            WindowOperation::SetWindowLevel(level) => {
+                                record.options.window_level = *level;
+                                record.requested_state.level = *level;
+                            }
+                            WindowOperation::SetWindowIcon(icon) => {
+                                record.options.window_icon = icon.clone();
+                            }
+                            WindowOperation::RequestUserAttention(_) => {}
                             WindowOperation::SetContentSensitivity(sensitivity) => {
                                 record.last_content_sensitivity = Some(*sensitivity);
                             }
@@ -1723,6 +1783,8 @@ impl Application {
                 .read()
                 .expect("window capability snapshot lock"),
             last_platform_error: record.last_platform_error.clone(),
+            requested_state: record.requested_state,
+            observed_state: record.observed_state,
         })
     }
 

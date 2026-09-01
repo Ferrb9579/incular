@@ -15,6 +15,16 @@ pub use incular_gestures::{
 
 use crate::{Widget, WidgetKind};
 use crate::{gestures::HitTestBehavior, tree::WidgetType};
+use incular_core::WindowResizeDirection;
+
+/// Framework-internal native window interaction selected by a retained hit
+/// region. Runtime consumes this through `incular_widgets::internal`.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WindowInteraction {
+    Move,
+    Resize(WindowResizeDirection),
+}
 
 /// Callback set used by [`Listener`].
 #[derive(Clone, Default)]
@@ -124,6 +134,10 @@ pub enum RawInputKind {
         group_id: TapRegionGroupId,
         consume_outside_taps: bool,
     },
+    WindowDragRegion,
+    WindowResizeRegion {
+        direction: WindowResizeDirection,
+    },
 }
 
 impl RawInputKind {
@@ -135,6 +149,8 @@ impl RawInputKind {
             Self::TapRegion { .. } => WidgetType::TapRegion,
             Self::TapRegionSurface => WidgetType::TapRegionSurface,
             Self::TextFieldTapRegion { .. } => WidgetType::TextFieldTapRegion,
+            Self::WindowDragRegion => WidgetType::WindowDragRegion,
+            Self::WindowResizeRegion { .. } => WidgetType::WindowResizeRegion,
         }
     }
 
@@ -159,7 +175,9 @@ impl RawInputKind {
                     HitTestBehavior::Translucent
                 }
             }
-            Self::TapRegionSurface => HitTestBehavior::DeferToChild,
+            Self::TapRegionSurface | Self::WindowDragRegion | Self::WindowResizeRegion { .. } => {
+                HitTestBehavior::DeferToChild
+            }
         }
     }
 
@@ -319,6 +337,11 @@ impl PartialEq for RawInputKind {
                     && tap_callbacks_eq(left, right)
             }
             (Self::TapRegionSurface, Self::TapRegionSurface) => true,
+            (Self::WindowDragRegion, Self::WindowDragRegion) => true,
+            (
+                Self::WindowResizeRegion { direction: left },
+                Self::WindowResizeRegion { direction: right },
+            ) => left == right,
             (
                 Self::TextFieldTapRegion {
                     callbacks: left,
@@ -355,6 +378,8 @@ impl fmt::Debug for RawInputKind {
             Self::TapRegion { .. } => "TapRegion",
             Self::TapRegionSurface => "TapRegionSurface",
             Self::TextFieldTapRegion { .. } => "TextFieldTapRegion",
+            Self::WindowDragRegion => "WindowDragRegion",
+            Self::WindowResizeRegion { .. } => "WindowResizeRegion",
         };
         formatter.write_str(name)
     }

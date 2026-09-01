@@ -8,6 +8,7 @@ mod app;
 mod router;
 mod title;
 mod view;
+mod window_chrome;
 
 pub use app::{
     ApplicationBootstrapHost, ApplicationBootstrapOptions, ApplicationBootstrapSpec, WidgetsApp,
@@ -31,3 +32,4 @@ pub use view::{
     ViewAnchorData, ViewAnchorSubscription, ViewController, ViewData, ViewEvent, ViewId,
     ViewLifecycle, ViewMetrics, ViewSubscription,
 };
+pub use window_chrome::{WindowDragRegion, WindowResizeRegion};

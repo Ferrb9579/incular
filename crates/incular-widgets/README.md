@@ -63,6 +63,18 @@ This crate depends on core, layout, painting, and the platform-neutral
 nor GPU resources. `GestureDetector` is the retained-tree adapter, while pointer
 event values and recognition state are owned by `incular-gestures`.
 
+## Custom desktop chrome
+
+`WindowDragRegion` and `WindowResizeRegion` are retained hit annotations for an
+undecorated native window. They own no native handle and never implement window
+movement by tracking desktop coordinates. Runtime turns an unhandled primary
+press into the corresponding semantic window operation, and the platform asks
+the compositor/window manager to perform the real move or resize. Interactive
+descendants—including buttons, editable/selectable text, gesture detectors,
+raw pointer listeners, and local draggables—take precedence before the window
+annotation is considered. This lets an entire title-bar row be draggable while
+its controls remain ordinary widgets.
+
 ## Vector painting
 
 `DecoratedBox`, `CustomPaint`, `Icon`, `ImageIcon`, and the decoration/value

@@ -105,7 +105,8 @@ pub use app_shell::{
     StringRouteInformationParser, Title, TitleController, TitleData, TitleError, View, ViewAnchor,
     ViewAnchorController, ViewAnchorData, ViewAnchorSubscription, ViewController, ViewData,
     ViewEvent, ViewId, ViewLifecycle, ViewMetrics, ViewSubscription, WidgetsApp,
-    WidgetsAppController, WidgetsAppData, WindowChromeSink, normalize_route_location,
+    WidgetsAppController, WidgetsAppData, WindowChromeSink, WindowDragRegion, WindowResizeRegion,
+    normalize_route_location,
 };
 pub use compositing::{
     AnnotatedRegion, BackdropFilter, CompositedTransformFollower, CompositedTransformTarget,

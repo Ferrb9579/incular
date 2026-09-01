@@ -89,6 +89,20 @@ are normalized to stable platform-error categories and the last per-window
 failure is visible through `WindowDiagnostics` without retaining native error
 objects.
 
+Window control stays semantic and native-handle free. `WindowHandle` can ask
+the compositor/window manager to begin an interactive move or edge/corner
+resize and can change minimize/maximize/fullscreen, decorations, resizability,
+size limits, level, icon, and attention policy. Interactive move/resize returns
+`NativeOperationRequest` because the OS may reject the gesture. Other setters
+remain enqueue operations; callers can inspect capabilities before requesting
+them and `WindowDiagnostics` records any backend failure. `requested_state` and
+`observed_state` remain distinct so asynchronous window-manager behavior is not
+mistaken for immediate acknowledgement.
+
+`BuildContext::window_handle()` gives a declarative window root access to its
+own command handle without exposing Winit. This is the intended boundary for
+custom title-bar controls and other window-local actions.
+
 `Signal` subscriptions are retained per root. A shared signal rebuilds only
 the roots that read it; a signal read only by one window leaves every other
 window idle. Physical metrics, DPI, safe/view insets, and native activation are

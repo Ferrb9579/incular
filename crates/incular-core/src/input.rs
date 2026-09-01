@@ -30,6 +30,29 @@ pub enum PointerDeviceKind {
     Unknown,
 }
 
+/// Edge/corner selected for a compositor-owned native window resize gesture.
+///
+/// This lives in `incular-core` because retained widgets can describe resize
+/// hit regions without depending on a platform window implementation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WindowResizeDirection {
+    East,
+    North,
+    NorthEast,
+    NorthWest,
+    South,
+    SouthEast,
+    SouthWest,
+    West,
+}
+
+/// Primary-button bit in Incular's portable pointer-button mask.
+///
+/// Raw pointer metadata follows Flutter's button-mask convention so the value
+/// is stable across platform adapters. Zero remains valid for legacy adapters
+/// that do not publish button metadata.
+pub const PRIMARY_POINTER_BUTTON: u32 = 1;
+
 /// IME composition is separate from committed text. Byte ranges always refer
 /// to valid UTF-8 boundaries in the preedit string when supplied.
 #[derive(Clone, Debug, PartialEq, Eq)]

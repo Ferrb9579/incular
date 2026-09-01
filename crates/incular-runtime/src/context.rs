@@ -199,6 +199,14 @@ impl BuildContext {
             .map(|manager| WindowOpener { manager })
     }
 
+    /// Returns a command handle for the native window owning this build.
+    /// Standalone/headless runtimes without an application window return None.
+    #[must_use]
+    pub fn window_handle(&self) -> Option<WindowHandle> {
+        let window_id = self.spawner.window_id()?;
+        self.window_manager.as_ref()?.handle(window_id)
+    }
+
     /// Returns the Tokio handle for advanced integrations. Tasks spawned
     /// directly through it are not owner-scoped; prefer [`Self::spawn`] or
     /// [`Self::spawn_into`] for UI work.

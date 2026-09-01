@@ -344,6 +344,10 @@ pub struct RuntimeSpawner {
 }
 
 impl RuntimeSpawner {
+    pub(crate) const fn window_id(&self) -> Option<WindowId> {
+        self.window_id
+    }
+
     /// Starts application-scoped Tokio work. Its output is observed through the
     /// returned state handle; use `spawn_into` to update UI-local state.
     pub fn spawn<F, T>(&self, future: F) -> Task<T>

@@ -15,6 +15,7 @@ use std::{fmt, path::PathBuf};
 mod capabilities;
 mod content_sensitivity;
 mod operation;
+mod window_control;
 
 pub use capabilities::{
     AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
@@ -29,6 +30,10 @@ pub use incular_config::{TransparencyMode, WindowSizePolicy};
 pub use operation::{
     NativeOperationCompletion, NativeRequestId, PlatformOperationError, PlatformOperationErrorKind,
     PlatformOperationResult,
+};
+pub use window_control::{
+    LogicalSizeLimits, LogicalSizeLimitsError, UserAttentionType, WindowIcon, WindowIconError,
+    WindowLevel, WindowObservedState, WindowRequestedState,
 };
 
 /// Resolves the persistent, local application-data directory through the
@@ -131,6 +136,8 @@ pub struct WindowOptions {
     pub background_color: Color,
     pub maximized: bool,
     pub fullscreen: Option<Fullscreen>,
+    pub window_level: WindowLevel,
+    pub window_icon: Option<WindowIcon>,
 }
 
 impl Default for WindowOptions {
@@ -149,6 +156,8 @@ impl Default for WindowOptions {
             background_color: defaults.background_color,
             maximized: defaults.maximized,
             fullscreen: None,
+            window_level: WindowLevel::Normal,
+            window_icon: None,
         }
     }
 }
@@ -199,6 +208,21 @@ impl WindowOptions {
             return Err(WindowOptionsError::InitialSizeAboveMaximum);
         }
         Ok(())
+    }
+
+    pub fn requested_state(&self) -> Result<WindowRequestedState, LogicalSizeLimitsError> {
+        let size_limits =
+            LogicalSizeLimits::new(self.minimum_logical_size, self.maximum_logical_size)?;
+        Ok(WindowRequestedState {
+            visible: self.visible,
+            minimized: false,
+            maximized: self.maximized,
+            fullscreen: self.fullscreen,
+            resizable: self.resizable,
+            decorations: self.decorations,
+            size_limits,
+            level: self.window_level,
+        })
     }
 }
 
@@ -289,6 +313,17 @@ pub enum WindowOperation {
     SetTitle(String),
     SetVisible(bool),
     SetLogicalSize(Size),
+    BeginMoveDrag,
+    BeginResizeDrag(incular_core::WindowResizeDirection),
+    SetMinimized(bool),
+    SetMaximized(bool),
+    SetFullscreen(Option<Fullscreen>),
+    SetResizable(bool),
+    SetDecorations(bool),
+    SetLogicalSizeLimits(LogicalSizeLimits),
+    SetWindowLevel(WindowLevel),
+    SetWindowIcon(Option<WindowIcon>),
+    RequestUserAttention(Option<UserAttentionType>),
     /// Applies the retained tree's effective capture-protection policy.
     SetContentSensitivity(incular_config::ContentSensitivity),
     RequestFocus,
@@ -341,12 +376,19 @@ impl WindowEvent {
         Self::new(window_id, WindowEventKind::RedrawRequested)
     }
 
+    #[must_use]
+    pub const fn state_changed(window_id: WindowId, state: WindowObservedState) -> Self {
+        Self::new(window_id, WindowEventKind::StateChanged(state))
+    }
+
     /// Returns the wrapped legacy event when this is a platform event.
     #[must_use]
     pub fn platform_event(&self) -> Option<&PlatformEvent> {
         match &self.kind {
             WindowEventKind::Platform(event) => Some(event),
-            WindowEventKind::Lifecycle(_) | WindowEventKind::RedrawRequested => None,
+            WindowEventKind::Lifecycle(_)
+            | WindowEventKind::RedrawRequested
+            | WindowEventKind::StateChanged(_) => None,
         }
     }
 }
@@ -360,6 +402,8 @@ pub enum WindowEventKind {
     Lifecycle(WindowLifecycle),
     /// The native surface is ready for the target window to present a frame.
     RedrawRequested,
+    /// Snapshot of native state that the active backend can actually observe.
+    StateChanged(WindowObservedState),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -634,6 +678,29 @@ pub fn raw_window_handles(window: &winit::window::Window) -> RawWindowHandles {
             .expect("window exposes a raw handle")
             .as_raw(),
         display: window.display_handle().ok().map(|handle| handle.as_raw()),
+    }
+}
+
+/// Native desktop window-system family for capability refinement.
+///
+/// This is a backend diagnostic/capability value, not a public native handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NativeWindowSystem {
+    Win32,
+    AppKit,
+    X11,
+    Wayland,
+    Other,
+}
+
+#[must_use]
+pub fn native_window_system(window: &winit::window::Window) -> NativeWindowSystem {
+    match raw_window_handles(window).window {
+        RawWindowHandle::Win32(_) => NativeWindowSystem::Win32,
+        RawWindowHandle::AppKit(_) => NativeWindowSystem::AppKit,
+        RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_) => NativeWindowSystem::X11,
+        RawWindowHandle::Wayland(_) => NativeWindowSystem::Wayland,
+        _ => NativeWindowSystem::Other,
     }
 }
 #[must_use]

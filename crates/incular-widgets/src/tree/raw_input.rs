@@ -11,6 +11,7 @@ use incular_gestures::{
 
 use crate::raw_input::{
     ListenerCallbacks, MouseRegionCallbacks, RawInputKind, TapRegionCallbacks, TapRegionGroupId,
+    WindowInteraction,
 };
 
 use super::*;
@@ -91,6 +92,50 @@ impl WidgetTree {
                 Some(RawInputKind::TextFieldTapRegion { enabled: true, .. })
             )
         })
+    }
+
+    /// Returns the deepest/frontmost custom-chrome interaction annotation at
+    /// `point`. Interactive descendants are resolved separately by Runtime and
+    /// take precedence before this annotation is acted upon.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn window_interaction_at(&self, point: Offset) -> Option<(ElementId, WindowInteraction)> {
+        self.raw_hit_elements(point).into_iter().find_map(|id| {
+            let interaction = match self.raw_input_kind(id)? {
+                RawInputKind::WindowDragRegion => WindowInteraction::Move,
+                RawInputKind::WindowResizeRegion { direction } => {
+                    WindowInteraction::Resize(*direction)
+                }
+                _ => return None,
+            };
+            (!self.window_interaction_blocked_by_descendant(id, point)).then_some((id, interaction))
+        })
+    }
+
+    fn window_interaction_blocked_by_descendant(&self, region: ElementId, point: Offset) -> bool {
+        let Some(mut current) = self
+            .hit_test(point)
+            .and_then(|render| self.element_for_render(render))
+        else {
+            return true;
+        };
+        loop {
+            if current == region {
+                return false;
+            }
+            let Some(element) = self.elements.get(current.0) else {
+                return true;
+            };
+            if window_chrome_blocks_at(element.widget.kind()) {
+                return true;
+            }
+            let Some(parent) = element.parent else {
+                // The raw annotation is not an ancestor of the visual target;
+                // another frontmost branch owns the press.
+                return true;
+            };
+            current = parent;
+        }
     }
 
     pub(super) fn sync_raw_input_state(&mut self, element: ElementId) {
@@ -713,5 +758,26 @@ impl WidgetTree {
                 recognizer.dispose();
             }
         }
+    }
+}
+
+fn window_chrome_blocks_at(kind: &WidgetKind) -> bool {
+    match kind {
+        WidgetKind::Button(_)
+        | WidgetKind::SelectableText { .. }
+        | WidgetKind::SelectionArea { .. }
+        | WidgetKind::SelectionContainer { .. }
+        | WidgetKind::TextField(_)
+        | WidgetKind::Gesture { .. }
+        | WidgetKind::Draggable { .. } => true,
+        WidgetKind::AbsorbPointer { absorbing, .. } => *absorbing,
+        WidgetKind::RawInput { kind, .. } => matches!(
+            kind,
+            RawInputKind::Listener { .. }
+                | RawInputKind::RawGestureDetector { .. }
+                | RawInputKind::TapRegion { .. }
+                | RawInputKind::TextFieldTapRegion { .. }
+        ),
+        _ => false,
     }
 }
