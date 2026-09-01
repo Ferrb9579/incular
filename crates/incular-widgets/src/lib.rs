@@ -61,6 +61,7 @@ mod selection_container;
 mod selection_listener;
 mod semantics;
 mod semantics_debugger;
+mod transient;
 mod tree;
 mod utilities;
 
@@ -140,7 +141,7 @@ pub use incular_animation::{
 pub use incular_config::{
     Alignment, AlignmentDirectional, Axis, AxisDirection, Brightness, Clip, CrossAxisAlignment,
     FlexFit, FractionalOffset, MainAxisAlignment, MainAxisSize, StackFit, TextDirection,
-    VerticalDirection, WrapAlignment, WrapCrossAlignment,
+    TransientPresentation, TransientRole, VerticalDirection, WrapAlignment, WrapCrossAlignment,
 };
 pub use incular_core::{Color, Key, LocalKey, Offset, Rect, Size, UniqueKey, ValueKey};
 pub use incular_image::{AssetImage, FileImage, ImageConfiguration, ImageProvider, MemoryImage};
@@ -228,6 +229,7 @@ pub use selection_container::SelectionContainer;
 pub use selection_listener::SelectionListener;
 pub use semantics::{BlockSemantics, ExcludeSemantics, MergeSemantics, Semantics};
 pub use semantics_debugger::{DEFAULT_SEMANTICS_DEBUGGER_NODE_LIMIT, SemanticsDebugger};
+pub use transient::{TransientSurfaceId, TransientSurfaceSnapshot};
 pub use tree::{
     BoxFit, BuildContext, ColorFiltered, DecoratedBox, EditableText, FadeTransition, Icon, Image,
     ImageRepeat, Opacity, RotationTransition, ScaleTransition, SlideTransition, Text,

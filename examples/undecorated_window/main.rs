@@ -48,7 +48,8 @@ fn main() {
                                 Text::new(
                                     "This content reaches the window edges because \
                                      decorations are disabled. Content sizing also lets the native \
-                                     host grow for overlays and shrink when they close.",
+                                     host follow primary layout changes without coupling menus or \
+                                     other transient overlays to top-level size.",
                                 )
                                 .style(
                                     TextStyle::new()

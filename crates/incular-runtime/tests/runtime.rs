@@ -635,12 +635,12 @@ fn take_resize_requests(application: &mut Application) -> Vec<Size> {
 }
 
 #[test]
-fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
+fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
     use incular_config::WindowSizePolicy;
     use incular_widgets::{Positioned, Stack};
 
-    let open = Signal::new(false);
-    let observed = open.clone();
+    let settings_open = Signal::new(false);
+    let observed = settings_open.clone();
     let options = WindowOptions {
         initial_logical_size: Size::new(100., 200.),
         decorations: false,
@@ -648,18 +648,22 @@ fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
         ..WindowOptions::default()
     };
     let mut application = Application::new_with_options(options, move |_| {
-        let base = Widget::box_(Size::new(100., 200.), Color::WHITE);
-        if observed.get() {
-            let panel: Widget = Positioned::new(Widget::box_(Size::new(100., 120.), Color::BLACK))
-                .left(0.)
-                .top(200.)
-                .width(100.)
-                .height(120.)
-                .into();
-            Stack::new([base, panel]).into()
+        let base_size = if observed.get() {
+            Size::new(420., 560.)
         } else {
-            Stack::new([base]).into()
-        }
+            Size::new(100., 200.)
+        };
+        let base = Widget::box_(base_size, Color::WHITE);
+        // Paint/layout overflow outside the primary root extent is not window
+        // content sizing. This models a transient overlay/menu that must be
+        // presented independently rather than making the top-level chase it.
+        let panel: Widget = Positioned::new(Widget::box_(Size::new(100., 120.), Color::BLACK))
+            .left(0.)
+            .top(base_size.height)
+            .width(100.)
+            .height(120.)
+            .into();
+        Stack::new([base, panel]).into()
     })
     .unwrap();
     let id = application.primary_window();
@@ -674,7 +678,7 @@ fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
         .unwrap();
     assert!(take_resize_requests(&mut application).is_empty());
 
-    assert!(open.set(true));
+    assert!(settings_open.set(true));
     application
         .run_window_frame_at(
             id,
@@ -684,7 +688,7 @@ fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
         .unwrap();
     assert_eq!(
         take_resize_requests(&mut application),
-        [Size::new(100., 320.)]
+        [Size::new(420., 560.)]
     );
 
     // The native resize is asynchronous. Re-rendering before a metrics event
@@ -701,24 +705,24 @@ fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
     application.handle_window_event(WindowEvent::platform(
         id,
         PlatformEvent::Metrics(WindowMetrics::new(
-            incular_platform::PhysicalSize::new(100, 320),
+            incular_platform::PhysicalSize::new(420, 560),
             1.,
         )),
     ));
     application
         .run_window_frame_at(
             id,
-            Constraints::tight(Size::new(100., 320.)),
+            Constraints::tight(Size::new(420., 560.)),
             Instant::now(),
         )
         .unwrap();
     assert!(take_resize_requests(&mut application).is_empty());
 
-    assert!(open.set(false));
+    assert!(settings_open.set(false));
     application
         .run_window_frame_at(
             id,
-            Constraints::tight(Size::new(100., 320.)),
+            Constraints::tight(Size::new(420., 560.)),
             Instant::now(),
         )
         .unwrap();

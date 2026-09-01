@@ -80,7 +80,7 @@ fn material_menu_opens_in_an_application_frame_without_recursing() {
 }
 
 #[test]
-fn content_sized_undecorated_window_expands_for_material_menu() {
+fn material_menu_does_not_resize_a_content_sized_undecorated_window() {
     let controller = MenuController::new();
     let controller_for_build = controller.clone();
     let options = WindowOptions {
@@ -109,32 +109,32 @@ fn content_sized_undecorated_window_expands_for_material_menu() {
     let constraints = Constraints::tight(Size::new(100.0, 200.0));
     app.run_window_frame_at(window, constraints, std::time::Instant::now())
         .expect("initial content-sized frame");
-    let baseline_extent = app
-        .take_native_window_commands()
-        .into_iter()
-        .filter_map(|command| match command {
-            NativeWindowCommand::Operate(WindowCommand {
-                operation: WindowOperation::SetLogicalSize(size),
-                ..
-            }) => Some(size),
-            _ => None,
-        })
-        .next_back()
-        .unwrap_or(Size::new(100.0, 200.0));
+    let _ = app.take_native_window_commands();
 
     controller.open();
     app.run_window_frame_at(window, constraints, std::time::Instant::now())
         .expect("opened frame");
-    let requested = app
+    let transients = app.transient_surfaces(window);
+    assert_eq!(transients.len(), 1);
+    assert_eq!(transients[0].role, TransientRole::Menu);
+    assert_eq!(transients[0].presentation, TransientPresentation::Auto);
+    assert!(transients[0].anchor_rect.size.width > 0.0);
+    assert!(transients[0].anchor_rect.size.height > 0.0);
+    assert!(transients[0].content_rect.size.height > 0.0);
+    let resize_requested = app
         .take_native_window_commands()
         .into_iter()
-        .find_map(|command| match command {
-            NativeWindowCommand::Operate(WindowCommand {
-                operation: WindowOperation::SetLogicalSize(size),
-                ..
-            }) => Some(size),
-            _ => None,
-        })
-        .expect("opening menu requests a larger native content host");
-    assert!(requested.height > baseline_extent.height);
+        .any(|command| {
+            matches!(
+                command,
+                NativeWindowCommand::Operate(WindowCommand {
+                    operation: WindowOperation::SetLogicalSize(_),
+                    ..
+                })
+            )
+        });
+    assert!(
+        !resize_requested,
+        "transient menu presentation must not change top-level content size"
+    );
 }

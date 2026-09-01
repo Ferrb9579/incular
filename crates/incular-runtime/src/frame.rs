@@ -585,6 +585,14 @@ impl Runtime {
     pub fn content_sensitivity(&self) -> incular_config::ContentSensitivity {
         self.tree.content_sensitivity()
     }
+
+    /// Visible transient portals after the latest layout. Desktop adapters use
+    /// this retained snapshot to bind popup presentation to the owning window
+    /// without coupling controls to a native event loop.
+    #[must_use]
+    pub fn transient_surfaces(&self) -> Vec<incular_widgets::TransientSurfaceSnapshot> {
+        self.tree.transient_surfaces()
+    }
     #[cfg(feature = "devtools")]
     pub(crate) fn devtools_edit_property(
         &mut self,

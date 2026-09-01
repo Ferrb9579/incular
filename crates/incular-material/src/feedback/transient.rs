@@ -674,6 +674,7 @@ impl Tooltip {
         };
         OverlayPortal::new(anchor)
             .overlay_child(popup)
+            .role(incular_widgets::TransientRole::Tooltip)
             .show(self.enabled && self.controller.is_visible())
             .into()
     }

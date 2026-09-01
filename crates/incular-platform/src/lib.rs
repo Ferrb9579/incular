@@ -104,9 +104,11 @@ pub struct WindowOptions {
     /// Selects whether native viewport metrics or retained content own size.
     ///
     /// In [`WindowSizePolicy::Content`] mode `initial_logical_size` is also the
-    /// minimum content viewport. The framework can grow the native window to
-    /// contain retained scene overflow and shrink it back when that overflow
-    /// disappears. This is deliberately independent of window decorations.
+    /// minimum content viewport. The framework follows the retained root's
+    /// layout size and can shrink back when primary content becomes smaller.
+    /// Paint-only overflow such as shadows and transient overlays does not
+    /// resize the native host. This is deliberately independent of window
+    /// decorations.
     pub size_policy: WindowSizePolicy,
     pub minimum_logical_size: Option<Size>,
     pub maximum_logical_size: Option<Size>,

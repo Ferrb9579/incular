@@ -33,9 +33,10 @@ impl TransparencyMode {
 ///
 /// `Viewport` is the normal application-window model: native window metrics
 /// are authoritative and the root receives tight viewport constraints.
-/// `Content` is intended for compact utility/popup-style windows: the initial
-/// logical size is the stable minimum content viewport, retained content may
-/// grow beyond it, and the native host follows that measured scene extent.
+/// `Content` is intended for compact, content-sized top-level windows: the
+/// initial logical size is the stable minimum content viewport, retained content may
+/// grow beyond it, and the native host follows the measured root layout extent.
+/// Paint-only overflow and transient presentation are not content size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WindowSizePolicy {
     #[default]

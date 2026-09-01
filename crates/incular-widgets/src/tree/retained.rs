@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::environment::{ContentSensitivity, SensitiveContentHost};
+use crate::transient::{TransientPortalMarker, TransientSurfaceId, TransientSurfaceSnapshot};
 
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -96,13 +97,62 @@ impl WidgetTree {
             .unwrap_or(ContentSensitivity::NotSensitive)
     }
 
-    /// World-space bounds of the retained scene produced by this tree.
+    /// Layout size of the retained root before paint-only overflow is applied.
+    ///
+    /// This is the framework's content-sizing boundary. Transforms, shadows,
+    /// filters, and positioned/overlay paint overflow must not silently become
+    /// native-window layout. Call [`Self::scene_bounds`] when visual bounds are
+    /// actually required.
+    #[must_use]
+    pub fn root_layout_size(&self) -> Option<Size> {
+        let root = self.root?;
+        let render = self.render_id(root)?;
+        self.renders.get(render.0).map(|node| node.size)
+    }
+
+    /// World-space visual bounds of the retained scene produced by this tree.
     ///
     /// The compositor is the authority for transforms and viewport clips, so
     /// callers do not need to reconstruct geometry from widget descriptors.
     #[must_use]
     pub fn scene_bounds(&self) -> Option<Rect> {
         self.compositor.scene_bounds()
+    }
+
+    /// Visible semantic transient portals after the latest retained layout.
+    ///
+    /// The first stack child is the anchor. Barrier children remain owned by
+    /// the parent view; `popup_child_index` identifies only the transient
+    /// content so native presentation never inherits full-window barrier
+    /// bounds.
+    #[must_use]
+    pub fn transient_surfaces(&self) -> Vec<TransientSurfaceSnapshot> {
+        self.elements
+            .iter()
+            .filter_map(|(raw, element)| {
+                let marker = element
+                    .environment_override
+                    .as_ref()?
+                    .value
+                    .downcast_ref::<TransientPortalMarker>()?;
+                if !marker.show {
+                    return None;
+                }
+                // Environment scopes materialize one transparent child. The
+                // open OverlayPortal materializes a Stack beneath that scope.
+                let stack = *element.children.first()?;
+                let stack_element = self.elements.get(stack.0)?;
+                let anchor = *stack_element.children.first()?;
+                let popup = *stack_element.children.get(marker.popup_child_index)?;
+                Some(TransientSurfaceSnapshot {
+                    id: TransientSurfaceId::from_parts(raw.index(), raw.generation()),
+                    role: marker.role,
+                    presentation: marker.presentation,
+                    anchor_rect: self.element_bounds(anchor)?,
+                    content_rect: self.element_bounds(popup)?,
+                })
+            })
+            .collect()
     }
 
     /// Records the input or command responsible for subsequent frame work.

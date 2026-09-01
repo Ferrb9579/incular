@@ -41,7 +41,13 @@ forms.
 `WindowSizePolicy` makes native size ownership explicit. `Viewport` keeps the
 ordinary desktop contract where native metrics tightly constrain the retained
 root. `Content` is opt-in for compact utility/popup-style windows: the declared
-initial size remains a stable minimum, retained visual overflow can request a
-larger native host, and the host shrinks back when that overflow disappears.
-Decoration is deliberately unrelated to this policy; an undecorated window is
-not implicitly content-sized.
+initial size remains a stable minimum, the retained root layout can request a
+larger native host, and the host shrinks back when primary content becomes
+smaller. Paint-only overflow, shadows, filters, and transient portals do not
+participate in top-level sizing. Decoration is deliberately unrelated to this
+policy; an undecorated window is not implicitly content-sized.
+
+`TransientPresentation` is orthogonal again: `Auto` lets a capable platform
+host lift menus/popovers/tooltips into a transient surface and otherwise keeps
+them in the owning view's overlay, while `Overlay` explicitly requests the
+in-view representation. This policy never implies a top-level resize.

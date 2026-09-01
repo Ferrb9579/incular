@@ -14,7 +14,7 @@ use incular_core::{Color, Offset};
 use incular_text::TextStyle;
 use incular_widgets::{
     Border, BoxDecoration, Container, GestureDetector, HitTestBehavior, ListView, Positioned, Row,
-    SizedBox, Stack, Text, Widget,
+    SizedBox, Text, TransientRole, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -769,7 +769,7 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
             .top(self.offset.y)
             .height(panel_height)
             .into();
-        let overlay_child = if self.barrier_dismissible {
+        let barrier = if self.barrier_dismissible {
             let controller = self.controller.clone();
             let on_canceled = self.on_canceled.clone();
             let barrier = GestureDetector::new(Container::new().color(Color::TRANSPARENT))
@@ -780,14 +780,18 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
                         callback();
                     }
                 });
-            Stack::new([Positioned::fill(barrier).into(), panel]).into()
+            Some(Widget::from(Positioned::fill(barrier)))
         } else {
-            panel
+            None
         };
-        incular_widgets::OverlayPortal::new(anchor)
-            .overlay_child(overlay_child)
-            .show(true)
-            .into()
+        let mut portal = incular_widgets::OverlayPortal::new(anchor)
+            .overlay_child(panel)
+            .role(TransientRole::Menu)
+            .show(true);
+        if let Some(barrier) = barrier {
+            portal = portal.barrier_child(barrier);
+        }
+        portal.into()
     }
 }
 

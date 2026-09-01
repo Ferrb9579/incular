@@ -7,7 +7,8 @@ use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
 use incular_widgets::{
-    Container, GestureDetector, HitTestBehavior, Positioned, Stack, Text, Widget,
+    Container, GestureDetector, HitTestBehavior, OverlayPortal, Positioned, Text, TransientRole,
+    Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -286,15 +287,23 @@ impl MenuAnchor {
         } else {
             HitTestBehavior::Translucent
         };
-        let barrier = GestureDetector::new(Container::new().color(Color::TRANSPARENT))
-            .behavior(barrier_behavior)
-            .on_tap(move || {
-                controller.close();
-                if let Some(callback) = on_close.as_ref() {
-                    callback();
-                }
-            });
-        let overlay: Widget = Stack::new([barrier.into(), anchor, panel]).into();
+        let barrier: Widget = Positioned::fill(
+            GestureDetector::new(Container::new().color(Color::TRANSPARENT))
+                .behavior(barrier_behavior)
+                .on_tap(move || {
+                    controller.close();
+                    if let Some(callback) = on_close.as_ref() {
+                        callback();
+                    }
+                }),
+        )
+        .into();
+        let overlay: Widget = OverlayPortal::new(anchor)
+            .barrier_child(barrier)
+            .overlay_child(panel)
+            .role(TransientRole::Menu)
+            .show(true)
+            .into();
         let _ = (
             self.clip_behavior,
             self.cross_axis_unconstrained,

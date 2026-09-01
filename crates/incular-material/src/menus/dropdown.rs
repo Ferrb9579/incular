@@ -865,6 +865,7 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
         if open.get() {
             incular_widgets::OverlayPortal::new(anchor)
                 .overlay_child(panel)
+                .role(incular_widgets::TransientRole::ComboBox)
                 .show(true)
                 .into()
         } else {

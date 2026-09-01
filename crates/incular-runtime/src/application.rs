@@ -726,6 +726,21 @@ impl Application {
         self.registry.borrow().contains(window_id)
     }
 
+    /// Visible transient surfaces belonging to `window_id` after its latest
+    /// retained layout. Geometry is window-local logical space and therefore
+    /// remains anchored when the native parent moves; the platform adapter is
+    /// responsible only for mapping that geometry into desktop coordinates.
+    #[must_use]
+    pub fn transient_surfaces(
+        &self,
+        window_id: WindowId,
+    ) -> Vec<incular_widgets::TransientSurfaceSnapshot> {
+        self.registry
+            .borrow()
+            .get(window_id)
+            .map_or_else(Vec::new, |record| record.runtime.transient_surfaces())
+    }
+
     pub fn set_last_window_policy(&mut self, policy: LastWindowPolicy) {
         self.last_window_policy = policy;
     }
@@ -1027,7 +1042,7 @@ impl Application {
                             content_size_request = record.content_sizing.reconcile(
                                 &record.options,
                                 record.metrics,
-                                record.runtime.tree().scene_bounds(),
+                                record.runtime.tree().root_layout_size(),
                             );
                             record.last_frame = FrameRecord {
                                 frame: 0,

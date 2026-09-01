@@ -8,9 +8,10 @@
 //!
 //! # Platform-neutral limits
 //!
-//! `OverlayPortal` currently lowers to a retained stack when an overlay host is
-//! not available. Native window adapters can lift that logical overlay into a
-//! real overlay without changing this API. The existing raw input layer has
+//! `OverlayPortal` is a semantic transient portal. A constrained host can keep
+//! it in the owning view while a capable desktop adapter can lift the same
+//! retained relationship into a true transient surface without changing this
+//! API. The existing raw input layer has
 //! no window-global pointer route, so tap-to-dismiss outside the tooltip is
 //! provided through an ancestor `TapRegionSurface` when one exists, plus the
 //! child listener and the explicit controller dismissal methods. A host that
@@ -1397,6 +1398,7 @@ impl RawTooltip {
 
         OverlayPortal::new(anchor)
             .overlay_child(follower)
+            .role(crate::TransientRole::Tooltip)
             .show(self.controller.is_visible())
             .into()
     }

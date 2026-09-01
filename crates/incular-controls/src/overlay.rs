@@ -3,7 +3,9 @@
 
 use incular_config::EdgeInsets;
 use incular_core::Offset;
-use incular_widgets::{OverlayPortal as RawOverlayPortal, Positioned, Widget};
+use incular_widgets::{
+    OverlayPortal as RawOverlayPortal, Positioned, TransientPresentation, TransientRole, Widget,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Side {
@@ -34,6 +36,8 @@ pub struct OverlayPortal {
     child: Widget,
     overlay: Option<Widget>,
     open: bool,
+    presentation: TransientPresentation,
+    role: TransientRole,
 }
 impl OverlayPortal {
     #[must_use]
@@ -42,6 +46,8 @@ impl OverlayPortal {
             child: child.into(),
             overlay: None,
             open: false,
+            presentation: TransientPresentation::Auto,
+            role: TransientRole::Popover,
         }
     }
     #[must_use]
@@ -54,6 +60,18 @@ impl OverlayPortal {
         self.open = value;
         self
     }
+
+    #[must_use]
+    pub fn presentation(mut self, value: TransientPresentation) -> Self {
+        self.presentation = value;
+        self
+    }
+
+    #[must_use]
+    pub fn role(mut self, value: TransientRole) -> Self {
+        self.role = value;
+        self
+    }
 }
 impl From<OverlayPortal> for Widget {
     fn from(value: OverlayPortal) -> Self {
@@ -63,6 +81,8 @@ impl From<OverlayPortal> for Widget {
                     .overlay
                     .unwrap_or_else(|| incular_widgets::SizedBox::shrink().into()),
             )
+            .presentation(value.presentation)
+            .role(value.role)
             .show(value.open)
             .into()
     }

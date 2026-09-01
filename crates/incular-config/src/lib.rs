@@ -10,6 +10,7 @@ mod defaults;
 mod environment;
 mod insets;
 mod localization;
+mod transient;
 
 pub use alignment::{
     Alignment, AlignmentDirectional, Axis, AxisDirection, Clip, CrossAxisAlignment, FlexFit,
@@ -25,3 +26,4 @@ pub use localization::{
     LocaleResolver, LocalizationCatalog, LocalizationError, LocalizedMessage, PluralCategory,
     PluralForms,
 };
+pub use transient::{TransientPresentation, TransientRole};

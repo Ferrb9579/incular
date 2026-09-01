@@ -9,7 +9,7 @@ use crate::tasks::{self, TaskScope};
 use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
 use incular_accessibility::AccessibilityDiagnostics;
 use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment, WindowSizePolicy};
-use incular_core::{Rect, RestorationKey, RestorationScope, Size};
+use incular_core::{RestorationKey, RestorationScope, Size};
 use incular_platform::{WindowId, WindowLifecycle, WindowMetrics, WindowOptions};
 use incular_widgets::Widget;
 use std::{
@@ -79,8 +79,9 @@ pub(crate) struct WindowRecord {
 
 /// Window-local negotiation state for content-driven native sizing.
 ///
-/// The retained scene produces a logical target, while the native host remains
-/// asynchronous. Remembering the outstanding target prevents redraws from
+/// The retained root layout produces a logical target, while the native host
+/// remains asynchronous. Paint-only overflow (including transient overlays,
+/// shadows, and filters) is deliberately excluded. Remembering the outstanding target prevents redraws from
 /// flooding the event loop with identical resize requests before metrics catch
 /// up.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -114,7 +115,7 @@ impl ContentSizeCoordinator {
         &mut self,
         options: &WindowOptions,
         metrics: WindowMetrics,
-        scene_bounds: Option<Rect>,
+        root_layout_size: Option<Size>,
     ) -> Option<Size> {
         if options.size_policy != WindowSizePolicy::Content {
             self.pending = None;
@@ -122,12 +123,7 @@ impl ContentSizeCoordinator {
         }
 
         let minimum = content_minimum(options);
-        let extent = scene_bounds.map_or(Size::ZERO, |bounds| {
-            Size::new(
-                (bounds.origin.x + bounds.size.width).max(0.0),
-                (bounds.origin.y + bounds.size.height).max(0.0),
-            )
-        });
+        let extent = root_layout_size.unwrap_or(Size::ZERO);
         let mut target = Size::new(
             minimum.width.max(extent.width),
             minimum.height.max(extent.height),
