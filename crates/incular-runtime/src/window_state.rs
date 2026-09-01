@@ -6,7 +6,9 @@ use crate::frame::Runtime;
 use crate::profiling::{FrameRecord, GpuSample, RenderFrameMetrics};
 use crate::restoration;
 use crate::tasks::{self, TaskScope};
-use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
+use crate::window_commands::{
+    DisplayCatalog, NativeWindowCommand, WindowCommandBridge, WindowHandle,
+};
 use incular_accessibility::AccessibilityDiagnostics;
 use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment, WindowSizePolicy};
 use incular_core::{RestorationKey, RestorationScope, Size};
@@ -92,7 +94,7 @@ pub(crate) struct WindowRecord {
     pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) last_platform_error: Option<PlatformOperationError>,
     pub(crate) requested_state: WindowRequestedState,
-    pub(crate) observed_state: WindowObservedState,
+    pub(crate) observed_state: Arc<RwLock<WindowObservedState>>,
 }
 
 /// Window-local negotiation state for content-driven native sizing.
@@ -318,6 +320,7 @@ pub(crate) struct WindowManager {
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) restoration: Option<restoration::RestorationManager>,
     pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,
+    pub(crate) displays: Arc<RwLock<DisplayCatalog>>,
 }
 
 impl WindowManager {
@@ -349,6 +352,7 @@ impl WindowManager {
                 .read()
                 .expect("application capability snapshot lock"),
         ));
+        let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
         let scope = tasks::TaskScheduler::spawner(&self.scheduler).scope();
         scope.bind_window(id);
         let metrics = initial_metrics(&options);
@@ -392,7 +396,7 @@ impl WindowManager {
                 capabilities: capabilities.clone(),
                 last_platform_error: None,
                 requested_state,
-                observed_state: WindowObservedState::default(),
+                observed_state: observed_state.clone(),
             },
         );
         self.sync_restorable_windows(true);
@@ -406,6 +410,8 @@ impl WindowManager {
             id,
             bridge: self.bridge.clone(),
             capabilities,
+            observed_state,
+            displays: self.displays.clone(),
         })
     }
 
@@ -452,6 +458,7 @@ impl WindowManager {
                 .read()
                 .expect("application capability snapshot lock"),
         ));
+        let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
         let spawner = tasks::TaskScheduler::spawner_for(&self.scheduler, id);
         let window_scope = spawner.scope();
         window_scope.bind_window(id);
@@ -552,7 +559,7 @@ impl WindowManager {
                 capabilities: capabilities.clone(),
                 last_platform_error: None,
                 requested_state,
-                observed_state: WindowObservedState::default(),
+                observed_state: observed_state.clone(),
             },
         );
         self.sync_restorable_windows(true);
@@ -566,19 +573,24 @@ impl WindowManager {
             id,
             bridge: self.bridge.clone(),
             capabilities,
+            observed_state,
+            displays: self.displays.clone(),
         })
     }
 
     pub(crate) fn handle(&self, id: WindowId) -> Option<WindowHandle> {
         let registry = self.registry.upgrade()?;
-        let capabilities = {
+        let (capabilities, observed_state) = {
             let registry = registry.borrow();
-            registry.get(id)?.capabilities.clone()
+            let record = registry.get(id)?;
+            (record.capabilities.clone(), record.observed_state.clone())
         };
         Some(WindowHandle {
             id,
             bridge: self.bridge.clone(),
             capabilities,
+            observed_state,
+            displays: self.displays.clone(),
         })
     }
 

@@ -234,6 +234,7 @@ fn requested_window_state_changes_before_observed_native_state() {
         fullscreen: Some(false),
         resizable: Some(true),
         decorations: Some(false),
+        ..WindowObservedState::default()
     };
     application.handle_window_event(WindowEvent::state_changed(id, observed));
     let diagnostics = application.window_diagnostics(id).expect("diagnostics");

@@ -1949,6 +1949,10 @@ name = "incular-macos"
 version = "0.1.0"
 dependencies = [
  "incular-desktop",
+ "incular-platform",
+ "incular-runtime",
+ "objc2-app-kit 0.2.2",
+ "winit",
 ]
 
 [[package]]
@@ -2112,9 +2116,12 @@ version = "0.1.0"
 dependencies = [
  "crash-handler",
  "incular-desktop",
+ "incular-platform",
  "incular-runtime",
  "incular-widgets",
  "minidump-writer",
+ "windows-sys 0.52.0",
+ "winit",
 ]
 
 [[package]]

@@ -14,8 +14,8 @@ use crate::scheduler_counters;
 use crate::simulation::{self, Screenshot, Simulation, SimulationError};
 use crate::tasks::{self, RuntimeWake, Task, TaskFailure, TaskHandle, TokioHandle};
 use crate::window_commands::{
-    NativeOperationCompletionStatus, NativeWindowCommand, QueuedNativeRequest, QueuedWindowCommand,
-    WindowCommandBridge, WindowHandle,
+    DisplayCatalog, NativeOperationCompletionStatus, NativeWindowCommand, QueuedNativeRequest,
+    QueuedWindowCommand, WindowCommandBridge, WindowHandle,
 };
 use crate::window_state::{
     ApplicationDiagnostics, ContentSizeCoordinator, WindowDiagnostics, WindowManager, WindowRecord,
@@ -26,10 +26,10 @@ use incular_accessibility::{
 };
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_platform::{
-    Clipboard, NativeOperationCompletion, NativeRequestId, PlatformCapabilities, PlatformEvent,
-    PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
-    TextInputCommand, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
-    WindowOperation, WindowOptions,
+    Clipboard, DisplayId, DisplaySnapshot, NativeOperationCompletion, NativeRequestId,
+    PlatformCapabilities, PlatformEvent, PlatformLifecycle, PlatformOperationError,
+    PlatformOperationErrorKind, PlatformOperationResult, TextInputCommand, WindowCommand,
+    WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
 };
 use incular_rendering::DisplayList;
 use incular_widgets::Widget;
@@ -63,6 +63,7 @@ pub struct Application {
     pub(crate) request_cancellation_receiver: mpsc::Receiver<NativeRequestId>,
     pending_native_requests: HashMap<NativeRequestId, PendingNativeRequest>,
     platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
+    display_catalog: Arc<RwLock<DisplayCatalog>>,
     pub(crate) simulation_receiver: mpsc::Receiver<simulation::SimulationRequest>,
     pub(crate) simulation_bridge: Arc<simulation::SimulationBridge>,
     pub(crate) simulation_frame_waiters:
@@ -158,6 +159,7 @@ impl Application {
         let (simulation_sender, simulation_receiver) = mpsc::channel();
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
+        let display_catalog = Arc::new(RwLock::new(DisplayCatalog::default()));
         let bridge = Arc::new(WindowCommandBridge {
             sender,
             cancellation_sender,
@@ -172,6 +174,7 @@ impl Application {
             native_commands: native_commands.clone(),
             restoration: restoration.clone(),
             application_capabilities: platform_capabilities.clone(),
+            displays: display_catalog.clone(),
         };
         let primary_window = manager
             .open_window_with_inner(options, build, primary_restoration)?
@@ -184,6 +187,7 @@ impl Application {
             request_cancellation_receiver,
             pending_native_requests: HashMap::new(),
             platform_capabilities,
+            display_catalog,
             simulation_receiver,
             simulation_bridge,
             simulation_frame_waiters: HashMap::new(),
@@ -322,6 +326,61 @@ impl Application {
             .platform_capabilities
             .read()
             .expect("application capability snapshot lock")
+    }
+
+    /// Replaces the backend's immutable connected-display snapshot.
+    ///
+    /// Display IDs are allocated/generationally managed by the native backend.
+    /// Replacing the snapshot immediately invalidates removed IDs at this API
+    /// boundary; a later display using the same slot must have a new generation.
+    /// Replaces the native backend's immutable display snapshot catalog.
+    ///
+    /// This is public for sibling platform adapters and headless/test hosts; UI
+    /// code should read displays through [`Application::displays`] or a
+    /// [`WindowHandle`](crate::WindowHandle), not manufacture native topology.
+    #[doc(hidden)]
+    pub fn publish_displays(
+        &mut self,
+        displays: impl IntoIterator<Item = DisplaySnapshot>,
+        primary: Option<DisplayId>,
+    ) {
+        self.display_catalog
+            .write()
+            .expect("display catalog lock")
+            .replace(displays, primary);
+    }
+
+    #[must_use]
+    pub fn displays(&self) -> Vec<DisplaySnapshot> {
+        self.display_catalog
+            .read()
+            .expect("display catalog lock")
+            .all()
+    }
+
+    #[must_use]
+    pub fn display(&self, id: DisplayId) -> Option<DisplaySnapshot> {
+        self.display_catalog
+            .read()
+            .expect("display catalog lock")
+            .get(id)
+    }
+
+    #[must_use]
+    pub fn primary_display(&self) -> Option<DisplaySnapshot> {
+        self.display_catalog
+            .read()
+            .expect("display catalog lock")
+            .primary()
+    }
+
+    #[must_use]
+    pub fn current_display(&self, window_id: WindowId) -> Option<DisplaySnapshot> {
+        let display_id = self
+            .window_handle(window_id)?
+            .observed_state()
+            .current_display?;
+        self.display(display_id)
     }
 
     /// Publishes one backend/session capability snapshot and applies it to all
@@ -1044,7 +1103,10 @@ impl Application {
             WindowEventKind::RedrawRequested => {}
             WindowEventKind::StateChanged(state) => {
                 let _ = self.with_window_mut(window_id, |record| {
-                    record.observed_state = state;
+                    *record
+                        .observed_state
+                        .write()
+                        .expect("window observed-state snapshot lock") = state;
                 });
             }
         }
@@ -1566,6 +1628,7 @@ impl Application {
                                     return false;
                                 }
                             }
+                            WindowOperation::SetOuterPosition(_) => {}
                             WindowOperation::BeginMoveDrag
                             | WindowOperation::BeginResizeDrag(_) => {}
                             WindowOperation::SetMinimized(minimized) => {
@@ -1784,7 +1847,10 @@ impl Application {
                 .expect("window capability snapshot lock"),
             last_platform_error: record.last_platform_error.clone(),
             requested_state: record.requested_state,
-            observed_state: record.observed_state,
+            observed_state: *record
+                .observed_state
+                .read()
+                .expect("window observed-state snapshot lock"),
         })
     }
 

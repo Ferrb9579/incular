@@ -42,6 +42,23 @@ flag. `Unknown` means no backend/session has published support yet;
 for session-dependent facilities such as Wayland placement and native desktop
 services.
 
+## Displays and placement
+
+`DisplayId` is a generational Incular identity, not a monitor name or an
+enumeration index. `DisplaySnapshot` is immutable and distinguishes monitor
+pixel size from optional desktop-global bounds and optional usable/work area.
+Display-local logical/physical coordinates have dedicated wrapper types so a
+mixed-DPI conversion never silently treats one monitor's scale as a global
+desktop scale. Global screen positions likewise use explicit physical screen
+types rather than widget `Offset` values.
+
+Top-level placement is capability-gated. Win32, AppKit, and X11 can expose
+Winit's physical desktop position/bounds; Wayland deliberately reports global
+bounds, outer-position queries, and outer-position setters as unsupported.
+Wayland still exposes display-local size/scale/name and current-display
+association where Winit can provide them. A missing work area is represented as
+`None` and must never be replaced with full monitor bounds under the same API.
+
 `WindowEvent` associates existing `PlatformEvent` input/metrics/close data
 with a normalized `WindowId`; `WindowLifecycle`, `RedrawRequested`, and
 `StateChanged` provide the extra per-window state native adapters need without

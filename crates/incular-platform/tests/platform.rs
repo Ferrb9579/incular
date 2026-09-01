@@ -236,6 +236,7 @@ fn state_changed_events_do_not_masquerade_as_legacy_platform_events() {
         fullscreen: Some(false),
         resizable: Some(true),
         decorations: Some(false),
+        ..WindowObservedState::default()
     };
     let event = WindowEvent::state_changed(window_id, observed);
     assert_eq!(event.window_id, window_id);
@@ -266,6 +267,74 @@ fn dpi_round_trip_supports_fractional_scales() {
     assert_eq!(
         m.logical_to_physical(Offset::new(50., 20.)),
         Offset::new(75., 30.)
+    );
+}
+
+#[test]
+fn display_local_coordinates_are_explicit_and_mixed_dpi_safe() {
+    let display = DisplaySnapshot {
+        id: DisplayId::from_parts(4, 2),
+        name: Some("HiDPI".into()),
+        scale_factor: 1.5,
+        physical_size: PhysicalSize::new(2_560, 1_440),
+        physical_bounds: Some(PhysicalScreenRect::new(-2_560, 0, 2_560, 1_440)),
+        logical_bounds: None,
+        physical_work_area: None,
+        logical_work_area: None,
+        is_primary: false,
+    };
+
+    let local = LogicalDisplayPosition::new(100.0, 40.0);
+    let physical = display
+        .logical_to_physical_local(local)
+        .expect("finite local coordinates");
+    assert_eq!(physical, PhysicalDisplayPosition::new(150, 60));
+    assert_eq!(display.physical_to_logical_local(physical), Some(local));
+    assert_eq!(
+        display.screen_position(physical),
+        Some(PhysicalScreenPosition::new(-2_410, 60))
+    );
+
+    let wayland_style = DisplaySnapshot {
+        physical_bounds: None,
+        ..display
+    };
+    assert_eq!(
+        wayland_style.logical_to_physical_local(local),
+        Some(physical),
+        "display-local DPI conversion does not require global coordinates"
+    );
+    assert_eq!(wayland_style.screen_position(physical), None);
+}
+
+#[test]
+fn work_area_centering_excludes_reserved_desktop_space() {
+    let display = DisplaySnapshot {
+        id: DisplayId::from_parts(0, 0),
+        name: None,
+        scale_factor: 1.0,
+        physical_size: PhysicalSize::new(1_920, 1_080),
+        physical_bounds: Some(PhysicalScreenRect::new(0, 0, 1_920, 1_080)),
+        logical_bounds: None,
+        physical_work_area: Some(PhysicalScreenRect::new(0, 0, 1_920, 1_040)),
+        logical_work_area: None,
+        is_primary: true,
+    };
+    let outer = PhysicalSize::new(400, 200);
+
+    assert_eq!(
+        display
+            .placement_rect(DisplayPlacementArea::WorkArea)
+            .expect("work area")
+            .centered_position(outer),
+        PhysicalScreenPosition::new(760, 420)
+    );
+    assert_eq!(
+        display
+            .placement_rect(DisplayPlacementArea::FullBounds)
+            .expect("bounds")
+            .centered_position(outer),
+        PhysicalScreenPosition::new(760, 440)
     );
 }
 

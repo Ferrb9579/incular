@@ -3,12 +3,14 @@ use crate::context::BuildContext;
 use crate::tasks::RuntimeWake;
 use crate::window_state::WindowManager;
 use incular_platform::{
-    Fullscreen, LogicalSizeLimits, NativeRequestId, PlatformCapabilities, PlatformOperationError,
+    CapabilitySupport, DisplayPlacementArea, DisplaySnapshot, Fullscreen, LogicalSizeLimits,
+    NativeRequestId, PhysicalScreenPosition, PlatformCapabilities, PlatformOperationError,
     PlatformOperationResult, UserAttentionType, WindowCommand, WindowIcon, WindowId, WindowLevel,
-    WindowOperation, WindowOptions,
+    WindowObservedState, WindowOperation, WindowOptions,
 };
 use incular_widgets::Widget;
 use std::{
+    collections::BTreeMap,
     future::Future,
     pin::Pin,
     sync::{
@@ -40,6 +42,69 @@ pub enum NativeWindowCommand {
 pub enum WindowCommandEnqueueError {
     RuntimeStopped,
     RequestIdExhausted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowPlacementError {
+    Unsupported,
+    OuterSizeUnavailable,
+    DisplayGeometryUnavailable(DisplayPlacementArea),
+    Enqueue(WindowCommandEnqueueError),
+}
+
+#[derive(Default)]
+pub(crate) struct DisplayCatalog {
+    displays: BTreeMap<incular_platform::DisplayId, DisplaySnapshot>,
+    primary: Option<incular_platform::DisplayId>,
+}
+
+impl DisplayCatalog {
+    pub(crate) fn replace(
+        &mut self,
+        displays: impl IntoIterator<Item = DisplaySnapshot>,
+        primary: Option<incular_platform::DisplayId>,
+    ) {
+        self.displays = displays
+            .into_iter()
+            .map(|display| (display.id, display))
+            .collect();
+        self.primary = primary.filter(|id| self.displays.contains_key(id));
+    }
+
+    pub(crate) fn all(&self) -> Vec<DisplaySnapshot> {
+        self.displays.values().cloned().collect()
+    }
+
+    pub(crate) fn get(&self, id: incular_platform::DisplayId) -> Option<DisplaySnapshot> {
+        self.displays.get(&id).cloned()
+    }
+
+    pub(crate) fn primary(&self) -> Option<DisplaySnapshot> {
+        self.primary.and_then(|id| self.get(id))
+    }
+}
+
+impl std::fmt::Display for WindowPlacementError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported => formatter.write_str("top-level window placement is unsupported"),
+            Self::OuterSizeUnavailable => {
+                formatter.write_str("native outer window size is not available yet")
+            }
+            Self::DisplayGeometryUnavailable(area) => {
+                write!(formatter, "display {area:?} geometry is unavailable")
+            }
+            Self::Enqueue(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for WindowPlacementError {}
+
+impl From<WindowCommandEnqueueError> for WindowPlacementError {
+    fn from(value: WindowCommandEnqueueError) -> Self {
+        Self::Enqueue(value)
+    }
 }
 
 /// Runtime disposition after a backend reports one native completion.
@@ -137,6 +202,8 @@ pub struct WindowHandle {
     pub(crate) id: WindowId,
     pub(crate) bridge: Arc<WindowCommandBridge>,
     pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
+    pub(crate) observed_state: Arc<RwLock<WindowObservedState>>,
+    pub(crate) displays: Arc<RwLock<DisplayCatalog>>,
 }
 
 impl std::fmt::Debug for WindowHandle {
@@ -162,6 +229,41 @@ impl WindowHandle {
             .expect("window capability snapshot lock")
     }
 
+    #[must_use]
+    pub fn observed_state(&self) -> WindowObservedState {
+        *self
+            .observed_state
+            .read()
+            .expect("window observed-state snapshot lock")
+    }
+
+    /// Immutable snapshots for displays currently published by the native
+    /// backend. Removed displays disappear immediately; a later display using
+    /// the same registry slot carries a different generation.
+    #[must_use]
+    pub fn displays(&self) -> Vec<DisplaySnapshot> {
+        self.displays.read().expect("display catalog lock").all()
+    }
+
+    #[must_use]
+    pub fn display(&self, id: incular_platform::DisplayId) -> Option<DisplaySnapshot> {
+        self.displays.read().expect("display catalog lock").get(id)
+    }
+
+    #[must_use]
+    pub fn primary_display(&self) -> Option<DisplaySnapshot> {
+        self.displays
+            .read()
+            .expect("display catalog lock")
+            .primary()
+    }
+
+    #[must_use]
+    pub fn current_display(&self) -> Option<DisplaySnapshot> {
+        let id = self.observed_state().current_display?;
+        self.display(id)
+    }
+
     pub fn set_title(&self, title: impl Into<String>) -> Result<(), WindowCommandEnqueueError> {
         self.send(WindowOperation::SetTitle(title.into()))
     }
@@ -175,6 +277,54 @@ impl WindowHandle {
         size: incular_core::Size,
     ) -> Result<(), WindowCommandEnqueueError> {
         self.send(WindowOperation::SetLogicalSize(size))
+    }
+
+    pub fn set_outer_position(
+        &self,
+        position: PhysicalScreenPosition,
+    ) -> Result<(), WindowCommandEnqueueError> {
+        self.send(WindowOperation::SetOuterPosition(position))
+    }
+
+    /// Centers this window using already-observed native outer size and one
+    /// immutable display snapshot. Work-area centering never falls back to full
+    /// monitor bounds: callers must choose that policy explicitly.
+    pub fn center_on_display(
+        &self,
+        display: &DisplaySnapshot,
+        area: DisplayPlacementArea,
+    ) -> Result<PhysicalScreenPosition, WindowPlacementError> {
+        if self.capabilities().display.set_window_position == CapabilitySupport::Unsupported {
+            return Err(WindowPlacementError::Unsupported);
+        }
+        let outer_size = self
+            .observed_state()
+            .outer_size
+            .ok_or(WindowPlacementError::OuterSizeUnavailable)?;
+        let bounds = display
+            .placement_rect(area)
+            .ok_or(WindowPlacementError::DisplayGeometryUnavailable(area))?;
+        let target = bounds.centered_position(outer_size);
+        self.set_outer_position(target)?;
+        Ok(target)
+    }
+
+    /// Moves the window to a physical point relative to one known display.
+    /// This is intentionally unavailable when the display snapshot has no
+    /// desktop-global origin (for example a Wayland top-level display).
+    pub fn move_relative_to_display(
+        &self,
+        display: &DisplaySnapshot,
+        position: incular_platform::PhysicalDisplayPosition,
+    ) -> Result<PhysicalScreenPosition, WindowPlacementError> {
+        if self.capabilities().display.set_window_position == CapabilitySupport::Unsupported {
+            return Err(WindowPlacementError::Unsupported);
+        }
+        let target = display.screen_position(position).ok_or(
+            WindowPlacementError::DisplayGeometryUnavailable(DisplayPlacementArea::FullBounds),
+        )?;
+        self.set_outer_position(target)?;
+        Ok(target)
     }
 
     /// Begins a compositor/window-manager-owned interactive move. The native

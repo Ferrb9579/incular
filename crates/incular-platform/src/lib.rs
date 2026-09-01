@@ -14,6 +14,7 @@ use std::{fmt, path::PathBuf};
 
 mod capabilities;
 mod content_sensitivity;
+mod display;
 mod operation;
 mod window_control;
 
@@ -25,6 +26,11 @@ pub use capabilities::{
 pub use content_sensitivity::{
     ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
+};
+pub use display::{
+    DisplayId, DisplayPlacementArea, DisplaySnapshot, LogicalDisplayPosition,
+    LogicalScreenPosition, LogicalScreenRect, PhysicalDisplayPosition, PhysicalScreenPosition,
+    PhysicalScreenRect,
 };
 pub use incular_config::{TransparencyMode, WindowSizePolicy};
 pub use operation::{
@@ -313,6 +319,7 @@ pub enum WindowOperation {
     SetTitle(String),
     SetVisible(bool),
     SetLogicalSize(Size),
+    SetOuterPosition(PhysicalScreenPosition),
     BeginMoveDrag,
     BeginResizeDrag(incular_core::WindowResizeDirection),
     SetMinimized(bool),
@@ -406,7 +413,7 @@ pub enum WindowEventKind {
     StateChanged(WindowObservedState),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PhysicalSize {
     pub width: u32,
     pub height: u32,

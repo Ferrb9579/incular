@@ -16,6 +16,22 @@ paper over a Winit method that is a documented no-op on the active backend;
 unsupported operations are reported through the platform capability/error
 contract.
 
+Display discovery is retained in a private generational registry keyed by
+Winit's native monitor identity. Reordering enumeration does not change an
+Incular `DisplayId`; disconnecting a monitor invalidates its generation before
+that slot can be reused. The shell publishes monitor size/scale and current
+association on every supported desktop, plus physical desktop bounds and
+top-level placement only on window systems that define them. Wayland output
+geometry is intentionally not promoted into a fake top-level global coordinate
+space.
+
+Winit does not expose taskbar/dock-adjusted work areas, so the shared shell has
+a narrow `DesktopPlatformServices` seam for OS facade crates. Windows supplies
+`MONITORINFO.rcWork`; macOS supplies `NSScreen.visibleFrame` converted into
+Winit's top-left physical coordinate model. The default service (including the
+current X11 adapter) reports work areas unsupported rather than guessing from
+full monitor bounds.
+
 The native `winit::Window` remains alive for the full lifetime of the WGPU
 surface created from its raw handles. Per-window surfaces and presentation state
 remain local, while the renderer may share GPU resources across windows.

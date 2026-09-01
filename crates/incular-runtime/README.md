@@ -103,6 +103,20 @@ mistaken for immediate acknowledgement.
 own command handle without exposing Winit. This is the intended boundary for
 custom title-bar controls and other window-local actions.
 
+Display topology uses the same stale-identity discipline as windows. The native
+adapter publishes immutable `DisplaySnapshot` values keyed by generational
+`DisplayId`; a removed monitor disappears immediately, and a later monitor
+reusing the registry slot receives a newer generation. `Application` and every
+live `WindowHandle` can read the same thread-safe snapshot catalog, including
+primary/current-display association. `WindowHandle::center_on_display` and
+`move_relative_to_display` operate only when both capability and required
+geometry are present; they never synthesize Wayland global coordinates.
+
+Window outer position/size are observed native state, not requested state.
+Moving a window between displays continues through the ordinary native metrics
+event path, so scale-factor/environment changes occur on the existing
+generational `WindowId` and renderer surface rather than replacing the window.
+
 `Signal` subscriptions are retained per root. A shared signal rebuilds only
 the roots that read it; a signal read only by one window leaves every other
 window idle. Physical metrics, DPI, safe/view insets, and native activation are

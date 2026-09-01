@@ -94,16 +94,18 @@ pub mod prelude {
     pub use incular_platform::{
         AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
         ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
-        ContentSensitivityOutcome, DataTransferCapabilities, DisplayPlacementCapabilities,
-        Fullscreen, LogicalSizeLimits, LogicalSizeLimitsError, MemoryContentSensitivityBackend,
-        MemoryTextInputAdapter, NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
-        NoopContentSensitivityBackend, PlatformCapabilities, PlatformOperationError,
-        PlatformOperationErrorKind, PlatformOperationResult, TextInputAction, TextInputAdapter,
-        TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
-        TransientSurfaceCapabilities, UserAttentionType, WindowCommand, WindowControlCapabilities,
-        WindowEvent, WindowEventKind, WindowIcon, WindowIconError, WindowId, WindowLevel,
-        WindowLifecycle, WindowObservedState, WindowOperation, WindowOptions, WindowOptionsError,
-        WindowRequestedState,
+        ContentSensitivityOutcome, DataTransferCapabilities, DisplayId, DisplayPlacementArea,
+        DisplayPlacementCapabilities, DisplaySnapshot, Fullscreen, LogicalDisplayPosition,
+        LogicalScreenPosition, LogicalScreenRect, LogicalSizeLimits, LogicalSizeLimitsError,
+        MemoryContentSensitivityBackend, MemoryTextInputAdapter, NativeMenuCapabilities,
+        NativeOperationCompletion, NativeRequestId, NoopContentSensitivityBackend,
+        PhysicalDisplayPosition, PhysicalScreenPosition, PhysicalScreenRect, PlatformCapabilities,
+        PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
+        TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
+        TextInputConfiguration, TextInputState, TextInputType, TransientSurfaceCapabilities,
+        UserAttentionType, WindowCommand, WindowControlCapabilities, WindowEvent, WindowEventKind,
+        WindowIcon, WindowIconError, WindowId, WindowLevel, WindowLifecycle, WindowObservedState,
+        WindowOperation, WindowOptions, WindowOptionsError, WindowRequestedState,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -124,7 +126,7 @@ pub mod prelude {
         RuntimeErrorReport, SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope,
         TokioHandle, UiDispatcher, UndoHistoryController, UndoHistoryState,
         WindowCommandEnqueueError, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
-        WindowRestorationId,
+        WindowPlacementError, WindowRestorationId,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,

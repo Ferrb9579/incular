@@ -1,5 +1,11 @@
 # incular-linux
 
+Linux facade over the shared Winit desktop shell. X11 exposes desktop-global
+window positions and monitor bounds through the shared adapter. Wayland
+deliberately exposes neither top-level global positions nor setters. A reliable
+per-monitor X11 usable-area service is not currently installed, so `work_area`
+is explicitly unsupported rather than approximated from full monitor bounds.
+
 Linux adapter for Incular's shared desktop shell.
 
 `incular-desktop` owns the common Winit event loop, WGPU surface/renderer

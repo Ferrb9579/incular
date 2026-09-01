@@ -60,6 +60,8 @@ pub struct WindowControlCapabilities {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct DisplayPlacementCapabilities {
     pub enumerate_displays: CapabilitySupport,
+    pub query_current_display: CapabilitySupport,
+    pub display_bounds: CapabilitySupport,
     pub work_area: CapabilitySupport,
     pub query_window_position: CapabilitySupport,
     pub set_window_position: CapabilitySupport,
@@ -149,6 +151,8 @@ impl PlatformCapabilities {
             },
             display: DisplayPlacementCapabilities {
                 enumerate_displays: unsupported,
+                query_current_display: unsupported,
+                display_bounds: unsupported,
                 work_area: unsupported,
                 query_window_position: unsupported,
                 set_window_position: unsupported,

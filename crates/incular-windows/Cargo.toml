@@ -24,7 +24,15 @@ incular-widgets = { workspace = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 crash-handler = { workspace = true }
 minidump-writer = { workspace = true }
+incular-platform = { workspace = true }
+winit = { workspace = true }
+windows-sys = { workspace = true }
 
 [features]
 default = []
 devtools = ["incular-desktop/devtools"]
+
+[[test]]
+name = "display_placement"
+path = "tests/display_placement.rs"
+harness = false

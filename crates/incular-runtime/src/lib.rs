@@ -96,7 +96,7 @@ pub use tasks::{
 pub use undo::{UndoHistoryController, UndoHistoryState};
 pub use window_commands::{
     NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
-    WindowCommandEnqueueError, WindowHandle, WindowOpener,
+    WindowCommandEnqueueError, WindowHandle, WindowOpener, WindowPlacementError,
 };
 pub use window_state::{ApplicationDiagnostics, WindowDiagnostics};
 

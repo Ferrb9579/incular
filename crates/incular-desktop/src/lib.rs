@@ -1,4 +1,9 @@
 //! Shared desktop event-loop bridge for Incular.
+mod display;
+mod display_identity;
+
+pub use display::{DefaultDesktopPlatformServices, DesktopPlatformServices};
+
 use accesskit_winit::{
     Adapter as AccessKitAdapter, Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent,
 };
@@ -10,12 +15,12 @@ use incular_core::{PointerPhase, WindowResizeDirection};
 use incular_platform::{
     CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, NativeOperationCompletion, NativeWindowSystem,
-    NoopContentSensitivityBackend, PhysicalSize, PlatformCapabilities, PlatformEvent,
-    PlatformOperationError, PlatformOperationErrorKind, TransparencyMode, UserAttentionType,
-    WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon, WindowId as IncularWindowId,
-    WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState, WindowOperation,
-    WindowOptions, apply_text_input_command, ime_event, key_event, native_window_system,
-    pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
+    NoopContentSensitivityBackend, PhysicalScreenPosition, PhysicalSize, PlatformCapabilities,
+    PlatformEvent, PlatformOperationError, PlatformOperationErrorKind, TransparencyMode,
+    UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon,
+    WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState,
+    WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
+    native_window_system, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
@@ -37,6 +42,8 @@ use winit::{
         WindowId as NativeWindowId, WindowLevel as NativeWindowLevel,
     },
 };
+
+use crate::display::DesktopDisplayRegistry;
 
 #[derive(Debug)]
 pub enum RunError {
@@ -250,7 +257,18 @@ fn launch_devtools_ui() {
     }
 }
 
-pub fn run_application(mut application: Application) -> Result<(), RunError> {
+pub fn run_application(application: Application) -> Result<(), RunError> {
+    run_application_with_services(application, DefaultDesktopPlatformServices)
+}
+
+/// Runs an application with optional OS-specific desktop geometry services.
+/// The shared shell remains Winit-owned; facade crates use this seam only for
+/// data Winit does not expose portably, such as a taskbar/dock-adjusted work
+/// area.
+pub fn run_application_with_services(
+    mut application: Application,
+    platform_services: impl DesktopPlatformServices + 'static,
+) -> Result<(), RunError> {
     application.set_platform_capabilities(desktop_platform_capabilities());
     let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
         .build()
@@ -282,6 +300,9 @@ pub fn run_application(mut application: Application) -> Result<(), RunError> {
         shared_gpu: None,
         frame_timestamp: Instant::now(),
         accessibility_proxy: proxy,
+        displays: DesktopDisplayRegistry::default(),
+        platform_services: Box::new(platform_services),
+        window_system: None,
         #[cfg(feature = "devtools")]
         devtools_state: crate::devtools_runner::DevToolsState::new(devtools_agent),
     };
@@ -667,12 +688,38 @@ struct MultiApp {
     shared_gpu: Option<SharedGpuContext>,
     frame_timestamp: Instant,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
+    displays: DesktopDisplayRegistry,
+    platform_services: Box<dyn DesktopPlatformServices>,
+    window_system: Option<NativeWindowSystem>,
     /// Debug overlays, Select Widget mode, and the DevTools agent pump.
     #[cfg(feature = "devtools")]
     devtools_state: crate::devtools_runner::DevToolsState,
 }
 
 impl MultiApp {
+    fn refresh_displays(&mut self, target: &ActiveEventLoop) {
+        let Some(system) = self.window_system else {
+            return;
+        };
+        let sync = self.displays.synchronize(
+            target.available_monitors().collect(),
+            target.primary_monitor(),
+            system,
+            self.platform_services.as_ref(),
+        );
+        if !sync.changed {
+            return;
+        }
+        self.application
+            .publish_displays(sync.snapshots, sync.primary);
+        // Current-monitor association can change when an output is removed even
+        // if no window movement event is delivered for the surviving windows.
+        let ids = self.application.active_window_ids();
+        for id in ids {
+            self.publish_window_state(id);
+        }
+    }
+
     fn apply_window_commands(&mut self, target: &ActiveEventLoop) {
         // Simulation requests arrive through the same event-loop wake as
         // runtime work. They are serviced before native operations so a
@@ -717,6 +764,17 @@ impl MultiApp {
                 return;
             }
         };
+        let system = native_window_system(&window);
+        if self.window_system.is_none() {
+            self.window_system = Some(system);
+            self.application
+                .set_platform_capabilities(refine_window_capabilities(
+                    desktop_platform_capabilities(),
+                    system,
+                    self.platform_services.as_ref(),
+                ));
+        }
+        self.refresh_displays(target);
         let metrics = WindowMetrics::new(
             PhysicalSize::new(window.inner_size().width, window.inner_size().height),
             window.scale_factor(),
@@ -768,8 +826,9 @@ impl MultiApp {
         accessibility.projection.note_adapter_created();
         let clipboard = DesktopClipboard::new();
         let mut capabilities = refine_window_capabilities(
-            self.application.platform_capabilities(),
-            native_window_system(&window),
+            desktop_platform_capabilities(),
+            system,
+            self.platform_services.as_ref(),
         );
         capabilities.data_transfer.clipboard_text =
             CapabilitySupport::from_supported(clipboard.native_available());
@@ -795,7 +854,7 @@ impl MultiApp {
             ));
         let native_id = window.id();
         window.set_visible(options.visible);
-        let observed_state = observed_window_state(&window);
+        let observed_state = observed_window_state(&window, &self.displays, system);
         self.native_ids.insert(id, native_id);
         self.windows.insert(
             native_id,
@@ -845,6 +904,7 @@ impl MultiApp {
         let publishes_state = matches!(
             command.operation,
             WindowOperation::SetVisible(_)
+                | WindowOperation::SetOuterPosition(_)
                 | WindowOperation::SetMinimized(_)
                 | WindowOperation::SetMaximized(_)
                 | WindowOperation::SetFullscreen(_)
@@ -891,6 +951,11 @@ impl MultiApp {
                                     state.window.scale_factor(),
                                 )
                             });
+                    }
+                    WindowOperation::SetOuterPosition(position) => {
+                        state
+                            .window
+                            .set_outer_position(PhysicalPosition::new(position.x, position.y));
                     }
                     WindowOperation::BeginMoveDrag => {
                         operation_result = state.window.drag_window().map_err(map_external_error);
@@ -1004,7 +1069,10 @@ impl MultiApp {
         let Some(state) = self.windows.get(&native_id) else {
             return;
         };
-        let observed = observed_window_state(&state.window);
+        let Some(system) = self.window_system else {
+            return;
+        };
+        let observed = observed_window_state(&state.window, &self.displays, system);
         self.application
             .handle_window_event(IncularWindowEvent::state_changed(id, observed));
     }
@@ -1319,6 +1387,14 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     // sensitivity backend. OS-specific enforcement can publish Supported when
     // a real adapter is installed.
     capabilities.window.content_sensitivity = CapabilitySupport::Unsupported;
+    capabilities.display.enumerate_displays = CapabilitySupport::Supported;
+    capabilities.display.query_current_display = CapabilitySupport::Supported;
+    // These depend on the concrete window system and are refined after the
+    // first native window reveals whether this is Win32/AppKit/X11/Wayland.
+    capabilities.display.display_bounds = CapabilitySupport::Unknown;
+    capabilities.display.work_area = CapabilitySupport::Unknown;
+    capabilities.display.query_window_position = CapabilitySupport::Unknown;
+    capabilities.display.set_window_position = CapabilitySupport::Unknown;
     // Clipboard availability depends on whether the native clipboard service
     // can be opened for the concrete session/window, so creation refines it.
     capabilities.data_transfer.clipboard_text = CapabilitySupport::Unknown;
@@ -1328,25 +1404,38 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
 fn refine_window_capabilities(
     mut capabilities: PlatformCapabilities,
     system: NativeWindowSystem,
+    services: &dyn DesktopPlatformServices,
 ) -> PlatformCapabilities {
+    capabilities.display.enumerate_displays = CapabilitySupport::Supported;
+    capabilities.display.query_current_display = CapabilitySupport::Supported;
+    capabilities.display.work_area = services.work_area_support(system);
     match system {
         NativeWindowSystem::Win32 => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
             capabilities.window.set_window_level = CapabilitySupport::Supported;
             capabilities.window.set_window_icon = CapabilitySupport::Supported;
             capabilities.window.request_user_attention = CapabilitySupport::Supported;
+            capabilities.display.display_bounds = CapabilitySupport::Supported;
+            capabilities.display.query_window_position = CapabilitySupport::Supported;
+            capabilities.display.set_window_position = CapabilitySupport::Supported;
         }
         NativeWindowSystem::AppKit => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Unsupported;
             capabilities.window.set_window_level = CapabilitySupport::Supported;
             capabilities.window.set_window_icon = CapabilitySupport::Unsupported;
             capabilities.window.request_user_attention = CapabilitySupport::Supported;
+            capabilities.display.display_bounds = CapabilitySupport::Supported;
+            capabilities.display.query_window_position = CapabilitySupport::Supported;
+            capabilities.display.set_window_position = CapabilitySupport::Supported;
         }
         NativeWindowSystem::X11 => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
             capabilities.window.set_window_level = CapabilitySupport::Supported;
             capabilities.window.set_window_icon = CapabilitySupport::Supported;
             capabilities.window.request_user_attention = CapabilitySupport::Supported;
+            capabilities.display.display_bounds = CapabilitySupport::Supported;
+            capabilities.display.query_window_position = CapabilitySupport::Supported;
+            capabilities.display.set_window_position = CapabilitySupport::Supported;
         }
         NativeWindowSystem::Wayland => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -1355,6 +1444,13 @@ fn refine_window_capabilities(
             // Winit can issue an xdg-activation request, but protocol availability
             // is compositor/session dependent and is not queryable here.
             capabilities.window.request_user_attention = CapabilitySupport::Unknown;
+            // A Wayland compositor owns top-level placement. Winit's output
+            // metadata must not be repurposed into a fake desktop-global
+            // coordinate system for application windows.
+            capabilities.display.display_bounds = CapabilitySupport::Unsupported;
+            capabilities.display.work_area = CapabilitySupport::Unsupported;
+            capabilities.display.query_window_position = CapabilitySupport::Unsupported;
+            capabilities.display.set_window_position = CapabilitySupport::Unsupported;
         }
         NativeWindowSystem::Other => {}
     }
@@ -1369,6 +1465,7 @@ fn operation_support(
         WindowOperation::SetTitle(_) => capabilities.window.set_title,
         WindowOperation::SetVisible(_) => capabilities.window.set_visibility,
         WindowOperation::SetLogicalSize(_) => capabilities.window.set_logical_size,
+        WindowOperation::SetOuterPosition(_) => capabilities.display.set_window_position,
         WindowOperation::BeginMoveDrag => capabilities.window.begin_move_drag,
         WindowOperation::BeginResizeDrag(_) => capabilities.window.begin_resize_drag,
         WindowOperation::SetMinimized(_) => capabilities.window.minimize,
@@ -1413,7 +1510,20 @@ fn unsupported_initial_window_policy(
     })
 }
 
-fn observed_window_state(window: &Window) -> WindowObservedState {
+fn observed_window_state(
+    window: &Window,
+    displays: &DesktopDisplayRegistry,
+    system: NativeWindowSystem,
+) -> WindowObservedState {
+    let outer_position = if matches!(system, NativeWindowSystem::Wayland) {
+        None
+    } else {
+        window
+            .outer_position()
+            .ok()
+            .map(|position| PhysicalScreenPosition::new(position.x, position.y))
+    };
+    let outer_size = window.outer_size();
     WindowObservedState {
         visible: window.is_visible(),
         minimized: window.is_minimized(),
@@ -1421,6 +1531,12 @@ fn observed_window_state(window: &Window) -> WindowObservedState {
         fullscreen: Some(window.fullscreen().is_some()),
         resizable: Some(window.is_resizable()),
         decorations: Some(window.is_decorated()),
+        outer_position,
+        outer_size: Some(PhysicalSize::new(outer_size.width, outer_size.height)),
+        current_display: window
+            .current_monitor()
+            .as_ref()
+            .and_then(|monitor| displays.id_for(monitor)),
     }
 }
 
@@ -1478,6 +1594,7 @@ fn map_external_error(error: winit::error::ExternalError) -> PlatformOperationEr
 impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
     fn resumed(&mut self, target: &ActiveEventLoop) {
         self.apply_window_commands(target);
+        self.refresh_displays(target);
     }
 
     fn window_event(
@@ -1510,6 +1627,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.resize_window(id, PhysicalSize::new(size.width, size.height), scale);
                 self.publish_window_state(id);
             }
+            WindowEvent::Moved(_) => {
+                self.refresh_displays(target);
+                self.publish_window_state(id);
+            }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let size = self
                     .windows
@@ -1518,6 +1639,8 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .window
                     .inner_size();
                 self.resize_window(id, PhysicalSize::new(size.width, size.height), scale_factor);
+                self.refresh_displays(target);
+                self.publish_window_state(id);
             }
             WindowEvent::Focused(focused) => self.route_window_event(
                 native_id,
@@ -1648,6 +1771,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
 
     fn about_to_wait(&mut self, target: &ActiveEventLoop) {
         self.frame_timestamp = Instant::now();
+        self.refresh_displays(target);
         self.apply_window_commands(target);
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);

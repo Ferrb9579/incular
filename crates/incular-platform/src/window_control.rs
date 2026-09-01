@@ -1,6 +1,6 @@
 //! Portable window-control values shared by runtime and native adapters.
 
-use crate::Fullscreen;
+use crate::{DisplayId, Fullscreen, PhysicalScreenPosition, PhysicalSize};
 use incular_core::Size;
 use std::{fmt, sync::Arc};
 
@@ -202,6 +202,9 @@ pub struct WindowObservedState {
     pub fullscreen: Option<bool>,
     pub resizable: Option<bool>,
     pub decorations: Option<bool>,
+    pub outer_position: Option<PhysicalScreenPosition>,
+    pub outer_size: Option<PhysicalSize>,
+    pub current_display: Option<DisplayId>,
 }
 
 const fn is_positive_size(size: Size) -> bool {

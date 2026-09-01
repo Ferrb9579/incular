@@ -18,6 +18,12 @@ path = "src/lib.rs"
 
 [dependencies]
 incular-desktop = { workspace = true }
+incular-runtime = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+incular-platform = { workspace = true }
+winit = { workspace = true }
+objc2-app-kit = { workspace = true }
 
 [features]
 default = []
