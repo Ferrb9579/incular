@@ -16,7 +16,7 @@ use super::{
 };
 use incular_config::{
     ApplicationDefaults, Locale, LocaleResolver, LocalizationCatalog, RuntimeEnvironment,
-    TransparencyMode,
+    TransparencyMode, WindowSizePolicy,
 };
 use incular_core::{Color, RestorationKey, RestorationScope, Size};
 use std::{
@@ -37,6 +37,7 @@ type GeneratedTitle = Rc<dyn Fn(&Locale) -> String>;
 pub struct ApplicationBootstrapOptions {
     pub title: String,
     pub initial_size: Size,
+    pub size_policy: WindowSizePolicy,
     pub resizable: bool,
     pub visible: bool,
     pub decorations: bool,
@@ -51,6 +52,7 @@ impl Default for ApplicationBootstrapOptions {
         Self {
             title: defaults.window_title.to_owned(),
             initial_size: defaults.initial_window_size,
+            size_policy: defaults.window_size_policy,
             resizable: defaults.resizable,
             visible: defaults.visible,
             decorations: defaults.decorations,

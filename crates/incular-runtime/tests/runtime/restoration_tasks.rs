@@ -414,3 +414,39 @@ fn restorable_windows_use_stable_ids_and_user_close_removes_auxiliary_descriptor
     // key; reopening the same descriptor never serializes this value.
     assert_ne!(inspector.id(), second.primary_window());
 }
+
+#[test]
+fn content_sized_window_persists_baseline_not_transient_expansion() {
+    let store = Arc::new(InMemoryRestorationStore::new());
+    let options = WindowOptions {
+        initial_logical_size: Size::new(100., 200.),
+        size_policy: incular_config::WindowSizePolicy::Content,
+        ..WindowOptions::default()
+    };
+    let mut application = Application::new_restorable(
+        WindowRestorationId::new("palette").unwrap(),
+        "palette",
+        options,
+        RestorationConfig::new("com.example.content-sized-restore", 1, store.clone())
+            .with_debounce(Duration::ZERO),
+        |_| Widget::box_(Size::new(100., 200.), Color::WHITE),
+    )
+    .unwrap();
+    let id = application.primary_window();
+
+    // Model a native resize produced by a temporarily open overlay. This is
+    // presentation state, not a new application-owned baseline.
+    application.handle_window_event(WindowEvent::platform(
+        id,
+        PlatformEvent::Metrics(WindowMetrics::new(
+            incular_platform::PhysicalSize::new(100, 320),
+            1.,
+        )),
+    ));
+    application.shutdown();
+
+    let snapshot: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    let saved = &snapshot["windows"][0];
+    assert_eq!(saved["logical_width"], 100.0);
+    assert_eq!(saved["logical_height"], 200.0);
+}

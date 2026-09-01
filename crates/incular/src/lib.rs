@@ -67,7 +67,7 @@ pub mod prelude {
         FlexFit, FractionalOffset, InputCapabilities, Locale, LocaleResolver, LocalizationCatalog,
         LocalizationError, LocalizedMessage, MainAxisAlignment, MainAxisSize, PluralCategory,
         PluralForms, RuntimeEnvironment, TextDirection, TransparencyMode, VerticalDirection,
-        WidgetDefaults, WrapAlignment, WrapCrossAlignment,
+        WidgetDefaults, WindowSizePolicy, WrapAlignment, WrapCrossAlignment,
     };
     pub use incular_core::{
         ChangeImpact, Code, Color, DirtyFlags, HslColor, HsvColor, ImeEvent, InputEvent,

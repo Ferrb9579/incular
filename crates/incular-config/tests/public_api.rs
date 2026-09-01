@@ -1,6 +1,7 @@
 use incular_config::{
     Alignment, AlignmentDirectional, ApplicationDefaults, EdgeInsets, Locale, LocaleResolver,
     LocalizationCatalog, PluralForms, RuntimeEnvironment, TextDirection, WidgetDefaults,
+    WindowSizePolicy,
 };
 use incular_core::{Offset, Size};
 
@@ -21,6 +22,7 @@ fn application_defaults_are_valid_for_initialization() {
     let defaults = ApplicationDefaults::DEFAULT;
     assert!(defaults.initial_window_size.width > 0.0);
     assert!(defaults.initial_window_size.height > 0.0);
+    assert_eq!(defaults.window_size_policy, WindowSizePolicy::Viewport);
     assert!(defaults.scale_factor.is_finite() && defaults.scale_factor > 0.0);
     assert!(defaults.text_scale.is_finite() && defaults.text_scale > 0.0);
     assert_eq!(defaults, ApplicationDefaults::default());

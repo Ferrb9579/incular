@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use incular_config::{RuntimeEnvironment, TransparencyMode};
+use incular_config::{RuntimeEnvironment, TransparencyMode, WindowSizePolicy};
 use incular_core::{Color, Rect, RestorationBackend, RestorationKey, RestorationScope, Size};
 use incular_widgets::{
     ApplicationBootstrapHost, ApplicationBootstrapSpec, AuxiliaryViewError, AuxiliaryViewHandle,
@@ -101,7 +101,7 @@ fn widgets_app_expands_deep_links_and_bootstraps_defaults() {
 
     struct TestHost;
     impl ApplicationBootstrapHost for TestHost {
-        type Handle = (String, Size, TransparencyMode, Color);
+        type Handle = (String, Size, WindowSizePolicy, TransparencyMode, Color);
         type Error = std::convert::Infallible;
 
         fn create_application(
@@ -111,16 +111,18 @@ fn widgets_app_expands_deep_links_and_bootstraps_defaults() {
             Ok((
                 specification.options.title,
                 specification.options.initial_size,
+                specification.options.size_policy,
                 specification.options.transparency_mode,
                 specification.options.background_color,
             ))
         }
     }
 
-    let (title, size, transparency_mode, background_color) =
+    let (title, size, size_policy, transparency_mode, background_color) =
         app.bootstrap(&TestHost).expect("bootstrap succeeds");
     assert_eq!(title, "Incular");
     assert_eq!(size, Size::new(800.0, 600.0));
+    assert_eq!(size_policy, WindowSizePolicy::Viewport);
     assert_eq!(transparency_mode, TransparencyMode::Opaque);
     assert_eq!(background_color, Color::BLACK);
 }

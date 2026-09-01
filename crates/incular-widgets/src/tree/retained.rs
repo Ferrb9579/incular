@@ -96,6 +96,15 @@ impl WidgetTree {
             .unwrap_or(ContentSensitivity::NotSensitive)
     }
 
+    /// World-space bounds of the retained scene produced by this tree.
+    ///
+    /// The compositor is the authority for transforms and viewport clips, so
+    /// callers do not need to reconstruct geometry from widget descriptors.
+    #[must_use]
+    pub fn scene_bounds(&self) -> Option<Rect> {
+        self.compositor.scene_bounds()
+    }
+
     /// Records the input or command responsible for subsequent frame work.
     /// The value is retained until another trigger replaces it so an input
     /// callback that merely schedules a frame remains attributable later.

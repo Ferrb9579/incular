@@ -37,3 +37,11 @@ is the base color underneath the rendered scene. Either value can be changed
 without implying the other. Platform and renderer crates carry the same typed
 transparency value instead of maintaining parallel booleans or renderer-specific
 forms.
+
+`WindowSizePolicy` makes native size ownership explicit. `Viewport` keeps the
+ordinary desktop contract where native metrics tightly constrain the retained
+root. `Content` is opt-in for compact utility/popup-style windows: the declared
+initial size remains a stable minimum, retained visual overflow can request a
+larger native host, and the host shrinks back when that overflow disappears.
+Decoration is deliberately unrelated to this policy; an undecorated window is
+not implicitly content-sized.

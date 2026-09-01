@@ -18,7 +18,7 @@ pub use content_sensitivity::{
     ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
 };
-pub use incular_config::TransparencyMode;
+pub use incular_config::{TransparencyMode, WindowSizePolicy};
 
 /// Resolves the persistent, local application-data directory through the
 /// operating system's standard project-directory conventions.
@@ -101,6 +101,13 @@ pub enum Fullscreen {
 pub struct WindowOptions {
     pub title: String,
     pub initial_logical_size: Size,
+    /// Selects whether native viewport metrics or retained content own size.
+    ///
+    /// In [`WindowSizePolicy::Content`] mode `initial_logical_size` is also the
+    /// minimum content viewport. The framework can grow the native window to
+    /// contain retained scene overflow and shrink it back when that overflow
+    /// disappears. This is deliberately independent of window decorations.
+    pub size_policy: WindowSizePolicy,
     pub minimum_logical_size: Option<Size>,
     pub maximum_logical_size: Option<Size>,
     pub resizable: bool,
@@ -119,6 +126,7 @@ impl Default for WindowOptions {
         Self {
             title: defaults.window_title.to_owned(),
             initial_logical_size: defaults.initial_window_size,
+            size_policy: defaults.window_size_policy,
             minimum_logical_size: None,
             maximum_logical_size: None,
             resizable: defaults.resizable,

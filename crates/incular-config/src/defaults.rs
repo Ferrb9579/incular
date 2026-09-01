@@ -29,6 +29,20 @@ impl TransparencyMode {
     }
 }
 
+/// Which side of the content/window relationship owns the logical size.
+///
+/// `Viewport` is the normal application-window model: native window metrics
+/// are authoritative and the root receives tight viewport constraints.
+/// `Content` is intended for compact utility/popup-style windows: the initial
+/// logical size is the stable minimum content viewport, retained content may
+/// grow beyond it, and the native host follows that measured scene extent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowSizePolicy {
+    #[default]
+    Viewport,
+    Content,
+}
+
 /// Defaults used when an application does not provide window/environment
 /// policy.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,6 +51,7 @@ pub struct ApplicationDefaults {
     pub window_title: &'static str,
     /// Initial logical window size before native metrics are known.
     pub initial_window_size: Size,
+    pub window_size_policy: WindowSizePolicy,
     pub resizable: bool,
     pub visible: bool,
     pub decorations: bool,
@@ -65,6 +80,7 @@ impl ApplicationDefaults {
             width: 800.0,
             height: 600.0,
         },
+        window_size_policy: WindowSizePolicy::Viewport,
         resizable: true,
         visible: true,
         decorations: true,

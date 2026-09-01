@@ -8,8 +8,8 @@ use crate::restoration;
 use crate::tasks::{self, TaskScope};
 use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
 use incular_accessibility::AccessibilityDiagnostics;
-use incular_config::{ContentSensitivity, RuntimeEnvironment};
-use incular_core::{RestorationKey, RestorationScope};
+use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment, WindowSizePolicy};
+use incular_core::{Rect, RestorationKey, RestorationScope, Size};
 use incular_platform::{WindowId, WindowLifecycle, WindowMetrics, WindowOptions};
 use incular_widgets::Widget;
 use std::{
@@ -72,8 +72,124 @@ pub(crate) struct WindowRecord {
     pub(crate) surface_generation: u64,
     pub(crate) accessibility: AccessibilityDiagnostics,
     pub(crate) last_content_sensitivity: Option<ContentSensitivity>,
+    pub(crate) content_sizing: ContentSizeCoordinator,
     pub(crate) restoration: Option<RestorableWindowMetadata>,
     pub(crate) _restoration_scope_lease: Option<restoration::ScopeLease>,
+}
+
+/// Window-local negotiation state for content-driven native sizing.
+///
+/// The retained scene produces a logical target, while the native host remains
+/// asynchronous. Remembering the outstanding target prevents redraws from
+/// flooding the event loop with identical resize requests before metrics catch
+/// up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ContentSizeCoordinator {
+    pending: Option<Size>,
+}
+
+impl ContentSizeCoordinator {
+    pub(crate) fn layout_constraints(
+        options: &WindowOptions,
+        viewport_constraints: Constraints,
+    ) -> Constraints {
+        if options.size_policy != WindowSizePolicy::Content {
+            return viewport_constraints;
+        }
+        let minimum = content_minimum(options);
+        let (maximum_width, maximum_height) = options
+            .maximum_logical_size
+            .map_or((f32::INFINITY, f32::INFINITY), |maximum| {
+                (maximum.width, maximum.height)
+            });
+        Constraints::new(
+            minimum.width,
+            maximum_width.max(minimum.width),
+            minimum.height,
+            maximum_height.max(minimum.height),
+        )
+    }
+
+    pub(crate) fn reconcile(
+        &mut self,
+        options: &WindowOptions,
+        metrics: WindowMetrics,
+        scene_bounds: Option<Rect>,
+    ) -> Option<Size> {
+        if options.size_policy != WindowSizePolicy::Content {
+            self.pending = None;
+            return None;
+        }
+
+        let minimum = content_minimum(options);
+        let extent = scene_bounds.map_or(Size::ZERO, |bounds| {
+            Size::new(
+                (bounds.origin.x + bounds.size.width).max(0.0),
+                (bounds.origin.y + bounds.size.height).max(0.0),
+            )
+        });
+        let mut target = Size::new(
+            minimum.width.max(extent.width),
+            minimum.height.max(extent.height),
+        );
+        if let Some(maximum) = options.maximum_logical_size {
+            target.width = target.width.min(maximum.width);
+            target.height = target.height.min(maximum.height);
+        }
+        target = snap_outward_to_physical_pixels(target, metrics.scale_factor);
+        if let Some(maximum) = options.maximum_logical_size {
+            target.width = target.width.min(maximum.width);
+            target.height = target.height.min(maximum.height);
+        }
+
+        let current = metrics.logical_size();
+        if equivalent_logical_size(target, current, metrics.scale_factor) {
+            self.pending = None;
+            return None;
+        }
+        if self
+            .pending
+            .is_some_and(|pending| equivalent_logical_size(pending, target, metrics.scale_factor))
+        {
+            return None;
+        }
+        self.pending = Some(target);
+        Some(target)
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.pending = None;
+    }
+}
+
+fn content_minimum(options: &WindowOptions) -> Size {
+    let declared = options.minimum_logical_size.unwrap_or(Size::ZERO);
+    Size::new(
+        options.initial_logical_size.width.max(declared.width),
+        options.initial_logical_size.height.max(declared.height),
+    )
+}
+
+fn snap_outward_to_physical_pixels(size: Size, scale_factor: f64) -> Size {
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor as f32
+    } else {
+        1.0
+    };
+    Size::new(
+        (size.width * scale).ceil() / scale,
+        (size.height * scale).ceil() / scale,
+    )
+}
+
+fn equivalent_logical_size(left: Size, right: Size, scale_factor: f64) -> bool {
+    let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor as f32
+    } else {
+        1.0
+    };
+    let tolerance = 0.5 / scale + f32::EPSILON;
+    (left.width - right.width).abs() <= tolerance && (left.height - right.height).abs() <= tolerance
 }
 
 pub(crate) struct WindowSlot {
@@ -246,6 +362,7 @@ impl WindowManager {
                 surface_generation: 1,
                 accessibility: AccessibilityDiagnostics::default(),
                 last_content_sensitivity: None,
+                content_sizing: ContentSizeCoordinator::default(),
                 restoration,
                 _restoration_scope_lease: restoration_lease,
             },
@@ -391,6 +508,7 @@ impl WindowManager {
                 surface_generation: 1,
                 accessibility: AccessibilityDiagnostics::default(),
                 last_content_sensitivity: None,
+                content_sizing: ContentSizeCoordinator::default(),
                 restoration,
                 _restoration_scope_lease: restoration_lease,
             },
@@ -505,7 +623,15 @@ impl WindowManager {
             .filter_map(|slot| slot.record.as_ref())
             .filter_map(|record| {
                 let metadata = record.restoration.as_ref()?;
-                let logical = record.metrics.logical_size();
+                // Content-driven expansion is transient presentation state
+                // (for example, an open menu). Persist the stable application
+                // baseline instead; explicit SetLogicalSize updates that
+                // baseline before synchronization reaches this point.
+                let logical = if record.options.size_policy == WindowSizePolicy::Content {
+                    record.options.initial_logical_size
+                } else {
+                    record.metrics.logical_size()
+                };
                 Some(restoration::RestoredWindow {
                     restoration_id: metadata.id.as_key().as_str().to_owned(),
                     kind: metadata.kind.clone(),

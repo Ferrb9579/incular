@@ -620,6 +620,114 @@ fn test_window_options(title: &str, width: f32, height: f32) -> WindowOptions {
     }
 }
 
+fn take_resize_requests(application: &mut Application) -> Vec<Size> {
+    application
+        .take_native_window_commands()
+        .into_iter()
+        .filter_map(|command| match command {
+            NativeWindowCommand::Operate(WindowCommand {
+                operation: WindowOperation::SetLogicalSize(size),
+                ..
+            }) => Some(size),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn content_sized_window_expands_for_overlay_and_shrinks_after_it_closes() {
+    use incular_config::WindowSizePolicy;
+    use incular_widgets::{Positioned, Stack};
+
+    let open = Signal::new(false);
+    let observed = open.clone();
+    let options = WindowOptions {
+        initial_logical_size: Size::new(100., 200.),
+        decorations: false,
+        size_policy: WindowSizePolicy::Content,
+        ..WindowOptions::default()
+    };
+    let mut application = Application::new_with_options(options, move |_| {
+        let base = Widget::box_(Size::new(100., 200.), Color::WHITE);
+        if observed.get() {
+            let panel: Widget = Positioned::new(Widget::box_(Size::new(100., 120.), Color::BLACK))
+                .left(0.)
+                .top(200.)
+                .width(100.)
+                .height(120.)
+                .into();
+            Stack::new([base, panel]).into()
+        } else {
+            Stack::new([base]).into()
+        }
+    })
+    .unwrap();
+    let id = application.primary_window();
+    let _ = application.take_native_window_commands();
+
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 200.)),
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(take_resize_requests(&mut application).is_empty());
+
+    assert!(open.set(true));
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 200.)),
+            Instant::now(),
+        )
+        .unwrap();
+    assert_eq!(
+        take_resize_requests(&mut application),
+        [Size::new(100., 320.)]
+    );
+
+    // The native resize is asynchronous. Re-rendering before a metrics event
+    // must not flood the event loop with the same request.
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 200.)),
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(take_resize_requests(&mut application).is_empty());
+
+    application.handle_window_event(WindowEvent::platform(
+        id,
+        PlatformEvent::Metrics(WindowMetrics::new(
+            incular_platform::PhysicalSize::new(100, 320),
+            1.,
+        )),
+    ));
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 320.)),
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(take_resize_requests(&mut application).is_empty());
+
+    assert!(open.set(false));
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 320.)),
+            Instant::now(),
+        )
+        .unwrap();
+    assert_eq!(
+        take_resize_requests(&mut application),
+        [Size::new(100., 200.)]
+    );
+}
+
 #[test]
 fn virtual_windows_keep_trees_environments_focus_and_semantics_independent() {
     let mut application = Application::new(|_| ActionSurface::new("A").into()).unwrap();

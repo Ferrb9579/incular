@@ -62,6 +62,37 @@ fn shadow_lowers_correctly() {
     assert_eq!(midpoint.offset, Offset::new(5., 2.));
     assert_eq!(midpoint.blur_radius, 3.);
 }
+
+#[test]
+fn scene_bounds_include_transforms_clips_and_effect_support() {
+    let mut tree = LayerTree::new();
+    let root = tree.create_transform(Transform::translation(Offset::new(5., 7.)));
+    let shadow = tree.create_drop_shadow(DropShadowEffect::asymmetric(
+        Offset::new(4., 3.),
+        2.,
+        1.,
+        Color::BLACK,
+    ));
+    let clip = tree.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)));
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(2., 3.), Size::new(20., 10.)),
+    );
+    tree.set_children(root, vec![shadow]);
+    tree.set_children(shadow, vec![clip]);
+    tree.set_children(clip, vec![picture]);
+    tree.set_root(root);
+
+    // Source after transform: (7,10)..(27,20). Shadow blur expands the union
+    // by 3*sigma around the +4,+3 translated shadow.
+    assert_eq!(
+        tree.scene_bounds(),
+        Some(Rect::from_origin_size(
+            Offset::new(5., 10.),
+            Size::new(32., 16.)
+        ))
+    );
+}
 #[test]
 fn radii_normalize_coherently_across_opposing_edges() {
     let r = CornerRadii {

@@ -1,5 +1,7 @@
 use crate::display_list::{DisplayList, PaintCommand};
-use crate::effects::{BlendMode, ColorFilter, DropShadowEffect, GaussianBlur};
+use crate::effects::{
+    BlendMode, ColorFilter, DropShadowEffect, GaussianBlur, blur_bounds, drop_shadow_bounds,
+};
 use crate::geometry::union_rect;
 use crate::gradients::Brush;
 use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
@@ -309,6 +311,19 @@ impl LayerTree {
     }
     pub fn set_root(&mut self, root: LayerId) {
         self.root = Some(root);
+    }
+
+    /// Returns the retained scene's conservative world-space visual bounds
+    /// after compositor transforms, rectangular clipping, blur support, and
+    /// drop-shadow support have been applied.
+    ///
+    /// This is renderer-independent geometry. It is useful to embedders that
+    /// need to size a native host around retained content without inspecting
+    /// widget types or GPU commands.
+    #[must_use]
+    pub fn scene_bounds(&self) -> Option<Rect> {
+        self.root
+            .and_then(|root| self.visual_subtree_bounds(root, Transform::IDENTITY))
     }
     pub fn create_picture(&mut self, display_list: DisplayList, bounds: Rect) -> LayerId {
         self.insert(LayerKind::Picture {
@@ -1383,6 +1398,58 @@ impl LayerTree {
                     .iter()
                     .filter_map(|child| self.subtree_bounds(*child, next))
                     .reduce(union_rect)
+            }
+        }
+    }
+
+    fn visual_subtree_bounds(&self, id: LayerId, world_transform: Transform) -> Option<Rect> {
+        let layer = self.layers.get(id.0)?;
+        let child_bounds = |tree: &Self, transform: Transform| {
+            layer
+                .children
+                .iter()
+                .filter_map(|child| tree.visual_subtree_bounds(*child, transform))
+                .reduce(union_rect)
+        };
+        match &layer.kind {
+            LayerKind::Picture { bounds, .. } => Some(world_transform.transform_rect_bbox(*bounds)),
+            LayerKind::Transform { transform: local } => {
+                child_bounds(self, world_transform.then(*local))
+            }
+            LayerKind::ClipRect { rect } => {
+                let world = world_transform.transform_rect_bbox(*rect);
+                child_bounds(self, world_transform).and_then(|bounds| bounds.intersection(world))
+            }
+            LayerKind::Opacity { .. }
+            | LayerKind::ColorFilter { .. }
+            | LayerKind::Blend { .. }
+            | LayerKind::ShaderMask { .. }
+            | LayerKind::BackdropFilter { .. }
+            | LayerKind::AnnotatedRegion { .. }
+            | LayerKind::Leader { .. } => child_bounds(self, world_transform),
+            LayerKind::Blur { blur } => child_bounds(self, world_transform)
+                .map(|bounds| blur_bounds(bounds, blur.sigma_x, blur.sigma_y)),
+            LayerKind::DropShadow { shadow } => child_bounds(self, world_transform).map(|bounds| {
+                drop_shadow_bounds(bounds, shadow.offset, shadow.sigma_x, shadow.sigma_y)
+            }),
+            LayerKind::Follower {
+                link,
+                show_when_unlinked,
+                offset,
+                target_anchor,
+                follower_anchor,
+                size,
+            } => {
+                let next = self.follower_transform(
+                    world_transform,
+                    link.clone(),
+                    *show_when_unlinked,
+                    *offset,
+                    *target_anchor,
+                    *follower_anchor,
+                    *size,
+                )?;
+                child_bounds(self, next)
             }
         }
     }

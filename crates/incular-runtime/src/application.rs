@@ -15,7 +15,8 @@ use crate::simulation::{self, Screenshot, Simulation, SimulationError};
 use crate::tasks::{self, RuntimeWake, Task, TaskFailure, TaskHandle, TokioHandle};
 use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
 use crate::window_state::{
-    ApplicationDiagnostics, WindowDiagnostics, WindowManager, WindowRecord, WindowRegistry,
+    ApplicationDiagnostics, ContentSizeCoordinator, WindowDiagnostics, WindowManager, WindowRecord,
+    WindowRegistry,
 };
 use incular_accessibility::{
     AccessKitProjection, AccessibilityDiagnostics, NativeAccessibilityUpdate, SemanticActionRequest,
@@ -1004,6 +1005,7 @@ impl Application {
         now: Instant,
     ) -> Result<Option<(DisplayList, FrameStats)>, TreeError> {
         let mut sensitivity_update = None;
+        let mut content_size_request = None;
         let outcome = self
             .with_window_mut(window_id, |record| {
                 if record.metrics.physical_size.is_zero() {
@@ -1011,15 +1013,22 @@ impl Application {
                     scheduler_counters::FRAMES_SKIPPED.fetch_add(1, Ordering::Relaxed);
                     Ok(None)
                 } else {
+                    let frame_constraints =
+                        ContentSizeCoordinator::layout_constraints(&record.options, constraints);
                     record
                         .runtime
-                        .run_frame_at(constraints, now)
+                        .run_frame_at(frame_constraints, now)
                         .map(|(list, stats)| {
                             let sensitivity = record.runtime.content_sensitivity();
                             if record.last_content_sensitivity != Some(sensitivity) {
                                 record.last_content_sensitivity = Some(sensitivity);
                                 sensitivity_update = Some(sensitivity);
                             }
+                            content_size_request = record.content_sizing.reconcile(
+                                &record.options,
+                                record.metrics,
+                                record.runtime.tree().scene_bounds(),
+                            );
                             record.last_frame = FrameRecord {
                                 frame: 0,
                                 timings: stats.timings,
@@ -1040,6 +1049,14 @@ impl Application {
                 }
             })
             .unwrap_or(Ok(None));
+        if let Some(size) = content_size_request {
+            self.native_commands
+                .borrow_mut()
+                .push_back(NativeWindowCommand::Operate(WindowCommand::new(
+                    window_id,
+                    WindowOperation::SetLogicalSize(size),
+                )));
+        }
         if let Some(sensitivity) = sensitivity_update {
             self.native_commands
                 .borrow_mut()
@@ -1405,6 +1422,7 @@ impl Application {
                                     && size.width > 0.0
                                     && size.height > 0.0
                                 {
+                                    record.content_sizing.reset();
                                     record.options.initial_logical_size = *size;
                                 } else {
                                     return false;

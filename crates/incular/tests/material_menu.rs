@@ -78,3 +78,63 @@ fn material_menu_opens_in_an_application_frame_without_recursing() {
     app.run_window_frame_at(window, constraints, std::time::Instant::now())
         .expect("stable opened frame");
 }
+
+#[test]
+fn content_sized_undecorated_window_expands_for_material_menu() {
+    let controller = MenuController::new();
+    let controller_for_build = controller.clone();
+    let options = WindowOptions {
+        initial_logical_size: Size::new(100.0, 200.0),
+        size_policy: WindowSizePolicy::Content,
+        decorations: false,
+        ..WindowOptions::new("Content-sized menu")
+    };
+    let mut app = Application::new_with_options(options, move |_cx| {
+        MaterialApp::new(
+            Container::new().width(100.0).height(200.0).child(
+                MenuAnchor::new([
+                    MenuItemButton::label("First"),
+                    MenuItemButton::label("Second"),
+                ])
+                .controller(controller_for_build.clone())
+                .alignment_offset(Offset::new(0.0, 200.0))
+                .child(FilledButton::tonal("Menu")),
+            ),
+        )
+        .into()
+    })
+    .expect("create content-sized material menu application");
+    let window = app.primary_window();
+    let _ = app.take_native_window_commands();
+    let constraints = Constraints::tight(Size::new(100.0, 200.0));
+    app.run_window_frame_at(window, constraints, std::time::Instant::now())
+        .expect("initial content-sized frame");
+    let baseline_extent = app
+        .take_native_window_commands()
+        .into_iter()
+        .filter_map(|command| match command {
+            NativeWindowCommand::Operate(WindowCommand {
+                operation: WindowOperation::SetLogicalSize(size),
+                ..
+            }) => Some(size),
+            _ => None,
+        })
+        .next_back()
+        .unwrap_or(Size::new(100.0, 200.0));
+
+    controller.open();
+    app.run_window_frame_at(window, constraints, std::time::Instant::now())
+        .expect("opened frame");
+    let requested = app
+        .take_native_window_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            NativeWindowCommand::Operate(WindowCommand {
+                operation: WindowOperation::SetLogicalSize(size),
+                ..
+            }) => Some(size),
+            _ => None,
+        })
+        .expect("opening menu requests a larger native content host");
+    assert!(requested.height > baseline_extent.height);
+}

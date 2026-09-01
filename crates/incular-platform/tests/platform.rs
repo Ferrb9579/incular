@@ -21,6 +21,7 @@ fn window_options_use_the_shared_application_defaults() {
 
     assert_eq!(options.title, defaults.window_title);
     assert_eq!(options.initial_logical_size, defaults.initial_window_size);
+    assert_eq!(options.size_policy, defaults.window_size_policy);
     assert_eq!(options.resizable, defaults.resizable);
     assert_eq!(options.visible, defaults.visible);
     assert_eq!(options.decorations, defaults.decorations);
@@ -28,6 +29,16 @@ fn window_options_use_the_shared_application_defaults() {
     assert_eq!(options.background_color, defaults.background_color);
     assert_eq!(options.maximized, defaults.maximized);
     assert!(options.fullscreen.is_none());
+}
+
+#[test]
+fn content_sizing_is_explicit_and_independent_of_decorations() {
+    let mut options = WindowOptions::new("Palette");
+    options.decorations = false;
+    assert_eq!(options.size_policy, WindowSizePolicy::Viewport);
+    options.size_policy = WindowSizePolicy::Content;
+    assert_eq!(options.size_policy, WindowSizePolicy::Content);
+    assert!(!options.decorations);
 }
 
 #[test]

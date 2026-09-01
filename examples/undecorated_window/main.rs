@@ -11,6 +11,7 @@ pub(crate) mod simulations;
 fn main() {
     let options = WindowOptions {
         initial_logical_size: Size::new(520.0, 320.0),
+        size_policy: WindowSizePolicy::Content,
         decorations: false,
         ..WindowOptions::new("Incular Undecorated Window")
     };
@@ -46,7 +47,8 @@ fn main() {
                             Widget::from(
                                 Text::new(
                                     "This content reaches the window edges because \
-                                     WindowOptions::decorations is false.",
+                                     decorations are disabled. Content sizing also lets the native \
+                                     host grow for overlays and shrink when they close.",
                                 )
                                 .style(
                                     TextStyle::new()
