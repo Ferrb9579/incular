@@ -13,7 +13,10 @@ use crate::restoration::{self, RestorationConfig, RestorationDiagnostics};
 use crate::scheduler_counters;
 use crate::simulation::{self, Screenshot, Simulation, SimulationError};
 use crate::tasks::{self, RuntimeWake, Task, TaskFailure, TaskHandle, TokioHandle};
-use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHandle};
+use crate::window_commands::{
+    NativeOperationCompletionStatus, NativeWindowCommand, QueuedNativeRequest, QueuedWindowCommand,
+    WindowCommandBridge, WindowHandle,
+};
 use crate::window_state::{
     ApplicationDiagnostics, ContentSizeCoordinator, WindowDiagnostics, WindowManager, WindowRecord,
     WindowRegistry,
@@ -23,8 +26,10 @@ use incular_accessibility::{
 };
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_platform::{
-    Clipboard, PlatformEvent, PlatformLifecycle, TextInputCommand, WindowCommand, WindowEvent,
-    WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
+    Clipboard, NativeOperationCompletion, NativeRequestId, PlatformCapabilities, PlatformEvent,
+    PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
+    TextInputCommand, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
+    WindowOperation, WindowOptions,
 };
 use incular_rendering::DisplayList;
 use incular_widgets::Widget;
@@ -33,9 +38,19 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
-    sync::{Arc, Mutex, atomic::Ordering, mpsc},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::Instant,
 };
+use tokio::sync::oneshot;
+
+struct PendingNativeRequest {
+    window_id: WindowId,
+    sender: oneshot::Sender<PlatformOperationResult>,
+}
 
 /// Owns application services, one Tokio runtime, and multiple retained roots.
 /// A root's environment, input/focus, semantics, compositor, frame work, and
@@ -44,7 +59,10 @@ pub struct Application {
     pub(crate) scheduler: Rc<RefCell<tasks::TaskScheduler>>,
     pub(crate) registry: Rc<RefCell<WindowRegistry>>,
     pub(crate) manager: WindowManager,
-    pub(crate) command_receiver: mpsc::Receiver<WindowCommand>,
+    pub(crate) command_receiver: mpsc::Receiver<QueuedWindowCommand>,
+    pub(crate) request_cancellation_receiver: mpsc::Receiver<NativeRequestId>,
+    pending_native_requests: HashMap<NativeRequestId, PendingNativeRequest>,
+    platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) simulation_receiver: mpsc::Receiver<simulation::SimulationRequest>,
     pub(crate) simulation_bridge: Arc<simulation::SimulationBridge>,
     pub(crate) simulation_frame_waiters:
@@ -136,11 +154,16 @@ impl Application {
         let registry = Rc::new(RefCell::new(WindowRegistry::default()));
         let native_commands = Rc::new(RefCell::new(VecDeque::new()));
         let (sender, command_receiver) = mpsc::channel();
+        let (cancellation_sender, request_cancellation_receiver) = mpsc::channel();
         let (simulation_sender, simulation_receiver) = mpsc::channel();
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
+        let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
         let bridge = Arc::new(WindowCommandBridge {
             sender,
+            cancellation_sender,
             wake: Mutex::new(None),
+            next_request: AtomicU64::new(1),
+            active: Mutex::new(true),
         });
         let manager = WindowManager {
             registry: Rc::downgrade(&registry),
@@ -148,6 +171,7 @@ impl Application {
             bridge,
             native_commands: native_commands.clone(),
             restoration: restoration.clone(),
+            application_capabilities: platform_capabilities.clone(),
         };
         let primary_window = manager
             .open_window_with_inner(options, build, primary_restoration)?
@@ -157,6 +181,9 @@ impl Application {
             registry,
             manager,
             command_receiver,
+            request_cancellation_receiver,
+            pending_native_requests: HashMap::new(),
+            platform_capabilities,
             simulation_receiver,
             simulation_bridge,
             simulation_frame_waiters: HashMap::new(),
@@ -279,6 +306,65 @@ impl Application {
     #[must_use]
     pub fn active_window_ids(&self) -> Vec<WindowId> {
         self.registry.borrow().ids()
+    }
+
+    /// Returns the latest backend capability snapshot for application-level
+    /// services. Before a native backend attaches, fields are `Unknown`.
+    #[must_use]
+    pub fn platform_capabilities(&self) -> PlatformCapabilities {
+        *self
+            .platform_capabilities
+            .read()
+            .expect("application capability snapshot lock")
+    }
+
+    /// Publishes one backend/session capability snapshot and applies it to all
+    /// currently live windows. Custom embedders may call this before entering
+    /// their native event loop.
+    pub fn set_platform_capabilities(&mut self, capabilities: PlatformCapabilities) {
+        *self
+            .platform_capabilities
+            .write()
+            .expect("application capability snapshot lock") = capabilities;
+        for slot in &self.registry.borrow().slots {
+            if let Some(record) = slot.record.as_ref() {
+                *record
+                    .capabilities
+                    .write()
+                    .expect("window capability snapshot lock") = capabilities;
+            }
+        }
+    }
+
+    /// Returns the capability snapshot associated with one live window.
+    #[must_use]
+    pub fn window_capabilities(&self, window_id: WindowId) -> Option<PlatformCapabilities> {
+        let registry = self.registry.borrow();
+        let record = registry.get(window_id)?;
+        Some(
+            *record
+                .capabilities
+                .read()
+                .expect("window capability snapshot lock"),
+        )
+    }
+
+    /// Overrides capabilities for one live window when native support depends
+    /// on that concrete surface/session rather than the application backend.
+    pub fn set_window_capabilities(
+        &mut self,
+        window_id: WindowId,
+        capabilities: PlatformCapabilities,
+    ) -> bool {
+        let registry = self.registry.borrow();
+        let Some(record) = registry.get(window_id) else {
+            return false;
+        };
+        *record
+            .capabilities
+            .write()
+            .expect("window capability snapshot lock") = capabilities;
+        true
     }
 
     /// Development-only, read-only view of application windows.  Keeping this
@@ -864,6 +950,7 @@ impl Application {
             }
         }
         self.drain_window_commands();
+        self.drain_native_request_cancellations();
         self.process_simulation_requests();
     }
 
@@ -1386,6 +1473,7 @@ impl Application {
 
     pub fn close_window(&mut self, window_id: WindowId) -> bool {
         self.fail_simulation_window(window_id);
+        self.fail_native_requests_for_window(window_id, PlatformOperationError::stale_resource());
         let record = self.registry.borrow_mut().close(window_id);
         let Some(mut record) = record else {
             self.registry.borrow_mut().stale_window_commands += 1;
@@ -1411,10 +1499,20 @@ impl Application {
     }
 
     fn drain_window_commands(&mut self) {
-        while let Ok(command) = self.command_receiver.try_recv() {
+        while let Ok(queued) = self.command_receiver.try_recv() {
+            let QueuedWindowCommand { command, request } = queued;
             let window_id = command.window_id;
             match command.operation.clone() {
                 WindowOperation::Close => {
+                    if let Some(request) = request {
+                        Self::resolve_queued_request(
+                            request,
+                            Err(PlatformOperationError::with_context(
+                                PlatformOperationErrorKind::InvalidState,
+                                "window close does not expose a native completion request",
+                            )),
+                        );
+                    }
                     let _ = self.close_window(window_id);
                 }
                 operation => {
@@ -1453,6 +1551,23 @@ impl Application {
                         true
                     });
                     if applied == Some(true) {
+                        if let Some(request) = request {
+                            let request_id = command
+                                .request_id
+                                .expect("result-bearing command has request id");
+                            if !request.cancelled.load(Ordering::Acquire) {
+                                let previous = self.pending_native_requests.insert(
+                                    request_id,
+                                    PendingNativeRequest {
+                                        window_id,
+                                        sender: request.sender,
+                                    },
+                                );
+                                debug_assert!(previous.is_none(), "native request ids are unique");
+                            }
+                        } else {
+                            debug_assert!(command.request_id.is_none());
+                        }
                         self.native_commands
                             .borrow_mut()
                             .push_back(NativeWindowCommand::Operate(command));
@@ -1463,7 +1578,23 @@ impl Application {
                             self.should_exit = true;
                         }
                         self.manager.sync_restorable_windows(true);
+                    } else if applied == Some(false) {
+                        if let Some(request) = request {
+                            Self::resolve_queued_request(
+                                request,
+                                Err(PlatformOperationError::with_context(
+                                    PlatformOperationErrorKind::InvalidState,
+                                    "window operation arguments were rejected by the runtime",
+                                )),
+                            );
+                        }
                     } else if applied.is_none() {
+                        if let Some(request) = request {
+                            Self::resolve_queued_request(
+                                request,
+                                Err(PlatformOperationError::stale_resource()),
+                            );
+                        }
                         self.registry.borrow_mut().stale_window_commands += 1;
                     }
                 }
@@ -1471,11 +1602,86 @@ impl Application {
         }
     }
 
+    fn resolve_queued_request(request: QueuedNativeRequest, result: PlatformOperationResult) {
+        if !request.cancelled.load(Ordering::Acquire) {
+            let _ = request.sender.send(result);
+        }
+    }
+
+    fn drain_native_request_cancellations(&mut self) {
+        while let Ok(request_id) = self.request_cancellation_receiver.try_recv() {
+            self.pending_native_requests.remove(&request_id);
+        }
+    }
+
+    fn fail_native_requests_for_window(
+        &mut self,
+        window_id: WindowId,
+        error: PlatformOperationError,
+    ) {
+        let request_ids = self
+            .pending_native_requests
+            .iter()
+            .filter_map(|(request_id, request)| {
+                (request.window_id == window_id).then_some(*request_id)
+            })
+            .collect::<Vec<_>>();
+        for request_id in request_ids {
+            if let Some(request) = self.pending_native_requests.remove(&request_id) {
+                let _ = request.sender.send(Err(error.clone()));
+            }
+        }
+    }
+
+    fn fail_all_native_requests(&mut self, error: PlatformOperationError) {
+        for (_, request) in self.pending_native_requests.drain() {
+            let _ = request.sender.send(Err(error.clone()));
+        }
+        while let Ok(queued) = self.command_receiver.try_recv() {
+            if let Some(request) = queued.request {
+                Self::resolve_queued_request(request, Err(error.clone()));
+            }
+        }
+    }
+
+    /// Completes one result-bearing native operation. Backends call this only
+    /// after applying the operation on the owning native/UI thread.
+    pub fn complete_native_operation(
+        &mut self,
+        completion: NativeOperationCompletion,
+    ) -> NativeOperationCompletionStatus {
+        let Some(pending) = self.pending_native_requests.get(&completion.request_id) else {
+            return NativeOperationCompletionStatus::UnknownRequest;
+        };
+        if pending.window_id != completion.window_id {
+            return NativeOperationCompletionStatus::TargetMismatch;
+        }
+        let pending = self
+            .pending_native_requests
+            .remove(&completion.request_id)
+            .expect("pending request was just observed");
+        if !self.contains_window(completion.window_id) {
+            let _ = pending
+                .sender
+                .send(Err(PlatformOperationError::stale_resource()));
+            return NativeOperationCompletionStatus::StaleTarget;
+        }
+        if let Err(error) = &completion.result {
+            let error = error.clone();
+            let _ = self.with_window_mut(completion.window_id, |record| {
+                record.last_platform_error = Some(error);
+            });
+        }
+        let _ = pending.sender.send(completion.result);
+        NativeOperationCompletionStatus::Completed
+    }
+
     /// Takes all UI-thread native operations. Adapters must call this only
     /// from their event-loop callback; creation is consequently valid for
     /// Winit 0.30's active-loop restriction.
     pub fn take_native_window_commands(&mut self) -> Vec<NativeWindowCommand> {
         self.drain_window_commands();
+        self.drain_native_request_cancellations();
         self.native_commands.borrow_mut().drain(..).collect()
     }
 
@@ -1512,6 +1718,11 @@ impl Application {
             render_objects: record.runtime.tree().render_object_count(),
             semantics: record.runtime.tree().semantics().len(),
             accessibility: record.accessibility,
+            capabilities: *record
+                .capabilities
+                .read()
+                .expect("window capability snapshot lock"),
+            last_platform_error: record.last_platform_error.clone(),
         })
     }
 
@@ -1523,6 +1734,7 @@ impl Application {
             windows_closed: registry.windows_closed,
             active_windows: registry.ids().len(),
             stale_window_commands: registry.stale_window_commands,
+            pending_native_requests: self.pending_native_requests.len(),
         }
     }
 
@@ -1593,6 +1805,11 @@ impl Application {
 
     pub fn shutdown(&mut self) {
         self.flush_restoration_before_shutdown();
+        self.manager.bridge.stop();
+        self.fail_all_native_requests(PlatformOperationError::with_context(
+            PlatformOperationErrorKind::Unavailable,
+            "application runtime stopped before native completion",
+        ));
         let ids = self.active_window_ids();
         for id in ids {
             self.fail_simulation_window(id);
@@ -1622,6 +1839,7 @@ impl Application {
     /// tests. Extra windows are cancelled; desktop `run` retains all windows.
     #[must_use]
     pub fn into_runtime(self) -> Runtime {
+        self.manager.bridge.stop();
         let primary = self.primary_window;
         let mut primary_record = self
             .registry

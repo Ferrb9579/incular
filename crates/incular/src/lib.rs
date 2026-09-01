@@ -91,12 +91,17 @@ pub mod prelude {
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
+        AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
         ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
-        ContentSensitivityOutcome, Fullscreen, MemoryContentSensitivityBackend,
-        MemoryTextInputAdapter, NoopContentSensitivityBackend, TextInputAction, TextInputAdapter,
+        ContentSensitivityOutcome, DataTransferCapabilities, DisplayPlacementCapabilities,
+        Fullscreen, MemoryContentSensitivityBackend, MemoryTextInputAdapter,
+        NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
+        NoopContentSensitivityBackend, PlatformCapabilities, PlatformOperationError,
+        PlatformOperationErrorKind, PlatformOperationResult, TextInputAction, TextInputAdapter,
         TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
-        WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowOperation,
-        WindowOptions, WindowOptionsError,
+        TransientSurfaceCapabilities, WindowCommand, WindowControlCapabilities, WindowEvent,
+        WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
+        WindowOptionsError,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -109,13 +114,15 @@ pub mod prelude {
         AccessibilityDiagnostics, Application, ApplicationDiagnostics, ApplicationLifecycle,
         AsyncState, AsyncValue, BudgetStatistics, BuildContext, EditingDiagnostics,
         FileRestorationStore, FocusDiagnostics, FrameHistory, FrameRecord, FrameStatistics,
-        GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo, NativeWindowCommand,
+        GpuSample, InMemoryRestorationStore, LastWindowPolicy, Memo,
+        NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
         PerformanceHub, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable,
         RestorableWindowFactory, RestorationConfig, RestorationDiagnostics, RestorationHandle,
         RestorationMigration, RestorationStore, RestorationStoreError, Runtime, RuntimeDiagnostics,
         RuntimeErrorReport, SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope,
-        TokioHandle, UiDispatcher, UndoHistoryController, UndoHistoryState, WindowDiagnostics,
-        WindowError, WindowHandle, WindowOpener, WindowRestorationId,
+        TokioHandle, UiDispatcher, UndoHistoryController, UndoHistoryState,
+        WindowCommandEnqueueError, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
+        WindowRestorationId,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,

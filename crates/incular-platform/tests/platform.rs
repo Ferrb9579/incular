@@ -106,10 +106,55 @@ fn command_preserves_target_and_operation_without_native_data() {
     );
 
     assert_eq!(command.window_id, window_id);
+    assert!(command.request_id.is_none());
     assert_eq!(
         command.operation,
         WindowOperation::SetLogicalSize(Size::new(640.0, 480.0))
     );
+}
+
+#[test]
+fn capability_snapshots_distinguish_unknown_supported_and_unsupported() {
+    let unknown = PlatformCapabilities::default();
+    assert_eq!(
+        unknown.window.set_title,
+        CapabilitySupport::Unknown,
+        "construction before a native backend attaches must not pretend unsupported"
+    );
+
+    let unsupported = PlatformCapabilities::unsupported();
+    assert_eq!(
+        unsupported.application_services.global_shortcuts,
+        CapabilitySupport::Unsupported
+    );
+    assert!(!unsupported.transients.native_surface.is_supported());
+
+    let mut discovered = unsupported;
+    discovered.window.set_title = CapabilitySupport::Supported;
+    discovered.data_transfer.clipboard_text = CapabilitySupport::Supported;
+    assert!(discovered.window.set_title.is_supported());
+    assert!(discovered.data_transfer.clipboard_text.is_supported());
+}
+
+#[test]
+fn result_bearing_commands_carry_only_portable_request_identity() {
+    let window_id = WindowId::from_parts(4, 2);
+    let request_id = NativeRequestId::new(19);
+    let command = WindowCommand::with_request(window_id, request_id, WindowOperation::RequestFocus);
+    assert_eq!(command.window_id, window_id);
+    assert_eq!(command.request_id, Some(request_id));
+    assert_eq!(request_id.get(), 19);
+}
+
+#[test]
+fn platform_operation_errors_have_stable_categories_not_native_types() {
+    let error = PlatformOperationError::with_context(
+        PlatformOperationErrorKind::RejectedByPlatform,
+        "window manager declined request",
+    );
+    assert_eq!(error.kind(), PlatformOperationErrorKind::RejectedByPlatform);
+    assert_eq!(error.context(), Some("window manager declined request"));
+    assert!(error.to_string().contains("rejected by the platform"));
 }
 
 #[test]

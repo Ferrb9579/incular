@@ -12,13 +12,24 @@ use incular_core::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{fmt, path::PathBuf};
 
+mod capabilities;
 mod content_sensitivity;
+mod operation;
 
+pub use capabilities::{
+    AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
+    DataTransferCapabilities, DisplayPlacementCapabilities, NativeMenuCapabilities,
+    PlatformCapabilities, TransientSurfaceCapabilities, WindowControlCapabilities,
+};
 pub use content_sensitivity::{
     ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
 };
 pub use incular_config::{TransparencyMode, WindowSizePolicy};
+pub use operation::{
+    NativeOperationCompletion, NativeRequestId, PlatformOperationError, PlatformOperationErrorKind,
+    PlatformOperationResult,
+};
 
 /// Resolves the persistent, local application-data directory through the
 /// operating system's standard project-directory conventions.
@@ -240,6 +251,7 @@ impl std::error::Error for WindowOptionsError {}
 pub struct WindowCommand {
     pub window_id: WindowId,
     pub operation: WindowOperation,
+    pub request_id: Option<NativeRequestId>,
 }
 
 impl WindowCommand {
@@ -248,6 +260,21 @@ impl WindowCommand {
         Self {
             window_id,
             operation,
+            request_id: None,
+        }
+    }
+
+    /// Associates this command with one result-bearing runtime request.
+    #[must_use]
+    pub const fn with_request(
+        window_id: WindowId,
+        request_id: NativeRequestId,
+        operation: WindowOperation,
+    ) -> Self {
+        Self {
+            window_id,
+            operation,
+            request_id: Some(request_id),
         }
     }
 }

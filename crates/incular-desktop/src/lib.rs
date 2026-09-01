@@ -8,11 +8,12 @@ use incular_config::Constraints;
 use incular_core::Offset;
 use incular_core::PointerPhase;
 use incular_platform::{
-    Clipboard, ContentSensitivityBackend, NoopContentSensitivityBackend, PhysicalSize,
-    PlatformEvent, TransparencyMode, WindowCommand, WindowEvent as IncularWindowEvent,
-    WindowId as IncularWindowId, WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions,
-    apply_text_input_command, ime_event, key_event, pointer_event, raw_window_handles, text_event,
-    touch_event, wheel_event,
+    CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
+    ContentSensitivityOutcome, NativeOperationCompletion, NoopContentSensitivityBackend,
+    PhysicalSize, PlatformCapabilities, PlatformEvent, PlatformOperationError, TransparencyMode,
+    WindowCommand, WindowEvent as IncularWindowEvent, WindowId as IncularWindowId, WindowLifecycle,
+    WindowMetrics, WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
+    pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
@@ -118,6 +119,10 @@ impl DesktopClipboard {
             native: arboard::Clipboard::new().ok(),
             fallback: String::new(),
         }
+    }
+
+    fn native_available(&self) -> bool {
+        self.native.is_some()
     }
 }
 impl Clipboard for DesktopClipboard {
@@ -239,7 +244,8 @@ fn launch_devtools_ui() {
     }
 }
 
-pub fn run_application(application: Application) -> Result<(), RunError> {
+pub fn run_application(mut application: Application) -> Result<(), RunError> {
+    application.set_platform_capabilities(desktop_platform_capabilities());
     let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
         .build()
         .map_err(RunError::EventLoop)?;
@@ -747,8 +753,13 @@ impl MultiApp {
             active: false,
         };
         accessibility.projection.note_adapter_created();
+        let clipboard = DesktopClipboard::new();
+        let mut capabilities = self.application.platform_capabilities();
+        capabilities.data_transfer.clipboard_text =
+            CapabilitySupport::from_supported(clipboard.native_available());
+        let _ = self.application.set_window_capabilities(id, capabilities);
         self.application
-            .set_window_clipboard(id, Box::new(DesktopClipboard::new()));
+            .set_window_clipboard(id, Box::new(clipboard));
         self.application
             .handle_window_event(IncularWindowEvent::platform(
                 id,
@@ -783,7 +794,23 @@ impl MultiApp {
     }
 
     fn operate_window(&mut self, command: WindowCommand) {
+        let window_id = command.window_id;
+        let request_id = command.request_id;
         let Some(native_id) = self.native_ids.get(&command.window_id).copied() else {
+            if let Some(request_id) = request_id {
+                let error = if self.application.contains_window(window_id) {
+                    PlatformOperationError::unavailable()
+                } else {
+                    PlatformOperationError::stale_resource()
+                };
+                let _ = self
+                    .application
+                    .complete_native_operation(NativeOperationCompletion::new(
+                        window_id,
+                        request_id,
+                        Err(error),
+                    ));
+            }
             return;
         };
         if matches!(command.operation, WindowOperation::Close) {
@@ -794,8 +821,18 @@ impl MultiApp {
             return;
         }
         let mut synchronous_resize = None;
+        let mut operation_result = Ok(());
         {
             let Some(state) = self.windows.get_mut(&native_id) else {
+                if let Some(request_id) = request_id {
+                    let _ =
+                        self.application
+                            .complete_native_operation(NativeOperationCompletion::new(
+                                window_id,
+                                request_id,
+                                Err(PlatformOperationError::unavailable()),
+                            ));
+                }
                 return;
             };
             match command.operation {
@@ -813,7 +850,17 @@ impl MultiApp {
                         });
                 }
                 WindowOperation::SetContentSensitivity(sensitivity) => {
-                    let _ = state.content_sensitivity.apply(sensitivity);
+                    operation_result = match state.content_sensitivity.apply(sensitivity) {
+                        ContentSensitivityOutcome::Applied { .. }
+                        | ContentSensitivityOutcome::NoOp {
+                            reason: ContentSensitivityNoOpReason::Unchanged,
+                            ..
+                        } => Ok(()),
+                        ContentSensitivityOutcome::NoOp {
+                            reason: ContentSensitivityNoOpReason::Unsupported,
+                            ..
+                        } => Err(PlatformOperationError::unsupported()),
+                    };
                 }
                 WindowOperation::RequestFocus => state.window.focus_window(),
                 WindowOperation::RequestRedraw => state.window.request_redraw(),
@@ -829,6 +876,15 @@ impl MultiApp {
         // asynchronous and are handled by the ordinary `Resized` event path.
         if let Some((physical_size, scale_factor)) = synchronous_resize {
             self.resize_window(command.window_id, physical_size, scale_factor);
+        }
+        if let Some(request_id) = request_id {
+            let _ = self
+                .application
+                .complete_native_operation(NativeOperationCompletion::new(
+                    window_id,
+                    request_id,
+                    operation_result,
+                ));
         }
     }
 
@@ -1099,6 +1155,24 @@ impl MultiApp {
         self.application
             .set_accessibility_diagnostics(id, state.accessibility.projection.diagnostics());
     }
+}
+
+fn desktop_platform_capabilities() -> PlatformCapabilities {
+    let mut capabilities = PlatformCapabilities::unsupported();
+    capabilities.window.set_title = CapabilitySupport::Supported;
+    capabilities.window.set_visibility = CapabilitySupport::Supported;
+    capabilities.window.set_logical_size = CapabilitySupport::Supported;
+    capabilities.window.request_focus = CapabilitySupport::Supported;
+    capabilities.window.request_redraw = CapabilitySupport::Supported;
+    capabilities.window.close = CapabilitySupport::Supported;
+    // The current shared desktop adapter deliberately uses the explicit no-op
+    // sensitivity backend. OS-specific enforcement can publish Supported when
+    // a real adapter is installed.
+    capabilities.window.content_sensitivity = CapabilitySupport::Unsupported;
+    // Clipboard availability depends on whether the native clipboard service
+    // can be opened for the concrete session/window, so creation refines it.
+    capabilities.data_transfer.clipboard_text = CapabilitySupport::Unknown;
+    capabilities
 }
 
 impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {

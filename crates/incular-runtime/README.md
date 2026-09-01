@@ -72,6 +72,23 @@ tasks survive a window close, while window/component completions are cancelled
 and generationally rejected once their root closes. `WindowHandle` operations
 are data-only messages, so a Tokio worker cannot mutate a native window.
 
+`WindowHandle` distinguishes command transport from native execution. Ordinary
+setters return `Result<(), WindowCommandEnqueueError>`, which only reports
+whether the command crossed the runtime/UI bridge. Operations that require a
+native outcome return `NativeOperationRequest`, an awaitable request completed
+by the platform backend. Completion is keyed by both `NativeRequestId` and the
+generational `WindowId`; a close/reused slot cannot consume an old result, and
+each request resolves at most once. Dropping the request detaches result
+delivery without trying to undo an operation that may already have executed.
+
+`Application::platform_capabilities` and per-window capability snapshots expose
+what the active backend/session can actually honor. Before a backend attaches,
+capabilities are `Unknown`; explicit headless/unsupported backends publish
+`Unsupported` rather than pretending an operation succeeded. Native failures
+are normalized to stable platform-error categories and the last per-window
+failure is visible through `WindowDiagnostics` without retaining native error
+objects.
+
 `Signal` subscriptions are retained per root. A shared signal rebuilds only
 the roots that read it; a signal read only by one window leaves every other
 window idle. Physical metrics, DPI, safe/view insets, and native activation are

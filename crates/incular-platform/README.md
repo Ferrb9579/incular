@@ -17,12 +17,22 @@ decorations, transparency request, maximized state, and borderless fullscreen.
 `validate` rejects contradictory or non-positive dimensions before native
 creation.
 
-`WindowCommand` pairs that ID with a data-only `WindowOperation` (`SetTitle`,
-`SetVisible`, `SetLogicalSize`, `RequestFocus`, `RequestRedraw`, or `Close`).
-It is safe to queue from asynchronous work, but a native adapter applies it
-only during its UI/event-loop turn. A native close gesture is first represented
-by `WindowEvent::platform(id, PlatformEvent::CloseRequested)` so the runtime
-can apply an application close policy before issuing `Close`.
+`WindowCommand` pairs that ID with a data-only `WindowOperation`. Ordinary
+fire-and-observe operations carry no request identity; operations whose native
+outcome matters may carry a runtime-owned `NativeRequestId`. The platform
+adapter reports those results as `NativeOperationCompletion`, using the stable
+`PlatformOperationErrorKind` taxonomy rather than leaking Winit/native error
+objects through the framework. A native close gesture is first represented by
+`WindowEvent::platform(id, PlatformEvent::CloseRequested)` so the runtime can
+apply an application close policy before issuing `Close`.
+
+`PlatformCapabilities` is the runtime capability contract. It is grouped into
+window control, display/placement, transient surfaces, native menus, data
+transfer, application services, and advanced input instead of one platform
+flag. `Unknown` means no backend/session has published support yet;
+`Unsupported` is an explicit backend statement. This distinction is important
+for session-dependent facilities such as Wayland placement and native desktop
+services.
 
 `WindowEvent` associates existing `PlatformEvent` input/metrics/close data
 with a normalized `WindowId`; `WindowLifecycle` and `RedrawRequested` provide
@@ -37,8 +47,9 @@ selects the focused client, publishes selection/composing/caret state, and
 receives explicit soft-keyboard actions through `PlatformEvent`. Winit adapters
 apply those commands to the native IME; mobile hosts can consume the same
 commands without a window dependency. `Clipboard` is the backend boundary;
-Linux installs an `arboard` system-clipboard bridge with a safe in-memory
-fallback.
+the shared desktop runner installs an `arboard` system-clipboard bridge with a
+safe in-memory fallback and publishes whether native clipboard interop is
+actually available for the current session.
 
 The scroll convention is positive logical `delta.y` increasing the controller
 offset (content moves upward). Winit `LineDelta` is scaled by 40 logical px;

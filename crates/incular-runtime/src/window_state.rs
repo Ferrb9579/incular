@@ -10,13 +10,16 @@ use crate::window_commands::{NativeWindowCommand, WindowCommandBridge, WindowHan
 use incular_accessibility::AccessibilityDiagnostics;
 use incular_config::{Constraints, ContentSensitivity, RuntimeEnvironment, WindowSizePolicy};
 use incular_core::{RestorationKey, RestorationScope, Size};
-use incular_platform::{WindowId, WindowLifecycle, WindowMetrics, WindowOptions};
+use incular_platform::{
+    PlatformCapabilities, PlatformOperationError, WindowId, WindowLifecycle, WindowMetrics,
+    WindowOptions,
+};
 use incular_widgets::Widget;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashSet, VecDeque},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 /// Debug-facing, native-free state of one retained application window.
@@ -44,6 +47,11 @@ pub struct WindowDiagnostics {
     /// Adapter health for this window only. It contains no native IDs or text
     /// values, and remains zero when no desktop accessibility adapter exists.
     pub accessibility: AccessibilityDiagnostics,
+    /// Native backend capabilities currently published for this window.
+    pub capabilities: PlatformCapabilities,
+    /// Most recent native operation failure, if any. The stable error category
+    /// is suitable for diagnostics; no native error object is retained.
+    pub last_platform_error: Option<PlatformOperationError>,
 }
 
 /// Aggregate lifecycle and stale-command diagnostics for an application.
@@ -53,6 +61,7 @@ pub struct ApplicationDiagnostics {
     pub windows_closed: u64,
     pub active_windows: usize,
     pub stale_window_commands: u64,
+    pub pending_native_requests: usize,
 }
 
 pub(crate) struct WindowRecord {
@@ -75,6 +84,8 @@ pub(crate) struct WindowRecord {
     pub(crate) content_sizing: ContentSizeCoordinator,
     pub(crate) restoration: Option<RestorableWindowMetadata>,
     pub(crate) _restoration_scope_lease: Option<restoration::ScopeLease>,
+    pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
+    pub(crate) last_platform_error: Option<PlatformOperationError>,
 }
 
 /// Window-local negotiation state for content-driven native sizing.
@@ -299,6 +310,7 @@ pub(crate) struct WindowManager {
     pub(crate) bridge: Arc<WindowCommandBridge>,
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) restoration: Option<restoration::RestorationManager>,
+    pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,
 }
 
 impl WindowManager {
@@ -324,6 +336,12 @@ impl WindowManager {
             .ok_or(WindowError::ApplicationStopped)?;
         let restoration_lease = self.acquire_restoration_scope(restoration.as_ref())?;
         let id = registry.borrow_mut().reserve();
+        let capabilities = Arc::new(RwLock::new(
+            *self
+                .application_capabilities
+                .read()
+                .expect("application capability snapshot lock"),
+        ));
         let scope = tasks::TaskScheduler::spawner(&self.scheduler).scope();
         scope.bind_window(id);
         let metrics = initial_metrics(&options);
@@ -361,6 +379,8 @@ impl WindowManager {
                 content_sizing: ContentSizeCoordinator::default(),
                 restoration,
                 _restoration_scope_lease: restoration_lease,
+                capabilities: capabilities.clone(),
+                last_platform_error: None,
             },
         );
         self.sync_restorable_windows(true);
@@ -373,6 +393,7 @@ impl WindowManager {
         Ok(WindowHandle {
             id,
             bridge: self.bridge.clone(),
+            capabilities,
         })
     }
 
@@ -413,6 +434,12 @@ impl WindowManager {
         let restoration_scope = self.restoration_scope(restoration.as_ref());
         let restoration_lease = self.acquire_restoration_scope(restoration.as_ref())?;
         let id = registry.borrow_mut().reserve();
+        let capabilities = Arc::new(RwLock::new(
+            *self
+                .application_capabilities
+                .read()
+                .expect("application capability snapshot lock"),
+        ));
         let spawner = tasks::TaskScheduler::spawner_for(&self.scheduler, id);
         let window_scope = spawner.scope();
         window_scope.bind_window(id);
@@ -507,6 +534,8 @@ impl WindowManager {
                 content_sizing: ContentSizeCoordinator::default(),
                 restoration,
                 _restoration_scope_lease: restoration_lease,
+                capabilities: capabilities.clone(),
+                last_platform_error: None,
             },
         );
         self.sync_restorable_windows(true);
@@ -519,6 +548,7 @@ impl WindowManager {
         Ok(WindowHandle {
             id,
             bridge: self.bridge.clone(),
+            capabilities,
         })
     }
 

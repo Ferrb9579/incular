@@ -94,7 +94,10 @@ pub use tasks::{
     TaskHandle, TaskScope, TokioHandle, UiDispatcher,
 };
 pub use undo::{UndoHistoryController, UndoHistoryState};
-pub use window_commands::{NativeWindowCommand, WindowHandle, WindowOpener};
+pub use window_commands::{
+    NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
+    WindowCommandEnqueueError, WindowHandle, WindowOpener,
+};
 pub use window_state::{ApplicationDiagnostics, WindowDiagnostics};
 
 // Compatibility imports for the existing implementation submodules. These

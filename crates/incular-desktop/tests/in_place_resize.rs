@@ -118,11 +118,19 @@ fn programmatic_and_content_resizes_update_capture_surfaces_in_place() {
         let result = (|| -> Result<(ResizeCaptureReport, ResizeCaptureReport), SimulationError> {
             settle(&explicit_simulation)?;
             let initial = dimensions(&explicit_simulation)?;
-            assert!(explicit_handle.request_logical_size(Size::new(WIDTH, EXPANDED_HEIGHT)));
+            assert!(
+                explicit_handle
+                    .request_logical_size(Size::new(WIDTH, EXPANDED_HEIGHT))
+                    .is_ok()
+            );
             settle(&explicit_simulation)?;
             let expanded = dimensions(&explicit_simulation)?;
             assert_eq!(explicit_simulation.window_id(), explicit_handle.id());
-            assert!(explicit_handle.request_logical_size(Size::new(WIDTH, COMPACT_HEIGHT)));
+            assert!(
+                explicit_handle
+                    .request_logical_size(Size::new(WIDTH, COMPACT_HEIGHT))
+                    .is_ok()
+            );
             settle(&explicit_simulation)?;
             let compact = dimensions(&explicit_simulation)?;
             assert_eq!(explicit_simulation.window_id(), explicit_handle.id());

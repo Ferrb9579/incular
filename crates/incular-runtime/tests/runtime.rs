@@ -642,6 +642,7 @@ fn take_resize_commands(application: &mut Application) -> Vec<(WindowId, Size)> 
             NativeWindowCommand::Operate(WindowCommand {
                 window_id,
                 operation: WindowOperation::SetLogicalSize(size),
+                ..
             }) => Some((window_id, size)),
             _ => None,
         })
@@ -662,7 +663,7 @@ fn explicit_programmatic_resize_keeps_window_identity_and_waits_for_native_metri
     let _ = application.take_native_window_commands();
 
     assert!(application.contains_window(id));
-    assert!(handle.request_logical_size(Size::new(184., 154.)));
+    assert!(handle.request_logical_size(Size::new(184., 154.)).is_ok());
     assert_eq!(
         take_resize_commands(&mut application),
         [(id, Size::new(184., 154.))]
@@ -708,7 +709,7 @@ fn explicit_programmatic_resize_keeps_window_identity_and_waits_for_native_metri
         generation
     );
 
-    assert!(handle.request_logical_size(Size::new(184., 54.)));
+    assert!(handle.request_logical_size(Size::new(184., 54.)).is_ok());
     assert_eq!(
         take_resize_commands(&mut application),
         [(id, Size::new(184., 54.))]
@@ -1071,7 +1072,7 @@ fn close_cancels_only_its_window_scope_and_rejects_stale_handle_commands() {
         .unwrap();
     assert_eq!(replacement.id().index(), stale_id.index());
     assert_ne!(replacement.id().generation(), stale_id.generation());
-    assert!(stale.set_title("stale"));
+    assert!(stale.set_title("stale").is_ok());
     application.process_runtime_work();
     assert_eq!(
         application
