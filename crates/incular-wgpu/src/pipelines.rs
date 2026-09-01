@@ -205,6 +205,35 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>,
 }
 "#;
 
+/// Final presentation conversion for native surfaces whose compositor expects
+/// straight (postmultiplied) RGB. Incular's retained scene is accumulated as
+/// premultiplied RGB, so this pass unpremultiplies exactly once immediately
+/// before presentation.
+pub(crate) const STRAIGHT_ALPHA_PRESENT_SHADER: &str = r#"
+struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@vertex fn vs_main(
+  @location(0) quad: vec2<f32>,
+  @location(1) rect: vec4<f32>,
+  @location(2) uv: vec4<f32>,
+  @location(3) alpha: vec4<f32>,
+  @location(4) color: vec4<f32>,
+  @location(5) options: vec4<f32>,
+) -> Out {
+  var out: Out;
+  out.position = vec4<f32>(rect.xy + quad * rect.zw, 0., 1.);
+  out.uv = uv.xy + quad * (uv.zw - uv.xy);
+  return out;
+}
+@fragment fn fs_main(input: Out) -> @location(0) vec4<f32> {
+  let sample = textureSampleLevel(source, source_sampler, input.uv, 0.);
+  let alpha = clamp(sample.a, 0., 1.);
+  let rgb = clamp(sample.rgb / max(alpha, .000001), vec3<f32>(0.), vec3<f32>(1.));
+  return select(vec4<f32>(0.), vec4<f32>(rgb, alpha), alpha > .000001);
+}
+"#;
+
 pub(crate) const FIXED_BLEND_SHADER: &str = r#"
 struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 };
 @group(0) @binding(0) var group_texture: texture_2d<f32>;
@@ -414,6 +443,7 @@ pub(crate) struct SharedPipelineResources {
     pub(crate) rounded_rect_pipeline: wgpu::RenderPipeline,
     pub(crate) path_pipeline: wgpu::RenderPipeline,
     pub(crate) composite_pipeline: wgpu::RenderPipeline,
+    pub(crate) straight_alpha_present_pipeline: wgpu::RenderPipeline,
     pub(crate) fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
     pub(crate) blur_pipeline: wgpu::RenderPipeline,
     pub(crate) resample_pipeline: wgpu::RenderPipeline,
@@ -470,6 +500,8 @@ pub(crate) enum PipelineClass {
     Path,
     /// Offscreen group composite (opacity, drop shadows).
     Composite,
+    /// Premultiplied retained scene -> straight-alpha native presentation.
+    StraightAlphaPresent,
     /// Fixed-function Porter-Duff blending over offscreen groups.
     FixedBlend(BlendMode),
     /// Direct separable Gaussian blur pass.
@@ -645,6 +677,17 @@ pub(crate) fn pipeline_contracts() -> Vec<PipelineContract> {
             streams: VertexStreams::CompositeInstances,
             blend: ColorBlend::PremultipliedAlpha,
             stencil: StencilRequirement::ContentEqualKeep,
+            color_writes: wgpu::ColorWrites::ALL,
+        },
+        PipelineContract {
+            class: PipelineClass::StraightAlphaPresent,
+            label: "incular straight-alpha presentation pipeline",
+            shader_module_label: "incular straight-alpha presentation shader",
+            shader: STRAIGHT_ALPHA_PRESENT_SHADER,
+            resources: ResourceSet::Composite,
+            streams: VertexStreams::CompositeInstances,
+            blend: ColorBlend::Replace,
+            stencil: StencilRequirement::Disabled,
             color_writes: wgpu::ColorWrites::ALL,
         },
         PipelineContract {
@@ -1138,6 +1181,7 @@ pub(crate) async fn create_shared_pipeline_resources(
     let rounded_rect_pipeline = take_pipeline(PipelineClass::RoundedRect);
     let path_pipeline = take_pipeline(PipelineClass::Path);
     let composite_pipeline = take_pipeline(PipelineClass::Composite);
+    let straight_alpha_present_pipeline = take_pipeline(PipelineClass::StraightAlphaPresent);
     let fixed_blend_pipelines: Vec<_> = PORTER_DUFF_BLEND_MODES
         .map(|mode| take_pipeline(PipelineClass::FixedBlend(mode)))
         .into_iter()
@@ -1163,6 +1207,7 @@ pub(crate) async fn create_shared_pipeline_resources(
         rounded_rect_pipeline,
         path_pipeline,
         composite_pipeline,
+        straight_alpha_present_pipeline,
         fixed_blend_pipelines,
         blur_pipeline,
         resample_pipeline,

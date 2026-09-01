@@ -12,6 +12,7 @@ mod prelude {
     pub(crate) use bytemuck::{Pod, Zeroable};
     pub(crate) use fontdue::{Font, FontSettings};
     pub(crate) use incular_assets::FontId;
+    pub(crate) use incular_config::TransparencyMode;
     pub(crate) use incular_core::{Color, Offset, Rect, Size, Transform};
     pub(crate) use incular_image::{ImageHandle, ImageId};
     pub(crate) use incular_platform::{PhysicalSize, RawWindowHandles};
@@ -47,6 +48,7 @@ mod render_passes;
 mod render_plan;
 mod renderer;
 mod resources;
+mod surface;
 
 pub use batching::{BatchPlan, RectangleBatch, RectangleInstance};
 pub use diagnostics::{CapturedFrame, GpuCounters, GpuFrameTimings, RenderStats, RendererError};
@@ -61,6 +63,7 @@ pub use resources::{
     SharedGpuContext, SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry,
     WindowGpuPresentation, WindowGpuState,
 };
+pub use surface::{SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation};
 
 pub(crate) use compositor::*;
 pub(crate) use constants::*;

@@ -29,3 +29,11 @@ these values rather than maintaining independent copies. A base container does
 not acquire a background from this contract: transparent/no-paint is the
 neutral widget default, and visible surfaces belong to an explicit root widget
 or design-system theme.
+
+`TransparencyMode` is the renderer-independent native presentation intent. It
+is intentionally separate from `background_color`: framebuffer alpha determines
+how the operating-system compositor treats a window, while the background color
+is the base color underneath the rendered scene. Either value can be changed
+without implying the other. Platform and renderer crates carry the same typed
+transparency value instead of maintaining parallel booleans or renderer-specific
+forms.

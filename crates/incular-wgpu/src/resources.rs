@@ -124,6 +124,9 @@ pub struct WindowGpuState {
     pub(crate) handles: RawWindowHandles,
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) transparency_mode: TransparencyMode,
+    pub(crate) background_color: Color,
+    pub(crate) alpha_plan: SurfaceAlphaPlan,
     pub(crate) stencil_texture: wgpu::Texture,
     pub(crate) stencil_view: wgpu::TextureView,
     pub(crate) presentation: WindowGpuPresentation,
@@ -132,6 +135,22 @@ impl WindowGpuState {
     #[must_use]
     pub const fn presentation(&self) -> WindowGpuPresentation {
         self.presentation
+    }
+
+    /// Concrete native-compositor alpha contract selected for this surface.
+    #[must_use]
+    pub const fn alpha_plan(&self) -> SurfaceAlphaPlan {
+        self.alpha_plan
+    }
+
+    #[must_use]
+    pub const fn transparency_mode(&self) -> TransparencyMode {
+        self.transparency_mode
+    }
+
+    #[must_use]
+    pub const fn background_color(&self) -> Color {
+        self.background_color
     }
 }
 
@@ -183,10 +202,15 @@ pub(crate) struct SharedGpuAtlasPage {
 }
 impl SharedGpuContext {
     /// Creates the one device context to be shared by every desktop window in
-    /// an application. `handles` is used only to choose a compatible adapter;
-    /// the temporary surface is dropped before this method returns.
-    pub async fn new(handles: RawWindowHandles) -> Result<Self, RendererError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    /// an application. `handles` and `transparency` select an adapter that can
+    /// satisfy the first window's presentation contract; the temporary surface
+    /// is dropped before this method returns.
+    pub async fn new(
+        handles: RawWindowHandles,
+        transparency_mode: TransparencyMode,
+    ) -> Result<Self, RendererError> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         // SAFETY: `RawWindowHandles` is captured from a live native window by
         // the platform runner. The temporary surface is used only while that
         // window remains alive to select a compatible adapter, then dropped
@@ -198,13 +222,41 @@ impl SharedGpuContext {
             })
         }
         .map_err(RendererError::Surface)?;
-        let adapter = instance
+        let power_preference = wgpu::PowerPreference::from_env().unwrap_or_default();
+        let preferred_adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
+                power_preference,
                 ..Default::default()
             })
             .await
             .map_err(RendererError::Adapter)?;
+        let adapter = if adapter_supports_window_transparency(
+            &surface,
+            &preferred_adapter,
+            transparency_mode,
+        ) {
+            preferred_adapter
+        } else {
+            let candidates = instance
+                .enumerate_adapters(wgpu::Backends::all())
+                .await
+                .into_iter()
+                .filter(|adapter| adapter.is_surface_supported(&surface))
+                .filter(|adapter| {
+                    adapter_supports_window_transparency(&surface, adapter, transparency_mode)
+                });
+            select_fallback_adapter(candidates, power_preference).ok_or_else(|| {
+                RendererError::SurfaceAlpha(match transparency_mode {
+                    TransparencyMode::Transparent => {
+                        crate::surface::SurfaceAlphaError::TransparentCompositingUnsupported
+                    }
+                    TransparencyMode::Opaque => {
+                        crate::surface::SurfaceAlphaError::NoOpaqueCompositingMode
+                    }
+                })
+            })?
+        };
         // Timestamp support is additive and optional: adapters that expose it
         // get non-blocking GPU frame timing through wgpu-profiler, everyone
         // else reports `GPU timing unavailable` instead of failing
@@ -248,8 +300,17 @@ impl SharedGpuContext {
         &self,
         handles: RawWindowHandles,
         size: PhysicalSize,
+        transparency_mode: TransparencyMode,
+        background_color: Color,
     ) -> Result<WgpuRenderer, RendererError> {
-        WgpuRenderer::new_with_shared(self.clone(), handles, size).await
+        WgpuRenderer::new_with_shared(
+            self.clone(),
+            handles,
+            size,
+            transparency_mode,
+            background_color,
+        )
+        .await
     }
     #[must_use]
     pub fn diagnostics(&self) -> SharedGpuDiagnostics {
@@ -473,5 +534,52 @@ impl SharedGpuContext {
             });
         }
         resources.glyph_pages[usize::from(page)].texture.clone()
+    }
+}
+
+fn adapter_supports_window_transparency(
+    surface: &wgpu::Surface<'_>,
+    adapter: &wgpu::Adapter,
+    transparency_mode: TransparencyMode,
+) -> bool {
+    SurfaceAlphaPlan::select(
+        transparency_mode,
+        &surface.get_capabilities(adapter).alpha_modes,
+    )
+    .is_ok()
+}
+
+fn select_fallback_adapter(
+    mut candidates: impl Iterator<Item = wgpu::Adapter>,
+    preference: wgpu::PowerPreference,
+) -> Option<wgpu::Adapter> {
+    match preference {
+        wgpu::PowerPreference::None => candidates.next(),
+        wgpu::PowerPreference::LowPower => {
+            candidates.max_by_key(|adapter| low_power_rank(adapter.get_info().device_type))
+        }
+        wgpu::PowerPreference::HighPerformance => {
+            candidates.max_by_key(|adapter| high_performance_rank(adapter.get_info().device_type))
+        }
+    }
+}
+
+const fn low_power_rank(device_type: wgpu::DeviceType) -> u8 {
+    match device_type {
+        wgpu::DeviceType::IntegratedGpu => 5,
+        wgpu::DeviceType::DiscreteGpu => 4,
+        wgpu::DeviceType::VirtualGpu => 3,
+        wgpu::DeviceType::Other => 2,
+        wgpu::DeviceType::Cpu => 1,
+    }
+}
+
+const fn high_performance_rank(device_type: wgpu::DeviceType) -> u8 {
+    match device_type {
+        wgpu::DeviceType::DiscreteGpu => 5,
+        wgpu::DeviceType::IntegratedGpu => 4,
+        wgpu::DeviceType::VirtualGpu => 3,
+        wgpu::DeviceType::Other => 2,
+        wgpu::DeviceType::Cpu => 1,
     }
 }

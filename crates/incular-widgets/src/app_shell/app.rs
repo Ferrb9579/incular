@@ -16,6 +16,7 @@ use super::{
 };
 use incular_config::{
     ApplicationDefaults, Locale, LocaleResolver, LocalizationCatalog, RuntimeEnvironment,
+    TransparencyMode,
 };
 use incular_core::{Color, RestorationKey, RestorationScope, Size};
 use std::{
@@ -39,7 +40,8 @@ pub struct ApplicationBootstrapOptions {
     pub resizable: bool,
     pub visible: bool,
     pub decorations: bool,
-    pub transparent: bool,
+    pub transparency_mode: TransparencyMode,
+    pub background_color: Color,
     pub maximized: bool,
 }
 
@@ -52,7 +54,8 @@ impl Default for ApplicationBootstrapOptions {
             resizable: defaults.resizable,
             visible: defaults.visible,
             decorations: defaults.decorations,
-            transparent: defaults.transparent,
+            transparency_mode: defaults.transparency_mode,
+            background_color: defaults.background_color,
             maximized: defaults.maximized,
         }
     }

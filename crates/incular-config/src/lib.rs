@@ -17,7 +17,7 @@ pub use alignment::{
     WrapAlignment, WrapCrossAlignment,
 };
 pub use constraints::{ConstraintError, Constraints};
-pub use defaults::{ApplicationDefaults, WidgetDefaults};
+pub use defaults::{ApplicationDefaults, TransparencyMode, WidgetDefaults};
 pub use environment::{Brightness, ContentSensitivity, InputCapabilities, RuntimeEnvironment};
 pub use icu_locale::Locale;
 pub use insets::{EdgeInsets, EdgeInsetsDirectional};

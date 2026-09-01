@@ -1,3 +1,4 @@
+use super::create_stencil_attachment;
 use super::prelude::*;
 
 #[derive(Clone)]
@@ -21,6 +22,48 @@ impl OffscreenTarget {
     pub(crate) fn bytes(&self) -> usize {
         let color_bytes = self.width as usize * self.height as usize * 4;
         color_bytes + if self.has_stencil { color_bytes } else { 0 }
+    }
+}
+
+/// Creates one sampleable premultiplied scene target using the renderer's
+/// target format. Ownership/counter policy stays with the caller so retained
+/// effects and native presentation can share the allocation primitive without
+/// conflating their diagnostics.
+pub(crate) fn create_scene_target(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+    label: &'static str,
+) -> OffscreenTarget {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let color_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let (stencil, stencil_view) = create_stencil_attachment(device, width, height);
+    OffscreenTarget {
+        _color: texture,
+        color_view,
+        _stencil: stencil,
+        stencil_view,
+        width,
+        height,
+        format,
+        has_stencil: true,
     }
 }
 #[derive(Default)]

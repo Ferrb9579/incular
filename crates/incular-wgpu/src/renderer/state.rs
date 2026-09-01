@@ -24,6 +24,7 @@ pub struct WgpuRenderer {
     pub(super) rounded_rect_pipeline: wgpu::RenderPipeline,
     pub(super) path_pipeline: wgpu::RenderPipeline,
     pub(super) composite_pipeline: wgpu::RenderPipeline,
+    pub(super) straight_alpha_present_pipeline: wgpu::RenderPipeline,
     pub(super) fixed_blend_pipelines: Vec<wgpu::RenderPipeline>,
     pub(super) blur_pipeline: wgpu::RenderPipeline,
     pub(super) resample_pipeline: wgpu::RenderPipeline,
@@ -69,6 +70,9 @@ pub struct WgpuRenderer {
     pub(super) blend_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) blend_sampler: wgpu::Sampler,
     pub(super) destination_targets: Option<DestinationTargets>,
+    /// Full-surface retained scene target used only when the native compositor
+    /// requires straight/postmultiplied RGB.
+    pub(super) presentation_target: Option<OffscreenTarget>,
     pub(super) offscreen_cache: HashMap<incular_painting::LayerId, OffscreenCacheEntry>,
     pub(super) effect_cache: HashMap<incular_painting::LayerId, EffectCacheEntry>,
     pub(super) offscreen_target_pool: OffscreenTargetPool,
@@ -94,11 +98,26 @@ impl DerefMut for WgpuRenderer {
     }
 }
 impl WgpuRenderer {
+    pub(super) fn scene_background_clear(&self) -> wgpu::Color {
+        let [red, green, blue, alpha] = self.background_color.to_linear_rgba();
+        wgpu::Color {
+            r: f64::from(red * alpha),
+            g: f64::from(green * alpha),
+            b: f64::from(blue * alpha),
+            a: f64::from(alpha),
+        }
+    }
+
     /// # Safety boundary
     /// `handles` must describe a window that outlives this renderer.
-    pub async fn new(handles: RawWindowHandles, size: PhysicalSize) -> Result<Self, RendererError> {
-        let shared = SharedGpuContext::new(handles).await?;
-        Self::new_with_shared(shared, handles, size).await
+    pub async fn new(
+        handles: RawWindowHandles,
+        size: PhysicalSize,
+        transparency_mode: TransparencyMode,
+        background_color: Color,
+    ) -> Result<Self, RendererError> {
+        let shared = SharedGpuContext::new(handles, transparency_mode).await?;
+        Self::new_with_shared(shared, handles, size, transparency_mode, background_color).await
     }
     /// Creates a renderer for one native window using an existing shared GPU
     /// device context. No `wgpu::Instance`, adapter, device, or queue is
@@ -107,6 +126,8 @@ impl WgpuRenderer {
         shared: SharedGpuContext,
         handles: RawWindowHandles,
         size: PhysicalSize,
+        transparency_mode: TransparencyMode,
+        background_color: Color,
     ) -> Result<Self, RendererError> {
         let surface = shared.create_surface(handles)?;
         let device = shared.inner.device.clone();
@@ -118,23 +139,17 @@ impl WgpuRenderer {
                 limit: texture_limit,
             });
         }
+        let capabilities = surface.get_capabilities(&shared.inner.adapter);
         let mut config = surface
             .get_default_config(&shared.inner.adapter, size.width.max(1), size.height.max(1))
             .expect("surface config");
+        let alpha_plan = SurfaceAlphaPlan::select(transparency_mode, &capabilities.alpha_modes)
+            .map_err(RendererError::SurfaceAlpha)?;
+        config.alpha_mode = alpha_plan.composite_mode();
         // Surface readback is optional in wgpu. Request it only when the
         // adapter advertises COPY_SRC; the renderer reports capture as
         // unavailable on surfaces that cannot be copied safely.
-        let capture_supported = surface
-            .get_capabilities(&shared.inner.adapter)
-            .usages
-            .contains(wgpu::TextureUsages::COPY_SRC)
-            && matches!(
-                config.format,
-                wgpu::TextureFormat::Rgba8Unorm
-                    | wgpu::TextureFormat::Rgba8UnormSrgb
-                    | wgpu::TextureFormat::Bgra8Unorm
-                    | wgpu::TextureFormat::Bgra8UnormSrgb
-            );
+        let capture_supported = surface_capture_supported(&capabilities, config.format);
         if capture_supported {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
@@ -143,7 +158,17 @@ impl WgpuRenderer {
         }
         if let Some(pipelines) = shared.pipeline_resources(config.format) {
             return Self::from_shared_pipeline_resources(
-                shared, handles, surface, config, size, device, queue, pipelines,
+                shared,
+                handles,
+                surface,
+                config,
+                alpha_plan,
+                transparency_mode,
+                background_color,
+                size,
+                device,
+                queue,
+                pipelines,
             );
         }
         // Device-level resources (layouts, samplers, unit quad, gradient LUT,
@@ -184,6 +209,7 @@ impl WgpuRenderer {
             rounded_rect_pipeline,
             path_pipeline,
             composite_pipeline,
+            straight_alpha_present_pipeline,
             fixed_blend_pipelines,
             blur_pipeline,
             resample_pipeline,
@@ -217,6 +243,9 @@ impl WgpuRenderer {
                 handles,
                 surface,
                 config,
+                transparency_mode,
+                background_color,
+                alpha_plan,
                 stencil_texture,
                 stencil_view,
                 presentation: WindowGpuPresentation::new(size),
@@ -236,6 +265,7 @@ impl WgpuRenderer {
             rounded_rect_pipeline,
             path_pipeline,
             composite_pipeline,
+            straight_alpha_present_pipeline,
             fixed_blend_pipelines,
             blur_pipeline,
             resample_pipeline,
@@ -281,6 +311,7 @@ impl WgpuRenderer {
             blend_bind_group_layout,
             blend_sampler,
             destination_targets: None,
+            presentation_target: None,
             offscreen_cache: HashMap::new(),
             effect_cache: HashMap::new(),
             offscreen_target_pool: OffscreenTargetPool::default(),
@@ -297,6 +328,7 @@ impl WgpuRenderer {
                 image_pipeline_creations: 1,
                 path_pipeline_creations: 1,
                 composite_pipeline_creations: 1,
+                surface_present_pipeline_creations: 1,
                 // Blur/resample share one stable pipeline family; these are
                 // retained as explicit diagnostics for effect setup.
                 stencil_texture_creations: 1,
@@ -311,6 +343,9 @@ impl WgpuRenderer {
         handles: RawWindowHandles,
         surface: wgpu::Surface<'static>,
         config: wgpu::SurfaceConfiguration,
+        alpha_plan: SurfaceAlphaPlan,
+        transparency_mode: TransparencyMode,
+        background_color: Color,
         size: PhysicalSize,
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -354,6 +389,9 @@ impl WgpuRenderer {
                 handles,
                 surface,
                 config,
+                transparency_mode,
+                background_color,
+                alpha_plan,
                 stencil_texture,
                 stencil_view,
                 presentation: WindowGpuPresentation::new(size),
@@ -373,6 +411,7 @@ impl WgpuRenderer {
             rounded_rect_pipeline: pipelines.rounded_rect_pipeline.clone(),
             path_pipeline: pipelines.path_pipeline.clone(),
             composite_pipeline: pipelines.composite_pipeline.clone(),
+            straight_alpha_present_pipeline: pipelines.straight_alpha_present_pipeline.clone(),
             fixed_blend_pipelines: pipelines.fixed_blend_pipelines.clone(),
             blur_pipeline: pipelines.blur_pipeline.clone(),
             resample_pipeline: pipelines.resample_pipeline.clone(),
@@ -418,6 +457,7 @@ impl WgpuRenderer {
             blend_bind_group_layout: pipelines.blend_bind_group_layout.clone(),
             blend_sampler: pipelines.blend_sampler.clone(),
             destination_targets: None,
+            presentation_target: None,
             offscreen_cache: HashMap::new(),
             effect_cache: HashMap::new(),
             offscreen_target_pool: OffscreenTargetPool::default(),
@@ -610,6 +650,41 @@ impl WgpuRenderer {
             create_stencil_attachment(&self.device, size.width, size.height);
         self.counters.stencil_texture_recreations += 1;
         self.destination_targets = None;
+        self.presentation_target = None;
+        self.counters.surface_present_cached_bytes = 0;
         self.counters.blend_intermediate_cached_bytes = 0;
     }
+
+    pub(super) fn refresh_surface_alpha_plan(&mut self) -> Result<(), RendererError> {
+        let capabilities = self.surface.get_capabilities(&self.shared.inner.adapter);
+        let alpha_plan =
+            SurfaceAlphaPlan::select(self.transparency_mode, &capabilities.alpha_modes)
+                .map_err(RendererError::SurfaceAlpha)?;
+        self.config.alpha_mode = alpha_plan.composite_mode();
+        self.capture_supported = surface_capture_supported(&capabilities, self.config.format);
+        self.config.usage.remove(wgpu::TextureUsages::COPY_SRC);
+        if self.capture_supported {
+            self.config.usage.insert(wgpu::TextureUsages::COPY_SRC);
+        }
+        if self.alpha_plan != alpha_plan {
+            self.presentation_target = None;
+            self.counters.surface_present_cached_bytes = 0;
+        }
+        self.alpha_plan = alpha_plan;
+        Ok(())
+    }
+}
+
+fn surface_capture_supported(
+    capabilities: &wgpu::SurfaceCapabilities,
+    format: wgpu::TextureFormat,
+) -> bool {
+    capabilities.usages.contains(wgpu::TextureUsages::COPY_SRC)
+        && matches!(
+            format,
+            wgpu::TextureFormat::Rgba8Unorm
+                | wgpu::TextureFormat::Rgba8UnormSrgb
+                | wgpu::TextureFormat::Bgra8Unorm
+                | wgpu::TextureFormat::Bgra8UnormSrgb
+        )
 }

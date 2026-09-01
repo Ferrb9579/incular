@@ -6,7 +6,7 @@
 use directories::ProjectDirs;
 use incular_config::ApplicationDefaults;
 use incular_core::{
-    Code, ImeEvent, InputEvent, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers,
+    Code, Color, ImeEvent, InputEvent, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers,
     NamedKey, Offset, PointerPhase, Rect, Size,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
@@ -18,6 +18,7 @@ pub use content_sensitivity::{
     ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
 };
+pub use incular_config::TransparencyMode;
 
 /// Resolves the persistent, local application-data directory through the
 /// operating system's standard project-directory conventions.
@@ -92,8 +93,10 @@ pub enum Fullscreen {
 
 /// Configuration used when creating an Incular desktop window.
 ///
-/// All sizes are logical pixels. `transparent` is a request: native adapters
-/// may fall back when transparent windows are unavailable on the host.
+/// All sizes are logical pixels. A transparent window is a strict presentation
+/// request: a backend must either configure compatible compositor alpha or
+/// report that the request is unsupported rather than silently presenting an
+/// opaque/black surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowOptions {
     pub title: String,
@@ -103,7 +106,9 @@ pub struct WindowOptions {
     pub resizable: bool,
     pub visible: bool,
     pub decorations: bool,
-    pub transparent: bool,
+    pub transparency_mode: TransparencyMode,
+    /// Base scene color. This does not change native compositor transparency.
+    pub background_color: Color,
     pub maximized: bool,
     pub fullscreen: Option<Fullscreen>,
 }
@@ -119,7 +124,8 @@ impl Default for WindowOptions {
             resizable: defaults.resizable,
             visible: defaults.visible,
             decorations: defaults.decorations,
-            transparent: defaults.transparent,
+            transparency_mode: defaults.transparency_mode,
+            background_color: defaults.background_color,
             maximized: defaults.maximized,
             fullscreen: None,
         }

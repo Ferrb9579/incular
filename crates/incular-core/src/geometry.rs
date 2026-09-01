@@ -2,7 +2,7 @@
 
 use std::ops::{Add, Sub};
 
-use palette::{FromColor, Hsl, Hsv, Srgba, WithAlpha};
+use palette::{FromColor, Hsl, Hsv, LinSrgba, Srgba, WithAlpha};
 
 pub use kurbo::Affine;
 use kurbo::{Point, Vec2};
@@ -144,6 +144,26 @@ impl Color {
             linear.color.blue,
             linear.alpha,
         ]
+    }
+
+    /// Converts straight linear-sRGB components into compact encoded sRGBA8.
+    /// Non-finite and out-of-range components are sanitized to `0.0..=1.0`.
+    /// Palette owns the transfer function in both directions so CPU color-space
+    /// boundaries cannot drift from [`Self::to_linear_rgba`].
+    #[must_use]
+    pub fn from_linear_rgba([red, green, blue, alpha]: [f32; 4]) -> Self {
+        let encoded = Srgba::<u8>::from_linear(LinSrgba::new(
+            unit(red),
+            unit(green),
+            unit(blue),
+            unit(alpha),
+        ));
+        Self::rgba(
+            encoded.color.red,
+            encoded.color.green,
+            encoded.color.blue,
+            encoded.alpha,
+        )
     }
 
     /// Converts this sRGB color to the HSL representation used by style and

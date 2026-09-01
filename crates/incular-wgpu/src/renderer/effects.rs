@@ -7,37 +7,10 @@ impl WgpuRenderer {
         height: u32,
         label: &'static str,
     ) -> OffscreenTarget {
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let color_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let (stencil, stencil_view) = create_stencil_attachment(&self.device, width, height);
+        let target = create_scene_target(&self.device, self.config.format, width, height, label);
         self.counters.offscreen_color_texture_creations += 1;
         self.counters.offscreen_stencil_texture_creations += 1;
-        OffscreenTarget {
-            _color: texture,
-            color_view,
-            _stencil: stencil,
-            stencil_view,
-            width,
-            height,
-            format: self.config.format,
-            has_stencil: true,
-        }
+        target
     }
 
     pub(super) fn create_composite_bind_group(
@@ -95,8 +68,15 @@ impl WgpuRenderer {
                 .destination_targets
                 .take()
                 .expect("destination targets after ensure");
-            let (current_first, _, _, passes) =
-                self.render_destination_batches(batches, scale, width, height, &mut targets, label);
+            let (current_first, _, _, passes) = self.render_destination_batches(
+                batches,
+                scale,
+                width,
+                height,
+                &mut targets,
+                label,
+                wgpu::Color::TRANSPARENT,
+            );
             let final_target = if current_first {
                 &targets.first
             } else {

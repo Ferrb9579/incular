@@ -116,6 +116,7 @@ impl WgpuRenderer {
             self.config.format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
+        let alpha_representation = self.alpha_plan.representation();
         let mut rgba8 = Vec::with_capacity(
             usize::try_from(row_bytes)
                 .ok()
@@ -131,12 +132,15 @@ impl WgpuRenderer {
         let row_bytes = usize::try_from(row_bytes)
             .map_err(|_| "capture row size does not fit in usize".to_owned())?;
         for row in mapped.chunks(padded_row_bytes).take(height as usize) {
-            if is_bgra {
-                for pixel in row[..row_bytes].as_chunks::<4>().0 {
-                    rgba8.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
-                }
-            } else {
-                rgba8.extend_from_slice(&row[..row_bytes]);
+            for pixel in row[..row_bytes].as_chunks::<4>().0 {
+                let rgba = if is_bgra {
+                    [pixel[2], pixel[1], pixel[0], pixel[3]]
+                } else {
+                    *pixel
+                };
+                rgba8.extend_from_slice(
+                    &alpha_representation.to_straight_rgba8(self.config.format, rgba),
+                );
             }
         }
         drop(mapped);

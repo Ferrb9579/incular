@@ -1,21 +1,6 @@
 use super::*;
 
 impl WgpuRenderer {
-    pub(super) fn lower_draw_batches(
-        &mut self,
-        list: &DisplayList,
-        scale: f32,
-    ) -> Result<Vec<DrawBatch>, RendererError> {
-        self.target_width = self.config.width;
-        self.target_height = self.config.height;
-        self.target_origin = Offset::ZERO;
-        self.lower_commands(
-            list.commands(),
-            scale,
-            Transform::IDENTITY,
-            ClipState::Unbounded,
-        )
-    }
     pub(super) fn lower_commands(
         &mut self,
         commands: &[PaintCommand],

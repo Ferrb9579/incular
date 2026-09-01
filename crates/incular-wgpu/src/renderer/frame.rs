@@ -1,6 +1,110 @@
 use super::*;
 
 impl WgpuRenderer {
+    pub(super) fn acquire_surface_texture(
+        &mut self,
+    ) -> Result<Option<wgpu::SurfaceTexture>, RendererError> {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some(frame)),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.surface.configure(&self.device, &self.config);
+                Ok(Some(frame))
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                Ok(None)
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.shared.create_surface(self.handles)?;
+                self.refresh_surface_alpha_plan()?;
+                self.surface.configure(&self.device, &self.config);
+                self.window_gpu.presentation.surface_lost();
+                Ok(None)
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => Ok(None),
+        }
+    }
+
+    pub(super) fn ensure_presentation_target(&mut self) {
+        if self.presentation_target.as_ref().is_some_and(|target| {
+            target.width == self.config.width
+                && target.height == self.config.height
+                && target.format == self.config.format
+        }) {
+            return;
+        }
+        self.presentation_target = Some(create_scene_target(
+            &self.device,
+            self.config.format,
+            self.config.width,
+            self.config.height,
+            "incular native presentation scene target",
+        ));
+        self.counters.surface_present_target_creations += 1;
+        self.counters.surface_present_cached_bytes = self
+            .presentation_target
+            .as_ref()
+            .map_or(0, OffscreenTarget::bytes);
+    }
+
+    pub(super) fn present_straight_alpha_target(
+        &mut self,
+        target: &OffscreenTarget,
+        frame_view: &wgpu::TextureView,
+    ) -> u32 {
+        self.ensure_composite_capacity(1);
+        let instance = composite_instance(
+            Offset::ZERO,
+            Offset::ZERO,
+            self.config.width,
+            self.config.height,
+            self.config.width,
+            self.config.height,
+            1.0,
+            1.0,
+        );
+        self.queue
+            .write_buffer(&self.composite_instances, 0, bytemuck::bytes_of(&instance));
+        let bind_group = self
+            .create_composite_bind_group(target, "incular straight-alpha presentation bind group");
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("incular straight-alpha presentation encoder"),
+            });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("incular straight-alpha presentation pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: frame_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.straight_alpha_present_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, self.mesh.slice(..));
+        pass.set_vertex_buffer(
+            1,
+            self.composite_instances
+                .slice(..std::mem::size_of::<GpuCompositeInstance>() as u64),
+        );
+        pass.draw(0..6, 0..1);
+        drop(pass);
+        self.queue.submit(Some(encoder.finish()));
+        self.counters.surface_present_conversion_passes += 1;
+        1
+    }
+
     pub(super) fn ensure_destination_targets(&mut self, width: u32, height: u32) {
         if self
             .destination_targets
@@ -138,6 +242,7 @@ impl WgpuRenderer {
         height: u32,
         targets: &mut DestinationTargets,
         label: &'static str,
+        clear: wgpu::Color,
     ) -> (bool, u32, u32, u32) {
         let mut current_first = true;
         let mut first_pass = true;
@@ -180,7 +285,7 @@ impl WgpuRenderer {
                 width,
                 height,
                 scale,
-                wgpu::Color::TRANSPARENT,
+                clear,
                 None,
                 !first_pass,
             );
@@ -259,7 +364,7 @@ impl WgpuRenderer {
             width,
             height,
             scale,
-            wgpu::Color::TRANSPARENT,
+            clear,
             None,
             !first_pass,
         );
@@ -275,6 +380,7 @@ impl WgpuRenderer {
         &mut self,
         target: &OffscreenTarget,
         frame_view: &wgpu::TextureView,
+        frame_stencil_view: &wgpu::TextureView,
         target_origin: Offset,
         target_width: u32,
         target_height: u32,
@@ -316,7 +422,7 @@ impl WgpuRenderer {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.stencil_view,
+                view: frame_stencil_view,
                 depth_ops: None,
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
@@ -354,354 +460,6 @@ impl WgpuRenderer {
         }
         Ok(stats)
     }
-    #[allow(dead_code)]
-    pub(super) fn render_legacy(
-        &mut self,
-        list: &DisplayList,
-        scale_factor: f64,
-    ) -> Result<RenderStats, RendererError> {
-        if !self.window_gpu.presentation.configured {
-            return Ok(RenderStats::default());
-        }
-        let scale = normalized_scale(scale_factor);
-        let batches = self.lower_draw_batches(list, scale)?;
-        let rectangles = batches
-            .iter()
-            .map(|b| {
-                if let DrawBatch::Rectangles { clip, instances } = b
-                    && *clip != ClipState::Empty
-                {
-                    instances.len()
-                } else {
-                    0
-                }
-            })
-            .sum();
-        let glyphs = batches
-            .iter()
-            .map(|b| {
-                if let DrawBatch::Glyphs {
-                    clip, instances, ..
-                } = b
-                    && *clip != ClipState::Empty
-                {
-                    instances.len()
-                } else {
-                    0
-                }
-            })
-            .sum();
-        let images = batches
-            .iter()
-            .map(|b| {
-                if let DrawBatch::Images {
-                    clip, instances, ..
-                } = b
-                    && *clip != ClipState::Empty
-                {
-                    instances.len()
-                } else {
-                    0
-                }
-            })
-            .sum();
-        let rounded: usize = batches
-            .iter()
-            .map(|b| {
-                if let DrawBatch::RoundedRects {
-                    clip, instances, ..
-                } = b
-                    && *clip != ClipState::Empty
-                {
-                    instances.len()
-                } else {
-                    0
-                }
-            })
-            .sum::<usize>() + batches.iter().filter(|b| matches!(b, DrawBatch::StencilRRect { clip, .. } if *clip != ClipState::Empty)).count();
-        let paths: usize = batches
-            .iter()
-            .filter(
-                |batch| matches!(batch, DrawBatch::Path { clip, .. } if *clip != ClipState::Empty),
-            )
-            .count() + batches.iter().filter(|b| matches!(b, DrawBatch::StencilPath { clip, .. } if *clip != ClipState::Empty)).count();
-        let rectangle_reallocated = self.ensure_rectangle_capacity(rectangles);
-        let glyph_reallocated = self.ensure_glyph_capacity(glyphs);
-        let image_reallocated = self.ensure_image_capacity(images);
-        if rounded > self.rounded_rect_instance_capacity {
-            self.rounded_rect_instance_capacity = rounded.next_power_of_two();
-            self.rounded_rect_instances =
-                create_rrect_buffer(&self.device, self.rounded_rect_instance_capacity);
-        }
-        if paths > self.path_instance_capacity {
-            self.path_instance_capacity = paths.next_power_of_two();
-            self.path_instances =
-                create_path_instance_buffer(&self.device, self.path_instance_capacity);
-        }
-        self.upload_instance_data(&batches, scale, self.config.width, self.config.height);
-        self.prepare_image_bind_groups(&batches);
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.surface.configure(&self.device, &self.config);
-                frame
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
-                return Ok(RenderStats::default());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.shared.create_surface(self.handles)?;
-                self.surface.configure(&self.device, &self.config);
-                self.window_gpu.presentation.surface_lost();
-                return Ok(RenderStats::default());
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return Ok(RenderStats::default()),
-        };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("incular frame encoder"),
-            });
-        let mut draw_calls = 0_u32;
-        let mut text_draw_calls = 0_u32;
-        let mut rectangle_offset = 0_u64;
-        let mut glyph_offset = 0_u64;
-        let mut image_offset = 0_u64;
-        let mut rounded_offset = 0_u64;
-        let mut path_offset = 0_u64;
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("incular ordered UI pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.stencil_view,
-                    depth_ops: None,
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            for batch in &batches {
-                let clip = match batch {
-                    DrawBatch::Rectangles { clip, .. }
-                    | DrawBatch::Glyphs { clip, .. }
-                    | DrawBatch::Images { clip, .. }
-                    | DrawBatch::RoundedRects { clip, .. }
-                    | DrawBatch::Path { clip, .. }
-                    | DrawBatch::StencilRRect { clip, .. }
-                    | DrawBatch::StencilPath { clip, .. }
-                    | DrawBatch::Offscreen { clip, .. }
-                    | DrawBatch::Filtered { clip, .. }
-                    | DrawBatch::Shadow { clip, .. }
-                    | DrawBatch::Blend { clip, .. } => *clip,
-                };
-                if !set_scissor(
-                    &mut pass,
-                    clip,
-                    self.config.width,
-                    self.config.height,
-                    scale,
-                ) {
-                    // Instance data was uploaded in display-list order even
-                    // when a scissor is wholly outside the surface. Consume
-                    // its slot so a later visible path keeps its paint data.
-                    if matches!(
-                        batch,
-                        DrawBatch::Path { .. } | DrawBatch::StencilPath { .. }
-                    ) {
-                        path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
-                    }
-                    if matches!(batch, DrawBatch::StencilRRect { .. }) {
-                        rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
-                    }
-                    self.counters.clip_culled_draws += 1;
-                    continue;
-                }
-                pass.set_stencil_reference(u32::from(stencil_depth(clip)));
-                match batch {
-                    DrawBatch::Rectangles { instances, .. } if !instances.is_empty() => {
-                        let start = rectangle_offset;
-                        rectangle_offset +=
-                            (instances.len() * std::mem::size_of::<GpuInstance>()) as u64;
-                        pass.set_pipeline(&self.rectangle_pipeline);
-                        pass.set_vertex_buffer(0, self.mesh.slice(..));
-                        pass.set_vertex_buffer(1, self.instances.slice(start..rectangle_offset));
-                        pass.draw(0..6, 0..instances.len() as u32);
-                        draw_calls += 1;
-                    }
-                    DrawBatch::Glyphs {
-                        page, instances, ..
-                    } if !instances.is_empty() => {
-                        let Some(atlas_page) = self.atlas_pages.get(usize::from(*page)) else {
-                            continue;
-                        };
-                        let start = glyph_offset;
-                        glyph_offset +=
-                            (instances.len() * std::mem::size_of::<GpuGlyphInstance>()) as u64;
-                        pass.set_pipeline(&self.text_pipeline);
-                        pass.set_bind_group(0, &atlas_page.bind_group, &[]);
-                        pass.set_vertex_buffer(0, self.mesh.slice(..));
-                        pass.set_vertex_buffer(1, self.glyph_instances.slice(start..glyph_offset));
-                        pass.draw(0..6, 0..instances.len() as u32);
-                        draw_calls += 1;
-                        text_draw_calls += 1;
-                    }
-                    DrawBatch::Images {
-                        image,
-                        sampling,
-                        instances,
-                        ..
-                    } if !instances.is_empty() => {
-                        let Some(bind_group) = self.image_bind_group(*image, *sampling) else {
-                            continue;
-                        };
-                        let start = image_offset;
-                        image_offset +=
-                            (instances.len() * std::mem::size_of::<GpuImageInstance>()) as u64;
-                        pass.set_pipeline(&self.image_pipeline);
-                        pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_vertex_buffer(0, self.mesh.slice(..));
-                        pass.set_vertex_buffer(1, self.image_instances.slice(start..image_offset));
-                        pass.draw(0..6, 0..instances.len() as u32);
-                        draw_calls += 1;
-                        self.counters.image_draw_calls += 1;
-                    }
-                    DrawBatch::RoundedRects {
-                        gradient,
-                        instances,
-                        ..
-                    } if !instances.is_empty() => {
-                        let start = rounded_offset;
-                        rounded_offset +=
-                            (instances.len() * std::mem::size_of::<GpuRRectInstance>()) as u64;
-                        pass.set_pipeline(&self.rounded_rect_pipeline);
-                        pass.set_bind_group(0, self.gradient_bind_group(*gradient), &[]);
-                        pass.set_vertex_buffer(0, self.mesh.slice(..));
-                        pass.set_vertex_buffer(
-                            1,
-                            self.rounded_rect_instances.slice(start..rounded_offset),
-                        );
-                        pass.draw(0..6, 0..instances.len() as u32);
-                        draw_calls += 1;
-                    }
-                    DrawBatch::Path { key, gradient, .. } => {
-                        if let Some(mesh) = self.gpu_path_cache.get_mut(key) {
-                            mesh.last_used_frame = self.counters.frames;
-                        } else {
-                            continue;
-                        }
-                        let gradient_bind_group = self.gradient_bind_group(*gradient);
-                        let Some(mesh) = self.gpu_path_cache.get(key) else {
-                            continue;
-                        };
-                        pass.set_pipeline(&self.path_pipeline);
-                        pass.set_bind_group(0, gradient_bind_group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                        let instance_start = path_offset;
-                        path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
-                        pass.set_vertex_buffer(
-                            1,
-                            self.path_instances.slice(instance_start..path_offset),
-                        );
-                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                        draw_calls += 1;
-                        self.counters.path_draw_calls += 1;
-                        self.counters.path_triangles += u64::from(mesh.index_count / 3);
-                    }
-                    DrawBatch::StencilRRect { increment, .. } => {
-                        let start = rounded_offset;
-                        rounded_offset += std::mem::size_of::<GpuRRectInstance>() as u64;
-                        pass.set_pipeline(if *increment {
-                            &self.stencil_rrect_increment_pipeline
-                        } else {
-                            &self.stencil_rrect_decrement_pipeline
-                        });
-                        pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
-                        pass.set_vertex_buffer(0, self.mesh.slice(..));
-                        pass.set_vertex_buffer(
-                            1,
-                            self.rounded_rect_instances.slice(start..rounded_offset),
-                        );
-                        pass.draw(0..6, 0..1);
-                        draw_calls += 1;
-                        self.counters.stencil_mask_draws += 1;
-                    }
-                    DrawBatch::StencilPath { key, increment, .. } => {
-                        let Some(mesh) = self.gpu_path_cache.get(key) else {
-                            continue;
-                        };
-                        let start = path_offset;
-                        path_offset += std::mem::size_of::<GpuPathInstance>() as u64;
-                        pass.set_pipeline(if *increment {
-                            &self.stencil_path_increment_pipeline
-                        } else {
-                            &self.stencil_path_decrement_pipeline
-                        });
-                        pass.set_bind_group(0, self.gradient_bind_group(None), &[]);
-                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                        pass.set_vertex_buffer(1, self.path_instances.slice(start..path_offset));
-                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                        draw_calls += 1;
-                        self.counters.stencil_mask_draws += 1;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        self.queue.submit(Some(encoder.finish()));
-        self.queue.present(frame);
-        self.counters.frames += 1;
-        self.evict_unused_images();
-        self.evict_unused_path_meshes();
-        self.evict_unused_gradients();
-        self.counters.draw_calls += u64::from(draw_calls);
-        self.counters.text_draw_calls += u64::from(text_draw_calls);
-        self.counters.rectangle_instances += rectangles as u64;
-        self.counters.glyph_instances += glyphs as u64;
-        self.counters.image_instances += images as u64;
-        self.counters.rounded_rect_instances += rounded as u64;
-        Ok(RenderStats {
-            draw_calls,
-            rectangle_instances: rectangles as u32,
-            glyph_instances: glyphs as u32,
-            image_instances: images as u32,
-            buffer_reallocated: rectangle_reallocated,
-            glyph_buffer_reallocated: glyph_reallocated,
-            image_buffer_reallocated: image_reallocated,
-            presented: true,
-            rounded_rect_instances: rounded as u32,
-            path_draws: paths as u32,
-            render_passes: 1,
-            path_triangles: 0,
-            upload_bytes: 0,
-            texture_upload_bytes: 0,
-            queue_submissions: 1,
-            prepare_us: 0,
-            encode_us: 0,
-            submit_us: 0,
-            pipelines_created: 0,
-        })
-    }
     pub(super) fn render_composited(
         &mut self,
         list: &DisplayList,
@@ -715,11 +473,12 @@ impl WgpuRenderer {
         let before = self.counters;
         let scale = normalized_scale(scale_factor);
         let promote_destination = commands_have_destination_blend(list.commands());
-        let (target_origin, target_width, target_height) = if promote_destination {
-            destination_composition_scope(list, scale, self.config.width, self.config.height)
-        } else {
-            (Offset::ZERO, self.config.width, self.config.height)
-        };
+        let (target_origin, target_width, target_height) =
+            if promote_destination && self.background_color.alpha == 0 {
+                destination_composition_scope(list, scale, self.config.width, self.config.height)
+            } else {
+                (Offset::ZERO, self.config.width, self.config.height)
+            };
         self.target_width = target_width;
         self.target_height = target_height;
         self.target_origin = target_origin;
@@ -821,29 +580,25 @@ impl WgpuRenderer {
         let prepare_us = us_since(prepare_started);
         let encode_started = std::time::Instant::now();
         self.profiler_next_pass = self.gpu_timing_supported();
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.surface.configure(&self.device, &self.config);
-                frame
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
-                return Ok(RenderStats::default());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.shared.create_surface(self.handles)?;
-                self.surface.configure(&self.device, &self.config);
-                self.window_gpu.presentation.surface_lost();
-                return Ok(RenderStats::default());
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return Ok(RenderStats::default()),
+        let Some(frame) = self.acquire_surface_texture()? else {
+            return Ok(RenderStats::default());
         };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let presentation_target = if self.alpha_plan.requires_straight_alpha_conversion() {
+            self.ensure_presentation_target();
+            self.presentation_target.clone()
+        } else {
+            None
+        };
+        let scene_view = presentation_target
+            .as_ref()
+            .map_or_else(|| view.clone(), |target| target.color_view.clone());
+        let scene_stencil = presentation_target.as_ref().map_or_else(
+            || self.stencil_view.clone(),
+            |target| target.stencil_view.clone(),
+        );
         let has_destination_blend = batches.iter().any(|batch| {
             matches!(
                 batch,
@@ -853,7 +608,7 @@ impl WgpuRenderer {
                 } if mode.requires_destination_read()
             )
         });
-        let (draw_calls, _text_draw_calls) = if has_destination_blend {
+        let (mut draw_calls, _text_draw_calls) = if has_destination_blend {
             // A destination-read blend promotes only this composition scope;
             // ordinary SrcOver frames continue through the direct surface
             // path above.
@@ -869,6 +624,7 @@ impl WgpuRenderer {
                 target_height,
                 &mut targets,
                 "incular destination composition segment",
+                self.scene_background_clear(),
             );
             self.counters.full_frame_intermediate_passes += 1;
             self.counters.offscreen_render_passes += u64::from(passes);
@@ -879,7 +635,8 @@ impl WgpuRenderer {
             };
             let present_draw = self.present_composition_target(
                 &final_target,
-                &view,
+                &scene_view,
+                &scene_stencil,
                 target_origin,
                 target_width,
                 target_height,
@@ -895,22 +652,24 @@ impl WgpuRenderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("incular frame encoder"),
                 });
-            let root_stencil = self.stencil_view.clone();
             let result = self.encode_batches(
                 &mut encoder,
-                &view,
-                &root_stencil,
+                &scene_view,
+                &scene_stencil,
                 &batches,
                 target_width,
                 target_height,
                 scale,
-                wgpu::Color::TRANSPARENT,
+                self.scene_background_clear(),
                 None,
                 false,
             );
             self.queue.submit(Some(encoder.finish()));
             result
         };
+        if let Some(target) = presentation_target.as_ref() {
+            draw_calls += self.present_straight_alpha_target(target, &view);
+        }
         if self.capture_requested {
             self.last_capture = Some(self.capture_surface_texture(&frame.texture));
             self.capture_requested = false;
@@ -950,7 +709,9 @@ impl WgpuRenderer {
             rounded_rect_instances: rounded as u32 + stencil_masks as u32,
             path_draws: path_draws_this_frame as u32,
             render_passes: 1
-                + (after.offscreen_render_passes - before.offscreen_render_passes) as u32,
+                + (after.offscreen_render_passes - before.offscreen_render_passes) as u32
+                + (after.surface_present_conversion_passes
+                    - before.surface_present_conversion_passes) as u32,
             path_triangles: (after.path_triangles - before.path_triangles) as u32,
             upload_bytes: after.buffer_upload_bytes - before.buffer_upload_bytes,
             texture_upload_bytes: after.texture_upload_bytes - before.texture_upload_bytes,

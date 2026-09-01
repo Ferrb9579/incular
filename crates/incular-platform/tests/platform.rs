@@ -1,5 +1,5 @@
 use incular_core::{
-    Code, InputEvent, KeyboardEvent, KeyboardKey, NamedKey, Offset, PointerPhase, Size,
+    Code, Color, InputEvent, KeyboardEvent, KeyboardKey, NamedKey, Offset, PointerPhase, Size,
 };
 use incular_platform::*;
 
@@ -24,9 +24,21 @@ fn window_options_use_the_shared_application_defaults() {
     assert_eq!(options.resizable, defaults.resizable);
     assert_eq!(options.visible, defaults.visible);
     assert_eq!(options.decorations, defaults.decorations);
-    assert_eq!(options.transparent, defaults.transparent);
+    assert_eq!(options.transparency_mode, defaults.transparency_mode);
+    assert_eq!(options.background_color, defaults.background_color);
     assert_eq!(options.maximized, defaults.maximized);
     assert!(options.fullscreen.is_none());
+}
+
+#[test]
+fn transparency_mode_and_background_color_are_independent() {
+    let mut options = WindowOptions::default();
+    assert_eq!(options.transparency_mode, TransparencyMode::Opaque);
+    assert_eq!(options.background_color, Color::BLACK);
+    options.transparency_mode = TransparencyMode::Transparent;
+    options.background_color = Color::TRANSPARENT;
+    assert_eq!(options.transparency_mode, TransparencyMode::Transparent);
+    assert_eq!(options.background_color, Color::TRANSPARENT);
 }
 
 #[test]

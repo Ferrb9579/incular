@@ -2071,6 +2071,7 @@ dependencies = [
  "criterion",
  "fontdue",
  "incular-assets",
+ "incular-config",
  "incular-core",
  "incular-image",
  "incular-platform",

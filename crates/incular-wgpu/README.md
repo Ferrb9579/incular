@@ -16,6 +16,37 @@ each later window. A zero-sized surface is deliberately not configured or
 presented. Surface loss and resize are window-local; device loss is a future
 shared-context generation boundary.
 
+Every renderer is created with an explicit `TransparencyMode` plus an independent
+scene `background_color`. WGPU's
+`CompositeAlphaMode::Auto` is never used as transparency policy because it can
+resolve only to opaque/inherited compositing. Incular's source-over scene
+accumulation stores premultiplied RGB, so transparent surfaces prefer
+`PreMultiplied` and present directly. A surface exposing only `PostMultiplied`
+is supported through a final premultiplied-to-straight presentation pass. If a
+backend exposes neither transparent alpha mode, renderer initialization fails
+instead of silently presenting the requested transparent window as opaque
+black.
+
+The renderer clears only the root scene to `background_color`; retained effect
+and isolation targets remain transparent. Destination-reading blend modes see
+that background as the initial root destination. When a non-transparent
+background is configured, destination promotion uses the full view so the
+background is represented exactly once across the complete presented frame.
+
+The first window's transparency contract also participates in shared-adapter
+selection. Incular preserves WGPU's preferred compatible adapter when it can
+satisfy the requested surface alpha; otherwise it searches the instance's
+enabled adapters for a compatible one, respecting `WGPU_POWER_PREF` instead of
+inventing a framework-specific GPU preference. Later windows stay on that one
+shared device and fail explicitly when their native surface cannot satisfy a
+requested transparent contract.
+
+Surface readback has one backend-independent representation: `CapturedFrame`
+is top-to-bottom straight-alpha RGBA8. BGRA surfaces are reordered, and
+premultiplied readback is unpremultiplied in linear light before sRGB encoding.
+This keeps simulation screenshots consistent whether native presentation uses
+opaque, premultiplied, or postmultiplied alpha.
+
 `SharedGpuDiagnostics` and `WindowGpuPresentation` expose native-free
 ownership diagnostics for headless tests. In particular, image and matching
 DPI-specific glyph resource identities are context-wide, while presentation

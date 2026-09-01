@@ -9,9 +9,10 @@ use incular_core::Offset;
 use incular_core::PointerPhase;
 use incular_platform::{
     Clipboard, ContentSensitivityBackend, NoopContentSensitivityBackend, PhysicalSize,
-    PlatformEvent, WindowCommand, WindowEvent as IncularWindowEvent, WindowId as IncularWindowId,
-    WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions, apply_text_input_command,
-    ime_event, key_event, pointer_event, raw_window_handles, text_event, touch_event, wheel_event,
+    PlatformEvent, TransparencyMode, WindowCommand, WindowEvent as IncularWindowEvent,
+    WindowId as IncularWindowId, WindowLifecycle, WindowMetrics, WindowOperation, WindowOptions,
+    apply_text_input_command, ime_event, key_event, pointer_event, raw_window_handles, text_event,
+    touch_event, wheel_event,
 };
 use incular_runtime::{
     Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
@@ -323,6 +324,8 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
         let renderer = match pollster::block_on(WgpuRenderer::new(
             raw_window_handles(&window),
             metrics.physical_size,
+            TransparencyMode::Opaque,
+            defaults.background_color,
         )) {
             Ok(renderer) => renderer,
             Err(error) => {
@@ -701,20 +704,30 @@ impl MultiApp {
         );
         let handles = raw_window_handles(&window);
         let renderer = match self.shared_gpu.clone() {
-            Some(shared) => {
-                pollster::block_on(shared.create_renderer(handles, metrics.physical_size))
-            }
-            None => match pollster::block_on(SharedGpuContext::new(handles)) {
-                Ok(shared) => {
-                    let renderer =
-                        pollster::block_on(shared.create_renderer(handles, metrics.physical_size));
-                    if renderer.is_ok() {
-                        self.shared_gpu = Some(shared);
+            Some(shared) => pollster::block_on(shared.create_renderer(
+                handles,
+                metrics.physical_size,
+                options.transparency_mode,
+                options.background_color,
+            )),
+            None => {
+                match pollster::block_on(SharedGpuContext::new(handles, options.transparency_mode))
+                {
+                    Ok(shared) => {
+                        let renderer = pollster::block_on(shared.create_renderer(
+                            handles,
+                            metrics.physical_size,
+                            options.transparency_mode,
+                            options.background_color,
+                        ));
+                        if renderer.is_ok() {
+                            self.shared_gpu = Some(shared);
+                        }
+                        renderer
                     }
-                    renderer
+                    Err(error) => Err(error),
                 }
-                Err(error) => Err(error),
-            },
+            }
         };
         let renderer = match renderer {
             Ok(renderer) => renderer,
@@ -1267,7 +1280,7 @@ fn window_attributes(options: &WindowOptions) -> WindowAttributes {
         .with_resizable(options.resizable)
         .with_visible(options.visible)
         .with_decorations(options.decorations)
-        .with_transparent(options.transparent)
+        .with_transparent(options.transparency_mode.is_transparent())
         .with_maximized(options.maximized)
         .with_fullscreen(
             options

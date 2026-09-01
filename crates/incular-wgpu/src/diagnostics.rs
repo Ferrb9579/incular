@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::surface::SurfaceAlphaError;
 
 impl GpuCounters {
     /// Total render pipelines created across every family.
@@ -9,6 +10,7 @@ impl GpuCounters {
             + self.image_pipeline_creations
             + self.path_pipeline_creations
             + self.composite_pipeline_creations
+            + self.surface_present_pipeline_creations
             + self.stencil_pipeline_creations
     }
 }
@@ -78,6 +80,18 @@ pub struct GpuCounters {
     pub path_triangles: u64,
     pub path_pipeline_creations: u64,
     pub composite_pipeline_creations: u64,
+    /// Final premultiplied->straight presentation pipeline creation. The
+    /// pipeline is created once per target format even when a given surface can
+    /// present the premultiplied scene directly.
+    pub surface_present_pipeline_creations: u64,
+    /// Full-surface premultiplied scene targets allocated for postmultiplied
+    /// native presentation. Retained until resize.
+    pub surface_present_target_creations: u64,
+    /// Bytes retained by the current full-surface presentation target,
+    /// including its stencil attachment. Zero for direct presentation.
+    pub surface_present_cached_bytes: usize,
+    /// Frames that required a final premultiplied->straight presentation pass.
+    pub surface_present_conversion_passes: u64,
     /// Retained `Depth24PlusStencil8` attachments. Recreation only happens
     /// when the physical surface target changes.
     pub stencil_texture_creations: u64,
@@ -188,8 +202,9 @@ pub struct RenderStats {
     pub pipelines_created: u32,
 }
 
-/// A GPU readback of one rendered Incular frame. The renderer converts the
-/// native surface channel order to tightly packed RGBA8 before returning it.
+/// A GPU readback of one rendered Incular frame. Pixels are tightly packed,
+/// top-to-bottom, straight-alpha RGBA8 regardless of the native surface's
+/// channel order or compositor alpha representation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedFrame {
     pub width: u32,
@@ -246,6 +261,7 @@ pub enum RendererError {
     Adapter(wgpu::RequestAdapterError),
     Device(wgpu::RequestDeviceError),
     Surface(wgpu::CreateSurfaceError),
+    SurfaceAlpha(SurfaceAlphaError),
     ImageTooLarge {
         width: u32,
         height: u32,
@@ -279,6 +295,9 @@ impl std::fmt::Display for RendererError {
             Self::Adapter(e) => write!(f, "unable to acquire GPU adapter: {e}"),
             Self::Device(e) => write!(f, "unable to acquire GPU device: {e}"),
             Self::Surface(e) => write!(f, "unable to create GPU surface: {e}"),
+            Self::SurfaceAlpha(error) => {
+                write!(f, "GPU surface alpha configuration failed: {error}")
+            }
             Self::ImageTooLarge {
                 width,
                 height,

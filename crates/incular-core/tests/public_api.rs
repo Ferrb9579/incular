@@ -109,6 +109,16 @@ fn linear_rgba_uses_palette_srgb_transfer_function() {
 }
 
 #[test]
+fn linear_rgba_round_trips_through_the_same_palette_transfer_function() {
+    let original = Color::rgba(37, 149, 211, 127);
+    assert_eq!(Color::from_linear_rgba(original.to_linear_rgba()), original);
+    assert_eq!(
+        Color::from_linear_rgba([f32::NAN, -1.0, 4.0, f32::INFINITY]),
+        Color::rgba(0, 0, 255, 0)
+    );
+}
+
+#[test]
 fn unique_keys_are_distinct_and_cloneable() {
     let first = UniqueKey::new();
     let second = UniqueKey::new();

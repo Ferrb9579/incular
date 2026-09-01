@@ -7,7 +7,27 @@
 //! widget or an ambient theme.
 
 use crate::{Axis, Brightness, Clip, TextDirection};
-use incular_core::Size;
+use incular_core::{Color, Size};
+
+/// Whether a native application window participates in desktop compositing
+/// with framebuffer alpha.
+///
+/// This is presentation policy, not a paint color. A transparent window may
+/// render fully opaque frames, and an opaque window may still use alpha inside
+/// its render tree for antialiasing, effects, and offscreen composition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TransparencyMode {
+    #[default]
+    Opaque,
+    Transparent,
+}
+
+impl TransparencyMode {
+    #[must_use]
+    pub const fn is_transparent(self) -> bool {
+        matches!(self, Self::Transparent)
+    }
+}
 
 /// Defaults used when an application does not provide window/environment
 /// policy.
@@ -20,7 +40,14 @@ pub struct ApplicationDefaults {
     pub resizable: bool,
     pub visible: bool,
     pub decorations: bool,
-    pub transparent: bool,
+    /// How the native host/view participates in operating-system compositing.
+    pub transparency_mode: TransparencyMode,
+    /// Base color underneath the application's rendered scene.
+    ///
+    /// This is independent of [`TransparencyMode`]. A transparent host may use
+    /// an opaque background, and an opaque host may begin from transparent
+    /// scene content before native presentation.
+    pub background_color: Color,
     pub maximized: bool,
     /// Neutral environment values used until a platform publishes a snapshot.
     pub scale_factor: f64,
@@ -41,7 +68,8 @@ impl ApplicationDefaults {
         resizable: true,
         visible: true,
         decorations: true,
-        transparent: false,
+        transparency_mode: TransparencyMode::Opaque,
+        background_color: Color::BLACK,
         maximized: false,
         scale_factor: 1.0,
         text_scale: 1.0,
