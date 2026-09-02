@@ -29,10 +29,11 @@ use incular_accessibility::{
 };
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_platform::{
-    Clipboard, DisplayId, DisplaySnapshot, NativeOperationCompletion, NativeRequestId,
-    PlatformCapabilities, PlatformEvent, PlatformLifecycle, PlatformOperationError,
-    PlatformOperationErrorKind, PlatformOperationResult, TextInputCommand, WindowCommand,
-    WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowOperation, WindowOptions,
+    Clipboard, DisplayId, DisplaySnapshot, ExternalDragEvent, ExternalDragResponse,
+    NativeOperationCompletion, NativeRequestId, PlatformCapabilities, PlatformEvent,
+    PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
+    TextInputCommand, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
+    WindowOperation, WindowOptions,
 };
 use incular_rendering::DisplayList;
 use incular_widgets::Widget;
@@ -1097,6 +1098,23 @@ impl Application {
         }
     }
 
+    /// Routes external platform transfer data to one retained window and
+    /// returns the operation requested by the currently hit-tested target.
+    /// Native adapters with richer drag protocols can feed this response back
+    /// to the source; adapters such as Winit file-drop may simply ignore it.
+    #[must_use]
+    pub fn handle_external_drag_event(
+        &mut self,
+        window_id: WindowId,
+        event: ExternalDragEvent,
+    ) -> ExternalDragResponse {
+        self.with_window_mut(window_id, |record| {
+            record.input_events = record.input_events.wrapping_add(1);
+            record.runtime.handle_external_drag(event)
+        })
+        .unwrap_or_default()
+    }
+
     /// Routes a normalized event to exactly one retained root.
     pub fn handle_window_event(&mut self, event: WindowEvent) {
         let window_id = event.window_id;
@@ -1139,6 +1157,9 @@ impl Application {
                         let _ = self.flush_restoration();
                     }
                 }
+            }
+            WindowEventKind::Platform(PlatformEvent::ExternalDrag(event)) => {
+                let _ = self.handle_external_drag_event(window_id, event);
             }
             WindowEventKind::Lifecycle(lifecycle) => {
                 let _ = self.with_window_mut(window_id, |record| {

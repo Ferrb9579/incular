@@ -41,6 +41,7 @@ impl WidgetTree {
             consumed_tap_pointers: HashSet::new(),
             pointer_captures: HashMap::new(),
             active_drags: HashMap::new(),
+            active_external_drop: None,
             scale_gestures: HashMap::new(),
             scrollbar_drag: None,
             semantics: SemanticsTree::new(),

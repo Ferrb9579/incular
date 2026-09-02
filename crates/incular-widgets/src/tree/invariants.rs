@@ -770,6 +770,16 @@ impl WidgetTree {
                 None,
             ));
         }
+        if let Some(active) = self.active_external_drop.as_ref()
+            && !live(&active.element)
+        {
+            return Err(Self::invariant_error(
+                InvariantCategory::Interaction,
+                "active external drop target references a dead element",
+                Some(active.element),
+                None,
+            ));
+        }
         if let Some(element) = self.scale_gestures.keys().find(|id| !live(id)) {
             return Err(Self::invariant_error(
                 InvariantCategory::Interaction,

@@ -1,11 +1,15 @@
 //! Shared desktop event-loop bridge for Incular.
+mod clipboard;
 mod display;
 mod display_identity;
+mod external_drag;
 mod platform_menus;
 mod platform_services;
 mod pointer;
 mod transients;
 
+#[doc(hidden)]
+pub use external_drag::ExternalFileDragState;
 #[doc(hidden)]
 pub use platform_menus::{
     NativeMenuCommandId, NativeMenuCommandRegistry, NativeMenuRegistryError, format_menu_shortcut,
@@ -23,7 +27,7 @@ use incular_core::PRIMARY_POINTER_BUTTON;
 use incular_core::{Color, InputEvent, Offset};
 use incular_core::{PointerDeviceKind, PointerPhase, WindowResizeDirection};
 use incular_platform::{
-    CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
+    CapabilitySupport, ContentSensitivityBackend, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, CursorGrabMode, NativeOperationCompletion, NativeWindowSystem,
     NoopContentSensitivityBackend, PhysicalScreenPosition, PhysicalSize, PlatformCapabilities,
     PlatformEvent, PlatformOperationError, PlatformOperationErrorKind, PointerMetadata,
@@ -64,6 +68,9 @@ use winit::{
     },
 };
 
+use crate::clipboard::DesktopClipboard;
+#[doc(hidden)]
+pub use crate::clipboard::desktop_clipboard_write_report;
 use crate::display::DesktopDisplayRegistry;
 use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
 use crate::transients::{NativeTransientState, TransientHostKey, TransientNativeRejection};
@@ -144,38 +151,6 @@ struct DesktopWake(winit::event_loop::EventLoopProxy<RuntimeWakeEvent>);
 impl RuntimeWake for DesktopWake {
     fn wake(&self) {
         let _ = self.0.send_event(RuntimeWakeEvent::Runtime);
-    }
-}
-/// Native desktop clipboard with a local fallback for headless sessions or a
-/// temporarily unavailable system clipboard service.
-struct DesktopClipboard {
-    native: Option<arboard::Clipboard>,
-    fallback: String,
-}
-impl DesktopClipboard {
-    fn new() -> Self {
-        Self {
-            native: arboard::Clipboard::new().ok(),
-            fallback: String::new(),
-        }
-    }
-
-    fn native_available(&self) -> bool {
-        self.native.is_some()
-    }
-}
-impl Clipboard for DesktopClipboard {
-    fn get_text(&mut self) -> Option<String> {
-        self.native
-            .as_mut()
-            .and_then(|clipboard| clipboard.get_text().ok())
-            .or_else(|| (!self.fallback.is_empty()).then(|| self.fallback.clone()))
-    }
-    fn set_text(&mut self, text: String) {
-        self.fallback = text.clone();
-        if let Some(clipboard) = self.native.as_mut() {
-            let _ = clipboard.set_text(text);
-        }
     }
 }
 /// Runs an application built with Incular's declarative root API. Button
@@ -777,6 +752,7 @@ struct NativeWindowState {
     mouse_buttons: MouseButtonState,
     native_cursor: NativeCursorCoordinator,
     modifiers: winit::keyboard::ModifiersState,
+    external_file_drag: ExternalFileDragState,
     accessibility: NativeAccessibilityState,
     content_sensitivity: NoopContentSensitivityBackend,
     /// Must outlive every field that was created from this window's raw
@@ -812,6 +788,30 @@ struct MultiApp {
 }
 
 impl MultiApp {
+    fn native_external_drag_position(&self, native_id: NativeWindowId) -> Option<Offset> {
+        let system = self.window_system?;
+        let state = self.windows.get(&native_id)?;
+        self.platform_services
+            .external_drag_position(system, &state.window)
+            .map(|position| logical_cursor_position(position, state.metrics))
+    }
+
+    fn flush_external_file_drops(&mut self) {
+        let drops = self
+            .windows
+            .values_mut()
+            .filter_map(|state| {
+                state
+                    .external_file_drag
+                    .take_drop()
+                    .map(|event| (state.id, event))
+            })
+            .collect::<Vec<_>>();
+        for (id, event) in drops {
+            let _ = self.application.handle_external_drag_event(id, event);
+        }
+    }
+
     fn sync_platform_menus(&self) {
         for id in self.application.active_window_ids() {
             for binding in self.application.platform_menu_bindings(id) {
@@ -964,13 +964,31 @@ impl MultiApp {
         };
         accessibility.projection.note_adapter_created();
         let clipboard = DesktopClipboard::new();
+        let clipboard_capabilities = clipboard.native_capabilities();
         let mut capabilities = refine_window_capabilities(
             desktop_platform_capabilities(),
             system,
             self.platform_services.as_ref(),
         );
-        capabilities.data_transfer.clipboard_text =
-            CapabilitySupport::from_supported(clipboard.native_available());
+        capabilities.data_transfer.clipboard_text = clipboard_format_bidirectional_support(
+            clipboard_capabilities,
+            &incular_platform::TransferFormat::PlainText,
+        );
+        capabilities.data_transfer.clipboard_rich = if [
+            incular_platform::TransferFormat::Html,
+            incular_platform::TransferFormat::Files,
+            incular_platform::TransferFormat::Rgba8Image,
+        ]
+        .iter()
+        .all(|format| {
+            clipboard_format_bidirectional_support(clipboard_capabilities, format)
+                == CapabilitySupport::Supported
+        }) {
+            CapabilitySupport::Supported
+        } else {
+            CapabilitySupport::Unsupported
+        };
+        capabilities.data_transfer.clipboard_custom = CapabilitySupport::Unsupported;
         let _ = self.application.set_window_capabilities(id, capabilities);
         if let Some(error) = unsupported_initial_window_policy(&options, &capabilities) {
             let _ = self.application.record_platform_operation_error(id, error);
@@ -1016,6 +1034,7 @@ impl MultiApp {
                 mouse_buttons: MouseButtonState::default(),
                 native_cursor: NativeCursorCoordinator::default(),
                 modifiers: winit::keyboard::ModifiersState::default(),
+                external_file_drag: ExternalFileDragState::default(),
                 accessibility,
                 content_sensitivity: NoopContentSensitivityBackend,
             },
@@ -1046,6 +1065,21 @@ impl MultiApp {
             return;
         };
         if matches!(command.operation, WindowOperation::Close) {
+            let external_position = self.native_external_drag_position(native_id).or_else(|| {
+                self.windows
+                    .get(&native_id)
+                    .and_then(|state| state.external_file_drag.current_position())
+            });
+            let external_cancel = external_position.and_then(|position| {
+                self.windows
+                    .get_mut(&native_id)
+                    .and_then(|state| state.external_file_drag.cancel(position))
+            });
+            if let Some(event) = external_cancel {
+                let _ = self
+                    .application
+                    .handle_external_drag_event(command.window_id, event);
+            }
             self.destroy_transient_hosts_for_owner(command.window_id);
             self.native_ids.remove(&command.window_id);
             if let Some(mut state) = self.windows.remove(&native_id) {
@@ -1679,6 +1713,11 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     // Clipboard availability depends on whether the native clipboard service
     // can be opened for the concrete session/window, so creation refines it.
     capabilities.data_transfer.clipboard_text = CapabilitySupport::Unknown;
+    capabilities.data_transfer.clipboard_rich = CapabilitySupport::Unknown;
+    capabilities.data_transfer.clipboard_custom = CapabilitySupport::Unsupported;
+    capabilities.data_transfer.external_drag_drop = CapabilitySupport::Unknown;
+    capabilities.data_transfer.external_drag_drop_files = CapabilitySupport::Unknown;
+    capabilities.data_transfer.external_drag_drop_rich = CapabilitySupport::Unsupported;
     capabilities
 }
 
@@ -1774,7 +1813,25 @@ fn refine_window_capabilities(
         }
         NativeWindowSystem::Other => {}
     }
+    let external_file_drag = services.external_file_drag_support(system);
+    capabilities.data_transfer.external_drag_drop = external_file_drag;
+    capabilities.data_transfer.external_drag_drop_files = external_file_drag;
+    capabilities.data_transfer.external_drag_drop_rich = CapabilitySupport::Unsupported;
+    capabilities.data_transfer.clipboard_custom = CapabilitySupport::Unsupported;
     capabilities
+}
+
+fn clipboard_format_bidirectional_support(
+    capabilities: incular_platform::ClipboardCapabilities,
+    format: &incular_platform::TransferFormat,
+) -> CapabilitySupport {
+    if capabilities.read.support(format) == CapabilitySupport::Supported
+        && capabilities.write.support(format) == CapabilitySupport::Supported
+    {
+        CapabilitySupport::Supported
+    } else {
+        CapabilitySupport::Unsupported
+    }
 }
 
 fn operation_support(
@@ -2047,21 +2104,26 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 position,
             } => {
                 let device = self.pointer_devices.id(device_id);
-                let event = {
+                let (event, external_over) = {
                     let state = self
                         .windows
                         .get_mut(&native_id)
                         .expect("known native window");
                     state.cursor = position;
-                    pointer_event_with_metadata(
-                        mouse_pointer_metadata(
-                            device,
-                            state.mouse_buttons.pressed(),
-                            None,
-                            PointerPhase::Move,
+                    (
+                        pointer_event_with_metadata(
+                            mouse_pointer_metadata(
+                                device,
+                                state.mouse_buttons.pressed(),
+                                None,
+                                PointerPhase::Move,
+                            ),
+                            position,
+                            state.metrics,
                         ),
-                        position,
-                        state.metrics,
+                        state
+                            .external_file_drag
+                            .over(logical_cursor_position(state.cursor, state.metrics)),
                     )
                 };
                 #[cfg(feature = "devtools")]
@@ -2077,7 +2139,50 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     return;
                 }
                 self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                if let Some(event) = external_over {
+                    let _ = self.application.handle_external_drag_event(id, event);
+                }
                 self.sync_window_cursor(id);
+            }
+            WindowEvent::HoveredFile(path) => {
+                if let Some(position) = self.native_external_drag_position(native_id) {
+                    let event = self
+                        .windows
+                        .get_mut(&native_id)
+                        .expect("known native window")
+                        .external_file_drag
+                        .hover(path, position);
+                    let _ = self.application.handle_external_drag_event(id, event);
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                let position = self.native_external_drag_position(native_id).or_else(|| {
+                    self.windows
+                        .get(&native_id)
+                        .and_then(|state| state.external_file_drag.current_position())
+                });
+                if let Some(position) = position {
+                    self.windows
+                        .get_mut(&native_id)
+                        .expect("known native window")
+                        .external_file_drag
+                        .queue_drop(path, position);
+                }
+            }
+            WindowEvent::HoveredFileCancelled => {
+                let position = self.native_external_drag_position(native_id).or_else(|| {
+                    self.windows
+                        .get(&native_id)
+                        .and_then(|state| state.external_file_drag.current_position())
+                });
+                let event = position.and_then(|position| {
+                    self.windows
+                        .get_mut(&native_id)
+                        .and_then(|state| state.external_file_drag.cancel(position))
+                });
+                if let Some(event) = event {
+                    let _ = self.application.handle_external_drag_event(id, event);
+                }
             }
             WindowEvent::CursorEntered { device_id } | WindowEvent::CursorLeft { device_id } => {
                 let phase = if matches!(event, WindowEvent::CursorEntered { .. }) {
@@ -2220,6 +2325,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         self.platform_services.flush_platform_menu_events();
         self.sync_platform_menus();
         self.refresh_displays(target);
+        self.flush_external_file_drops();
         self.apply_window_commands(target);
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
@@ -2239,6 +2345,15 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             self.request_frame_if_needed(id);
         }
     }
+}
+
+fn logical_cursor_position(cursor: PhysicalPosition<f64>, metrics: WindowMetrics) -> Offset {
+    let scale = if metrics.scale_factor.is_finite() && metrics.scale_factor > 0.0 {
+        metrics.scale_factor
+    } else {
+        1.0
+    };
+    Offset::new((cursor.x / scale) as f32, (cursor.y / scale) as f32)
 }
 
 fn platform_menu_key(event: &winit::event::KeyEvent) -> Option<String> {

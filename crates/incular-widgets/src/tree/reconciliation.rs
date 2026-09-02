@@ -1200,6 +1200,7 @@ impl WidgetTree {
             match next {
                 UnmountWork::Enter(id) => {
                     self.raw_input_unmounted(id);
+                    self.external_drop_target_unmounted(id);
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;
                     };

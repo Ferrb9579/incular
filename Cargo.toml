@@ -90,6 +90,7 @@ wgpu-profiler = "0.28"
 naga = { version = "30", default-features = false, features = ["wgsl-in"] }
 winit = "0.30"
 raw-window-handle = "0.6"
+x11-dl = "2.21"
 bytemuck = { version = "1.23", features = ["derive"] }
 pollster = "0.4"
 # CPU benchmarking (dev-only, per-crate benches).
@@ -104,7 +105,9 @@ sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 proptest = "1"
 
 parley = "0.7"
-arboard = "3.6"
+# Use arboard's native X11 backend plus its Wayland data-control backend so
+# clipboard support does not silently depend on XWayland on Linux desktops.
+arboard = { version = "3.6", features = ["wayland-data-control"] }
 fontdue = "0.9"
 palette = "0.7.6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

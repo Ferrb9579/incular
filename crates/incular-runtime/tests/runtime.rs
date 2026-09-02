@@ -444,11 +444,47 @@ fn selectable_text_pointer_drag_shift_extension_and_copy_are_read_only() {
     #[derive(Clone)]
     struct TestClipboard(Rc<RefCell<String>>);
     impl Clipboard for TestClipboard {
-        fn get_text(&mut self) -> Option<String> {
-            (!self.0.borrow().is_empty()).then(|| self.0.borrow().clone())
+        fn capabilities(&self) -> incular_platform::ClipboardCapabilities {
+            incular_platform::ClipboardCapabilities {
+                read: incular_platform::TransferFormatCapabilities {
+                    plain_text: incular_platform::CapabilitySupport::Supported,
+                    ..incular_platform::TransferFormatCapabilities::default()
+                },
+                write: incular_platform::TransferFormatCapabilities {
+                    plain_text: incular_platform::CapabilitySupport::Supported,
+                    ..incular_platform::TransferFormatCapabilities::default()
+                },
+                lazy_write: incular_platform::CapabilitySupport::Unsupported,
+            }
         }
-        fn set_text(&mut self, text: String) {
-            *self.0.borrow_mut() = text;
+
+        fn read(
+            &mut self,
+            request: incular_platform::TransferReadRequest,
+        ) -> Result<incular_platform::DataTransfer, incular_platform::ClipboardError> {
+            if !request.includes(&incular_platform::TransferFormat::PlainText) {
+                return Err(incular_platform::ClipboardError::Unavailable);
+            }
+            let text = self.0.borrow().clone();
+            if text.is_empty() {
+                Err(incular_platform::ClipboardError::Unavailable)
+            } else {
+                Ok(incular_platform::DataTransfer::plain_text(text))
+            }
+        }
+
+        fn write(
+            &mut self,
+            transfer: incular_platform::DataTransfer,
+        ) -> Result<incular_platform::ClipboardWriteReport, incular_platform::ClipboardError>
+        {
+            let Some(text) = transfer.plain_text_value()? else {
+                return Err(incular_platform::ClipboardError::UnsupportedCombination);
+            };
+            *self.0.borrow_mut() = text.to_string();
+            Ok(incular_platform::ClipboardWriteReport::all_written(vec![
+                incular_platform::TransferFormat::PlainText,
+            ]))
         }
     }
 

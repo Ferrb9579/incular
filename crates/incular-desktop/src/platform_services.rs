@@ -5,6 +5,7 @@ use incular_platform::{
 use incular_widgets::{NoopPlatformMenuDelegate, PlatformMenuDelegate};
 use std::rc::Rc;
 use winit::{
+    dpi::PhysicalPosition,
     monitor::MonitorHandle,
     window::{Window, WindowAttributes},
 };
@@ -16,6 +17,23 @@ use winit::{
 /// this trait only for information or native relationship semantics that would
 /// otherwise require leaking HWND/NSWindow/X11 details into `incular-desktop`.
 pub trait DesktopPlatformServices {
+    /// Whether this facade can pair Winit's file-transfer payload events with a
+    /// trustworthy current client-space pointer position for hit testing.
+    fn external_file_drag_support(&self, _system: NativeWindowSystem) -> CapabilitySupport {
+        CapabilitySupport::Unsupported
+    }
+
+    /// Current client-space pointer position in physical pixels while a native
+    /// external drag is active. Winit's file events do not carry coordinates,
+    /// so supported facades must query their native window system directly.
+    fn external_drag_position(
+        &self,
+        _system: NativeWindowSystem,
+        _window: &Window,
+    ) -> Option<PhysicalPosition<f64>> {
+        None
+    }
+
     /// Returns the application-scoped native menu delegate. The shared desktop
     /// shell captures this once for the runner lifetime and binds retained
     /// `PlatformMenuBar` owners to it as windows mount/rebuild.

@@ -38,6 +38,8 @@ pub mod devtools;
 pub(crate) mod devtools_props;
 mod drag_drop;
 mod environment;
+pub mod extensions;
+mod external_drop;
 mod focus_keyboard;
 mod forms;
 mod gestures;

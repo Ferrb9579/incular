@@ -13,6 +13,42 @@ struct MacosDesktopPlatformServices {
 
 #[cfg(target_os = "macos")]
 impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
+    fn external_file_drag_support(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+    ) -> incular_platform::CapabilitySupport {
+        if system == incular_platform::NativeWindowSystem::AppKit {
+            incular_platform::CapabilitySupport::Supported
+        } else {
+            incular_platform::CapabilitySupport::Unsupported
+        }
+    }
+
+    fn external_drag_position(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        window: &winit::window::Window,
+    ) -> Option<winit::dpi::PhysicalPosition<f64>> {
+        if system != incular_platform::NativeWindowSystem::AppKit {
+            return None;
+        }
+        let native = appkit_window(window)?;
+        let view = native.contentView()?;
+        // SAFETY: both AppKit queries run synchronously on the native event-loop
+        // thread while NSWindow/NSView are retained by the live Winit window.
+        let point = unsafe { native.mouseLocationOutsideOfEventStream() };
+        let local = view.convertPoint_fromView(point, None);
+        let bounds = view.bounds();
+        let scale = window.scale_factor();
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        Some(winit::dpi::PhysicalPosition::new(
+            local.x * scale,
+            (bounds.size.height - local.y) * scale,
+        ))
+    }
+
     fn platform_menu_delegate(&self) -> std::rc::Rc<dyn incular_widgets::PlatformMenuDelegate> {
         self.menus.clone()
     }

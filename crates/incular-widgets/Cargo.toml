@@ -29,6 +29,7 @@ incular-devtools-protocol = { workspace = true, optional = true }
 icu_segmenter = { workspace = true }
 incular-animation = { workspace = true }
 incular-image = { workspace = true }
+incular-platform = { workspace = true }
 serde_json = { workspace = true }
 stacker = { workspace = true }
 

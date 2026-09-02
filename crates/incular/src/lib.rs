@@ -95,20 +95,25 @@ pub mod prelude {
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
         AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
-        ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
-        ContentSensitivityOutcome, CursorGrabMode, DataTransferCapabilities, DisplayId,
-        DisplayPlacementArea, DisplayPlacementCapabilities, DisplaySnapshot, Fullscreen,
-        LogicalDisplayPosition, LogicalScreenPosition, LogicalScreenRect, LogicalSizeLimits,
-        LogicalSizeLimitsError, LogicalWindowPosition, LogicalWindowPositionError,
-        MemoryContentSensitivityBackend, MemoryTextInputAdapter, NativeMenuCapabilities,
-        NativeOperationCompletion, NativeRequestId, NoopContentSensitivityBackend,
-        PhysicalDisplayPosition, PhysicalScreenPosition, PhysicalScreenRect, PlatformCapabilities,
-        PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
-        PointerMetadata, TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
-        TextInputConfiguration, TextInputState, TextInputType, TransientSurfaceCapabilities,
-        UserAttentionType, WindowCommand, WindowControlCapabilities, WindowEvent, WindowEventKind,
-        WindowIcon, WindowIconError, WindowId, WindowLevel, WindowLifecycle, WindowObservedState,
-        WindowOperation, WindowOptions, WindowOptionsError, WindowRequestedState,
+        ClipboardCapabilities, ClipboardError, ClipboardWriteReport, ContentSensitivityBackend,
+        ContentSensitivityCapability, ContentSensitivityNoOpReason, ContentSensitivityOutcome,
+        CursorGrabMode, DataTransfer, DataTransferCapabilities, DisplayId, DisplayPlacementArea,
+        DisplayPlacementCapabilities, DisplaySnapshot, ExternalDragEvent, ExternalDragPhase,
+        ExternalDragResponse, Fullscreen, LogicalDisplayPosition, LogicalScreenPosition,
+        LogicalScreenRect, LogicalSizeLimits, LogicalSizeLimitsError, LogicalWindowPosition,
+        LogicalWindowPositionError, MediaType, MemoryContentSensitivityBackend,
+        MemoryTextInputAdapter, NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
+        NoopContentSensitivityBackend, PhysicalDisplayPosition, PhysicalScreenPosition,
+        PhysicalScreenRect, PlatformCapabilities, PlatformOperationError,
+        PlatformOperationErrorKind, PlatformOperationResult, PointerMetadata, TextInputAction,
+        TextInputAdapter, TextInputClientId, TextInputCommand, TextInputConfiguration,
+        TextInputState, TextInputType, TransferData, TransferDataError, TransferFormat,
+        TransferFormatCapabilities, TransferImage, TransferItem, TransferOperation,
+        TransferOperations, TransferReadRequest, TransferRepresentation,
+        TransientSurfaceCapabilities, UserAttentionType, WindowCommand, WindowControlCapabilities,
+        WindowEvent, WindowEventKind, WindowIcon, WindowIconError, WindowId, WindowLevel,
+        WindowLifecycle, WindowObservedState, WindowOperation, WindowOptions, WindowOptionsError,
+        WindowRequestedState,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -143,6 +148,7 @@ pub mod prelude {
         TextLeadingDistribution, TextOverflow, TextRange, TextScaler, TextSelection, TextShadow,
         TextSpan, TextStyle, TextWidthBasis, WidgetSpan,
     };
+    pub use incular_widgets::extensions::ExternalDropTarget;
     pub use incular_widgets::{
         AbsorbPointer, Action, ActionInvocationPhase, ActionListener, ActionResult, Actions, Align,
         AlignTransition, AnimatedGrid, AnimatedGridController, AnimatedItem, AnimatedItemBuilder,

@@ -58,6 +58,7 @@ use crate::advanced_scrolling::{
 };
 use crate::compositing::ShaderCallback;
 use crate::drag_drop::{RetainedDragSource, RetainedDragTarget};
+use crate::external_drop::{ExternalDropTargetBinding, ExternalDropTargetMarker};
 use crate::focus_keyboard::FocusTraversalPolicyKind;
 use crate::gestures::{
     GestureAction, GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember,
@@ -81,6 +82,7 @@ use crate::selection::{
 
 mod context;
 mod descriptors;
+mod external_drop;
 mod focus;
 mod interaction;
 mod invariants;
@@ -765,6 +767,13 @@ struct ActiveDrag {
     start: Offset,
 }
 
+#[derive(Clone)]
+struct ActiveExternalDrop {
+    element: ElementId,
+    operation: incular_platform::TransferOperation,
+    last_event: incular_platform::ExternalDragEvent,
+}
+
 fn disposition_for(
     entries: &[GestureArenaEntry],
     member: GestureArenaMember,
@@ -876,6 +885,7 @@ pub struct WidgetTree {
     consumed_tap_pointers: HashSet<GestureArenaKey>,
     pointer_captures: HashMap<GestureArenaKey, ElementId>,
     active_drags: HashMap<GestureArenaKey, ActiveDrag>,
+    active_external_drop: Option<ActiveExternalDrop>,
     scale_gestures: HashMap<ElementId, ScaleGestureDetector>,
     scrollbar_drag: Option<ScrollbarDrag>,
     semantics: SemanticsTree,

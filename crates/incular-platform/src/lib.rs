@@ -14,6 +14,7 @@ use std::{fmt, path::PathBuf};
 
 mod capabilities;
 mod content_sensitivity;
+mod data_transfer;
 mod display;
 mod operation;
 mod pointer;
@@ -27,6 +28,13 @@ pub use capabilities::{
 pub use content_sensitivity::{
     ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, MemoryContentSensitivityBackend, NoopContentSensitivityBackend,
+};
+pub use data_transfer::{
+    Clipboard, ClipboardCapabilities, ClipboardError, ClipboardWriteReport, DataTransfer,
+    ExternalDragEvent, ExternalDragPhase, ExternalDragResponse, MediaType, MemoryClipboard,
+    TransferData, TransferDataError, TransferFormat, TransferFormatCapabilities, TransferImage,
+    TransferItem, TransferOperation, TransferOperations, TransferReadRequest,
+    TransferRepresentation,
 };
 pub use display::{
     DisplayId, DisplayPlacementArea, DisplaySnapshot, LogicalDisplayPosition,
@@ -647,6 +655,7 @@ pub enum PlatformEvent {
     TextInputAction(TextInputAction),
     Metrics(WindowMetrics),
     Lifecycle(PlatformLifecycle),
+    ExternalDrag(ExternalDragEvent),
     CloseRequested,
 }
 
@@ -658,24 +667,6 @@ pub enum PlatformLifecycle {
     Inactive,
     Suspended,
     Stopping,
-}
-/// Platform clipboard boundary. Backends replace this in-memory implementation
-/// with their native clipboard bridge without leaking native types into widgets.
-pub trait Clipboard {
-    fn get_text(&mut self) -> Option<String>;
-    fn set_text(&mut self, text: String);
-}
-#[derive(Default)]
-pub struct MemoryClipboard {
-    text: String,
-}
-impl Clipboard for MemoryClipboard {
-    fn get_text(&mut self) -> Option<String> {
-        (!self.text.is_empty()).then(|| self.text.clone())
-    }
-    fn set_text(&mut self, text: String) {
-        self.text = text;
-    }
 }
 /// Raw handles are passed only to the GPU backend. The Linux window owner must
 /// outlive the created surface; this is documented at the unsafe GPU boundary.

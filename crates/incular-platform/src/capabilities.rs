@@ -104,7 +104,10 @@ pub struct NativeMenuCapabilities {
 pub struct DataTransferCapabilities {
     pub clipboard_text: CapabilitySupport,
     pub clipboard_rich: CapabilitySupport,
+    pub clipboard_custom: CapabilitySupport,
     pub external_drag_drop: CapabilitySupport,
+    pub external_drag_drop_files: CapabilitySupport,
+    pub external_drag_drop_rich: CapabilitySupport,
 }
 
 /// Application-level desktop services that live outside ordinary widgets.
@@ -195,7 +198,10 @@ impl PlatformCapabilities {
             data_transfer: DataTransferCapabilities {
                 clipboard_text: unsupported,
                 clipboard_rich: unsupported,
+                clipboard_custom: unsupported,
                 external_drag_drop: unsupported,
+                external_drag_drop_files: unsupported,
+                external_drag_drop_rich: unsupported,
             },
             application_services: ApplicationServiceCapabilities {
                 file_dialogs: unsupported,

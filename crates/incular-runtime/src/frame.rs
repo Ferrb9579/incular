@@ -24,9 +24,10 @@ use incular_core::{
     PointerPhase, Rect,
 };
 use incular_platform::{
-    Clipboard, MemoryClipboard, PlatformEvent, PlatformLifecycle, TextInputAction,
-    TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState, TextInputType,
-    WindowId, WindowMetrics, WindowOperation, WindowOptions,
+    Clipboard, ClipboardCapabilities, ClipboardError, ClipboardWriteReport, DataTransfer,
+    ExternalDragEvent, ExternalDragResponse, MemoryClipboard, PlatformEvent, PlatformLifecycle,
+    TextInputAction, TextInputClientId, TextInputCommand, TextInputConfiguration, TextInputState,
+    TextInputType, TransferReadRequest, WindowId, WindowMetrics, WindowOperation, WindowOptions,
 };
 use incular_rendering::DisplayList;
 use incular_semantics::{SemanticAction, SemanticNodeId};
@@ -788,8 +789,37 @@ impl Runtime {
     pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
         self.clipboard = clipboard;
     }
+    /// Returns the capabilities of the clipboard backend currently installed
+    /// for this retained window.
+    #[must_use]
+    pub fn clipboard_capabilities(&self) -> ClipboardCapabilities {
+        self.clipboard.capabilities()
+    }
+    /// Reads rich clipboard data without collapsing it to plain text.
+    pub fn read_clipboard(
+        &mut self,
+        request: TransferReadRequest,
+    ) -> Result<DataTransfer, ClipboardError> {
+        self.clipboard.read(request)
+    }
+    /// Writes one rich clipboard transfer. The report distinguishes formats
+    /// written atomically by the backend from representations it skipped.
+    pub fn write_clipboard(
+        &mut self,
+        transfer: DataTransfer,
+    ) -> Result<ClipboardWriteReport, ClipboardError> {
+        self.clipboard.write(transfer)
+    }
     pub fn set_clipboard_text(&mut self, text: impl Into<String>) {
         self.clipboard.set_text(text.into());
+    }
+    /// Routes platform-owned transfer data through external drop targets. This
+    /// path is intentionally independent of the local typed gesture arena.
+    #[must_use]
+    pub fn handle_external_drag(&mut self, event: ExternalDragEvent) -> ExternalDragResponse {
+        let response = self.tree.dispatch_external_drag(event);
+        self.frame_requested = true;
+        response
     }
     /// Processes a normalized platform event without exposing native window or
     /// event-loop types to the runtime API.
@@ -811,6 +841,10 @@ impl Runtime {
                     PlatformLifecycle::Suspended => ApplicationLifecycle::Suspended,
                     PlatformLifecycle::Stopping => ApplicationLifecycle::Stopping,
                 });
+                None
+            }
+            PlatformEvent::ExternalDrag(event) => {
+                let _ = self.handle_external_drag(event);
                 None
             }
             PlatformEvent::CloseRequested => {
