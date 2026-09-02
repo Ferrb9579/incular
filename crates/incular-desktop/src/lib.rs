@@ -3,6 +3,7 @@ mod clipboard;
 mod display;
 mod display_identity;
 mod external_drag;
+mod file_dialogs;
 mod platform_menus;
 mod platform_services;
 mod pointer;
@@ -39,9 +40,9 @@ use incular_platform::{
 };
 use incular_rendering::DisplayList;
 use incular_runtime::{
-    Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics,
-    ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot, TransientFallbackReason,
-    TransientPresentationResolution,
+    Application, ApplicationLifecycle, GpuSample, NativeFileDialogCompletion, NativeWindowCommand,
+    RenderFrameMetrics, ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot,
+    TransientFallbackReason, TransientPresentationResolution,
 };
 use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::{
@@ -72,6 +73,8 @@ use crate::clipboard::DesktopClipboard;
 #[doc(hidden)]
 pub use crate::clipboard::desktop_clipboard_write_report;
 use crate::display::DesktopDisplayRegistry;
+#[doc(hidden)]
+pub use crate::file_dialogs::desktop_file_dialog_capabilities;
 use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
 use crate::transients::{NativeTransientState, TransientHostKey, TransientNativeRejection};
 
@@ -139,6 +142,7 @@ pub fn run_window(
 enum RuntimeWakeEvent {
     Runtime,
     Accessibility(AccessKitEvent),
+    FileDialog(NativeFileDialogCompletion),
 }
 
 impl From<AccessKitEvent> for RuntimeWakeEvent {
@@ -304,7 +308,7 @@ pub fn run_application_with_services(
         transient_native_rejections: HashMap::new(),
         shared_gpu: None,
         frame_timestamp: Instant::now(),
-        accessibility_proxy: proxy,
+        event_proxy: proxy,
         displays: DesktopDisplayRegistry::default(),
         pointer_devices: PointerDeviceRegistry::default(),
         platform_services: Box::new(platform_services),
@@ -553,6 +557,11 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 }
             }
             RuntimeWakeEvent::Accessibility(event) => self.handle_accesskit_event(event),
+            RuntimeWakeEvent::FileDialog(_) => {
+                // `run_window` owns a standalone Runtime, not an Application,
+                // so it cannot create native file-dialog requests. The shared
+                // event enum is used only to keep one Winit event-loop bridge.
+            }
         }
     }
 }
@@ -771,7 +780,7 @@ struct MultiApp {
     transient_native_rejections: HashMap<TransientHostKey, TransientNativeRejection>,
     shared_gpu: Option<SharedGpuContext>,
     frame_timestamp: Instant,
-    accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
+    event_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
     displays: DesktopDisplayRegistry,
     pointer_devices: PointerDeviceRegistry,
     platform_services: Box<dyn DesktopPlatformServices>,
@@ -788,6 +797,37 @@ struct MultiApp {
 }
 
 impl MultiApp {
+    fn start_pending_file_dialogs(&mut self) {
+        let requests = self.application.take_native_file_dialog_requests();
+        if requests.is_empty() {
+            return;
+        }
+        let tokio = self.application.tokio_handle();
+        for request in requests {
+            let parent = self
+                .native_ids
+                .get(&request.window_id)
+                .and_then(|native_id| self.windows.get(native_id))
+                .map(|state| &state.window);
+            if let Some(parent) = parent {
+                crate::file_dialogs::start_native_file_dialog(
+                    request,
+                    parent,
+                    tokio.clone(),
+                    self.event_proxy.clone(),
+                );
+            } else {
+                let _ = self.application.complete_file_dialog(
+                    incular_runtime::NativeFileDialogCompletion {
+                        request_id: request.request_id,
+                        window_id: request.window_id,
+                        result: Err(incular_platform::FileDialogError::ParentClosed),
+                    },
+                );
+            }
+        }
+    }
+
     fn native_external_drag_position(&self, native_id: NativeWindowId) -> Option<Offset> {
         let system = self.window_system?;
         let state = self.windows.get(&native_id)?;
@@ -957,7 +997,7 @@ impl MultiApp {
             adapter: AccessKitAdapter::with_event_loop_proxy(
                 target,
                 &window,
-                self.accessibility_proxy.clone(),
+                self.event_proxy.clone(),
             ),
             projection: AccessKitProjection::new(),
             active: false,
@@ -1718,6 +1758,8 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     capabilities.data_transfer.external_drag_drop = CapabilitySupport::Unknown;
     capabilities.data_transfer.external_drag_drop_files = CapabilitySupport::Unknown;
     capabilities.data_transfer.external_drag_drop_rich = CapabilitySupport::Unsupported;
+    capabilities.application_services.file_dialogs =
+        crate::file_dialogs::desktop_file_dialog_capabilities(None);
     capabilities
 }
 
@@ -1818,6 +1860,8 @@ fn refine_window_capabilities(
     capabilities.data_transfer.external_drag_drop_files = external_file_drag;
     capabilities.data_transfer.external_drag_drop_rich = CapabilitySupport::Unsupported;
     capabilities.data_transfer.clipboard_custom = CapabilitySupport::Unsupported;
+    capabilities.application_services.file_dialogs =
+        crate::file_dialogs::desktop_file_dialog_capabilities(Some(system));
     capabilities
 }
 
@@ -2021,6 +2065,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
     fn resumed(&mut self, target: &ActiveEventLoop) {
         self.apply_window_commands(target);
         self.refresh_displays(target);
+        self.start_pending_file_dialogs();
     }
 
     fn window_event(
@@ -2327,6 +2372,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         self.refresh_displays(target);
         self.flush_external_file_drops();
         self.apply_window_commands(target);
+        self.start_pending_file_dialogs();
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
         }
@@ -2337,10 +2383,14 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         match event {
             RuntimeWakeEvent::Runtime => self.application.process_runtime_work(),
             RuntimeWakeEvent::Accessibility(event) => self.route_accesskit_event(event),
+            RuntimeWakeEvent::FileDialog(completion) => {
+                let _ = self.application.complete_file_dialog(completion);
+            }
         }
         self.platform_services.flush_platform_menu_events();
         self.sync_platform_menus();
         self.apply_window_commands(target);
+        self.start_pending_file_dialogs();
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
         }

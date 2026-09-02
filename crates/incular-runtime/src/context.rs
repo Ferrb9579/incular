@@ -3,6 +3,7 @@ use crate::environment::{
     BUILD_SCOPE, ENV_ALL, ENV_BRIGHTNESS, ENV_DIRECTION, ENV_LOCALE, ENV_SAFE_INSETS, ENV_SCALE,
     ENV_TEXT_SCALE, ENV_VIEWPORT, ENV_WINDOW_FOCUS, install_focus_scope_watch,
 };
+use crate::file_dialogs::FileDialogService;
 use crate::frame::Runtime;
 use crate::restoration::{self, Restorable, RestorationHandle};
 use crate::tasks::{RuntimeSpawner, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle};
@@ -205,6 +206,13 @@ impl BuildContext {
     pub fn window_handle(&self) -> Option<WindowHandle> {
         let window_id = self.spawner.window_id()?;
         self.window_manager.as_ref()?.handle(window_id)
+    }
+
+    /// Returns the native file-dialog service owned by the current window.
+    /// Standalone/headless runtimes without an application window return None.
+    #[must_use]
+    pub fn file_dialogs(&self) -> Option<FileDialogService> {
+        self.window_handle().map(|window| window.file_dialogs())
     }
 
     /// Returns the Tokio handle for advanced integrations. Tasks spawned

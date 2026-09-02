@@ -1,5 +1,6 @@
 use crate::application_types::{WindowError, WindowRestorationId};
 use crate::context::BuildContext;
+use crate::file_dialogs::FileDialogService;
 use crate::tasks::RuntimeWake;
 use crate::transient_presentation::TransientPresentationResolution;
 use crate::window_state::WindowManager;
@@ -203,6 +204,7 @@ impl Drop for NativeOperationRequest {
 pub struct WindowHandle {
     pub(crate) id: WindowId,
     pub(crate) bridge: Arc<WindowCommandBridge>,
+    pub(crate) file_dialogs: FileDialogService,
     pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) observed_state: Arc<RwLock<WindowObservedState>>,
     pub(crate) displays: Arc<RwLock<DisplayCatalog>>,
@@ -230,6 +232,14 @@ impl WindowHandle {
             .capabilities
             .read()
             .expect("window capability snapshot lock")
+    }
+
+    /// Native file/folder dialog service associated with this window. The
+    /// service retains only the Incular window identity; native parent handles
+    /// remain inside the desktop adapter.
+    #[must_use]
+    pub fn file_dialogs(&self) -> FileDialogService {
+        self.file_dialogs.clone()
     }
 
     #[must_use]

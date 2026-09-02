@@ -3,6 +3,11 @@ use crate::application_types::{
     RestorableWindowMetadata, WindowError, WindowRestorationId,
 };
 use crate::context::BuildContext;
+use crate::file_dialogs::{
+    FileDialogBridge, FileDialogCompletionStatus, NativeFileDialogCompletion,
+    NativeFileDialogRequest, QueuedFileDialogRequest, explicitly_unsupported_request,
+    result_matches_request,
+};
 use crate::frame::{FrameStats, Runtime};
 use crate::profiling::{
     AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameWork, GpuSample,
@@ -30,6 +35,7 @@ use incular_accessibility::{
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_platform::{
     Clipboard, DisplayId, DisplaySnapshot, ExternalDragEvent, ExternalDragResponse,
+    FileDialogError, FileDialogOutcome, FileDialogRequest, FileDialogRequestId,
     NativeOperationCompletion, NativeRequestId, PlatformCapabilities, PlatformEvent,
     PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
     TextInputCommand, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
@@ -56,6 +62,13 @@ struct PendingNativeRequest {
     sender: oneshot::Sender<PlatformOperationResult>,
 }
 
+struct PendingFileDialogRequest {
+    window_id: WindowId,
+    request: FileDialogRequest,
+    sender: Option<oneshot::Sender<Result<FileDialogOutcome, FileDialogError>>>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// Owns application services, one Tokio runtime, and multiple retained roots.
 /// A root's environment, input/focus, semantics, compositor, frame work, and
 /// cancellation scope are window-local; assets, Signals, and Tokio are shared.
@@ -66,6 +79,13 @@ pub struct Application {
     pub(crate) command_receiver: mpsc::Receiver<QueuedWindowCommand>,
     pub(crate) request_cancellation_receiver: mpsc::Receiver<NativeRequestId>,
     pending_native_requests: HashMap<NativeRequestId, PendingNativeRequest>,
+    file_dialog_receiver: mpsc::Receiver<QueuedFileDialogRequest>,
+    file_dialog_cancellation_receiver: mpsc::Receiver<FileDialogRequestId>,
+    file_dialog_bridge: Arc<FileDialogBridge>,
+    pending_file_dialog_requests: HashMap<FileDialogRequestId, PendingFileDialogRequest>,
+    active_file_dialog_requests: HashMap<WindowId, FileDialogRequestId>,
+    queued_file_dialog_requests: HashMap<WindowId, VecDeque<FileDialogRequestId>>,
+    native_file_dialog_requests: VecDeque<NativeFileDialogRequest>,
     platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
     display_catalog: Arc<RwLock<DisplayCatalog>>,
     pub(crate) simulation_receiver: mpsc::Receiver<simulation::SimulationRequest>,
@@ -160,6 +180,12 @@ impl Application {
         let native_commands = Rc::new(RefCell::new(VecDeque::new()));
         let (sender, command_receiver) = mpsc::channel();
         let (cancellation_sender, request_cancellation_receiver) = mpsc::channel();
+        let (file_dialog_sender, file_dialog_receiver) = mpsc::channel();
+        let (file_dialog_cancellation_sender, file_dialog_cancellation_receiver) = mpsc::channel();
+        let file_dialog_bridge = Arc::new(FileDialogBridge::new(
+            file_dialog_sender,
+            file_dialog_cancellation_sender,
+        ));
         let (simulation_sender, simulation_receiver) = mpsc::channel();
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
@@ -175,6 +201,7 @@ impl Application {
             registry: Rc::downgrade(&registry),
             scheduler: scheduler.clone(),
             bridge,
+            file_dialog_bridge: file_dialog_bridge.clone(),
             native_commands: native_commands.clone(),
             restoration: restoration.clone(),
             application_capabilities: platform_capabilities.clone(),
@@ -190,6 +217,13 @@ impl Application {
             command_receiver,
             request_cancellation_receiver,
             pending_native_requests: HashMap::new(),
+            file_dialog_receiver,
+            file_dialog_cancellation_receiver,
+            file_dialog_bridge,
+            pending_file_dialog_requests: HashMap::new(),
+            active_file_dialog_requests: HashMap::new(),
+            queued_file_dialog_requests: HashMap::new(),
+            native_file_dialog_requests: VecDeque::new(),
             platform_capabilities,
             display_catalog,
             simulation_receiver,
@@ -976,6 +1010,7 @@ impl Application {
     pub fn set_wake_handler(&mut self, wake: Arc<dyn RuntimeWake>) {
         self.scheduler.borrow_mut().set_wake(wake.clone());
         self.manager.bridge.set_wake(wake.clone());
+        self.file_dialog_bridge.set_wake(wake.clone());
         self.simulation_bridge.set_wake(wake);
     }
 
@@ -1081,6 +1116,8 @@ impl Application {
         }
         self.drain_window_commands();
         self.drain_native_request_cancellations();
+        self.drain_file_dialog_requests();
+        self.drain_file_dialog_cancellations();
         self.process_simulation_requests();
     }
 
@@ -1648,6 +1685,7 @@ impl Application {
     pub fn close_window(&mut self, window_id: WindowId) -> bool {
         self.fail_simulation_window(window_id);
         self.fail_native_requests_for_window(window_id, PlatformOperationError::stale_resource());
+        self.fail_file_dialog_requests_for_window(window_id, FileDialogError::ParentClosed);
         let record = self.registry.borrow_mut().close(window_id);
         let Some(mut record) = record else {
             self.registry.borrow_mut().stale_window_commands += 1;
@@ -1863,6 +1901,238 @@ impl Application {
         }
     }
 
+    fn drain_file_dialog_requests(&mut self) {
+        while let Ok(queued) = self.file_dialog_receiver.try_recv() {
+            if queued.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                continue;
+            }
+            if !self.contains_window(queued.window_id) {
+                let _ = queued.sender.send(Err(FileDialogError::ParentClosed));
+                continue;
+            }
+            let capabilities = self
+                .window_capabilities(queued.window_id)
+                .expect("live file-dialog parent has capabilities")
+                .application_services
+                .file_dialogs;
+            if let Some(error) = explicitly_unsupported_request(capabilities, &queued.request) {
+                let _ = queued.sender.send(Err(error));
+                continue;
+            }
+            let request_id = queued.request_id;
+            let window_id = queued.window_id;
+            let previous = self.pending_file_dialog_requests.insert(
+                request_id,
+                PendingFileDialogRequest {
+                    window_id,
+                    request: queued.request,
+                    sender: Some(queued.sender),
+                    cancelled: queued.cancelled,
+                },
+            );
+            debug_assert!(previous.is_none(), "file-dialog request ids are unique");
+            if self.active_file_dialog_requests.contains_key(&window_id) {
+                self.queued_file_dialog_requests
+                    .entry(window_id)
+                    .or_default()
+                    .push_back(request_id);
+            } else {
+                self.activate_file_dialog(request_id);
+            }
+        }
+    }
+
+    fn activate_file_dialog(&mut self, request_id: FileDialogRequestId) {
+        let Some(pending) = self.pending_file_dialog_requests.get(&request_id) else {
+            return;
+        };
+        if pending.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            let window_id = pending.window_id;
+            self.pending_file_dialog_requests.remove(&request_id);
+            self.promote_next_file_dialog(window_id);
+            return;
+        }
+        let window_id = pending.window_id;
+        debug_assert!(!self.active_file_dialog_requests.contains_key(&window_id));
+        self.active_file_dialog_requests
+            .insert(window_id, request_id);
+        self.native_file_dialog_requests
+            .push_back(NativeFileDialogRequest {
+                request_id,
+                window_id,
+                request: pending.request.clone(),
+            });
+    }
+
+    fn promote_next_file_dialog(&mut self, window_id: WindowId) {
+        if self.active_file_dialog_requests.contains_key(&window_id)
+            || !self.contains_window(window_id)
+        {
+            return;
+        }
+        loop {
+            let next = self
+                .queued_file_dialog_requests
+                .get_mut(&window_id)
+                .and_then(VecDeque::pop_front);
+            let Some(request_id) = next else {
+                self.queued_file_dialog_requests.remove(&window_id);
+                return;
+            };
+            let cancelled = self
+                .pending_file_dialog_requests
+                .get(&request_id)
+                .is_none_or(|pending| pending.cancelled.load(std::sync::atomic::Ordering::Acquire));
+            if cancelled {
+                self.pending_file_dialog_requests.remove(&request_id);
+                continue;
+            }
+            self.activate_file_dialog(request_id);
+            return;
+        }
+    }
+
+    fn drain_file_dialog_cancellations(&mut self) {
+        while let Ok(request_id) = self.file_dialog_cancellation_receiver.try_recv() {
+            let Some(window_id) = self
+                .pending_file_dialog_requests
+                .get(&request_id)
+                .map(|pending| pending.window_id)
+            else {
+                continue;
+            };
+            let is_active = self.active_file_dialog_requests.get(&window_id) == Some(&request_id);
+            if is_active {
+                // If the desktop host has not taken this request yet, cancellation
+                // can prevent native presentation and the FIFO may advance.
+                let before = self.native_file_dialog_requests.len();
+                self.native_file_dialog_requests
+                    .retain(|request| request.request_id != request_id);
+                let not_started = self.native_file_dialog_requests.len() != before;
+                if not_started {
+                    self.active_file_dialog_requests.remove(&window_id);
+                    self.pending_file_dialog_requests.remove(&request_id);
+                    self.promote_next_file_dialog(window_id);
+                } else if let Some(pending) = self.pending_file_dialog_requests.get_mut(&request_id)
+                {
+                    // The native modal operation already owns the slot. Detach
+                    // result delivery, but keep serialization until completion.
+                    pending.sender = None;
+                }
+            } else {
+                if let Some(queue) = self.queued_file_dialog_requests.get_mut(&window_id) {
+                    queue.retain(|queued| *queued != request_id);
+                    if queue.is_empty() {
+                        self.queued_file_dialog_requests.remove(&window_id);
+                    }
+                }
+                self.pending_file_dialog_requests.remove(&request_id);
+            }
+        }
+    }
+
+    fn fail_file_dialog_requests_for_window(
+        &mut self,
+        window_id: WindowId,
+        error: FileDialogError,
+    ) {
+        self.native_file_dialog_requests
+            .retain(|request| request.window_id != window_id);
+        self.active_file_dialog_requests.remove(&window_id);
+        self.queued_file_dialog_requests.remove(&window_id);
+        let request_ids = self
+            .pending_file_dialog_requests
+            .iter()
+            .filter_map(|(request_id, pending)| {
+                (pending.window_id == window_id).then_some(*request_id)
+            })
+            .collect::<Vec<_>>();
+        for request_id in request_ids {
+            if let Some(mut pending) = self.pending_file_dialog_requests.remove(&request_id)
+                && !pending.cancelled.load(std::sync::atomic::Ordering::Acquire)
+                && let Some(sender) = pending.sender.take()
+            {
+                let _ = sender.send(Err(error.clone()));
+            }
+        }
+    }
+
+    fn fail_all_file_dialog_requests(&mut self, error: FileDialogError) {
+        self.file_dialog_bridge.stop();
+        while let Ok(queued) = self.file_dialog_receiver.try_recv() {
+            if !queued.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = queued.sender.send(Err(error.clone()));
+            }
+        }
+        for (_, mut pending) in self.pending_file_dialog_requests.drain() {
+            if !pending.cancelled.load(std::sync::atomic::Ordering::Acquire)
+                && let Some(sender) = pending.sender.take()
+            {
+                let _ = sender.send(Err(error.clone()));
+            }
+        }
+        self.active_file_dialog_requests.clear();
+        self.queued_file_dialog_requests.clear();
+        self.native_file_dialog_requests.clear();
+    }
+
+    /// Takes native file-dialog work ready to start. At most one request per
+    /// parent window is active; later requests for that window remain FIFO in
+    /// the runtime until completion or cancellation.
+    pub fn take_native_file_dialog_requests(&mut self) -> Vec<NativeFileDialogRequest> {
+        self.drain_file_dialog_requests();
+        self.drain_file_dialog_cancellations();
+        self.native_file_dialog_requests.drain(..).collect()
+    }
+
+    /// Completes one active file dialog and promotes the next request for the
+    /// same parent. Backends must invoke this only on the application UI/event
+    /// loop thread; native dialog objects never cross this boundary.
+    pub fn complete_file_dialog(
+        &mut self,
+        completion: NativeFileDialogCompletion,
+    ) -> FileDialogCompletionStatus {
+        let Some(pending) = self
+            .pending_file_dialog_requests
+            .get(&completion.request_id)
+        else {
+            return FileDialogCompletionStatus::UnknownRequest;
+        };
+        if pending.window_id != completion.window_id {
+            return FileDialogCompletionStatus::TargetMismatch;
+        }
+        if self.active_file_dialog_requests.get(&completion.window_id)
+            != Some(&completion.request_id)
+        {
+            return FileDialogCompletionStatus::UnknownRequest;
+        }
+
+        let mut pending = self
+            .pending_file_dialog_requests
+            .remove(&completion.request_id)
+            .expect("file-dialog request was just observed");
+        self.active_file_dialog_requests
+            .remove(&completion.window_id);
+
+        let (result, status) = match completion.result {
+            Ok(outcome) if result_matches_request(&pending.request, &outcome) => {
+                (Ok(outcome), FileDialogCompletionStatus::Completed)
+            }
+            Ok(_) => (
+                Err(FileDialogError::InvalidResult),
+                FileDialogCompletionStatus::InvalidResult,
+            ),
+            Err(error) => (Err(error), FileDialogCompletionStatus::Completed),
+        };
+        if !pending.cancelled.load(std::sync::atomic::Ordering::Acquire)
+            && let Some(sender) = pending.sender.take()
+        {
+            let _ = sender.send(result);
+        }
+        self.promote_next_file_dialog(completion.window_id);
+        status
+    }
+
     /// Completes one result-bearing native operation. Backends call this only
     /// after applying the operation on the owning native/UI thread.
     pub fn complete_native_operation(
@@ -1964,6 +2234,7 @@ impl Application {
             active_windows: registry.ids().len(),
             stale_window_commands: registry.stale_window_commands,
             pending_native_requests: self.pending_native_requests.len(),
+            pending_file_dialog_requests: self.pending_file_dialog_requests.len(),
         }
     }
 
@@ -2035,6 +2306,7 @@ impl Application {
     pub fn shutdown(&mut self) {
         self.flush_restoration_before_shutdown();
         self.manager.bridge.stop();
+        self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
         self.fail_all_native_requests(PlatformOperationError::with_context(
             PlatformOperationErrorKind::Unavailable,
             "application runtime stopped before native completion",
@@ -2067,8 +2339,9 @@ impl Application {
     /// Compatibility escape hatch for existing single-window embedders and
     /// tests. Extra windows are cancelled; desktop `run` retains all windows.
     #[must_use]
-    pub fn into_runtime(self) -> Runtime {
+    pub fn into_runtime(mut self) -> Runtime {
         self.manager.bridge.stop();
+        self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
         let primary = self.primary_window;
         let mut primary_record = self
             .registry

@@ -32,6 +32,13 @@ winit = { workspace = true }
 pollster = { workspace = true }
 arboard = { workspace = true }
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+native-dialog = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { workspace = true }
+url = { workspace = true }
+
 [features]
 default = []
 devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-runtime/devtools", "incular-widgets/devtools"]

@@ -3,6 +3,7 @@ use crate::application_types::ApplicationLifecycle;
 use crate::application_types::{RestorableWindowMetadata, WindowError, WindowRestorationId};
 use crate::context::BuildContext;
 use crate::environment::{BuildScope, BuildScopeGuard, InitialBuildDependencies, ReactiveQueue};
+use crate::file_dialogs::{FileDialogBridge, FileDialogService};
 use crate::frame::Runtime;
 use crate::profiling::{FrameRecord, GpuSample, RenderFrameMetrics};
 use crate::restoration;
@@ -73,6 +74,7 @@ pub struct ApplicationDiagnostics {
     pub active_windows: usize,
     pub stale_window_commands: u64,
     pub pending_native_requests: usize,
+    pub pending_file_dialog_requests: usize,
 }
 
 pub(crate) struct WindowRecord {
@@ -322,6 +324,7 @@ pub(crate) struct WindowManager {
     pub(crate) registry: Weak<RefCell<WindowRegistry>>,
     pub(crate) scheduler: Rc<RefCell<tasks::TaskScheduler>>,
     pub(crate) bridge: Arc<WindowCommandBridge>,
+    pub(crate) file_dialog_bridge: Arc<FileDialogBridge>,
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) restoration: Option<restoration::RestorationManager>,
     pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,
@@ -416,6 +419,11 @@ impl WindowManager {
         Ok(WindowHandle {
             id,
             bridge: self.bridge.clone(),
+            file_dialogs: FileDialogService::new(
+                id,
+                self.file_dialog_bridge.clone(),
+                capabilities.clone(),
+            ),
             capabilities,
             observed_state,
             displays: self.displays.clone(),
@@ -582,6 +590,11 @@ impl WindowManager {
         Ok(WindowHandle {
             id,
             bridge: self.bridge.clone(),
+            file_dialogs: FileDialogService::new(
+                id,
+                self.file_dialog_bridge.clone(),
+                capabilities.clone(),
+            ),
             capabilities,
             observed_state,
             displays: self.displays.clone(),
@@ -603,6 +616,11 @@ impl WindowManager {
         Some(WindowHandle {
             id,
             bridge: self.bridge.clone(),
+            file_dialogs: FileDialogService::new(
+                id,
+                self.file_dialog_bridge.clone(),
+                capabilities.clone(),
+            ),
             capabilities,
             observed_state,
             displays: self.displays.clone(),

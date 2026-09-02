@@ -5,6 +5,7 @@
 //! flattened into one global bitset: a Wayland session, for example, can have
 //! excellent window/input support while deliberately lacking global placement.
 
+use crate::FileDialogCapabilities;
 use incular_config::TransientRole;
 
 /// Whether a portable platform capability is known to be available.
@@ -113,7 +114,7 @@ pub struct DataTransferCapabilities {
 /// Application-level desktop services that live outside ordinary widgets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ApplicationServiceCapabilities {
-    pub file_dialogs: CapabilitySupport,
+    pub file_dialogs: FileDialogCapabilities,
     pub global_shortcuts: CapabilitySupport,
     pub single_instance_activation: CapabilitySupport,
     pub tray_or_status_item: CapabilitySupport,
@@ -204,7 +205,7 @@ impl PlatformCapabilities {
                 external_drag_drop_rich: unsupported,
             },
             application_services: ApplicationServiceCapabilities {
-                file_dialogs: unsupported,
+                file_dialogs: FileDialogCapabilities::all(unsupported),
                 global_shortcuts: unsupported,
                 single_instance_activation: unsupported,
                 tray_or_status_item: unsupported,

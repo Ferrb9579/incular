@@ -16,6 +16,7 @@ mod capabilities;
 mod content_sensitivity;
 mod data_transfer;
 mod display;
+mod file_dialog;
 mod operation;
 mod pointer;
 mod window_control;
@@ -40,6 +41,12 @@ pub use display::{
     DisplayId, DisplayPlacementArea, DisplaySnapshot, LogicalDisplayPosition,
     LogicalScreenPosition, LogicalScreenRect, PhysicalDisplayPosition, PhysicalScreenPosition,
     PhysicalScreenRect,
+};
+pub use file_dialog::{
+    DocumentActivation, DocumentDescriptor, FileContentType, FileContentTypeKind,
+    FileDialogCapabilities, FileDialogError, FileDialogFilter, FileDialogFilterId, FileDialogKind,
+    FileDialogOption, FileDialogOptions, FileDialogOutcome, FileDialogRequest, FileDialogRequestId,
+    FileDialogSelection, FileDialogValidationError, FileExtension,
 };
 pub use incular_config::{TransparencyMode, WindowSizePolicy};
 pub use operation::{

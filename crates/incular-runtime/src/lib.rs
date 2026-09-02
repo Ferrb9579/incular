@@ -4,6 +4,7 @@ mod application;
 mod application_types;
 mod context;
 mod environment;
+mod file_dialogs;
 mod frame;
 mod profiling;
 mod reactive;
@@ -74,6 +75,10 @@ pub use context::BuildContext;
 #[cfg(feature = "devtools")]
 pub use environment::devtools_registry;
 pub use environment::{EditableSignalKind, Signal, SignalRegistration};
+pub use file_dialogs::{
+    FileDialogCompletionStatus, FileDialogRequest, FileDialogService, MemoryFileDialogAdapter,
+    NativeFileDialogCompletion, NativeFileDialogRequest,
+};
 pub use frame::{EditingDiagnostics, EventTarget, FocusDiagnostics, FrameStats, Runtime};
 pub use incular_accessibility::AccessibilityDiagnostics;
 pub use profiling::{
