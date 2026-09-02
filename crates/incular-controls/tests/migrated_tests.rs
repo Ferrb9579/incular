@@ -660,12 +660,13 @@ mod popover_tests {
 }
 
 mod popup_tests {
+    use incular_config::Constraints;
     use incular_controls::{
         overlay::{Align, Side},
         popup::*,
     };
-    use incular_core::Offset;
-    use incular_widgets::{Text, Widget};
+    use incular_core::{Offset, Size};
+    use incular_widgets::{SizedBox, Text, TransientSide, Widget, internal::WidgetTree};
 
     #[test]
     fn root_builder_uses_explicit_defaults_and_generic_child() {
@@ -707,6 +708,36 @@ mod popup_tests {
             .into();
         let _: Widget = Close::builder().child(Text::new("close")).build().into();
         let _: Widget = Title::with_child(Text::new("legacy")).into();
+    }
+
+    #[test]
+    fn positioner_metadata_delegates_to_the_retained_transient_policy() {
+        let popup = Positioner::builder()
+            .child(SizedBox::new().width(80.0).height(40.0))
+            .side(Side::Top)
+            .align(Align::Start)
+            .side_offset(6.0)
+            .anchor(Offset::new(120.0, 80.0))
+            .build();
+        let root: Widget = Portal::new(SizedBox::new().width(20.0).height(20.0))
+            .overlay(popup)
+            .open(true)
+            .into();
+        let mut tree = WidgetTree::new();
+        tree.mount(root).expect("mount positioned popup");
+        tree.layout(Constraints::tight(Size::new(300.0, 200.0)))
+            .expect("layout positioned popup");
+
+        let snapshot = tree
+            .transient_surfaces()
+            .into_iter()
+            .next()
+            .expect("positioned transient surface");
+        assert_eq!(snapshot.anchor_rect.origin, Offset::new(120.0, 80.0));
+        assert_eq!(snapshot.anchor_rect.size, Size::ZERO);
+        assert_eq!(snapshot.desired_size, Size::new(80.0, 40.0));
+        assert_eq!(snapshot.placement_result.side, TransientSide::Top);
+        assert_eq!(snapshot.content_rect.origin, Offset::new(120.0, 34.0));
     }
 }
 

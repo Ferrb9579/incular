@@ -11,8 +11,8 @@ use incular_semantics::{Role as SemanticRole, SemanticAction, SemanticState};
 use incular_text::TextStyle;
 use incular_widgets::internal::ActionSurface;
 use incular_widgets::{
-    Align, BorderRadius, BoxDecoration, Container, Focus, FocusNode, OverlayPortal, Padding, Row,
-    Semantics, Text, Widget,
+    BorderRadius, BoxDecoration, Container, Focus, FocusNode, OverlayPortal, Row, Semantics, Text,
+    TransientAlignment, TransientPlacement, TransientSide, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -656,25 +656,25 @@ impl Tooltip {
             Color::rgba(0, 0, 0, 70),
             popup,
         ));
-        let popup = if self.prefer_below {
-            Align::new(
-                incular_config::Alignment::TOP_CENTER,
-                Padding::new(EdgeInsets::only(0.0, self.vertical_offset, 0.0, 0.0), popup),
-            )
-        } else {
-            Align::new(
-                incular_config::Alignment::BOTTOM_CENTER,
-                Padding::new(EdgeInsets::only(0.0, 0.0, 0.0, self.vertical_offset), popup),
-            )
-        };
+        let placement = TransientPlacement::default()
+            .alignment(TransientAlignment::Center)
+            .side(if self.prefer_below {
+                TransientSide::Bottom
+            } else {
+                TransientSide::Top
+            })
+            .side_offset(self.vertical_offset);
         let anchor = if self.trigger_mode == TooltipTriggerMode::Focus {
             Focus::new(anchor).node(self.focus_node.clone()).into()
         } else {
             anchor
         };
+        let dismiss = self.controller.clone();
         OverlayPortal::new(anchor)
             .overlay_child(popup)
             .role(incular_widgets::TransientRole::Tooltip)
+            .placement(placement)
+            .on_dismiss(move |_| dismiss.hide())
             .show(self.enabled && self.controller.is_visible())
             .into()
     }

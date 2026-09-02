@@ -21,6 +21,7 @@ impl WidgetTree {
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints)?;
         }
+        self.resolve_transient_placements(constraints)?;
         self.refresh_selection_states();
         self.refresh_notification_listeners();
         Ok(())

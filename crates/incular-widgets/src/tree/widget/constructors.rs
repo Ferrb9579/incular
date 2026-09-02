@@ -62,6 +62,19 @@ impl Widget {
         &mut self.node_mut().semantics
     }
 
+    /// Returns typed metadata stored directly on an inherited-scope widget.
+    /// This does not walk descendants; callers use it only when a descriptor
+    /// contract intentionally wraps its child in a metadata scope.
+    pub(crate) fn environment_value<T: Any>(&self) -> Option<&T> {
+        match self.kind() {
+            WidgetKind::LayoutBuilder {
+                environment: Some(scope),
+                ..
+            } => scope.value.downcast_ref::<T>(),
+            _ => None,
+        }
+    }
+
     pub(crate) fn set_key(&mut self, key: Option<Key>) {
         self.node_mut().key = key;
     }

@@ -11,10 +11,13 @@ use incular_controls::{
     current_control_theme,
 };
 use incular_core::{Color, Offset};
+use incular_semantics::Role as SemanticRole;
 use incular_text::TextStyle;
+use incular_widgets::internal::ExplicitSemantics;
 use incular_widgets::{
     Border, BoxDecoration, Container, GestureDetector, HitTestBehavior, ListView, Positioned, Row,
-    SizedBox, Text, TransientRole, Widget,
+    SizedBox, Text, TransientDismissPolicy, TransientDismissReason, TransientPlacement,
+    TransientRole, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -141,7 +144,7 @@ impl<T> PopupMenuItem<T> {
         &self,
         context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
-        close: Option<Rc<dyn Fn() + 'static>>,
+        close: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
     ) -> Widget
     where
         T: Clone + 'static,
@@ -282,7 +285,7 @@ impl<T> CheckedPopupMenuItem<T> {
         &self,
         context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
-        close: Option<Rc<dyn Fn() + 'static>>,
+        close: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
     ) -> Widget
     where
         T: Clone + 'static,
@@ -429,7 +432,7 @@ impl<T: Clone + 'static> PopupMenuEntry<T> {
         &self,
         context: &incular_widgets::BuildContext<'_>,
         on_selected: Option<Rc<dyn Fn(Option<T>) + 'static>>,
-        close: Option<Rc<dyn Fn() + 'static>>,
+        close: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
     ) -> Widget {
         match self {
             Self::Item(item) => item.build_with_selection_and_close(context, on_selected, close),
@@ -731,7 +734,8 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
 
         let close = {
             let controller = self.controller.clone();
-            Rc::new(move || controller.close()) as Rc<dyn Fn() + 'static>
+            Rc::new(move |_reason| controller.close())
+                as Rc<dyn Fn(TransientDismissReason) + 'static>
         };
         let selected = self.on_selected.clone();
         let select = Rc::new(move |value: Option<T>| {
@@ -764,29 +768,30 @@ impl<T: Clone + 'static> PopupMenuButton<T> {
             style = style.surface_tint_color(value);
         }
         let (panel, panel_height) = menu_panel(children, &style, &theme);
-        let panel: Widget = Positioned::new(panel)
-            .left(self.offset.x)
-            .top(self.offset.y)
-            .height(panel_height)
-            .into();
+        let panel: Widget = SizedBox::new().height(panel_height).child(panel).into();
         let barrier = if self.barrier_dismissible {
-            let controller = self.controller.clone();
-            let on_canceled = self.on_canceled.clone();
             let barrier = GestureDetector::new(Container::new().color(Color::TRANSPARENT))
                 .behavior(HitTestBehavior::Opaque)
-                .on_tap(move || {
-                    controller.close();
-                    if let Some(callback) = on_canceled.as_ref() {
-                        callback();
-                    }
-                });
+                .on_tap(|| {});
             Some(Widget::from(Positioned::fill(barrier)))
         } else {
             None
         };
+        let mut dismiss_policy = TransientDismissPolicy::interactive();
+        dismiss_policy.outside_pointer = self.barrier_dismissible;
+        let dismiss_controller = self.controller.clone();
+        let on_canceled = self.on_canceled.clone();
         let mut portal = incular_widgets::OverlayPortal::new(anchor)
             .overlay_child(panel)
             .role(TransientRole::Menu)
+            .placement(TransientPlacement::default().alignment_offset(self.offset))
+            .dismiss_policy(dismiss_policy)
+            .on_dismiss(move |_| {
+                dismiss_controller.close();
+                if let Some(callback) = on_canceled.as_ref() {
+                    callback();
+                }
+            })
             .show(true);
         if let Some(barrier) = barrier {
             portal = portal.barrier_child(barrier);
@@ -847,5 +852,8 @@ pub(super) fn menu_panel(
     } else {
         material.into()
     };
-    (style.constrained(material), panel_height)
+    let panel = style
+        .constrained(material)
+        .semantics(ExplicitSemantics::new(SemanticRole::Menu));
+    (panel, panel_height)
 }

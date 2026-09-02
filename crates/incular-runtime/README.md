@@ -98,6 +98,15 @@ fallback reason. Native adapters replace the complete snapshot after host
 negotiation; closing a window clears it before the generational window record is
 released, so an old handle cannot claim that a destroyed popup is still live.
 
+Logical transient focus and dismissal stay inside the owning runtime even when
+presentation is native. Popup-local input is normalized back to owner-local
+coordinates before retained dispatch; pointer-down can dismiss unrelated
+transient chains, focus movement preserves the chain containing the new focus,
+Escape applies role policy, and native parent deactivation closes interactive
+transients without transferring semantic ownership to a second native window.
+If a focused popup subtree disappears, stale focus is cleared in the same frame
+before text-input synchronization.
+
 Window control stays semantic and native-handle free. `WindowHandle` can ask
 the compositor/window manager to begin an interactive move or edge/corner
 resize and can change minimize/maximize/fullscreen, decorations, resizability,

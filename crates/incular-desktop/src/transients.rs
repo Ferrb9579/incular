@@ -25,6 +25,7 @@ pub(super) struct NativeTransientState {
     modifiers: winit::keyboard::ModifiersState,
     display_list: DisplayList,
     requires_opaque_surface_base: bool,
+    native_rect: incular_core::Rect,
     requested_position: Option<PhysicalPosition<i32>>,
     visible: bool,
     /// The WGPU surface borrows this native handle contractually; declaring the
@@ -33,6 +34,72 @@ pub(super) struct NativeTransientState {
 }
 
 impl MultiApp {
+    pub(super) fn publish_native_transient_bounds(&mut self, owner: IncularWindowId) {
+        let bounds = self.native_transient_available_rect(owner);
+        let _ = self.application.set_native_transient_bounds(owner, bounds);
+    }
+
+    fn native_transient_available_rect(
+        &self,
+        owner: IncularWindowId,
+    ) -> Option<incular_core::Rect> {
+        self.window_system?;
+        let capabilities = self.application.window_capabilities(owner)?;
+        if !capabilities.transients.native_surface.is_supported() {
+            return None;
+        }
+        let native_id = self.native_ids.get(&owner)?;
+        let parent = self.windows.get(native_id)?;
+        let scale = parent.metrics.scale_factor;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let monitor = parent.window.current_monitor()?;
+        let monitor_position = monitor.position();
+        let monitor_size = monitor.size();
+        let physical = self
+            .platform_services
+            .work_area(&monitor)
+            .unwrap_or_else(|| {
+                incular_platform::PhysicalScreenRect::new(
+                    monitor_position.x,
+                    monitor_position.y,
+                    monitor_size.width,
+                    monitor_size.height,
+                )
+            });
+        let parent_origin = parent.window.inner_position().ok()?;
+        Some(incular_core::Rect::from_origin_size(
+            Offset::new(
+                ((f64::from(physical.origin.x) - f64::from(parent_origin.x)) / scale) as f32,
+                ((f64::from(physical.origin.y) - f64::from(parent_origin.y)) / scale) as f32,
+            ),
+            incular_core::Size::new(
+                (f64::from(physical.size.width) / scale) as f32,
+                (f64::from(physical.size.height) / scale) as f32,
+            ),
+        ))
+    }
+
+    fn native_transient_rect(
+        &self,
+        owner: IncularWindowId,
+        snapshot: TransientSurfaceSnapshot,
+    ) -> Option<incular_core::Rect> {
+        let available_rect = self.native_transient_available_rect(owner)?;
+        Some(
+            incular_widgets::place_transient(incular_widgets::TransientPlacementInput {
+                anchor_rect: snapshot.anchor_rect,
+                desired_size: snapshot.desired_size,
+                available_rect,
+                role: snapshot.role,
+                text_direction: snapshot.text_direction,
+                placement: snapshot.placement,
+            })
+            .rect,
+        )
+    }
+
     pub(super) fn synchronize_transient_hosts(
         &mut self,
         target: &ActiveEventLoop,
@@ -53,7 +120,7 @@ impl MultiApp {
                         .transients
                         .support(snapshot.role)
                         .is_supported()
-                    && valid_transient_size(snapshot.content_size())
+                    && valid_transient_size(snapshot.desired_size)
             })
             .map(|snapshot| (snapshot.id, snapshot))
             .collect::<HashMap<_, _>>();
@@ -200,13 +267,17 @@ impl MultiApp {
         let Some(parent_native_id) = self.native_ids.get(&key.owner).copied() else {
             return false;
         };
+        let Some(native_rect) = self.native_transient_rect(key.owner, snapshot) else {
+            return false;
+        };
         let Some((position, attributes)) = self.windows.get(&parent_native_id).and_then(|parent| {
-            let position = transient_screen_position(&parent.window, parent.metrics, snapshot)?;
+            let position =
+                transient_screen_position(&parent.window, parent.metrics, native_rect.origin)?;
             let base = WindowAttributes::default()
                 .with_title("")
                 .with_inner_size(winit::dpi::LogicalSize::new(
-                    f64::from(snapshot.content_size().width),
-                    f64::from(snapshot.content_size().height),
+                    f64::from(native_rect.size.width),
+                    f64::from(native_rect.size.height),
                 ))
                 .with_position(position)
                 .with_resizable(false)
@@ -299,6 +370,7 @@ impl MultiApp {
                 modifiers: winit::keyboard::ModifiersState::default(),
                 display_list: DisplayList::new(),
                 requires_opaque_surface_base,
+                native_rect,
                 requested_position: Some(position),
                 visible: false,
             },
@@ -317,20 +389,22 @@ impl MultiApp {
         let Some(parent_native_id) = self.native_ids.get(&key.owner).copied() else {
             return;
         };
-        let position = self
-            .windows
-            .get(&parent_native_id)
-            .and_then(|parent| transient_screen_position(&parent.window, parent.metrics, snapshot));
+        let Some(native_rect) = self.native_transient_rect(key.owner, snapshot) else {
+            return;
+        };
+        let position = self.windows.get(&parent_native_id).and_then(|parent| {
+            transient_screen_position(&parent.window, parent.metrics, native_rect.origin)
+        });
         let Some(state) = self.transient_windows.get_mut(&native_id) else {
             return;
         };
-        let old_size = state.snapshot.content_size();
-        if old_size != snapshot.content_size()
+        let old_size = state.native_rect.size;
+        if old_size != native_rect.size
             && let Some(size) = state
                 .window
                 .request_inner_size(winit::dpi::LogicalSize::new(
-                    f64::from(snapshot.content_size().width),
-                    f64::from(snapshot.content_size().height),
+                    f64::from(native_rect.size.width),
+                    f64::from(native_rect.size.height),
                 ))
         {
             let physical = PhysicalSize::new(size.width, size.height);
@@ -343,6 +417,7 @@ impl MultiApp {
             }
             state.requested_position = position;
         }
+        state.native_rect = native_rect;
         state.snapshot = snapshot;
     }
 
@@ -402,7 +477,7 @@ impl MultiApp {
         &mut self,
         key: TransientHostKey,
         list: &DisplayList,
-    ) -> Result<RenderStats, TransientFallbackReason> {
+    ) -> Result<bool, TransientFallbackReason> {
         let Some(system) = self.window_system else {
             return Err(TransientFallbackReason::NativeHostUnavailable);
         };
@@ -425,6 +500,13 @@ impl MultiApp {
                 "Incular transient requires compositor alpha but this GPU surface is opaque; falling back to in-view overlay"
             );
             return Err(TransientFallbackReason::SurfaceTransparencyRequired);
+        }
+        if state.snapshot.content_rect != state.native_rect {
+            // Native negotiation succeeded, but the retained tree is still at
+            // its viewport-safe overlay placement. Keep the host hidden and
+            // the parent partition attached for this frame; publishing Native
+            // below requests the canonical work-area placement frame.
+            return Ok(false);
         }
         let stats = match state
             .renderer
@@ -453,7 +535,7 @@ impl MultiApp {
         if !stats.presented {
             state.window.request_redraw();
         }
-        Ok(stats)
+        Ok(true)
     }
 
     pub(super) fn redraw_transient_host(&mut self, native_id: NativeWindowId) {
@@ -465,6 +547,9 @@ impl MultiApp {
             let Some(state) = self.transient_windows.get_mut(&native_id) else {
                 return;
             };
+            if state.snapshot.content_rect != state.native_rect {
+                return;
+            }
             if state.requires_opaque_surface_base
                 && !state
                     .display_list
@@ -772,14 +857,13 @@ fn valid_transient_size(size: incular_core::Size) -> bool {
 fn transient_screen_position(
     parent: &Window,
     metrics: WindowMetrics,
-    snapshot: TransientSurfaceSnapshot,
+    offset: Offset,
 ) -> Option<PhysicalPosition<i32>> {
     let origin = parent.inner_position().ok()?;
     let scale = metrics.scale_factor;
     if !scale.is_finite() || scale <= 0.0 {
         return None;
     }
-    let offset = snapshot.content_offset();
     if !offset.x.is_finite() || !offset.y.is_finite() {
         return None;
     }

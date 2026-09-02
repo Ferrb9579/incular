@@ -3,7 +3,10 @@
 use super::*;
 
 use crate::environment::{ContentSensitivity, SensitiveContentHost};
-use crate::transient::{TransientPortalMarker, TransientSurfaceId, TransientSurfaceSnapshot};
+use crate::transient::{
+    RetainedTransientPlacement, TransientPlacementInput, TransientPortalMarker, TransientSurfaceId,
+    TransientSurfaceSnapshot, place_transient,
+};
 
 impl Default for WidgetTree {
     fn default() -> Self {
@@ -45,6 +48,9 @@ impl WidgetTree {
             dependency_root,
             inherited_consumers: HashMap::new(),
             environment: RuntimeEnvironment::default(),
+            transient_placements: HashMap::new(),
+            native_transient_bounds: None,
+            native_transient_presentations: HashSet::new(),
             recursion_diagnostics: RecursionDiagnostics::new(),
             #[cfg(feature = "devtools")]
             deep_trace: None,
@@ -133,6 +139,269 @@ impl WidgetTree {
             .collect()
     }
 
+    /// Publishes the desktop work-area/full-display bounds available to native
+    /// transient hosts, expressed in this view's logical coordinate space.
+    /// `None` means the backend cannot provide a reliable native placement
+    /// rectangle and retained transients stay viewport-constrained.
+    #[doc(hidden)]
+    pub fn set_native_transient_bounds(&mut self, bounds: Option<Rect>) -> bool {
+        if self.native_transient_bounds == bounds {
+            return false;
+        }
+        self.native_transient_bounds = bounds;
+        true
+    }
+
+    /// Selects which retained transients have completed native-host negotiation.
+    /// Until a host is confirmed, the popup remains at its overlay placement so
+    /// native fallback never flashes/crops a work-area-positioned subtree in the
+    /// owning view.
+    #[doc(hidden)]
+    pub fn set_native_transient_presentations(
+        &mut self,
+        ids: impl IntoIterator<Item = TransientSurfaceId>,
+    ) -> bool {
+        let next = ids.into_iter().collect::<HashSet<_>>();
+        if self.native_transient_presentations == next {
+            return false;
+        }
+        self.native_transient_presentations = next;
+        true
+    }
+
+    pub(super) fn resolve_transient_placements(
+        &mut self,
+        constraints: Constraints,
+    ) -> Result<(), TreeError> {
+        let entries = self.transient_portal_entries();
+        let active = entries.iter().map(|entry| entry.0).collect::<HashSet<_>>();
+        self.transient_placements
+            .retain(|id, _| active.contains(id));
+        self.native_transient_presentations
+            .retain(|id| active.contains(id));
+
+        let viewport_size =
+            if self.environment.viewport.width > 0.0 && self.environment.viewport.height > 0.0 {
+                self.environment.viewport
+            } else if constraints.max_width.is_finite() && constraints.max_height.is_finite() {
+                Size::new(constraints.max_width, constraints.max_height)
+            } else {
+                self.root_layout_size().unwrap_or(Size::ZERO)
+            };
+        let viewport = Rect::from_origin_size(Offset::ZERO, viewport_size);
+        let text_direction = self.environment.text_direction;
+
+        for (id, marker, _parent, stack, anchor, popup) in entries {
+            let Some(popup_render) = self.render_id(popup) else {
+                continue;
+            };
+            // A positioned transient does not size its owning Stack. Measure it
+            // independently first so a compact toolbar can host a much larger
+            // native popup without growing the top-level window.
+            self.layout_render(
+                popup_render,
+                Constraints::new(0.0, f32::INFINITY, 0.0, f32::INFINITY),
+            )?;
+            let desired_size = self
+                .renders
+                .get(popup_render.0)
+                .map_or(Size::ZERO, |node| node.size);
+            let Some(anchor_rect) = marker
+                .anchor_override
+                .or_else(|| self.element_bounds(anchor))
+            else {
+                continue;
+            };
+            let available_rect = if marker.presentation
+                == incular_config::TransientPresentation::Auto
+                && self.native_transient_presentations.contains(&id)
+            {
+                self.native_transient_bounds.unwrap_or(viewport)
+            } else {
+                viewport
+            };
+            let input = TransientPlacementInput {
+                anchor_rect,
+                desired_size,
+                available_rect,
+                role: marker.role,
+                text_direction,
+                placement: marker.placement,
+            };
+            let first = place_transient(input);
+            self.layout_render(
+                popup_render,
+                Constraints::new(0.0, first.rect.size.width, 0.0, first.rect.size.height),
+            )?;
+            let actual_size = self
+                .renders
+                .get(popup_render.0)
+                .map_or(Size::ZERO, |node| node.size);
+            let mut result = if actual_size == first.rect.size {
+                first
+            } else {
+                place_transient(TransientPlacementInput {
+                    desired_size: actual_size,
+                    ..input
+                })
+            };
+            result.constrained |= first.constrained;
+
+            let stack_origin = self
+                .element_bounds(stack)
+                .map_or(Offset::ZERO, |bounds| bounds.origin);
+            let local_offset = result.rect.origin - stack_origin;
+            let layer = {
+                let node = self.render_live_mut(
+                    popup_render,
+                    "transient popup render must remain live during placement",
+                );
+                node.offset = local_offset;
+                node.object.layers.root
+            };
+            self.compositor
+                .update_transform(layer, CoreTransform::translation(local_offset));
+            self.transient_placements.insert(
+                id,
+                RetainedTransientPlacement {
+                    desired_size,
+                    result,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Applies a semantic dismissal cause to every visible transient whose
+    /// policy accepts it. Callbacks are collected before invocation so closing
+    /// a controller cannot mutate retained traversal in the middle of a scan.
+    #[doc(hidden)]
+    pub fn dismiss_transients(&self, reason: crate::TransientDismissReason) -> usize {
+        let callbacks = self
+            .transient_portal_entries()
+            .into_iter()
+            .rev()
+            .filter_map(|(_, marker, _, _, _, _)| {
+                marker
+                    .dismiss_policy
+                    .allows(reason)
+                    .then_some(marker.on_dismiss)
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(reason);
+        }
+        count
+    }
+
+    /// Dismisses visible transient chains for which `point` is an outside
+    /// activation. A popup containing the point and all of its retained parent
+    /// transients are protected; unrelated sibling chains close.
+    #[doc(hidden)]
+    pub fn dismiss_transients_for_pointer(&self, point: Offset) -> usize {
+        let entries = self.transient_portal_entries();
+        let snapshots = self
+            .transient_surface_entries()
+            .into_iter()
+            .map(|(snapshot, _)| (snapshot.id, snapshot))
+            .collect::<HashMap<_, _>>();
+        let mut protected = snapshots
+            .values()
+            .filter(|snapshot| {
+                snapshot.content_rect.contains(point) || snapshot.anchor_rect.contains(point)
+            })
+            .map(|snapshot| snapshot.id)
+            .collect::<HashSet<_>>();
+        let mut frontier = protected.iter().copied().collect::<Vec<_>>();
+        while let Some(id) = frontier.pop() {
+            if let Some(parent) = snapshots.get(&id).and_then(|snapshot| snapshot.parent)
+                && protected.insert(parent)
+            {
+                frontier.push(parent);
+            }
+        }
+        let reason = crate::TransientDismissReason::OutsidePointer;
+        let callbacks = entries
+            .into_iter()
+            .rev()
+            .filter_map(|(id, marker, _, _, _, _)| {
+                (!protected.contains(&id) && marker.dismiss_policy.outside_pointer)
+                    .then_some(marker.on_dismiss)
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(reason);
+        }
+        count
+    }
+
+    /// Dismisses interactive transient chains after logical focus moves. The
+    /// chain containing the newly focused element (either its anchor or popup
+    /// subtree) and all retained transient ancestors is preserved.
+    #[doc(hidden)]
+    pub fn dismiss_transients_for_focus(&self, focused: ElementId) -> usize {
+        let entries = self.transient_portal_entries();
+        let snapshots = self
+            .transient_surface_entries()
+            .into_iter()
+            .map(|(snapshot, _)| (snapshot.id, snapshot))
+            .collect::<HashMap<_, _>>();
+        let mut protected = entries
+            .iter()
+            .filter(|(_, _, _, _, anchor, popup)| {
+                self.is_descendant_or_self(focused, *anchor)
+                    || self.is_descendant_or_self(focused, *popup)
+            })
+            .map(|(id, _, _, _, _, _)| *id)
+            .collect::<HashSet<_>>();
+        let mut frontier = protected.iter().copied().collect::<Vec<_>>();
+        while let Some(id) = frontier.pop() {
+            if let Some(parent) = snapshots.get(&id).and_then(|snapshot| snapshot.parent)
+                && protected.insert(parent)
+            {
+                frontier.push(parent);
+            }
+        }
+        // Focus on a menu-chain ancestor must not collapse a still-owned
+        // submenu beneath it while Tab/arrow traversal is moving through the
+        // chain. Once an ancestor is protected, protect all currently visible
+        // retained transient descendants as part of the same ownership chain.
+        loop {
+            let mut changed = false;
+            for snapshot in snapshots.values() {
+                if snapshot
+                    .parent
+                    .is_some_and(|parent| protected.contains(&parent))
+                    && protected.insert(snapshot.id)
+                {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let reason = crate::TransientDismissReason::FocusLost;
+        let callbacks = entries
+            .into_iter()
+            .rev()
+            .filter_map(|(id, marker, _, _, _, _)| {
+                (!protected.contains(&id) && marker.dismiss_policy.focus_loss)
+                    .then_some(marker.on_dismiss)
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        let count = callbacks.len();
+        for callback in callbacks {
+            callback(reason);
+        }
+        count
+    }
+
     pub(super) fn sync_transient_surface_partitions(&mut self) {
         let entries = self.transient_surface_entries();
         self.compositor.clear_surface_partitions();
@@ -145,6 +414,59 @@ impl WidgetTree {
     fn transient_surface_entries(
         &self,
     ) -> Vec<(TransientSurfaceSnapshot, incular_rendering::LayerId)> {
+        self.transient_portal_entries()
+            .into_iter()
+            .filter_map(|(id, marker, parent, _stack, anchor, popup)| {
+                let popup_render = self.render_id(popup)?;
+                let popup_layer = self.renders.get(popup_render.0)?.object.layers.root;
+                let content_rect = self.element_bounds(popup)?;
+                let placement = self.transient_placements.get(&id).copied().unwrap_or(
+                    RetainedTransientPlacement {
+                        desired_size: content_rect.size,
+                        result: place_transient(TransientPlacementInput {
+                            anchor_rect: marker
+                                .anchor_override
+                                .or_else(|| self.element_bounds(anchor))?,
+                            desired_size: content_rect.size,
+                            available_rect: Rect::from_origin_size(
+                                Offset::ZERO,
+                                self.root_layout_size().unwrap_or(Size::ZERO),
+                            ),
+                            role: marker.role,
+                            text_direction: self.environment.text_direction,
+                            placement: marker.placement,
+                        }),
+                    },
+                );
+                let snapshot = TransientSurfaceSnapshot {
+                    id,
+                    parent,
+                    role: marker.role,
+                    presentation: marker.presentation,
+                    anchor_rect: marker
+                        .anchor_override
+                        .or_else(|| self.element_bounds(anchor))?,
+                    desired_size: placement.desired_size,
+                    placement: marker.placement,
+                    text_direction: self.environment.text_direction,
+                    placement_result: placement.result,
+                    content_rect,
+                };
+                Some((snapshot, popup_layer))
+            })
+            .collect()
+    }
+
+    pub(super) fn transient_portal_entries(
+        &self,
+    ) -> Vec<(
+        TransientSurfaceId,
+        TransientPortalMarker,
+        Option<TransientSurfaceId>,
+        ElementId,
+        ElementId,
+        ElementId,
+    )> {
         self.elements
             .iter()
             .filter_map(|(raw, element)| {
@@ -152,26 +474,43 @@ impl WidgetTree {
                     .environment_override
                     .as_ref()?
                     .value
-                    .downcast_ref::<TransientPortalMarker>()?;
+                    .downcast_ref::<TransientPortalMarker>()?
+                    .clone();
                 if !marker.show {
                     return None;
+                }
+                let mut parent = element.parent;
+                let mut transient_parent = None;
+                while let Some(ancestor) = parent {
+                    let ancestor_element = self.elements.get(ancestor.0)?;
+                    if ancestor_element
+                        .environment_override
+                        .as_ref()
+                        .and_then(|scope| scope.value.downcast_ref::<TransientPortalMarker>())
+                        .is_some_and(|ancestor_marker| ancestor_marker.show)
+                    {
+                        transient_parent = Some(TransientSurfaceId::from_parts(
+                            ancestor.0.index(),
+                            ancestor.0.generation(),
+                        ));
+                        break;
+                    }
+                    parent = ancestor_element.parent;
                 }
                 // Environment scopes materialize one transparent child. The
                 // open OverlayPortal materializes a Stack beneath that scope.
                 let stack = *element.children.first()?;
                 let stack_element = self.elements.get(stack.0)?;
-                let anchor = *stack_element.children.first()?;
+                let anchor = *stack_element.children.get(marker.anchor_child_index)?;
                 let popup = *stack_element.children.get(marker.popup_child_index)?;
-                let popup_render = self.render_id(popup)?;
-                let popup_layer = self.renders.get(popup_render.0)?.object.layers.root;
-                let snapshot = TransientSurfaceSnapshot {
-                    id: TransientSurfaceId::from_parts(raw.index(), raw.generation()),
-                    role: marker.role,
-                    presentation: marker.presentation,
-                    anchor_rect: self.element_bounds(anchor)?,
-                    content_rect: self.element_bounds(popup)?,
-                };
-                Some((snapshot, popup_layer))
+                Some((
+                    TransientSurfaceId::from_parts(raw.index(), raw.generation()),
+                    marker,
+                    transient_parent,
+                    stack,
+                    anchor,
+                    popup,
+                ))
             })
             .collect()
     }

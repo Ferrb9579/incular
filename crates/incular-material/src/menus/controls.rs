@@ -10,7 +10,9 @@ use incular_controls::{
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
-use incular_widgets::{Border, BoxDecoration, Container, Row, Text, Widget};
+use incular_widgets::{
+    Border, BoxDecoration, Container, Row, Text, TransientDismissReason, Widget,
+};
 use typed_builder::TypedBuilder;
 
 /// Retained controller shared by menu anchors and popup buttons.
@@ -19,6 +21,9 @@ pub struct MenuController {
     open: Rc<Cell<bool>>,
     revision: Rc<Cell<u64>>,
 }
+
+#[derive(Clone)]
+pub(super) struct MenuCloseScope(pub(super) Rc<dyn Fn(TransientDismissReason) + 'static>);
 
 impl MenuController {
     #[must_use]
@@ -359,7 +364,7 @@ impl MenuItemButton {
     pub(super) fn build_with_close(
         &self,
         context: &incular_widgets::BuildContext<'_>,
-        close: Option<Rc<dyn Fn() + 'static>>,
+        close: Option<Rc<dyn Fn(TransientDismissReason) + 'static>>,
     ) -> Widget {
         let mut children = Vec::with_capacity(3);
         if let Some(icon) = &self.leading_icon {
@@ -403,7 +408,7 @@ impl MenuItemButton {
         if on_pressed.is_some() || (close_on_activate && close.is_some()) {
             button = button.on_click(move || {
                 if close_on_activate && let Some(close) = close.as_ref() {
-                    close();
+                    close(TransientDismissReason::ExplicitSelection);
                 }
                 if let Some(callback) = on_pressed.as_ref() {
                     callback();
@@ -427,7 +432,7 @@ impl MenuItemButton {
         }
 
         result.semantics(
-            ExplicitSemantics::new(SemanticRole::Button)
+            ExplicitSemantics::new(SemanticRole::MenuItem)
                 .label(semantic_label)
                 .state(SemanticState {
                     enabled: self.enabled,
@@ -447,7 +452,8 @@ impl From<MenuItemButton> for Widget {
     fn from(value: MenuItemButton) -> Self {
         let value = Rc::new(value);
         Widget::from(incular_widgets::LayoutBuilder::new(move |context, _| {
-            value.build_with_close(context, None)
+            let close = context.find::<MenuCloseScope>().map(|scope| scope.0);
+            value.build_with_close(context, close)
         }))
     }
 }
@@ -604,6 +610,7 @@ impl From<SubmenuButton> for Widget {
             .child(row)
             .enabled(value.enabled)
             .alignment_offset(value.alignment_offset)
+            .submenu(true)
             .controller(value.controller.clone());
         if let Some(style) = value.style {
             anchor = anchor.item_style(style);

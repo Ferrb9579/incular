@@ -83,6 +83,121 @@ impl WidgetTree {
         )
     }
 
+    /// Returns whether `element` participates in menu-item keyboard navigation.
+    ///
+    /// Focus may land on the retained control beneath a transparent semantic
+    /// wrapper, so walk outward until the first explicit semantic boundary.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_menu_item_focus(&self, mut element: ElementId) -> bool {
+        loop {
+            let Some(entry) = self.elements.get(element.0) else {
+                return false;
+            };
+            if let Some(explicit) = entry.widget.semantic_properties().explicit.as_ref() {
+                return explicit.role == SemanticRole::MenuItem;
+            }
+            let Some(parent) = entry.parent else {
+                return false;
+            };
+            element = parent;
+        }
+    }
+
+    /// Resolves desktop menu arrow-key focus using retained transient ownership.
+    ///
+    /// Vertical arrows cycle only inside the current menu surface. Horizontal
+    /// arrows cross a visible submenu boundary in the text-direction-aware
+    /// outward/inward direction. This remains renderer/platform neutral and is
+    /// therefore identical for overlay and native transient presentation.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn menu_directional_focus_target(
+        &self,
+        focused: ElementId,
+        code: incular_core::Code,
+    ) -> Option<ElementId> {
+        if !self.is_menu_item_focus(focused) {
+            return None;
+        }
+
+        let entries = self.transient_portal_entries();
+        let focusable = self.focusable_elements();
+        let surface_for = |candidate: ElementId| {
+            let mut current = Some(candidate);
+            while let Some(element) = current {
+                if let Some((id, _, _, _, _, _)) = entries
+                    .iter()
+                    .find(|(_, _, _, _, _, popup)| *popup == element)
+                {
+                    return Some(*id);
+                }
+                current = self.parent(element);
+            }
+            None
+        };
+        let current_surface = surface_for(focused)?;
+
+        match code {
+            incular_core::Code::ArrowDown | incular_core::Code::ArrowUp => {
+                let candidates = focusable
+                    .iter()
+                    .copied()
+                    .filter(|candidate| {
+                        self.is_menu_item_focus(*candidate)
+                            && surface_for(*candidate) == Some(current_surface)
+                    })
+                    .collect::<Vec<_>>();
+                let current = candidates
+                    .iter()
+                    .position(|candidate| *candidate == focused)?;
+                let next = if code == incular_core::Code::ArrowUp {
+                    (current + candidates.len() - 1) % candidates.len()
+                } else {
+                    (current + 1) % candidates.len()
+                };
+                candidates.get(next).copied()
+            }
+            incular_core::Code::ArrowLeft | incular_core::Code::ArrowRight => {
+                let outward = match self.environment.text_direction {
+                    TextDirection::Ltr => incular_core::Code::ArrowRight,
+                    TextDirection::Rtl => incular_core::Code::ArrowLeft,
+                };
+                if code == outward {
+                    // The focused submenu trigger is the anchor of the child
+                    // transient itself. Resolve that ownership directly rather
+                    // than inferring it from the parent's surface id; this also
+                    // remains correct through transparent retained wrappers.
+                    let child_surface =
+                        entries.iter().rev().find_map(|(id, _, _, _, anchor, _)| {
+                            self.is_descendant_or_self(focused, *anchor).then_some(*id)
+                        })?;
+                    return focusable.iter().copied().find(|candidate| {
+                        self.is_menu_item_focus(*candidate)
+                            && surface_for(*candidate) == Some(child_surface)
+                    });
+                }
+
+                let inward = match self.environment.text_direction {
+                    TextDirection::Ltr => incular_core::Code::ArrowLeft,
+                    TextDirection::Rtl => incular_core::Code::ArrowRight,
+                };
+                if code != inward {
+                    return None;
+                }
+                let (_, _, parent, _, anchor, _) = entries
+                    .iter()
+                    .find(|(id, _, _, _, _, _)| *id == current_surface)?;
+                parent.as_ref()?;
+                focusable.iter().copied().find(|candidate| {
+                    self.is_menu_item_focus(*candidate)
+                        && self.is_descendant_or_self(*candidate, *anchor)
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Finds the retained element associated with an externally managed focus
     /// node. This lets a `FocusScopeNode` request focus without coupling the
     /// gestures crate to runtime element IDs.

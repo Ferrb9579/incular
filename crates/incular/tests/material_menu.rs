@@ -6,6 +6,7 @@ use incular::material::{
     NavigationDrawerDestination, Scaffold, ScaffoldMessenger, ScaffoldMessengerController,
     ThemeData, ThemeMode,
 };
+use incular::platform::PlatformEvent;
 use incular::prelude::*;
 
 #[test]
@@ -136,5 +137,42 @@ fn material_menu_does_not_resize_a_content_sized_undecorated_window() {
     assert!(
         !resize_requested,
         "transient menu presentation must not change top-level content size"
+    );
+}
+
+#[test]
+fn open_material_menu_anchor_remains_pointer_interactive_above_its_barrier() {
+    let controller = MenuController::new();
+    let controller_for_build = controller.clone();
+    let mut app = Application::new(move |_cx| {
+        MenuAnchor::new([MenuItemButton::label("Item")])
+            .controller(controller_for_build.clone())
+            .child(FilledButton::tonal("Menu"))
+            .into()
+    })
+    .expect("create material menu application");
+    let window = app.primary_window();
+    let constraints = Constraints::tight(Size::new(320.0, 240.0));
+    app.run_window_frame_at(window, constraints, std::time::Instant::now())
+        .expect("initial frame");
+
+    controller.open();
+    app.run_window_frame_at(window, constraints, std::time::Instant::now())
+        .expect("open frame");
+    let anchor = app.transient_surfaces(window)[0].anchor_rect;
+    let point = anchor.origin + Offset::new(anchor.size.width * 0.5, anchor.size.height * 0.5);
+    for phase in [PointerPhase::Down, PointerPhase::Up] {
+        app.handle_window_event(WindowEvent::platform(
+            window,
+            PlatformEvent::Input(InputEvent::Pointer {
+                phase,
+                position: point,
+            }),
+        ));
+    }
+
+    assert!(
+        !controller.is_open(),
+        "the anchor must stay above the overlay barrier so it can toggle closed"
     );
 }

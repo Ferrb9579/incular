@@ -884,6 +884,10 @@ pub struct WidgetTree {
     dependency_root: DependencyContext,
     inherited_consumers: HashMap<ConsumerId, (ElementId, InheritedDependencyKind)>,
     environment: RuntimeEnvironment,
+    transient_placements:
+        HashMap<crate::transient::TransientSurfaceId, crate::transient::RetainedTransientPlacement>,
+    native_transient_bounds: Option<Rect>,
+    native_transient_presentations: HashSet<crate::transient::TransientSurfaceId>,
     recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,

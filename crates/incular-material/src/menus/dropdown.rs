@@ -13,7 +13,7 @@ use incular_controls::{ButtonStyle, ControlIcon, current_control_theme};
 use incular_core::{Color, Size};
 use incular_text::TextEditingController;
 use incular_widgets::internal::ActionSurface;
-use incular_widgets::{Column, Container, Row, SizedBox, Text, Widget};
+use incular_widgets::{Column, Container, Row, SizedBox, Text, TransientPlacement, Widget};
 use typed_builder::TypedBuilder;
 
 type DropdownValidator<T> = Rc<dyn Fn(Option<&T>) -> Option<String> + 'static>;
@@ -863,9 +863,17 @@ impl<T: Clone + PartialEq + 'static> DropdownMenu<T> {
                 revision.set(revision.get().wrapping_add(1));
             });
         if open.get() {
+            let dismiss_open = self.open.clone();
+            let dismiss_revision = self.revision.clone();
             incular_widgets::OverlayPortal::new(anchor)
                 .overlay_child(panel)
                 .role(incular_widgets::TransientRole::ComboBox)
+                .placement(TransientPlacement::default())
+                .on_dismiss(move |_| {
+                    if dismiss_open.replace(false) {
+                        dismiss_revision.set(dismiss_revision.get().wrapping_add(1));
+                    }
+                })
                 .show(true)
                 .into()
         } else {

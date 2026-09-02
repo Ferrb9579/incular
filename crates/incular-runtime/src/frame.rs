@@ -492,7 +492,12 @@ impl Runtime {
             return false;
         }
         let changed = environment_change_mask(&previous, &environment);
-        *self.environment.borrow_mut() = environment;
+        *self.environment.borrow_mut() = environment.clone();
+        // WidgetTree owns renderer-neutral runtime geometry and direction used
+        // by retained policies such as SafeArea and transient placement. Keep
+        // that snapshot synchronized even when no declarative environment
+        // dependency requires rebuilding the application root.
+        self.tree.set_environment(environment);
         self.environment_generation = self.environment_generation.wrapping_add(1);
         if self.environment_dependencies.get() & changed != 0
             && let Some(root) = self.application_root
@@ -605,6 +610,35 @@ impl Runtime {
     #[must_use]
     pub fn transient_surfaces(&self) -> Vec<incular_widgets::TransientSurfaceSnapshot> {
         self.tree.transient_surfaces()
+    }
+
+    /// Updates the parent-local logical rectangle that confirmed native
+    /// transient hosts may use for collision placement.
+    pub fn set_native_transient_bounds(&mut self, bounds: Option<incular_core::Rect>) -> bool {
+        let changed = self.tree.set_native_transient_bounds(bounds);
+        self.frame_requested |= changed;
+        changed
+    }
+
+    /// Updates the set of retained transients whose native hosts have completed
+    /// negotiation. A presentation change requests a frame so placement,
+    /// semantics, hit testing, and rendering switch coordinate spaces together.
+    pub fn set_native_transient_presentations(
+        &mut self,
+        ids: impl IntoIterator<Item = incular_widgets::TransientSurfaceId>,
+    ) -> bool {
+        let changed = self.tree.set_native_transient_presentations(ids);
+        self.frame_requested |= changed;
+        changed
+    }
+
+    /// Applies a framework-level transient dismissal cause without changing
+    /// native focus ownership. Controllers receive the callback and the normal
+    /// retained rebuild path removes their popup subtree.
+    pub fn dismiss_transients(&mut self, reason: incular_widgets::TransientDismissReason) -> bool {
+        let dismissed = self.tree.dismiss_transients(reason) > 0;
+        self.frame_requested |= dismissed;
+        dismissed
     }
     #[cfg(feature = "devtools")]
     pub(crate) fn devtools_edit_property(
@@ -951,6 +985,9 @@ impl Runtime {
         if phase != PointerPhase::Enter {
             self.last_pointer = position;
         }
+        if phase == PointerPhase::Down && self.tree.dismiss_transients_for_pointer(position) > 0 {
+            self.frame_requested = true;
+        }
         let gesture_window = self.window_id.map_or(0, |window| {
             (u64::from(window.index()) << 32) | u64::from(window.generation())
         });
@@ -1193,6 +1230,11 @@ impl Runtime {
         if self.focused == next {
             return;
         }
+        if let Some(next) = next
+            && self.tree.dismiss_transients_for_focus(next) > 0
+        {
+            self.frame_requested = true;
+        }
         if let Some(previous) = self.focused {
             self.tree.set_keyboard_focus(previous, false);
             let _ = self.tree.set_focused(previous, false, Instant::now());
@@ -1207,6 +1249,23 @@ impl Runtime {
         }
         self.frame_requested = true;
         self.sync_text_input_client();
+    }
+
+    fn clear_focus_if_unmounted(&mut self) {
+        if !self
+            .focused
+            .is_some_and(|focused| !self.tree.element_exists(focused))
+        {
+            return;
+        }
+        // The element is already gone, so do not attempt to write retained
+        // focus state through a stale generational id. Runtime focus and the
+        // native text-input client must nevertheless be cleared in this frame.
+        self.focused = None;
+        self.captured_text_field = None;
+        self.captured_selectable_text = None;
+        self.sync_text_input_client();
+        self.frame_requested = true;
     }
 
     fn ensure_text_history(&mut self, field: ElementId) -> Option<UndoHistoryController> {
@@ -1363,6 +1422,34 @@ impl Runtime {
             return;
         }
         if !event.state.is_down() {
+            return;
+        }
+        if event.code == Code::Escape
+            && self
+                .tree
+                .dismiss_transients(incular_widgets::TransientDismissReason::Escape)
+                > 0
+        {
+            self.frame_requested = true;
+            return;
+        }
+        if matches!(
+            event.code,
+            Code::ArrowUp | Code::ArrowDown | Code::ArrowLeft | Code::ArrowRight
+        ) && let Some(focused) = self.focused
+            && let Some(next) = self.tree.menu_directional_focus_target(focused, event.code)
+        {
+            self.set_focus(Some(next));
+            return;
+        }
+        if matches!(event.code, Code::Enter | Code::NumpadEnter | Code::Space)
+            && let Some(focused) = self.focused
+            && self.tree.is_menu_item_focus(focused)
+            && let Some((_, action)) = self.tree.action_ancestor(focused)
+            && let Some(callback) = self.handlers.get(&action).cloned()
+        {
+            callback();
+            self.frame_requested = true;
             return;
         }
         if event.code == Code::Tab {
@@ -1649,6 +1736,7 @@ impl Runtime {
                 scope.cancel();
             }
         }
+        self.clear_focus_if_unmounted();
         self.prune_handlers();
         let build = build_span.elapsed_us();
         drop(build_guard);
@@ -1670,6 +1758,7 @@ impl Runtime {
                 scope.cancel();
             }
         }
+        self.clear_focus_if_unmounted();
         self.prune_handlers();
         let _composite_guard = tracing::info_span!("incular.composite").entered();
         let composite_span = profiling::PhaseSpan::start();

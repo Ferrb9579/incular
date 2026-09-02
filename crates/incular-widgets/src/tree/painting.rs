@@ -29,6 +29,28 @@ impl WidgetTree {
     }
     #[must_use]
     pub fn hit_test(&self, point: Offset) -> Option<RenderObjectId> {
+        // Native transient input arrives in the owning view's logical
+        // coordinate space and may legitimately lie outside every ancestor's
+        // layout bounds. Test visible transient roots first so Clip::None popup
+        // content remains interactive without weakening ordinary ancestor hit
+        // testing for the rest of the tree.
+        for (_, _, _, stack, _, popup) in self.transient_portal_entries().into_iter().rev() {
+            let Some(bounds) = self.element_bounds(popup) else {
+                continue;
+            };
+            if !bounds.contains(point) {
+                continue;
+            }
+            let Some(render) = self.render_id(popup) else {
+                continue;
+            };
+            let origin = self
+                .element_bounds(stack)
+                .map_or(Offset::ZERO, |bounds| bounds.origin);
+            if let Some(hit) = self.hit_test_render(render, point, origin) {
+                return Some(hit);
+            }
+        }
         self.root
             .and_then(|id| self.render_id(id))
             .and_then(|id| self.hit_test_render(id, point, Offset::ZERO))
@@ -40,6 +62,24 @@ impl WidgetTree {
     /// visual child, while ordinary retained hit testing continues to return
     /// one target for buttons and text editing.
     pub(super) fn raw_hit_elements(&self, point: Offset) -> Vec<ElementId> {
+        for (_, _, _, stack, _, popup) in self.transient_portal_entries().into_iter().rev() {
+            let Some(bounds) = self.element_bounds(popup) else {
+                continue;
+            };
+            if !bounds.contains(point) {
+                continue;
+            }
+            let Some(render) = self.render_id(popup) else {
+                continue;
+            };
+            let origin = self
+                .element_bounds(stack)
+                .map_or(Offset::ZERO, |bounds| bounds.origin);
+            let result = self.collect_raw_hit_render(render, point, origin);
+            if result.subtree_hit || !result.elements.is_empty() {
+                return result.elements;
+            }
+        }
         let Some(root) = self.root.and_then(|id| self.render_id(id)) else {
             return Vec::new();
         };

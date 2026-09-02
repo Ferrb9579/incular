@@ -1212,6 +1212,7 @@ impl MultiApp {
         let observed = observed_window_state(&state.window, &self.displays, system);
         self.application
             .handle_window_event(IncularWindowEvent::state_changed(id, observed));
+        self.publish_native_transient_bounds(id);
     }
 
     fn request_frame_if_needed(&mut self, id: IncularWindowId) {
@@ -1269,6 +1270,7 @@ impl MultiApp {
         {
             state.renderer.request_capture();
         }
+        self.publish_native_transient_bounds(id);
         #[cfg(feature = "devtools")]
         self.devtools_state
             .begin_deep_frame(&mut self.application, id);
@@ -1294,6 +1296,7 @@ impl MultiApp {
                 let selected = self.synchronize_transient_hosts(target, id, &snapshots);
                 let (_, detached) = list.detach_surface_partitions(&selected);
                 let mut failed = Vec::new();
+                let mut ready = HashSet::new();
                 for snapshot in snapshots.iter().copied() {
                     let partition = snapshot.id.surface_partition();
                     if !selected.contains(&partition) {
@@ -1307,8 +1310,12 @@ impl MultiApp {
                         owner: id,
                         transient: snapshot.id,
                     };
-                    if let Err(reason) = self.render_transient_partition(key, transient_list) {
-                        failed.push((snapshot, reason));
+                    match self.render_transient_partition(key, transient_list) {
+                        Ok(true) => {
+                            ready.insert(partition);
+                        }
+                        Ok(false) => {}
+                        Err(reason) => failed.push((snapshot, reason)),
                     }
                 }
                 for (snapshot, reason) in &failed {
@@ -1325,16 +1332,8 @@ impl MultiApp {
                         },
                     );
                 }
-                let successful = selected
-                    .into_iter()
-                    .filter(|partition| {
-                        !failed
-                            .iter()
-                            .any(|(snapshot, _)| snapshot.id.surface_partition() == *partition)
-                    })
-                    .collect::<HashSet<_>>();
                 self.publish_transient_presentations(id, &snapshots);
-                let (parent_list, _) = list.detach_surface_partitions(&successful);
+                let (parent_list, _) = list.detach_surface_partitions(&ready);
 
                 let Some(state) = self.windows.get_mut(&native_id) else {
                     return;

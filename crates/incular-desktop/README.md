@@ -59,6 +59,16 @@ surface that cannot preserve required transparent pixels. A failed native host
 is rejected for that retained ID/role lifetime instead of being recreated every
 frame; closing and reopening gives a fresh generational negotiation.
 
+Native placement uses the same `incular-widgets` positioner as the overlay path.
+The shell converts the owning monitor's work area into owner-local logical
+geometry, publishes those bounds back to the runtime, and keeps a newly created
+host hidden until retained layout has resolved the identical canonical popup
+rect. Parent movement, monitor changes, and DPI transitions therefore reposition
+the existing popup host without relaying out or resizing the top-level window.
+Where a backend cannot provide a taskbar/dock-adjusted work area, the shell uses
+only geometry the backend actually exposes rather than inventing cross-platform
+desktop coordinates.
+
 The popup surface is presentation-only. The owning window retains one WidgetTree,
 one focus model, and one semantics tree; pointer, keyboard, touch, wheel, and IME
 events from a popup are translated back into that same runtime. Incular therefore

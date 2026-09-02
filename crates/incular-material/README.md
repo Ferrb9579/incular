@@ -17,6 +17,15 @@ Flutter's low-level Material entry point is available here as
 Multiline editing uses `TextField::max_lines`/`TextField::multiline`, just as it
 does in Flutter.
 
+Material menus, popup menus, dropdowns, context-menu anchors, and tooltips do not
+own a second popup-positioning implementation. They supply Material defaults to
+the Widgets-layer `TransientPlacement` policy, including RTL submenu direction,
+then rely on the runtime for cross-surface dismissal/focus. `MenuAnchor` treats
+its trigger child as presentation and owns the single activation surface, so a
+button-styled visual child cannot create a competing nested-button hit target.
+Leaf selection propagates an explicit semantic close reason through the complete
+retained submenu chain.
+
 Use `incular_material::prelude` for the common application surface or
 `incular_material::components` when importing the complete component
 vocabulary in one place. The module re-exports dialogs, menus, drawers,

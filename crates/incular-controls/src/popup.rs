@@ -120,8 +120,8 @@ pub struct Positioner {
     side_offset: f32,
     #[builder(default = 0.)]
     align_offset: f32,
-    #[builder(default = Offset::ZERO)]
-    anchor: Offset,
+    #[builder(default, setter(strip_option))]
+    anchor: Option<Offset>,
 }
 impl Positioner {
     #[must_use]
@@ -153,19 +153,21 @@ impl Positioner {
 
     #[must_use]
     pub fn anchor(mut self, value: Offset) -> Self {
-        self.anchor = value;
+        self.anchor = Some(value);
         self
     }
 }
 impl From<Positioner> for Widget {
     fn from(value: Positioner) -> Self {
-        AnchoredPositioner::new(value.child)
+        let mut positioner = AnchoredPositioner::new(value.child)
             .side(value.side)
             .align(value.align)
             .side_offset(value.side_offset)
-            .align_offset(value.align_offset)
-            .anchor(value.anchor)
-            .into()
+            .align_offset(value.align_offset);
+        if let Some(anchor) = value.anchor {
+            positioner = positioner.anchor(anchor);
+        }
+        positioner.into()
     }
 }
 #[derive(Clone, TypedBuilder)]

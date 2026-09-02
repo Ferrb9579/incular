@@ -1,14 +1,18 @@
 use std::rc::Rc;
 
-use super::{controls::MenuController, popup::menu_panel, style::MenuStyle};
+use super::{
+    controls::{MenuCloseScope, MenuController},
+    popup::menu_panel,
+    style::MenuStyle,
+};
 use incular_config::Clip;
 use incular_controls::{Button as ControlButton, ButtonStyle, current_control_theme};
 use incular_core::{Color, Offset};
 use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
 use incular_widgets::internal::{ActionSurface, ExplicitSemantics};
 use incular_widgets::{
-    Container, GestureDetector, HitTestBehavior, OverlayPortal, Positioned, Text, TransientRole,
-    Widget,
+    Container, ExcludeSemantics, GestureDetector, HitTestBehavior, IgnorePointer, OverlayPortal,
+    Positioned, SizedBox, Text, TransientPlacement, TransientRole, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -44,6 +48,8 @@ pub struct MenuAnchor {
     item_style: Option<ButtonStyle>,
     #[builder(default)]
     alignment_offset: Offset,
+    #[builder(default, setter(skip))]
+    submenu: bool,
     #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
     #[builder(default)]
@@ -102,6 +108,7 @@ impl MenuAnchor {
             style: None,
             item_style: None,
             alignment_offset: Offset::ZERO,
+            submenu: false,
             clip_behavior: Clip::HardEdge,
             consume_outside_tap: false,
             cross_axis_unconstrained: true,
@@ -142,6 +149,12 @@ impl MenuAnchor {
     #[must_use]
     pub fn alignment_offset(mut self, value: Offset) -> Self {
         self.alignment_offset = value;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn submenu(mut self, value: bool) -> Self {
+        self.submenu = value;
         self
     }
 
@@ -219,6 +232,11 @@ impl MenuAnchor {
         let on_open = self.on_open.clone();
         let on_close = self.on_close.clone();
         let anchor_label = anchor_child.semantic_text();
+        // `MenuAnchor` owns the trigger interaction. Treat the supplied child
+        // as presentation even when callers use a Material Button for its
+        // visuals; otherwise the nested inner Button wins retained hit testing
+        // and the menu trigger never receives the activation.
+        let anchor_child: Widget = IgnorePointer::new(ExcludeSemantics::new(anchor_child)).into();
         let mut anchor = ActionSurface::with_child(anchor_child)
             .color(Color::TRANSPARENT)
             .enabled(self.enabled);
@@ -236,7 +254,12 @@ impl MenuAnchor {
             });
         }
         let anchor: Widget = anchor.into();
-        let mut semantics = ExplicitSemantics::new(SemanticRole::Button).state(SemanticState {
+        let semantic_role = if self.submenu {
+            SemanticRole::MenuItem
+        } else {
+            SemanticRole::Button
+        };
+        let mut semantics = ExplicitSemantics::new(semantic_role).state(SemanticState {
             enabled: self.enabled,
             focusable: self.enabled,
             expanded: Some(open),
@@ -271,17 +294,31 @@ impl MenuAnchor {
             self.menu_children.clone()
         };
         let (panel, panel_height) = menu_panel(items, &style, &theme);
-        let panel: Widget = Positioned::new(panel)
-            .left(self.alignment_offset.x)
-            .top(self.alignment_offset.y)
-            .height(panel_height)
-            .into();
+        let panel: Widget = SizedBox::new().height(panel_height).child(panel).into();
+        // Leaf menu items close the complete retained menu chain, not merely
+        // the nearest popup. A nested MenuAnchor inherits its parent's close
+        // scope and composes its own controller into the same callback, so a
+        // selection inside a cascading submenu deterministically closes the
+        // submenu and every owning menu exactly once.
+        let parent_close = context.find::<MenuCloseScope>().map(|scope| scope.0);
+        let selection_controller = self.controller.clone();
+        let selection_on_close = self.on_close.clone();
+        let close_chain = Rc::new(move |reason| {
+            let was_open = selection_controller.is_open();
+            selection_controller.close();
+            if was_open && let Some(callback) = selection_on_close.as_ref() {
+                callback();
+            }
+            if let Some(parent_close) = parent_close.as_ref() {
+                parent_close(reason);
+            }
+        })
+            as Rc<dyn Fn(incular_widgets::TransientDismissReason) + 'static>;
+        let panel = Widget::environment_scope(MenuCloseScope(close_chain), panel);
         // The lower-level overlay portal is retained here.  When requested,
         // add a transparent, full-bounds barrier beneath the anchor/panel so
         // an outside activation closes the menu while the visible rows remain
         // the top hit-test targets.
-        let controller = self.controller.clone();
-        let on_close = self.on_close.clone();
         let barrier_behavior = if self.consume_outside_tap {
             HitTestBehavior::Opaque
         } else {
@@ -290,18 +327,29 @@ impl MenuAnchor {
         let barrier: Widget = Positioned::fill(
             GestureDetector::new(Container::new().color(Color::TRANSPARENT))
                 .behavior(barrier_behavior)
-                .on_tap(move || {
-                    controller.close();
-                    if let Some(callback) = on_close.as_ref() {
-                        callback();
-                    }
-                }),
+                // Runtime owns outside-dismissal on pointer-down so the same
+                // policy works across parent and native transient surfaces.
+                // This retained barrier only preserves overlay hit consumption.
+                .on_tap(|| {}),
         )
         .into();
+        let controller = self.controller.clone();
+        let on_close = self.on_close.clone();
         let overlay: Widget = OverlayPortal::new(anchor)
             .barrier_child(barrier)
             .overlay_child(panel)
             .role(TransientRole::Menu)
+            .placement(
+                TransientPlacement::default()
+                    .submenu(self.submenu)
+                    .alignment_offset(self.alignment_offset),
+            )
+            .on_dismiss(move |_| {
+                controller.close();
+                if let Some(callback) = on_close.as_ref() {
+                    callback();
+                }
+            })
             .show(true)
             .into();
         let _ = (

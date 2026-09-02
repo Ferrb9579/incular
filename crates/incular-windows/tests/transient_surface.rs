@@ -7,7 +7,7 @@ use incular_runtime::{
     Application, ResolvedTransientPresentation, Signal, Simulation, SimulationError,
 };
 #[cfg(target_os = "windows")]
-use incular_widgets::{GestureDetector, OverlayPortal, Positioned, TransientRole, Widget};
+use incular_widgets::{GestureDetector, OverlayPortal, TransientPlacement, TransientRole, Widget};
 #[cfg(target_os = "windows")]
 use std::{
     sync::{
@@ -155,20 +155,15 @@ fn native_transient_surface_smoke() {
                         let _ = click_state.set(next);
                     })
                     .into();
-            let popup: Widget = Positioned::new(
-                GestureDetector::new(Widget::box_(Size::new(80.0, 120.0), Color::WHITE)).on_tap(
-                    move || {
+            let popup: Widget =
+                GestureDetector::new(Widget::box_(Size::new(80.0, 120.0), Color::WHITE))
+                    .on_tap(move || {
                         popup_hits.fetch_add(1, Ordering::SeqCst);
-                    },
-                ),
-            )
-            .left(10.0)
-            .top(80.0)
-            .width(80.0)
-            .height(120.0)
-            .into();
+                    })
+                    .into();
             OverlayPortal::new(anchor)
                 .overlay_child(popup)
+                .placement(TransientPlacement::new().alignment_offset(Offset::new(10.0, 0.0)))
                 .role(TransientRole::Menu)
                 .show(observed.get())
                 .into()
@@ -200,7 +195,19 @@ fn native_transient_surface_smoke() {
             let parent = find_window(TITLE);
             assert_ne!(parent, 0, "parent HWND must be discoverable");
             let parent_rect = window_rect(parent);
-            let first = owned_windows(parent);
+            // Plan 06 deliberately keeps a newly created native host hidden
+            // until the runtime has consumed the OS work-area bounds and
+            // resolved the same canonical placement as the desktop adapter.
+            // Allow bounded frames for that handshake rather than assuming the
+            // popup is visible after the first host-creation frame.
+            let mut first = owned_windows(parent);
+            for _ in 0..8 {
+                if first.len() == 1 {
+                    break;
+                }
+                frame(&simulation, &worker_handle)?;
+                first = owned_windows(parent);
+            }
             assert_eq!(first.len(), 1, "exactly one retained menu host is expected");
             let popup = first[0];
             {

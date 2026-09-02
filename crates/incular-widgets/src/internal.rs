@@ -58,6 +58,8 @@ pub use crate::painting_effects::*;
 pub use crate::raw_input::*;
 pub use crate::scrolling::*;
 pub use crate::selection::*;
+#[doc(hidden)]
+pub use crate::transient::TransientPlacementOverride;
 pub use crate::tree::icons;
 pub use crate::tree::{
     ActionId, Blend, Blur, BlurController, BoxFit, BuildContext, ButtonSpec, ButtonState,

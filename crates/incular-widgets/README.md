@@ -102,6 +102,19 @@ flip/shift/constrain policy, cross-surface dismissal, and logical accessibility
 ownership are layered on top of this hosting primitive rather than being
 hard-coded into individual Material menu widgets.
 
+`TransientPlacement` and `place_transient` are the single geometry policy for
+both overlay and native hosts. They resolve preferred side/alignment, RTL-aware
+submenu direction, safe margins, offsets, and collision handling in the fixed
+order `flip -> shift -> constrain`. The same retained result drives popup layout,
+hit testing, renderer partition geometry, and the desktop host, so changing
+presentation mode cannot silently move the popup to a different policy.
+
+Dismissal is likewise semantic. A retained portal carries a role-aware
+`TransientDismissPolicy`; runtime pointer/focus/Escape and parent-deactivation
+events close retained chains without an invisible native barrier. Parent IDs keep
+nested menus protected when a pointer or focus target is inside a descendant
+popup, while unrelated sibling chains can close independently.
+
 Native hosting never creates a second WidgetTree, focus tree, gesture arena, or
 semantics tree. The transient's surface is only another presentation/input host
 for the same retained subtree. Desktop events are translated from popup-local

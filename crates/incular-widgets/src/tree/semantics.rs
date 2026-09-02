@@ -29,22 +29,38 @@ impl WidgetTree {
             self.semantic_ids.remove(&element);
             let _ = self.semantics.remove(node);
         }
+        // Allocate stable IDs for the complete semantic graph before wiring
+        // any edges. A single-pass insert/update leaves first-frame parents
+        // childless because later siblings/descendants do not have IDs yet.
+        // Native accessibility must receive a coherent tree on the same frame
+        // a transient opens, not one semantic pass later.
+        let mut inserted = HashSet::new();
+        for build in &built {
+            if self.semantic_ids.contains_key(&build.element) {
+                continue;
+            }
+            let id = self.semantics.insert(SemanticNode {
+                id: SemanticNodeId(ArenaId::from_parts(0, 0)),
+                role: build.role,
+                label: build.label.clone(),
+                value: build.value.clone(),
+                description: build.description.clone(),
+                bounds: build.bounds,
+                state: build.state.clone(),
+                actions: build.actions.clone(),
+                children: Vec::new(),
+            });
+            self.semantic_ids.insert(build.element, id);
+            inserted.insert(build.element);
+        }
+
         for build in &built {
             #[cfg(feature = "devtools")]
             let semantic_revision_before = self.semantics.revision();
-            let id = *self.semantic_ids.entry(build.element).or_insert_with(|| {
-                self.semantics.insert(SemanticNode {
-                    id: SemanticNodeId(ArenaId::from_parts(0, 0)),
-                    role: build.role,
-                    label: build.label.clone(),
-                    value: build.value.clone(),
-                    description: build.description.clone(),
-                    bounds: build.bounds,
-                    state: build.state.clone(),
-                    actions: build.actions.clone(),
-                    children: Vec::new(),
-                })
-            });
+            let id = *self
+                .semantic_ids
+                .get(&build.element)
+                .expect("semantic id allocated in graph prepass");
             let children = built
                 .iter()
                 .filter(|child| child.parent == Some(build.element))
@@ -65,7 +81,8 @@ impl WidgetTree {
                 },
             );
             #[cfg(feature = "devtools")]
-            if self.semantics.revision() != semantic_revision_before
+            if (inserted.contains(&build.element)
+                || self.semantics.revision() != semantic_revision_before)
                 && let Some(element) = self.elements.get_mut(build.element.0)
             {
                 element.dev.semantic_updates = element.dev.semantic_updates.saturating_add(1);

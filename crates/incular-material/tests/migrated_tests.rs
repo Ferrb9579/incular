@@ -318,9 +318,14 @@ mod feedback_tests {
 }
 
 mod menu_tests {
+    use std::{cell::Cell, rc::Rc};
+
     use incular_config::{Constraints, EdgeInsets};
     use incular_core::{Color, Size};
     use incular_material::*;
+    use incular_semantics::{
+        Role as SemanticRole, SemanticActionKind, SemanticNodeId, SemanticsTree,
+    };
     use incular_widgets::{Column, Container, ListView, Text, Widget, internal::WidgetTree};
 
     #[test]
@@ -346,6 +351,202 @@ mod menu_tests {
         assert!(controller.is_open());
         controller.close();
         assert!(!controller.is_open());
+    }
+
+    #[test]
+    fn menu_item_selection_closes_its_owning_menu_chain() {
+        let controller = MenuController::new();
+        let hits = Rc::new(Cell::new(0));
+        let observed = hits.clone();
+        let widget: Widget =
+            MenuAnchor::new([MenuItemButton::label("Select")
+                .on_pressed(move || observed.set(observed.get() + 1))])
+            .controller(controller.clone())
+            .child(Text::new("Menu"))
+            .into();
+        let mut tree = WidgetTree::new();
+        tree.mount(widget).expect("mount menu");
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)))
+            .expect("initial layout");
+        controller.open();
+        tree.layout(Constraints::tight(Size::new(320.0, 240.0)))
+            .expect("open layout");
+        tree.update_semantics();
+        let semantic = tree
+            .semantics()
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("Select"))
+            .map(|(id, _)| id)
+            .expect("menu item semantics");
+        let element = tree
+            .element_for_semantic_node(semantic)
+            .expect("menu item element");
+        let action = tree.action_for_element(element).expect("menu item action");
+        let callback = tree
+            .take_pending_handlers()
+            .into_iter()
+            .find(|(id, _)| *id == action)
+            .map(|(_, callback)| callback)
+            .expect("menu item callback");
+        callback();
+        assert_eq!(hits.get(), 1);
+        assert!(!controller.is_open());
+    }
+
+    #[test]
+    fn submenu_item_selection_closes_every_controller_in_the_chain() {
+        let outer = MenuController::new();
+        let inner = MenuController::new();
+        let hits = Rc::new(Cell::new(0));
+        let observed = hits.clone();
+        let submenu = SubmenuButton::new(
+            Text::new("More"),
+            [MenuItemButton::label("Leaf").on_pressed(move || observed.set(observed.get() + 1))],
+        )
+        .controller(inner.clone());
+        let widget: Widget = MenuAnchor::new([submenu])
+            .controller(outer.clone())
+            .child(Text::new("Menu"))
+            .into();
+        let mut tree = WidgetTree::new();
+        tree.mount(widget).expect("mount nested menu");
+        tree.layout(Constraints::tight(Size::new(480.0, 320.0)))
+            .expect("initial layout");
+        outer.open();
+        inner.open();
+        tree.layout(Constraints::tight(Size::new(480.0, 320.0)))
+            .expect("open nested layout");
+        tree.update_semantics();
+        let semantic = tree
+            .semantics()
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("Leaf"))
+            .map(|(id, _)| id)
+            .expect("submenu leaf semantics");
+        let element = tree
+            .element_for_semantic_node(semantic)
+            .expect("submenu leaf element");
+        let action = tree
+            .action_for_element(element)
+            .expect("submenu leaf action");
+        let callback = tree
+            .take_pending_handlers()
+            .into_iter()
+            .find(|(id, _)| *id == action)
+            .map(|(_, callback)| callback)
+            .expect("submenu leaf callback");
+
+        callback();
+
+        assert_eq!(hits.get(), 1);
+        assert!(!inner.is_open());
+        assert!(!outer.is_open());
+    }
+
+    #[test]
+    fn open_menu_exposes_ordered_menu_and_menu_item_semantics() {
+        fn descendant_order(
+            semantics: &SemanticsTree,
+            root: SemanticNodeId,
+        ) -> Vec<SemanticNodeId> {
+            let mut ordered = Vec::new();
+            let mut stack = semantics
+                .node(root)
+                .map(|node| node.children.iter().rev().copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+            while let Some(id) = stack.pop() {
+                ordered.push(id);
+                if let Some(node) = semantics.node(id) {
+                    stack.extend(node.children.iter().rev().copied());
+                }
+            }
+            ordered
+        }
+
+        let outer = MenuController::new();
+        let inner = MenuController::new();
+        let widget: Widget = MenuAnchor::new([
+            Widget::from(MenuItemButton::label("First")),
+            SubmenuButton::new(Text::new("More"), [MenuItemButton::label("Nested")])
+                .controller(inner.clone())
+                .into(),
+            Widget::from(MenuItemButton::label("Disabled").enabled(false)),
+        ])
+        .controller(outer.clone())
+        .child(Text::new("Menu"))
+        .into();
+        let mut tree = WidgetTree::new();
+        tree.mount(widget).expect("mount semantic menu");
+        tree.layout(Constraints::tight(Size::new(480.0, 320.0)))
+            .expect("initial semantic layout");
+        outer.open();
+        inner.open();
+        tree.layout(Constraints::tight(Size::new(480.0, 320.0)))
+            .expect("open semantic layout");
+        tree.update_semantics();
+
+        let semantics = tree.semantics();
+        let menu_nodes = semantics
+            .iter()
+            .filter(|(_, node)| node.role == SemanticRole::Menu)
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        assert_eq!(menu_nodes.len(), 2, "outer and nested menu surfaces");
+
+        let (first_id, first) = semantics
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("First"))
+            .expect("first item semantics");
+        assert_eq!(first.role, SemanticRole::MenuItem);
+        assert!(first.actions.contains(&SemanticActionKind::Focus));
+        assert!(first.actions.contains(&SemanticActionKind::Activate));
+
+        let (submenu_id, submenu) = semantics
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("More"))
+            .expect("submenu anchor semantics");
+        assert_eq!(submenu.role, SemanticRole::MenuItem);
+        assert_eq!(submenu.state.expanded, Some(true));
+
+        let (nested_id, nested) = semantics
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("Nested"))
+            .expect("nested item semantics");
+        assert_eq!(nested.role, SemanticRole::MenuItem);
+
+        let (disabled_id, disabled) = semantics
+            .iter()
+            .find(|(_, node)| node.label.as_deref() == Some("Disabled"))
+            .expect("disabled item semantics");
+        assert_eq!(disabled.role, SemanticRole::MenuItem);
+        assert!(!disabled.state.enabled);
+        assert!(!disabled.actions.contains(&SemanticActionKind::Activate));
+
+        let outer_menu = menu_nodes
+            .iter()
+            .copied()
+            .find(|menu| {
+                let descendants = descendant_order(semantics, *menu);
+                descendants.contains(&first_id)
+                    && descendants.contains(&submenu_id)
+                    && descendants.contains(&disabled_id)
+            })
+            .expect("outer menu semantic ownership");
+        let nested_menu = menu_nodes
+            .iter()
+            .copied()
+            .find(|menu| {
+                *menu != outer_menu && descendant_order(semantics, *menu).contains(&nested_id)
+            })
+            .expect("nested menu semantic ownership");
+        assert_ne!(outer_menu, nested_menu);
+
+        let top_level_order = descendant_order(semantics, outer_menu)
+            .into_iter()
+            .filter(|id| [first_id, submenu_id, disabled_id].contains(id))
+            .collect::<Vec<_>>();
+        assert_eq!(top_level_order, [first_id, submenu_id, disabled_id]);
+        assert!(descendant_order(semantics, nested_menu).contains(&nested_id));
     }
 
     #[test]
@@ -381,6 +582,18 @@ mod menu_tests {
         tree.layout(Constraints::tight(Size::new(320.0, 240.0)))
             .expect("layout");
         tree.update_semantics();
+        let anchor_nodes = tree
+            .semantics()
+            .iter()
+            .filter(|(_, node)| node.label.as_deref() == Some("Menu"))
+            .map(|(_, node)| node)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            anchor_nodes.len(),
+            1,
+            "button-styled anchor visuals must not duplicate trigger semantics"
+        );
+        assert_eq!(anchor_nodes[0].role, SemanticRole::Button);
         assert!(
             tree.semantics()
                 .iter()
@@ -449,9 +662,11 @@ mod menu_tests {
             .expect("layout");
         item_tree.update_semantics();
         assert!(
-            item_tree.semantics().iter().any(|(_, node)| node.role
-                == incular_semantics::Role::Button
-                && !node.state.enabled)
+            item_tree
+                .semantics()
+                .iter()
+                .any(|(_, node)| node.role == incular_semantics::Role::MenuItem
+                    && !node.state.enabled)
         );
 
         let submenu = SubmenuButton::builder()

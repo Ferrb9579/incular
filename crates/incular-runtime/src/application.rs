@@ -13,7 +13,9 @@ use crate::restoration::{self, RestorationConfig, RestorationDiagnostics};
 use crate::scheduler_counters;
 use crate::simulation::{self, Screenshot, Simulation, SimulationError};
 use crate::tasks::{self, RuntimeWake, Task, TaskFailure, TaskHandle, TokioHandle};
-use crate::transient_presentation::TransientPresentationResolution;
+use crate::transient_presentation::{
+    ResolvedTransientPresentation, TransientPresentationResolution,
+};
 use crate::window_commands::{
     DisplayCatalog, NativeOperationCompletionStatus, NativeWindowCommand, QueuedNativeRequest,
     QueuedWindowCommand, WindowCommandBridge, WindowHandle,
@@ -454,12 +456,33 @@ impl Application {
         presentations: Vec<TransientPresentationResolution>,
     ) -> bool {
         self.with_window_mut(window_id, |record| {
+            let native = presentations
+                .iter()
+                .filter_map(|presentation| {
+                    (presentation.resolved == ResolvedTransientPresentation::Native)
+                        .then_some(presentation.id)
+                })
+                .collect::<Vec<_>>();
+            record.runtime.set_native_transient_presentations(native);
             *record
                 .transient_presentations
                 .write()
                 .expect("transient presentation snapshot lock") = presentations;
         })
         .is_some()
+    }
+
+    /// Publishes the desktop bounds a confirmed native transient may use for
+    /// collision placement. Bounds are parent-view-local logical geometry.
+    pub fn set_native_transient_bounds(
+        &mut self,
+        window_id: WindowId,
+        bounds: Option<incular_core::Rect>,
+    ) -> bool {
+        self.with_window_mut(window_id, |record| {
+            record.runtime.set_native_transient_bounds(bounds)
+        })
+        .unwrap_or(false)
     }
 
     /// Development-only, read-only view of application windows.  Keeping this
@@ -1118,6 +1141,9 @@ impl Application {
                         }
                         WindowLifecycle::Unfocused => {
                             record.native_focused = false;
+                            record.runtime.dismiss_transients(
+                                incular_widgets::TransientDismissReason::ParentDeactivated,
+                            );
                             let mut environment = record.runtime.environment();
                             environment.window_focused = false;
                             record.runtime.set_environment(environment);

@@ -3,7 +3,8 @@
 use accesskit::{Action as AccessKitAction, ActionRequest, TreeId};
 use incular_accessibility::AccessKitProjection;
 use incular_config::{
-    Constraints, EdgeInsets, RuntimeEnvironment, TransientPresentation, TransientRole,
+    Constraints, EdgeInsets, RuntimeEnvironment, TextDirection, TransientPresentation,
+    TransientRole,
 };
 use incular_core::{
     Code, Color, ImeEvent, InputEvent, KeyboardEvent, KeyboardKey, Modifiers, Offset, PointerPhase,
@@ -17,11 +18,11 @@ use incular_platform::{
 };
 use incular_rendering::{DisplayList, PaintCommand};
 use incular_runtime::*;
-use incular_semantics::{Role as SemanticRole, SemanticAction};
+use incular_semantics::{Role as SemanticRole, SemanticAction, SemanticActionKind};
 use incular_text::TextStyle;
 use incular_widgets::internal::{
-    ActionId, Diagnostics, ElementId, GeneratedChildIdentity, GestureCallbacks, Key, PointerEvent,
-    TextEditingController, TextRange, TextSelection, TreeError, WidgetTree,
+    ActionId, Diagnostics, ElementId, ExplicitSemantics, GeneratedChildIdentity, GestureCallbacks,
+    Key, PointerEvent, TextEditingController, TextRange, TextSelection, TreeError, WidgetTree,
 };
 use incular_widgets::{
     Align, BorderRadius, BoxDecoration, Container, CustomScrollView, DecoratedBox,
@@ -79,6 +80,18 @@ fn key_down(code: Code) -> KeyboardEvent {
     KeyboardEvent::key_down(
         KeyboardKey::Named(incular_core::NamedKey::Unidentified),
         code,
+    )
+}
+
+fn semantic_menu_action(label: &'static str, callback: impl Fn() + 'static) -> Widget {
+    let action: Widget = ActionSurface::new(label)
+        .size(Size::new(90., 30.))
+        .on_press(callback)
+        .into();
+    action.semantics(
+        ExplicitSemantics::new(SemanticRole::MenuItem)
+            .label(label)
+            .actions([SemanticActionKind::Focus, SemanticActionKind::Activate]),
     )
 }
 
@@ -852,6 +865,502 @@ fn resolved_transient_presentation_is_observable_from_handle_and_diagnostics() {
     assert!(application.set_transient_presentations(id, vec![resolution]));
     assert!(application.close_window(id));
     assert!(handle.transient_presentations().is_empty());
+}
+
+#[test]
+fn confirmed_native_transient_switches_to_work_area_placement_on_next_frame() {
+    let mut application = Application::new(|_| {
+        OverlayPortal::new(Widget::box_(Size::new(100., 100.), Color::BLACK))
+            .overlay_child(Widget::box_(Size::new(80., 60.), Color::WHITE))
+            .presentation(TransientPresentation::Auto)
+            .role(TransientRole::Menu)
+            .show(true)
+            .into()
+    })
+    .unwrap();
+    let id = application.primary_window();
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 100.)),
+            Instant::now(),
+        )
+        .unwrap();
+    let overlay = application.transient_surfaces(id)[0];
+    assert!(
+        overlay.content_rect.origin.y
+            < overlay.anchor_rect.origin.y + overlay.anchor_rect.size.height
+    );
+
+    assert!(application.set_native_transient_bounds(
+        id,
+        Some(Rect::from_origin_size(
+            Offset::new(-100., -100.),
+            Size::new(400., 300.),
+        )),
+    ));
+    let resolution = TransientPresentationResolution {
+        id: overlay.id,
+        role: overlay.role,
+        requested: overlay.presentation,
+        resolved: ResolvedTransientPresentation::Native,
+        fallback_reason: None,
+    };
+    assert!(application.set_transient_presentations(id, vec![resolution]));
+    assert!(application.frame_requested(id));
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 100.)),
+            Instant::now(),
+        )
+        .unwrap();
+    let native = application.transient_surfaces(id)[0];
+    assert_eq!(native.id, overlay.id);
+    assert_eq!(
+        native.placement_result.side,
+        incular_widgets::TransientSide::Bottom
+    );
+    assert_eq!(native.content_rect.origin.y, 100.0);
+}
+
+#[test]
+fn native_transient_repositions_across_parent_move_and_mixed_dpi_without_identity_or_root_resize() {
+    let mut runtime = Runtime::new(
+        OverlayPortal::new(Widget::box_(Size::new(100., 100.), Color::BLACK))
+            .overlay_child(Widget::box_(Size::new(80., 60.), Color::WHITE))
+            .role(TransientRole::Menu)
+            .show(true)
+            .into(),
+    )
+    .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let id = runtime.transient_surfaces()[0].id;
+    assert!(
+        runtime.set_native_transient_bounds(Some(Rect::from_origin_size(
+            Offset::new(-100., -100.),
+            Size::new(400., 300.),
+        )))
+    );
+    assert!(runtime.set_native_transient_presentations([id]));
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let before = runtime.transient_surfaces()[0];
+    assert_eq!(before.id, id);
+    assert_eq!(
+        before.placement_result.side,
+        incular_widgets::TransientSide::Bottom
+    );
+    assert_eq!(
+        runtime.tree().root_layout_size(),
+        Some(Size::new(100., 100.))
+    );
+
+    let mut environment = runtime.environment();
+    environment.scale_factor = 1.5;
+    environment.physical_width = 150;
+    environment.physical_height = 150;
+    assert!(runtime.set_environment(environment));
+    // Simulates the parent moving lower on the display: the desktop work-area
+    // bottom is now exactly the owner's bottom in parent-local logical space.
+    assert!(
+        runtime.set_native_transient_bounds(Some(Rect::from_origin_size(
+            Offset::new(-100., -200.),
+            Size::new(400., 300.),
+        )))
+    );
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let after = runtime.transient_surfaces()[0];
+    assert_eq!(after.id, id);
+    assert_eq!(
+        after.placement_result.side,
+        incular_widgets::TransientSide::Top
+    );
+    assert!(after.placement_result.flipped);
+    assert_ne!(after.content_rect, before.content_rect);
+    assert_eq!(
+        runtime.tree().root_layout_size(),
+        Some(Size::new(100., 100.))
+    );
+}
+
+#[test]
+fn escape_and_parent_deactivation_use_semantic_transient_dismissal() {
+    let escape_hits = Rc::new(Cell::new(0));
+    let escape_observed = escape_hits.clone();
+    let mut runtime = Runtime::new(
+        OverlayPortal::new(Widget::box_(Size::new(40., 20.), Color::BLACK))
+            .overlay_child(Widget::box_(Size::new(80., 60.), Color::WHITE))
+            .role(TransientRole::Menu)
+            .on_dismiss(move |reason| {
+                if reason == incular_widgets::TransientDismissReason::Escape {
+                    escape_observed.set(escape_observed.get() + 1);
+                }
+            })
+            .show(true)
+            .into(),
+    )
+    .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(200., 160.)))
+        .unwrap();
+    let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Escape)));
+    assert_eq!(escape_hits.get(), 1);
+    assert!(runtime.frame_requested());
+
+    let deactivate_hits = Rc::new(Cell::new(0));
+    let observed = deactivate_hits.clone();
+    let mut application = Application::new(move |_| {
+        OverlayPortal::new(Widget::box_(Size::new(40., 20.), Color::BLACK))
+            .overlay_child(Widget::box_(Size::new(80., 60.), Color::WHITE))
+            .role(TransientRole::Menu)
+            .on_dismiss({
+                let observed = observed.clone();
+                move |reason| {
+                    if reason == incular_widgets::TransientDismissReason::ParentDeactivated {
+                        observed.set(observed.get() + 1);
+                    }
+                }
+            })
+            .show(true)
+            .into()
+    })
+    .unwrap();
+    let id = application.primary_window();
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(200., 160.)),
+            Instant::now(),
+        )
+        .unwrap();
+    application.handle_window_event(WindowEvent::lifecycle(id, WindowLifecycle::Unfocused));
+    assert_eq!(deactivate_hits.get(), 1);
+    assert!(application.frame_requested(id));
+}
+
+#[test]
+fn destroying_focused_transient_clears_logical_focus_in_same_frame() {
+    let open = Rc::new(Cell::new(true));
+    let revision = Rc::new(Cell::new(0_u64));
+    let editor = TextEditingController::with_text("popup");
+    let root: Widget = Widget::stateful_layout_builder(revision.clone(), {
+        let open = open.clone();
+        let editor = editor.clone();
+        move |_, _| {
+            let anchor = Widget::box_(Size::new(40., 20.), Color::BLACK);
+            if open.get() {
+                OverlayPortal::new(anchor)
+                    .overlay_child(
+                        incular_widgets::EditableText::new(editor.clone())
+                            .size(Size::new(100., 36.)),
+                    )
+                    .role(TransientRole::Menu)
+                    .show(true)
+                    .into()
+            } else {
+                anchor
+            }
+        }
+    });
+    let mut runtime = Runtime::new(root).unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(240., 180.)))
+        .unwrap();
+    let popup = runtime.transient_surfaces()[0].content_rect;
+    let position = popup.origin + Offset::new(5., 5.);
+    let _ = runtime.handle_input(InputEvent::Pointer {
+        phase: PointerPhase::Down,
+        position,
+    });
+    assert!(runtime.focused_element().is_some());
+
+    open.set(false);
+    revision.set(revision.get().wrapping_add(1));
+    runtime
+        .run_frame(Constraints::tight(Size::new(240., 180.)))
+        .unwrap();
+    assert!(runtime.focused_element().is_none());
+    assert!(runtime.transient_surfaces().is_empty());
+}
+
+#[test]
+fn native_transient_routes_pointer_to_retained_control_outside_owner_bounds() {
+    let hits = Rc::new(Cell::new(0));
+    let observed = hits.clone();
+    let mut runtime = Runtime::new(
+        OverlayPortal::new(Widget::box_(Size::new(20., 20.), Color::BLACK))
+            .overlay_child(
+                ActionSurface::new("popup")
+                    .size(Size::new(80., 40.))
+                    .on_press(move || observed.set(observed.get() + 1)),
+            )
+            .placement(
+                incular_widgets::TransientPlacement::new().alignment_offset(Offset::new(150., 0.)),
+            )
+            .role(TransientRole::Menu)
+            .show(true)
+            .into(),
+    )
+    .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let id = runtime.transient_surfaces()[0].id;
+    assert!(
+        runtime.set_native_transient_bounds(Some(Rect::from_origin_size(
+            Offset::ZERO,
+            Size::new(400., 300.),
+        )))
+    );
+    assert!(runtime.set_native_transient_presentations([id]));
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let popup = runtime.transient_surfaces()[0].content_rect;
+    assert!(popup.origin.x > 100.0, "popup must escape the owner bounds");
+    let point = popup.origin + Offset::new(5., 5.);
+    for phase in [PointerPhase::Down, PointerPhase::Up] {
+        let _ = runtime.handle_input(InputEvent::Pointer {
+            phase,
+            position: point,
+        });
+    }
+    assert_eq!(hits.get(), 1);
+}
+
+#[test]
+fn native_transient_keeps_semantic_identity_tree_membership_and_actionability() {
+    let hits = Rc::new(Cell::new(0));
+    let observed = hits.clone();
+    let mut runtime = Runtime::new(
+        OverlayPortal::new(ActionSurface::new("anchor").size(Size::new(40., 20.)))
+            .overlay_child(
+                ActionSurface::new("popup")
+                    .size(Size::new(80., 40.))
+                    .on_press(move || observed.set(observed.get() + 1)),
+            )
+            .placement(
+                incular_widgets::TransientPlacement::new().alignment_offset(Offset::new(150., 0.)),
+            )
+            .role(TransientRole::Menu)
+            .show(true)
+            .into(),
+    )
+    .unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let overlay_semantic = runtime
+        .tree()
+        .semantics()
+        .iter()
+        .find(|(_, node)| node.label.as_deref() == Some("popup"))
+        .map(|(id, node)| (id, node.bounds))
+        .expect("popup semantics in overlay tree");
+    let transient = runtime.transient_surfaces()[0];
+
+    assert!(
+        runtime.set_native_transient_bounds(Some(Rect::from_origin_size(
+            Offset::ZERO,
+            Size::new(400., 300.),
+        )))
+    );
+    assert!(runtime.set_native_transient_presentations([transient.id]));
+    runtime
+        .run_frame(Constraints::tight(Size::new(100., 100.)))
+        .unwrap();
+    let semantics = runtime.tree().semantics();
+    let (native_semantic_id, native_semantic) = semantics
+        .iter()
+        .find(|(_, node)| node.label.as_deref() == Some("popup"))
+        .expect("popup semantics after native placement");
+    assert_eq!(native_semantic_id, overlay_semantic.0);
+    assert_ne!(native_semantic.bounds, overlay_semantic.1);
+    assert!(native_semantic.bounds.origin.x > 100.0);
+
+    let root = semantics.root().expect("semantic root");
+    let mut reachable = vec![root];
+    let mut saw_popup = false;
+    while let Some(id) = reachable.pop() {
+        if id == native_semantic_id {
+            saw_popup = true;
+            break;
+        }
+        if let Some(node) = semantics.node(id) {
+            reachable.extend(node.children.iter().copied());
+        }
+    }
+    assert!(
+        saw_popup,
+        "native popup remains in the owner's semantic tree"
+    );
+
+    let mut projection = AccessKitProjection::new();
+    projection.activate();
+    let update = projection
+        .sync(semantics, 1.0)
+        .expect("full AccessKit tree");
+    let native_node = update
+        .into_accesskit()
+        .nodes
+        .into_iter()
+        .find(|(_, node)| node.role() == accesskit::Role::Button && node.label() == Some("popup"))
+        .map(|(id, _)| id)
+        .expect("popup AccessKit node");
+    let request = ActionRequest {
+        action: AccessKitAction::Click,
+        target_tree: TreeId::ROOT,
+        target_node: native_node,
+        data: None,
+    };
+    let request = projection
+        .translate_action(&request)
+        .expect("popup semantic activation translates");
+    assert!(runtime.dispatch_semantic_action(request.node, request.action));
+    assert_eq!(hits.get(), 1);
+}
+
+#[test]
+fn tab_focus_crosses_nested_transient_boundaries_without_closing_its_chain() {
+    let outer_dismissals = Rc::new(Cell::new(0));
+    let inner_dismissals = Rc::new(Cell::new(0));
+    let outer_observed = outer_dismissals.clone();
+    let inner_observed = inner_dismissals.clone();
+    let inner: Widget =
+        OverlayPortal::new(ActionSurface::new("submenu-anchor").size(Size::new(80., 30.)))
+            .overlay_child(ActionSurface::new("submenu-item").size(Size::new(90., 30.)))
+            .placement(incular_widgets::TransientPlacement::new().submenu(true))
+            .role(TransientRole::Menu)
+            .on_dismiss(move |_| inner_observed.set(inner_observed.get() + 1))
+            .show(true)
+            .into();
+    let menu: Widget =
+        OverlayPortal::new(ActionSurface::new("menu-anchor").size(Size::new(80., 30.)))
+            .overlay_child(inner)
+            .role(TransientRole::Menu)
+            .on_dismiss(move |_| outer_observed.set(outer_observed.get() + 1))
+            .show(true)
+            .into();
+    let root: Widget = incular_widgets::Column::new([
+        menu,
+        ActionSurface::new("outside")
+            .size(Size::new(80., 30.))
+            .into(),
+    ])
+    .into();
+    let mut runtime = Runtime::new(root).unwrap();
+    runtime
+        .run_frame(Constraints::tight(Size::new(320., 240.)))
+        .unwrap();
+
+    for _ in 0..3 {
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Tab)));
+        assert_eq!(outer_dismissals.get(), 0);
+        assert_eq!(inner_dismissals.get(), 0);
+    }
+    let focused = runtime
+        .focused_element()
+        .expect("nested popup item focused");
+    let focused_bounds = runtime
+        .tree()
+        .element_bounds(focused)
+        .expect("focused element bounds");
+    let submenu = runtime
+        .transient_surfaces()
+        .into_iter()
+        .find(|surface| surface.parent.is_some())
+        .expect("submenu surface");
+    assert!(submenu.content_rect.intersection(focused_bounds).is_some());
+
+    let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Tab)));
+    assert_eq!(inner_dismissals.get(), 1);
+    assert_eq!(outer_dismissals.get(), 1);
+}
+
+#[test]
+fn menu_arrow_navigation_crosses_nested_transient_boundaries_in_text_direction() {
+    let build_runtime = |direction: TextDirection| {
+        let activations = Rc::new(Cell::new(0));
+        let observed = activations.clone();
+        let submenu_item = semantic_menu_action("submenu-item", move || {
+            observed.set(observed.get() + 1);
+        });
+        let submenu_anchor = semantic_menu_action("submenu-anchor", || {});
+        let inner: Widget = OverlayPortal::new(submenu_anchor)
+            .overlay_child(submenu_item)
+            .placement(incular_widgets::TransientPlacement::new().submenu(true))
+            .role(TransientRole::Menu)
+            .show(true)
+            .into();
+        let outer_item = semantic_menu_action("outer-item", || {});
+        let outer_popup: Widget = incular_widgets::Column::new([outer_item, inner]).into();
+        let menu: Widget =
+            OverlayPortal::new(ActionSurface::new("menu-anchor").size(Size::new(90., 30.)))
+                .overlay_child(outer_popup)
+                .role(TransientRole::Menu)
+                .show(true)
+                .into();
+        let mut runtime = Runtime::new(menu).expect("nested menu runtime");
+        let environment = RuntimeEnvironment {
+            text_direction: direction,
+            ..RuntimeEnvironment::default()
+        };
+        let _ = runtime.set_environment(environment);
+        runtime
+            .run_frame(Constraints::tight(Size::new(320., 240.)))
+            .expect("nested menu frame");
+        (runtime, activations)
+    };
+
+    for (direction, outward, inward) in [
+        (TextDirection::Ltr, Code::ArrowRight, Code::ArrowLeft),
+        (TextDirection::Rtl, Code::ArrowLeft, Code::ArrowRight),
+    ] {
+        let (mut runtime, activations) = build_runtime(direction);
+
+        // The top-level trigger is first; the first outer menu item is second.
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Tab)));
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Tab)));
+        let outer_item = runtime.focused_element().expect("outer item focus");
+        assert!(runtime.tree().is_menu_item_focus(outer_item));
+
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::ArrowDown)));
+        let submenu_anchor = runtime.focused_element().expect("submenu anchor focus");
+        assert_ne!(submenu_anchor, outer_item);
+
+        let _ = runtime.handle_input(InputEvent::Key(key_down(outward)));
+        let submenu_item = runtime.focused_element().expect("submenu item focus");
+        assert_ne!(submenu_item, submenu_anchor);
+        let nested_surface = runtime
+            .transient_surfaces()
+            .into_iter()
+            .find(|surface| surface.parent.is_some())
+            .expect("nested surface");
+        let focused_bounds = runtime
+            .tree()
+            .element_bounds(submenu_item)
+            .expect("submenu item bounds");
+        assert!(
+            nested_surface
+                .content_rect
+                .intersection(focused_bounds)
+                .is_some()
+        );
+
+        let _ = runtime.handle_input(InputEvent::Key(key_down(inward)));
+        assert_eq!(runtime.focused_element(), Some(submenu_anchor));
+
+        let _ = runtime.handle_input(InputEvent::Key(key_down(outward)));
+        assert_eq!(runtime.focused_element(), Some(submenu_item));
+        let _ = runtime.handle_input(InputEvent::Key(key_down(Code::Enter)));
+        assert_eq!(activations.get(), 1);
+    }
 }
 
 #[test]
