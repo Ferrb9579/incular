@@ -1,31 +1,10 @@
 use incular_platform::{
-    CapabilitySupport, DisplayId, DisplaySnapshot, NativeWindowSystem, PhysicalScreenRect,
-    PhysicalSize,
+    DisplayId, DisplaySnapshot, NativeWindowSystem, PhysicalScreenRect, PhysicalSize,
 };
 use winit::monitor::MonitorHandle;
 
+use crate::DesktopPlatformServices;
 use crate::display_identity::GenerationalDisplayRegistry;
-
-/// Narrow native-service seam for desktop geometry Winit intentionally does
-/// not expose, such as a monitor's taskbar/dock-adjusted work area.
-///
-/// OS facade crates implement this when they can make a reliable native query.
-/// Returning `Unsupported`/`None` is preferable to deriving a fake usable area
-/// from full monitor bounds.
-pub trait DesktopPlatformServices {
-    fn work_area_support(&self, _system: NativeWindowSystem) -> CapabilitySupport {
-        CapabilitySupport::Unsupported
-    }
-
-    fn work_area(&self, _monitor: &MonitorHandle) -> Option<PhysicalScreenRect> {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DefaultDesktopPlatformServices;
-
-impl DesktopPlatformServices for DefaultDesktopPlatformServices {}
 
 #[derive(Default)]
 pub(crate) struct DesktopDisplayRegistry {

@@ -205,6 +205,8 @@ pub(crate) fn display_list_composition_bounds(commands: &[PaintCommand]) -> Opti
                 }
             }
             PaintCommand::PushClip { .. }
+            | PaintCommand::PushSurfacePartition { .. }
+            | PaintCommand::PopSurfacePartition
             | PaintCommand::PushClipRRect { .. }
             | PaintCommand::PushClipOval { .. }
             | PaintCommand::PushClipPath { .. }

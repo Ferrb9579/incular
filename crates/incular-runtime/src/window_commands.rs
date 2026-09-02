@@ -1,6 +1,7 @@
 use crate::application_types::{WindowError, WindowRestorationId};
 use crate::context::BuildContext;
 use crate::tasks::RuntimeWake;
+use crate::transient_presentation::TransientPresentationResolution;
 use crate::window_state::WindowManager;
 use incular_platform::{
     CapabilitySupport, CursorGrabMode, DisplayPlacementArea, DisplaySnapshot, Fullscreen,
@@ -205,6 +206,7 @@ pub struct WindowHandle {
     pub(crate) capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) observed_state: Arc<RwLock<WindowObservedState>>,
     pub(crate) displays: Arc<RwLock<DisplayCatalog>>,
+    pub(crate) transient_presentations: Arc<RwLock<Vec<TransientPresentationResolution>>>,
 }
 
 impl std::fmt::Debug for WindowHandle {
@@ -236,6 +238,17 @@ impl WindowHandle {
             .observed_state
             .read()
             .expect("window observed-state snapshot lock")
+    }
+
+    /// Resolved native-vs-overlay presentation for visible retained transients
+    /// in this window. The native adapter updates this after host negotiation;
+    /// an empty list means no visible semantic transient is currently present.
+    #[must_use]
+    pub fn transient_presentations(&self) -> Vec<TransientPresentationResolution> {
+        self.transient_presentations
+            .read()
+            .expect("transient presentation snapshot lock")
+            .clone()
     }
 
     /// Immutable snapshots for displays currently published by the native

@@ -1,3 +1,4 @@
+use crate::TransientPresentationResolution;
 use crate::application_types::ApplicationLifecycle;
 use crate::application_types::{RestorableWindowMetadata, WindowError, WindowRestorationId};
 use crate::context::BuildContext;
@@ -59,6 +60,9 @@ pub struct WindowDiagnostics {
     /// State most recently observed from the native backend. Unknown fields are
     /// `None` rather than copied from requested state.
     pub observed_state: WindowObservedState,
+    /// Resolved native-vs-overlay presentation for every currently visible
+    /// semantic transient in this window.
+    pub transient_presentations: Vec<TransientPresentationResolution>,
 }
 
 /// Aggregate lifecycle and stale-command diagnostics for an application.
@@ -95,6 +99,7 @@ pub(crate) struct WindowRecord {
     pub(crate) last_platform_error: Option<PlatformOperationError>,
     pub(crate) requested_state: WindowRequestedState,
     pub(crate) observed_state: Arc<RwLock<WindowObservedState>>,
+    pub(crate) transient_presentations: Arc<RwLock<Vec<TransientPresentationResolution>>>,
 }
 
 /// Window-local negotiation state for content-driven native sizing.
@@ -353,6 +358,7 @@ impl WindowManager {
                 .expect("application capability snapshot lock"),
         ));
         let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
+        let transient_presentations = Arc::new(RwLock::new(Vec::new()));
         let scope = tasks::TaskScheduler::spawner(&self.scheduler).scope();
         scope.bind_window(id);
         let metrics = initial_metrics(&options);
@@ -397,6 +403,7 @@ impl WindowManager {
                 last_platform_error: None,
                 requested_state,
                 observed_state: observed_state.clone(),
+                transient_presentations: transient_presentations.clone(),
             },
         );
         self.sync_restorable_windows(true);
@@ -412,6 +419,7 @@ impl WindowManager {
             capabilities,
             observed_state,
             displays: self.displays.clone(),
+            transient_presentations,
         })
     }
 
@@ -459,6 +467,7 @@ impl WindowManager {
                 .expect("application capability snapshot lock"),
         ));
         let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
+        let transient_presentations = Arc::new(RwLock::new(Vec::new()));
         let spawner = tasks::TaskScheduler::spawner_for(&self.scheduler, id);
         let window_scope = spawner.scope();
         window_scope.bind_window(id);
@@ -560,6 +569,7 @@ impl WindowManager {
                 last_platform_error: None,
                 requested_state,
                 observed_state: observed_state.clone(),
+                transient_presentations: transient_presentations.clone(),
             },
         );
         self.sync_restorable_windows(true);
@@ -575,15 +585,20 @@ impl WindowManager {
             capabilities,
             observed_state,
             displays: self.displays.clone(),
+            transient_presentations,
         })
     }
 
     pub(crate) fn handle(&self, id: WindowId) -> Option<WindowHandle> {
         let registry = self.registry.upgrade()?;
-        let (capabilities, observed_state) = {
+        let (capabilities, observed_state, transient_presentations) = {
             let registry = registry.borrow();
             let record = registry.get(id)?;
-            (record.capabilities.clone(), record.observed_state.clone())
+            (
+                record.capabilities.clone(),
+                record.observed_state.clone(),
+                record.transient_presentations.clone(),
+            )
         };
         Some(WindowHandle {
             id,
@@ -591,6 +606,7 @@ impl WindowManager {
             capabilities,
             observed_state,
             displays: self.displays.clone(),
+            transient_presentations,
         })
     }
 

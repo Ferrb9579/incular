@@ -1,8 +1,10 @@
 use incular_config::Constraints;
 use incular_core::{Color, Offset, Rect, Size};
+use incular_rendering::PaintCommand;
 use incular_widgets::internal::WidgetTree;
 use incular_widgets::{
-    OverlayPortal, Padding, Positioned, SizedBox, TransientPresentation, TransientRole, Widget,
+    Column, OverlayPortal, Padding, Positioned, SizedBox, TransientPresentation, TransientRole,
+    Widget,
 };
 
 fn anchored_portal(inset: f32) -> Widget {
@@ -96,4 +98,62 @@ fn transient_snapshot_tracks_anchor_relayout_without_changing_identity() {
     );
     assert_eq!(second.anchor_rect.origin, Offset::new(24.0, 24.0));
     assert_eq!(second.content_rect.origin, Offset::new(29.0, 36.0));
+}
+
+#[test]
+fn painted_transient_subtree_is_marked_with_the_snapshot_partition_identity() {
+    let portal = anchored_portal(8.0);
+    let mut tree = WidgetTree::new();
+    tree.mount(portal).expect("mount portal");
+    tree.layout(Constraints::loose(Size::new(200.0, 160.0)))
+        .expect("layout portal");
+    let snapshot = tree.transient_surfaces()[0];
+    let list = tree.paint();
+    let partition = snapshot.id.surface_partition();
+
+    assert!(list.commands().iter().any(|command| {
+        matches!(command, PaintCommand::PushSurfacePartition { id } if *id == partition)
+    }));
+    let selected = [partition].into_iter().collect();
+    let (parent, detached) = list.detach_surface_partitions(&selected);
+    assert!(
+        detached
+            .get(&partition)
+            .is_some_and(|list| !list.is_empty())
+    );
+    assert!(parent.commands().iter().all(|command| !matches!(
+        command,
+        PaintCommand::PushSurfacePartition { .. } | PaintCommand::PopSurfacePartition
+    )));
+}
+
+#[test]
+fn simultaneous_transients_keep_distinct_retained_and_render_partition_identity() {
+    let root: Widget = Column::new([anchored_portal(4.0), anchored_portal(12.0)]).into();
+    let mut tree = WidgetTree::new();
+    tree.mount(root).expect("mount simultaneous portals");
+    tree.layout(Constraints::loose(Size::new(200.0, 200.0)))
+        .expect("layout simultaneous portals");
+
+    let surfaces = tree.transient_surfaces();
+    assert_eq!(surfaces.len(), 2);
+    assert_ne!(surfaces[0].id, surfaces[1].id);
+    let selected = surfaces
+        .iter()
+        .map(|surface| surface.id.surface_partition())
+        .collect();
+    let (parent, detached) = tree.paint().detach_surface_partitions(&selected);
+
+    assert_eq!(detached.len(), 2);
+    for surface in surfaces {
+        assert!(
+            detached
+                .get(&surface.id.surface_partition())
+                .is_some_and(|list| !list.is_empty())
+        );
+    }
+    assert!(parent.commands().iter().all(|command| !matches!(
+        command,
+        PaintCommand::PushSurfacePartition { .. } | PaintCommand::PopSurfacePartition
+    )));
 }

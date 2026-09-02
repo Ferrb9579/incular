@@ -22,6 +22,7 @@ impl WidgetTree {
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.paint_render(root, &mut ignored);
         }
+        self.sync_transient_surface_partitions();
         let mut output = self.compositor.flatten();
         self.paint_semantics_debugger_overlay(&mut output);
         output

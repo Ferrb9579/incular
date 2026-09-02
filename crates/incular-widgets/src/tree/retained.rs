@@ -127,6 +127,24 @@ impl WidgetTree {
     /// bounds.
     #[must_use]
     pub fn transient_surfaces(&self) -> Vec<TransientSurfaceSnapshot> {
+        self.transient_surface_entries()
+            .into_iter()
+            .map(|(snapshot, _)| snapshot)
+            .collect()
+    }
+
+    pub(super) fn sync_transient_surface_partitions(&mut self) {
+        let entries = self.transient_surface_entries();
+        self.compositor.clear_surface_partitions();
+        for (snapshot, layer) in entries {
+            self.compositor
+                .set_surface_partition(layer, Some(snapshot.id.surface_partition()));
+        }
+    }
+
+    fn transient_surface_entries(
+        &self,
+    ) -> Vec<(TransientSurfaceSnapshot, incular_rendering::LayerId)> {
         self.elements
             .iter()
             .filter_map(|(raw, element)| {
@@ -144,13 +162,16 @@ impl WidgetTree {
                 let stack_element = self.elements.get(stack.0)?;
                 let anchor = *stack_element.children.first()?;
                 let popup = *stack_element.children.get(marker.popup_child_index)?;
-                Some(TransientSurfaceSnapshot {
+                let popup_render = self.render_id(popup)?;
+                let popup_layer = self.renders.get(popup_render.0)?.object.layers.root;
+                let snapshot = TransientSurfaceSnapshot {
                     id: TransientSurfaceId::from_parts(raw.index(), raw.generation()),
                     role: marker.role,
                     presentation: marker.presentation,
                     anchor_rect: self.element_bounds(anchor)?,
                     content_rect: self.element_bounds(popup)?,
-                })
+                };
+                Some((snapshot, popup_layer))
             })
             .collect()
     }

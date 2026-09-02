@@ -9,8 +9,44 @@ use incular_core::{Color, Rect, Size, Transform};
 use incular_image::ImageHandle;
 use std::sync::Arc;
 
+/// Renderer-neutral identity for a detachable composition subtree.
+///
+/// The retained widget layer maps its generational transient-surface identity
+/// onto this value. Renderers treat partition markers as no-ops unless a host
+/// explicitly detaches the marked commands for presentation on another
+/// surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SurfacePartitionId {
+    index: u32,
+    generation: u32,
+}
+
+impl SurfacePartitionId {
+    #[must_use]
+    pub const fn from_parts(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaintCommand {
+    /// Begins a retained subtree that may be detached to another presentation
+    /// surface. The marker itself has no visual effect.
+    PushSurfacePartition {
+        id: SurfacePartitionId,
+    },
+    /// Ends the most recent surface partition.
+    PopSurfacePartition,
     Rect {
         rect: Rect,
         color: Color,
@@ -151,6 +187,116 @@ impl DisplayList {
     }
     pub fn extend_from(&mut self, other: &Self) {
         self.commands.extend(other.commands.iter().cloned());
+    }
+
+    /// Splits selected retained surface partitions out of this display list.
+    ///
+    /// Commands inside an active selected partition are omitted from `parent`
+    /// and returned under that partition's stable identity. Nested selected
+    /// partitions are assigned to the deepest selected surface, so a submenu
+    /// can be detached independently from its owning menu. Partition markers
+    /// never reach either output.
+    #[must_use]
+    pub fn detach_surface_partitions(
+        &self,
+        selected: &std::collections::HashSet<SurfacePartitionId>,
+    ) -> (Self, std::collections::HashMap<SurfacePartitionId, Self>) {
+        let mut parent = Self::new();
+        let mut detached = std::collections::HashMap::<SurfacePartitionId, Self>::new();
+        let mut stack = Vec::<SurfacePartitionId>::new();
+        for command in &self.commands {
+            match command {
+                PaintCommand::PushSurfacePartition { id } => stack.push(*id),
+                PaintCommand::PopSurfacePartition => {
+                    let _ = stack.pop();
+                }
+                command => {
+                    let target = stack.iter().rev().copied().find(|id| selected.contains(id));
+                    if let Some(id) = target {
+                        detached.entry(id).or_default().push(command.clone());
+                    } else {
+                        parent.push(command.clone());
+                    }
+                }
+            }
+        }
+        (parent, detached)
+    }
+
+    /// Wraps this list in one logical translation without mutating retained
+    /// command geometry.
+    #[must_use]
+    pub fn translated(&self, offset: incular_core::Offset) -> Self {
+        if self.is_empty() || offset == incular_core::Offset::ZERO {
+            return self.clone();
+        }
+        let mut output = Self::new();
+        output.push(PaintCommand::PushTransform {
+            transform: Transform::translation(offset),
+        });
+        output.extend_from(self);
+        output.push(PaintCommand::PopTransform);
+        output
+    }
+
+    /// Conservatively proves that the first visual operation covers the entire
+    /// target with an opaque axis-aligned rectangle.
+    ///
+    /// This is intentionally stricter than a general coverage analysis. A
+    /// backend may use it before presenting through an opaque native surface;
+    /// returning `false` means "not proven" and must never be interpreted as
+    /// transparency being unnecessary.
+    #[must_use]
+    pub fn begins_with_opaque_surface_rect(&self, surface_size: Size) -> bool {
+        if !surface_size.width.is_finite()
+            || !surface_size.height.is_finite()
+            || surface_size.width <= 0.0
+            || surface_size.height <= 0.0
+        {
+            return false;
+        }
+        let mut transforms = vec![Transform::IDENTITY];
+        for command in &self.commands {
+            match command {
+                PaintCommand::PushTransform { transform } => {
+                    let next = transforms
+                        .last()
+                        .copied()
+                        .expect("root transform")
+                        .then(*transform);
+                    if !next.is_translation() {
+                        return false;
+                    }
+                    transforms.push(next);
+                }
+                PaintCommand::PopTransform => {
+                    if transforms.len() <= 1 {
+                        return false;
+                    }
+                    transforms.pop();
+                }
+                PaintCommand::PushSurfacePartition { .. } | PaintCommand::PopSurfacePartition => {}
+                PaintCommand::Rect { rect, color } => {
+                    if color.alpha != u8::MAX {
+                        return false;
+                    }
+                    let world = transforms
+                        .last()
+                        .expect("root transform")
+                        .transform_rect_bbox(*rect);
+                    const EPSILON: f32 = 0.01;
+                    return world.origin.x <= EPSILON
+                        && world.origin.y <= EPSILON
+                        && world.origin.x + world.size.width >= surface_size.width - EPSILON
+                        && world.origin.y + world.size.height >= surface_size.height - EPSILON;
+                }
+                // Any clip, effect, or visual primitive before a full opaque
+                // rectangle makes complete pixel coverage impossible to prove
+                // with this intentionally cheap predicate.
+                _ => return false,
+            }
+        }
+        false
     }
     #[must_use]
     pub fn commands(&self) -> &[PaintCommand] {

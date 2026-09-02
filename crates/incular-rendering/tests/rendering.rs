@@ -3,6 +3,116 @@ use incular_rendering::*;
 use std::sync::Arc;
 
 #[test]
+fn selected_surface_partitions_detach_by_deepest_identity_without_reordering_parent() {
+    let outer = SurfacePartitionId::from_parts(7, 2);
+    let inner = SurfacePartitionId::from_parts(9, 4);
+    let rect = |x| PaintCommand::Rect {
+        rect: Rect::from_origin_size(Offset::new(x, 0.0), Size::new(1.0, 1.0)),
+        color: Color::WHITE,
+    };
+    let mut list = DisplayList::new();
+    list.push(rect(0.0));
+    list.push(PaintCommand::PushSurfacePartition { id: outer });
+    list.push(rect(1.0));
+    list.push(PaintCommand::PushSurfacePartition { id: inner });
+    list.push(rect(2.0));
+    list.push(PaintCommand::PopSurfacePartition);
+    list.push(rect(3.0));
+    list.push(PaintCommand::PopSurfacePartition);
+    list.push(rect(4.0));
+
+    let selected = [outer, inner].into_iter().collect();
+    let (parent, detached) = list.detach_surface_partitions(&selected);
+    let xs = |commands: &[PaintCommand]| {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::Rect { rect, .. } => Some(rect.origin.x),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(xs(parent.commands()), vec![0.0, 4.0]);
+    assert_eq!(xs(detached[&outer].commands()), vec![1.0, 3.0]);
+    assert_eq!(xs(detached[&inner].commands()), vec![2.0]);
+    assert!(parent.commands().iter().all(|command| !matches!(
+        command,
+        PaintCommand::PushSurfacePartition { .. } | PaintCommand::PopSurfacePartition
+    )));
+}
+
+#[test]
+fn unselected_outer_partition_stays_in_parent_while_selected_nested_partition_detaches() {
+    let outer = SurfacePartitionId::from_parts(1, 1);
+    let inner = SurfacePartitionId::from_parts(2, 1);
+    let mut list = DisplayList::new();
+    for command in [
+        PaintCommand::PushSurfacePartition { id: outer },
+        PaintCommand::Rect {
+            rect: Rect::from_origin_size(Offset::ZERO, Size::new(1.0, 1.0)),
+            color: Color::WHITE,
+        },
+        PaintCommand::PushSurfacePartition { id: inner },
+        PaintCommand::Rect {
+            rect: Rect::from_origin_size(Offset::new(2.0, 0.0), Size::new(1.0, 1.0)),
+            color: Color::BLACK,
+        },
+        PaintCommand::PopSurfacePartition,
+        PaintCommand::PopSurfacePartition,
+    ] {
+        list.push(command);
+    }
+
+    let selected = [inner].into_iter().collect();
+    let (parent, detached) = list.detach_surface_partitions(&selected);
+    assert_eq!(parent.len(), 1);
+    assert_eq!(detached[&inner].len(), 1);
+    assert!(
+        matches!(parent.commands()[0], PaintCommand::Rect { color, .. } if color == Color::WHITE)
+    );
+    assert!(
+        matches!(detached[&inner].commands()[0], PaintCommand::Rect { color, .. } if color == Color::BLACK)
+    );
+}
+
+#[test]
+fn opaque_surface_base_detection_is_conservative_under_translation_and_clipping() {
+    let surface = Size::new(80.0, 120.0);
+    let mut opaque = DisplayList::new();
+    opaque.push(PaintCommand::PushTransform {
+        transform: Transform::translation(Offset::new(-10.0, -20.0)),
+    });
+    opaque.push(PaintCommand::Rect {
+        rect: Rect::from_origin_size(Offset::new(10.0, 20.0), surface),
+        color: Color::WHITE,
+    });
+    opaque.push(PaintCommand::PopTransform);
+    assert!(opaque.begins_with_opaque_surface_rect(surface));
+
+    let mut translucent = DisplayList::new();
+    translucent.push(PaintCommand::PushTransform {
+        transform: Transform::translation(Offset::new(-10.0, -20.0)),
+    });
+    translucent.push(PaintCommand::Rect {
+        rect: Rect::from_origin_size(Offset::new(10.0, 20.0), surface),
+        color: Color::rgba(255, 255, 255, 254),
+    });
+    translucent.push(PaintCommand::PopTransform);
+    assert!(!translucent.begins_with_opaque_surface_rect(surface));
+
+    let mut clipped = DisplayList::new();
+    clipped.push(PaintCommand::PushClip {
+        rect: Rect::from_origin_size(Offset::ZERO, Size::new(40.0, 120.0)),
+    });
+    clipped.push(PaintCommand::Rect {
+        rect: Rect::from_origin_size(Offset::ZERO, surface),
+        color: Color::WHITE,
+    });
+    assert!(!clipped.begins_with_opaque_surface_rect(surface));
+}
+
+#[test]
 fn commands_keep_painter_order() {
     let mut c = Canvas::default();
     c.rect(

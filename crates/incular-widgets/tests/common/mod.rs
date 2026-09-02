@@ -77,6 +77,8 @@ pub(super) fn rect_origins(list: &DisplayList) -> Vec<Offset> {
                 origins.push(rect.origin + *transforms.last().unwrap());
             }
             PaintCommand::GlyphRun { .. }
+            | PaintCommand::PushSurfacePartition { .. }
+            | PaintCommand::PopSurfacePartition
             | PaintCommand::Image { .. }
             | PaintCommand::RRect { .. }
             | PaintCommand::Border { .. }
@@ -115,6 +117,8 @@ pub(super) fn glyph_origins(list: &DisplayList) -> Vec<Offset> {
                 origins.push(run.origin + *transforms.last().unwrap());
             }
             PaintCommand::Rect { .. }
+            | PaintCommand::PushSurfacePartition { .. }
+            | PaintCommand::PopSurfacePartition
             | PaintCommand::Image { .. }
             | PaintCommand::RRect { .. }
             | PaintCommand::Border { .. }

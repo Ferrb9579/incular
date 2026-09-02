@@ -132,6 +132,18 @@ fn capability_snapshots_distinguish_unknown_supported_and_unsupported() {
         CapabilitySupport::Unsupported
     );
     assert!(!unsupported.transients.native_surface.is_supported());
+    for role in [
+        incular_config::TransientRole::Popover,
+        incular_config::TransientRole::Menu,
+        incular_config::TransientRole::ContextMenu,
+        incular_config::TransientRole::ComboBox,
+        incular_config::TransientRole::Tooltip,
+    ] {
+        assert_eq!(
+            unsupported.transients.support(role),
+            CapabilitySupport::Unsupported
+        );
+    }
 
     let mut discovered = unsupported;
     discovered.window.set_title = CapabilitySupport::Supported;

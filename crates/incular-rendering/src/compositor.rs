@@ -1,4 +1,4 @@
-use crate::display_list::{DisplayList, PaintCommand};
+use crate::display_list::{DisplayList, PaintCommand, SurfacePartitionId};
 use crate::effects::{
     BlendMode, ColorFilter, DropShadowEffect, GaussianBlur, blur_bounds, drop_shadow_bounds,
 };
@@ -264,6 +264,7 @@ pub enum LayerKind {
 struct Layer {
     kind: LayerKind,
     children: Vec<LayerId>,
+    surface_partition: Option<SurfacePartitionId>,
     dirty: DirtyFlags,
     generation: u64,
 }
@@ -442,6 +443,7 @@ impl LayerTree {
         let id = LayerId(self.layers.insert(Layer {
             kind,
             children: Vec::new(),
+            surface_partition: None,
             dirty: DirtyFlags::COMPOSITE,
             generation,
         }));
@@ -470,6 +472,33 @@ impl LayerTree {
             layer.dirty.insert(DirtyFlags::COMPOSITE);
             layer.generation = self.next_generation;
             self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        }
+    }
+
+    /// Marks one retained layer subtree as detachable presentation content.
+    /// The marker is renderer-neutral and does not alter layout, painting, or
+    /// the retained layer topology.
+    pub fn set_surface_partition(&mut self, id: LayerId, partition: Option<SurfacePartitionId>) {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return;
+        };
+        if layer.surface_partition == partition {
+            return;
+        }
+        layer.surface_partition = partition;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+    }
+
+    /// Clears every detachable-surface marker. WidgetTree reapplies markers for
+    /// the currently visible transient portals before flattening each frame.
+    pub fn clear_surface_partitions(&mut self) {
+        let ids = self
+            .layers
+            .iter()
+            .filter_map(|(raw, layer)| layer.surface_partition.is_some().then_some(LayerId(raw)))
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.set_surface_partition(id, None);
         }
     }
     pub fn update_picture(&mut self, id: LayerId, display_list: DisplayList, bounds: Rect) {
@@ -873,6 +902,26 @@ impl LayerTree {
         out
     }
     fn flatten_layer(
+        &mut self,
+        id: LayerId,
+        world_transform: Transform,
+        clip: Option<Rect>,
+        out: &mut DisplayList,
+    ) {
+        let partition = self
+            .layers
+            .get(id.0)
+            .and_then(|layer| layer.surface_partition);
+        if let Some(id) = partition {
+            out.push(PaintCommand::PushSurfacePartition { id });
+        }
+        self.flatten_layer_contents(id, world_transform, clip, out);
+        if partition.is_some() {
+            out.push(PaintCommand::PopSurfacePartition);
+        }
+    }
+
+    fn flatten_layer_contents(
         &mut self,
         id: LayerId,
         world_transform: Transform,

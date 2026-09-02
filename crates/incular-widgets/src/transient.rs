@@ -8,6 +8,7 @@
 
 use incular_config::{TransientPresentation, TransientRole};
 use incular_core::{Offset, Rect, Size};
+use incular_rendering::SurfacePartitionId;
 
 /// Stable identity of a mounted transient portal. The identity is owned by
 /// the retained tree, not by application code.
@@ -32,6 +33,12 @@ impl TransientSurfaceId {
     #[must_use]
     pub const fn generation(self) -> u32 {
         self.generation
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn surface_partition(self) -> SurfacePartitionId {
+        SurfacePartitionId::from_parts(self.index, self.generation)
     }
 }
 

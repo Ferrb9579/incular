@@ -2,7 +2,9 @@
 
 use accesskit::{Action as AccessKitAction, ActionRequest, TreeId};
 use incular_accessibility::AccessKitProjection;
-use incular_config::{Constraints, EdgeInsets, RuntimeEnvironment};
+use incular_config::{
+    Constraints, EdgeInsets, RuntimeEnvironment, TransientPresentation, TransientRole,
+};
 use incular_core::{
     Code, Color, ImeEvent, InputEvent, KeyboardEvent, KeyboardKey, Modifiers, Offset, PointerPhase,
     Rect, RestorationKey, RestorationScope, Size,
@@ -24,8 +26,8 @@ use incular_widgets::internal::{
 use incular_widgets::{
     Align, BorderRadius, BoxDecoration, Container, CustomScrollView, DecoratedBox,
     DefaultTextStyle, FocusScopeNode, FocusScopeSubscription, GestureDetector, KeyboardListener,
-    LayoutBuilder, SliverFixedExtentList, Text, TextInputActionHint, TextInputTypeHint, Widget,
-    internal::ActionSurface,
+    LayoutBuilder, OverlayPortal, SliverFixedExtentList, Text, TextInputActionHint,
+    TextInputTypeHint, Widget, internal::ActionSurface,
 };
 use std::time::{Duration, Instant};
 use std::{
@@ -242,6 +244,8 @@ fn picture_origins(list: &DisplayList) -> (Offset, Offset) {
                 glyph = Some(run.origin + *transforms.last().unwrap());
             }
             PaintCommand::Image { .. }
+            | PaintCommand::PushSurfacePartition { .. }
+            | PaintCommand::PopSurfacePartition
             | PaintCommand::RRect { .. }
             | PaintCommand::Border { .. }
             | PaintCommand::FillPath { .. }
@@ -801,6 +805,53 @@ fn content_sized_window_tracks_primary_layout_and_ignores_paint_overflow() {
         take_resize_requests(&mut application),
         [Size::new(184., 54.)]
     );
+}
+
+#[test]
+fn resolved_transient_presentation_is_observable_from_handle_and_diagnostics() {
+    let mut application = Application::new(|_| {
+        OverlayPortal::new(Widget::box_(Size::new(100., 100.), Color::BLACK))
+            .overlay_child(Widget::box_(Size::new(80., 60.), Color::WHITE))
+            .presentation(TransientPresentation::Auto)
+            .role(TransientRole::Menu)
+            .show(true)
+            .into()
+    })
+    .unwrap();
+    let id = application.primary_window();
+    let handle = application.window_handle(id).unwrap();
+    application
+        .run_window_frame_at(
+            id,
+            Constraints::tight(Size::new(100., 100.)),
+            Instant::now(),
+        )
+        .unwrap();
+    let snapshot = application.transient_surfaces(id)[0];
+    let resolution = TransientPresentationResolution {
+        id: snapshot.id,
+        role: snapshot.role,
+        requested: snapshot.presentation,
+        resolved: ResolvedTransientPresentation::Overlay,
+        fallback_reason: Some(TransientFallbackReason::NativeUnsupported),
+    };
+
+    assert!(application.set_transient_presentations(id, vec![resolution]));
+    assert_eq!(handle.transient_presentations(), vec![resolution]);
+    assert_eq!(
+        application
+            .window_diagnostics(id)
+            .unwrap()
+            .transient_presentations,
+        vec![resolution]
+    );
+
+    assert!(application.set_transient_presentations(id, Vec::new()));
+    assert!(handle.transient_presentations().is_empty());
+
+    assert!(application.set_transient_presentations(id, vec![resolution]));
+    assert!(application.close_window(id));
+    assert!(handle.transient_presentations().is_empty());
 }
 
 #[test]

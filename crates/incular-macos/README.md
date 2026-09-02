@@ -9,5 +9,10 @@ as per-monitor insets relative to Winit's physical monitor rectangle. This
 preserves Winit's top-left coordinate convention while respecting the menu bar
 and Dock, including side-mounted Docks.
 
+Native transient hosts remain Winit/WGPU windows but AppKit establishes the
+real ownership relationship with `NSWindow::addChildWindow:ordered:` and removes
+it before teardown. This keeps popup z-order/movement tied to the owning native
+window without leaking `NSWindow` into the shared desktop shell.
+
 The adapter intentionally does not duplicate or source-include another
 platform crate's implementation.

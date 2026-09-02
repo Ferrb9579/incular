@@ -9,6 +9,13 @@ struct WindowsDesktopPlatformServices;
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn wait_for_destroyed_event_after_window_drop(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+    ) -> bool {
+        system == incular_platform::NativeWindowSystem::Win32
+    }
+
     fn work_area_support(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -56,6 +63,127 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
             width,
             height,
         ))
+    }
+
+    fn transient_support(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        _role: incular_config::TransientRole,
+    ) -> incular_platform::CapabilitySupport {
+        if system == incular_platform::NativeWindowSystem::Win32 {
+            incular_platform::CapabilitySupport::Supported
+        } else {
+            incular_platform::CapabilitySupport::Unsupported
+        }
+    }
+
+    fn configure_transient_attributes(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        parent: &winit::window::Window,
+        _role: incular_config::TransientRole,
+        attributes: winit::window::WindowAttributes,
+    ) -> winit::window::WindowAttributes {
+        if system != incular_platform::NativeWindowSystem::Win32 {
+            return attributes;
+        }
+        use raw_window_handle::RawWindowHandle;
+        use winit::platform::windows::WindowAttributesExtWindows;
+
+        let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(parent).window
+        else {
+            return attributes;
+        };
+        attributes
+            .with_owner_window(handle.hwnd.get())
+            .with_skip_taskbar(true)
+            .with_active(false)
+    }
+
+    fn attach_transient(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        parent: &winit::window::Window,
+        popup: &winit::window::Window,
+        _role: incular_config::TransientRole,
+    ) -> incular_platform::PlatformOperationResult {
+        if system != incular_platform::NativeWindowSystem::Win32 {
+            return Ok(());
+        }
+        use raw_window_handle::RawWindowHandle;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow};
+
+        let RawWindowHandle::Win32(parent_handle) =
+            incular_platform::raw_window_handles(parent).window
+        else {
+            return Err(incular_platform::PlatformOperationError::unavailable());
+        };
+        let RawWindowHandle::Win32(popup_handle) =
+            incular_platform::raw_window_handles(popup).window
+        else {
+            return Err(incular_platform::PlatformOperationError::unavailable());
+        };
+        // SAFETY: both HWNDs are live Winit windows on this event-loop thread.
+        // Querying GW_OWNER does not retain or mutate either handle.
+        if unsafe { GetWindow(popup_handle.hwnd.get(), GW_OWNER) } != parent_handle.hwnd.get() {
+            return Err(incular_platform::PlatformOperationError::with_context(
+                incular_platform::PlatformOperationErrorKind::NativeFailure,
+                "Win32 transient window was not created with the requested owner",
+            ));
+        }
+        Ok(())
+    }
+
+    fn show_transient(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        popup: &winit::window::Window,
+        _role: incular_config::TransientRole,
+    ) -> incular_platform::PlatformOperationResult {
+        if system != incular_platform::NativeWindowSystem::Win32 {
+            popup.set_visible(true);
+            return Ok(());
+        }
+        use raw_window_handle::RawWindowHandle;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GWL_EXSTYLE, GetWindowLongPtrW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        };
+
+        let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(popup).window
+        else {
+            return Err(incular_platform::PlatformOperationError::unavailable());
+        };
+        let hwnd = handle.hwnd.get();
+        // SAFETY: the HWND is owned by this live Winit window and every call is
+        // synchronous on the window's event-loop thread. Showing first with
+        // SW_SHOWNOACTIVATE avoids an activation edge; applying the persistent
+        // NOACTIVATE/TOOLWINDOW styles afterwards prevents later mouse
+        // activation and task-switcher participation. The desktop shell never
+        // calls Winit's visibility mutator for this host after this point.
+        unsafe {
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let required = isize::try_from(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+                .expect("Win32 extended style flags fit isize");
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, current | required);
+            let flags = SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
+            if SetWindowPos(hwnd, 0, 0, 0, 0, 0, flags) == 0 {
+                return Err(incular_platform::PlatformOperationError::with_context(
+                    incular_platform::PlatformOperationErrorKind::NativeFailure,
+                    "Win32 could not apply transient extended-window styles",
+                ));
+            }
+            let applied = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if applied & required != required {
+                return Err(incular_platform::PlatformOperationError::with_context(
+                    incular_platform::PlatformOperationErrorKind::NativeFailure,
+                    "Win32 transient window is missing WS_EX_NOACTIVATE/WS_EX_TOOLWINDOW after native show",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

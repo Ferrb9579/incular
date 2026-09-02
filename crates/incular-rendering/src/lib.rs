@@ -13,7 +13,7 @@ pub use compositor::{
     Annotation, CompositorDiagnostics, FlattenedAnnotation, FlattenedPicture, LayerAnchor, LayerId,
     LayerKind, LayerLink, LayerTree, normalize_opacity,
 };
-pub use display_list::{Canvas, DisplayList, ImageSampling, PaintCommand};
+pub use display_list::{Canvas, DisplayList, ImageSampling, PaintCommand, SurfacePartitionId};
 pub use effects::{
     BlendMode, ColorFilter, ColorMatrix, DropShadowEffect, Effect, EffectChain, GaussianBlur,
     blend_premultiplied, blur_bounds, blur_margin, drop_shadow_bounds, gaussian_kernel_weights,

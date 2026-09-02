@@ -18,6 +18,7 @@ impl WgpuRenderer {
             let transform = *transforms.last().expect("transform stack");
             let translation = transform.translation_offset();
             match command {
+                PaintCommand::PushSurfacePartition { .. } | PaintCommand::PopSurfacePartition => {}
                 PaintCommand::Rect { rect, color } => {
                     let clip = *clips.last().expect("clip stack");
                     if transform.is_translation() {

@@ -10,6 +10,7 @@ mod reactive;
 mod restoration;
 mod simulation;
 mod tasks;
+mod transient_presentation;
 mod undo;
 mod window_commands;
 mod window_state;
@@ -92,6 +93,9 @@ pub use simulation::{Screenshot, Simulation, SimulationError};
 pub use tasks::{
     AsyncState, AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure,
     TaskHandle, TaskScope, TokioHandle, UiDispatcher,
+};
+pub use transient_presentation::{
+    ResolvedTransientPresentation, TransientFallbackReason, TransientPresentationResolution,
 };
 pub use undo::{UndoHistoryController, UndoHistoryState};
 pub use window_commands::{

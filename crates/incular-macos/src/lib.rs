@@ -69,6 +69,91 @@ impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
             u32::try_from(height).ok()?,
         ))
     }
+
+    fn transient_support(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        _role: incular_config::TransientRole,
+    ) -> incular_platform::CapabilitySupport {
+        if system == incular_platform::NativeWindowSystem::AppKit {
+            incular_platform::CapabilitySupport::Supported
+        } else {
+            incular_platform::CapabilitySupport::Unsupported
+        }
+    }
+
+    fn configure_transient_attributes(
+        &self,
+        _system: incular_platform::NativeWindowSystem,
+        _parent: &winit::window::Window,
+        _role: incular_config::TransientRole,
+        attributes: winit::window::WindowAttributes,
+    ) -> winit::window::WindowAttributes {
+        attributes.with_active(false)
+    }
+
+    fn attach_transient(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        parent: &winit::window::Window,
+        popup: &winit::window::Window,
+        _role: incular_config::TransientRole,
+    ) -> incular_platform::PlatformOperationResult {
+        if system != incular_platform::NativeWindowSystem::AppKit {
+            return Ok(());
+        }
+        let Some(parent_window) = appkit_window(parent) else {
+            return Err(incular_platform::PlatformOperationError::unavailable());
+        };
+        let Some(popup_window) = appkit_window(popup) else {
+            return Err(incular_platform::PlatformOperationError::unavailable());
+        };
+        // SAFETY: both NSWindows are retained by their live Winit windows and
+        // this call runs on AppKit's event-loop thread. The child relationship
+        // is removed explicitly before the popup Winit window is dropped.
+        unsafe {
+            parent_window.addChildWindow_ordered(
+                &popup_window,
+                objc2_app_kit::NSWindowOrderingMode::NSWindowAbove,
+            );
+        }
+        Ok(())
+    }
+
+    fn detach_transient(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        parent: &winit::window::Window,
+        popup: &winit::window::Window,
+        _role: incular_config::TransientRole,
+    ) {
+        if system != incular_platform::NativeWindowSystem::AppKit {
+            return;
+        }
+        if let (Some(parent_window), Some(popup_window)) =
+            (appkit_window(parent), appkit_window(popup))
+        {
+            // SAFETY: same live-window/event-thread invariant as attachment.
+            unsafe { parent_window.removeChildWindow(&popup_window) };
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn appkit_window(
+    window: &winit::window::Window,
+) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+    use raw_window_handle::RawWindowHandle;
+
+    let RawWindowHandle::AppKit(handle) = incular_platform::raw_window_handles(window).window
+    else {
+        return None;
+    };
+    // SAFETY: raw-window-handle documents this as the live NSView owned by the
+    // Winit window. We borrow it only long enough to ask AppKit for its retained
+    // containing NSWindow.
+    let view = unsafe { handle.ns_view.cast::<objc2_app_kit::NSView>().as_ref() };
+    view.window()
 }
 
 pub fn run_application(application: incular_runtime::Application) -> Result<(), RunError> {

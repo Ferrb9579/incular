@@ -1,7 +1,11 @@
-use incular_core::{Code, KeyState, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
-use incular_runtime::{Application, Screenshot, Simulation, SimulationError};
+use incular_config::Constraints;
+use incular_core::{Code, Color, KeyState, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
+use incular_runtime::{Application, Screenshot, Signal, Simulation, SimulationError};
 use incular_widgets::internal::{ActionSurface, TextEditingController};
-use incular_widgets::{EditableText, FocusNode, KeyboardListener, Text};
+use incular_widgets::{
+    EditableText, FocusNode, GestureDetector, KeyboardListener, OverlayPortal, Positioned, Text,
+    TransientRole, Widget,
+};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -50,6 +54,58 @@ fn semantic_click_uses_the_normal_pointer_dispatch_pipeline() {
         application.window_diagnostics(window).unwrap().input_events,
         3
     );
+}
+
+#[test]
+fn reactive_transient_closes_after_simulated_anchor_activation() {
+    let open = Signal::new(true);
+    let observed = open.clone();
+    let mut application = Application::new(move |_| {
+        let toggle = observed.clone();
+        let anchor: Widget =
+            GestureDetector::new(Widget::box_(Size::new(100.0, 100.0), Color::BLACK))
+                .on_tap(move || {
+                    let _ = toggle.set(!toggle.get());
+                })
+                .into();
+        let popup: Widget = Positioned::new(Widget::box_(Size::new(80.0, 120.0), Color::WHITE))
+            .left(10.0)
+            .top(80.0)
+            .width(80.0)
+            .height(120.0)
+            .into();
+        OverlayPortal::new(anchor)
+            .overlay_child(popup)
+            .role(TransientRole::Menu)
+            .show(observed.get())
+            .into()
+    })
+    .expect("application should build");
+    let window = application.primary_window();
+    application
+        .run_window_frame_at(
+            window,
+            Constraints::tight(Size::new(100.0, 100.0)),
+            std::time::Instant::now(),
+        )
+        .expect("initial transient frame");
+    assert_eq!(application.transient_surfaces(window).len(), 1);
+
+    let simulation = application.simulation();
+    let result = drive(&mut application, simulation, |simulation| {
+        simulation.click_at(Offset::new(10.0, 10.0))
+    });
+    assert_eq!(result, Ok(()));
+    assert!(!open.get());
+
+    application
+        .run_window_frame_at(
+            window,
+            Constraints::tight(Size::new(100.0, 100.0)),
+            std::time::Instant::now(),
+        )
+        .expect("closed transient frame");
+    assert!(application.transient_surfaces(window).is_empty());
 }
 
 #[test]

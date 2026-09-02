@@ -42,6 +42,13 @@ flag. `Unknown` means no backend/session has published support yet;
 for session-dependent facilities such as Wayland placement and native desktop
 services.
 
+Transient capability discovery is role-aware. `native_surface` is the aggregate
+summary, while popover, menu, context-menu, combo-box, and tooltip support can
+be queried independently. A backend must report `Unsupported` rather than
+silently manufacturing a top-level window that cannot honor the platform's
+popup relationship. In particular, the current Wayland adapter does not claim
+native popup support until the backend can provide real xdg-popup semantics.
+
 ## Displays and placement
 
 `DisplayId` is a generational Incular identity, not a monitor name or an

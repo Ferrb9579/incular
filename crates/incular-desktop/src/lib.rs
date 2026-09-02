@@ -1,19 +1,20 @@
 //! Shared desktop event-loop bridge for Incular.
 mod display;
 mod display_identity;
+mod platform_services;
 mod pointer;
+mod transients;
 
-pub use display::{DefaultDesktopPlatformServices, DesktopPlatformServices};
+pub use platform_services::{DefaultDesktopPlatformServices, DesktopPlatformServices};
 
 use accesskit_winit::{
     Adapter as AccessKitAdapter, Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent,
 };
 use incular_accessibility::AccessKitProjection;
-use incular_config::Constraints;
-#[cfg(feature = "devtools")]
-use incular_core::Offset;
+use incular_config::{Constraints, TransientPresentation, TransientRole};
 #[cfg(feature = "devtools")]
 use incular_core::PRIMARY_POINTER_BUTTON;
+use incular_core::{Color, InputEvent, Offset};
 use incular_core::{PointerDeviceKind, PointerPhase, WindowResizeDirection};
 use incular_platform::{
     CapabilitySupport, Clipboard, ContentSensitivityBackend, ContentSensitivityNoOpReason,
@@ -26,13 +27,19 @@ use incular_platform::{
     key_event, native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
     touch_event_with_device, wheel_event,
 };
+use incular_rendering::DisplayList;
 use incular_runtime::{
-    Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics, Runtime,
-    RuntimeWake, Screenshot,
+    Application, ApplicationLifecycle, GpuSample, NativeWindowCommand, RenderFrameMetrics,
+    ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot, TransientFallbackReason,
+    TransientPresentationResolution,
 };
 use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
-use incular_widgets::internal::ActionId;
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use incular_widgets::{TransientSurfaceId, TransientSurfaceSnapshot, internal::ActionId};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
 #[cfg(feature = "devtools")]
 use std::{path::PathBuf, process::Command};
 use winit::{
@@ -49,6 +56,7 @@ use winit::{
 
 use crate::display::DesktopDisplayRegistry;
 use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
+use crate::transients::{NativeTransientState, TransientHostKey, TransientNativeRejection};
 
 #[derive(Debug)]
 pub enum RunError {
@@ -305,6 +313,9 @@ pub fn run_application_with_services(
         application,
         windows: HashMap::new(),
         native_ids: HashMap::new(),
+        transient_windows: HashMap::new(),
+        transient_native_ids: HashMap::new(),
+        transient_native_rejections: HashMap::new(),
         shared_gpu: None,
         frame_timestamp: Instant::now(),
         accessibility_proxy: proxy,
@@ -312,6 +323,7 @@ pub fn run_application_with_services(
         pointer_devices: PointerDeviceRegistry::default(),
         platform_services: Box::new(platform_services),
         window_system: None,
+        pending_native_destructions: HashSet::new(),
         #[cfg(feature = "devtools")]
         devtools_state: crate::devtools_runner::DevToolsState::new(devtools_agent),
     };
@@ -319,7 +331,6 @@ pub fn run_application_with_services(
     event_loop.run_app(&mut app).map_err(RunError::EventLoop)
 }
 struct App<F: FnMut(ActionId)> {
-    window: Option<Window>,
     runtime: Option<Runtime>,
     renderer: Option<WgpuRenderer>,
     metrics: Option<WindowMetrics>,
@@ -331,6 +342,9 @@ struct App<F: FnMut(ActionId)> {
     on_action: F,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
     accessibility: Option<NativeAccessibilityState>,
+    /// Declared last so renderer/accessibility raw-handle users are dropped
+    /// before the native window itself.
+    window: Option<Window>,
 }
 
 /// One AccessKit adapter/projection pair belongs to exactly one native window.
@@ -745,7 +759,6 @@ impl<F: FnMut(ActionId)> App<F> {
 
 struct NativeWindowState {
     id: IncularWindowId,
-    window: Window,
     renderer: WgpuRenderer,
     metrics: WindowMetrics,
     cursor: PhysicalPosition<f64>,
@@ -754,6 +767,9 @@ struct NativeWindowState {
     modifiers: winit::keyboard::ModifiersState,
     accessibility: NativeAccessibilityState,
     content_sensitivity: NoopContentSensitivityBackend,
+    /// Must outlive every field that was created from this window's raw
+    /// handles. Struct fields drop in declaration order, so keep it last.
+    window: Window,
 }
 
 /// Winit 0.30 adapter for an [`Application`] with many retained roots. Native
@@ -762,6 +778,9 @@ struct MultiApp {
     application: Application,
     windows: HashMap<NativeWindowId, NativeWindowState>,
     native_ids: HashMap<IncularWindowId, NativeWindowId>,
+    transient_windows: HashMap<NativeWindowId, NativeTransientState>,
+    transient_native_ids: HashMap<TransientHostKey, NativeWindowId>,
+    transient_native_rejections: HashMap<TransientHostKey, TransientNativeRejection>,
     shared_gpu: Option<SharedGpuContext>,
     frame_timestamp: Instant,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
@@ -769,6 +788,11 @@ struct MultiApp {
     pointer_devices: PointerDeviceRegistry,
     platform_services: Box<dyn DesktopPlatformServices>,
     window_system: Option<NativeWindowSystem>,
+    /// Native windows whose platform service requires a post-drop
+    /// `WindowEvent::Destroyed` acknowledgement. Empty on synchronous-drop
+    /// backends. Keeping this portable leaves the lifecycle quirk in the OS
+    /// service rather than scattering target conditionals through the shell.
+    pending_native_destructions: HashSet<NativeWindowId>,
     /// Debug overlays, Select Widget mode, and the DevTools agent pump.
     #[cfg(feature = "devtools")]
     devtools_state: crate::devtools_runner::DevToolsState,
@@ -813,7 +837,22 @@ impl MultiApp {
             }
         }
         if self.application.should_exit() {
+            if !self.pending_native_destructions.is_empty() {
+                return;
+            }
             target.exit();
+        }
+    }
+
+    fn track_native_window_drop(&mut self, native_id: NativeWindowId) {
+        let Some(system) = self.window_system else {
+            return;
+        };
+        if self
+            .platform_services
+            .wait_for_destroyed_event_after_window_drop(system)
+        {
+            self.pending_native_destructions.insert(native_id);
         }
     }
 
@@ -888,6 +927,7 @@ impl MultiApp {
             Ok(renderer) => renderer,
             Err(error) => {
                 eprintln!("Incular renderer initialization failed: {error}");
+                self.track_native_window_drop(window.id());
                 let _ = self.application.close_window(id);
                 return;
             }
@@ -975,8 +1015,10 @@ impl MultiApp {
             return;
         };
         if matches!(command.operation, WindowOperation::Close) {
+            self.destroy_transient_hosts_for_owner(command.window_id);
             self.native_ids.remove(&command.window_id);
             if let Some(mut state) = self.windows.remove(&native_id) {
+                self.track_native_window_drop(native_id);
                 state.accessibility.projection.note_adapter_destroyed();
             }
             return;
@@ -1213,17 +1255,18 @@ impl MultiApp {
         }
     }
 
-    fn redraw_window(&mut self, id: IncularWindowId) {
+    fn redraw_window(&mut self, target: &ActiveEventLoop, id: IncularWindowId) {
         #[cfg(feature = "devtools")]
         self.devtools_state.drain(&mut self.application);
         let Some(native_id) = self.native_ids.get(&id).copied() else {
             return;
         };
-        let Some(state) = self.windows.get_mut(&native_id) else {
+        let Some(metrics) = self.windows.get(&native_id).map(|state| state.metrics) else {
             return;
         };
-        let metrics = state.metrics;
-        if self.application.simulation_capture_pending(id) {
+        if self.application.simulation_capture_pending(id)
+            && let Some(state) = self.windows.get_mut(&native_id)
+        {
             state.renderer.request_capture();
         }
         #[cfg(feature = "devtools")]
@@ -1238,13 +1281,65 @@ impl MultiApp {
             Ok(Some((list, frame))) => {
                 #[cfg(feature = "devtools")]
                 let mut list = list;
+                #[cfg(not(feature = "devtools"))]
+                let list = list;
                 #[cfg(feature = "devtools")]
                 let devtools_frame = frame;
                 #[cfg(not(feature = "devtools"))]
                 let _ = frame;
                 #[cfg(feature = "devtools")]
                 self.devtools_state.paint_overlay(id, &mut list);
-                match state.renderer.render(&list, metrics.scale_factor) {
+
+                let snapshots = self.application.transient_surfaces(id);
+                let selected = self.synchronize_transient_hosts(target, id, &snapshots);
+                let (_, detached) = list.detach_surface_partitions(&selected);
+                let mut failed = Vec::new();
+                for snapshot in snapshots.iter().copied() {
+                    let partition = snapshot.id.surface_partition();
+                    if !selected.contains(&partition) {
+                        continue;
+                    }
+                    let Some(transient_list) = detached.get(&partition) else {
+                        failed.push((snapshot, TransientFallbackReason::NativeHostUnavailable));
+                        continue;
+                    };
+                    let key = TransientHostKey {
+                        owner: id,
+                        transient: snapshot.id,
+                    };
+                    if let Err(reason) = self.render_transient_partition(key, transient_list) {
+                        failed.push((snapshot, reason));
+                    }
+                }
+                for (snapshot, reason) in &failed {
+                    let key = TransientHostKey {
+                        owner: id,
+                        transient: snapshot.id,
+                    };
+                    self.destroy_transient_host(key);
+                    self.transient_native_rejections.insert(
+                        key,
+                        TransientNativeRejection {
+                            role: snapshot.role,
+                            reason: *reason,
+                        },
+                    );
+                }
+                let successful = selected
+                    .into_iter()
+                    .filter(|partition| {
+                        !failed
+                            .iter()
+                            .any(|(snapshot, _)| snapshot.id.surface_partition() == *partition)
+                    })
+                    .collect::<HashSet<_>>();
+                self.publish_transient_presentations(id, &snapshots);
+                let (parent_list, _) = list.detach_surface_partitions(&successful);
+
+                let Some(state) = self.windows.get_mut(&native_id) else {
+                    return;
+                };
+                match state.renderer.render(&parent_list, metrics.scale_factor) {
                     Ok(stats) => {
                         self.application.note_presented(id, stats.presented);
                         let gpu = state.renderer.gpu_frame_timings().map(|timing| GpuSample {
@@ -1375,6 +1470,9 @@ impl MultiApp {
                     });
             }
         }
+        let Some(state) = self.windows.get_mut(&native_id) else {
+            return;
+        };
         if state.accessibility.active
             && let Some(update) = self
                 .application
@@ -1534,6 +1632,12 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     capabilities.display.work_area = CapabilitySupport::Unknown;
     capabilities.display.query_window_position = CapabilitySupport::Unknown;
     capabilities.display.set_window_position = CapabilitySupport::Unknown;
+    capabilities.transients.native_surface = CapabilitySupport::Unknown;
+    capabilities.transients.popover = CapabilitySupport::Unknown;
+    capabilities.transients.menu = CapabilitySupport::Unknown;
+    capabilities.transients.context_menu = CapabilitySupport::Unknown;
+    capabilities.transients.combo_box = CapabilitySupport::Unknown;
+    capabilities.transients.tooltip = CapabilitySupport::Unknown;
     capabilities.advanced_input.pointer_metadata = CapabilitySupport::Supported;
     capabilities.advanced_input.cursor_icons = CapabilitySupport::Supported;
     capabilities.advanced_input.cursor_visibility = CapabilitySupport::Supported;
@@ -1554,6 +1658,31 @@ fn refine_window_capabilities(
     capabilities.display.enumerate_displays = CapabilitySupport::Supported;
     capabilities.display.query_current_display = CapabilitySupport::Supported;
     capabilities.display.work_area = services.work_area_support(system);
+    capabilities.transients.popover =
+        services.transient_support(system, incular_config::TransientRole::Popover);
+    capabilities.transients.menu =
+        services.transient_support(system, incular_config::TransientRole::Menu);
+    capabilities.transients.context_menu =
+        services.transient_support(system, incular_config::TransientRole::ContextMenu);
+    capabilities.transients.combo_box =
+        services.transient_support(system, incular_config::TransientRole::ComboBox);
+    capabilities.transients.tooltip =
+        services.transient_support(system, incular_config::TransientRole::Tooltip);
+    let transient_support = [
+        capabilities.transients.popover,
+        capabilities.transients.menu,
+        capabilities.transients.context_menu,
+        capabilities.transients.combo_box,
+        capabilities.transients.tooltip,
+    ];
+    capabilities.transients.native_surface =
+        if transient_support.contains(&CapabilitySupport::Supported) {
+            CapabilitySupport::Supported
+        } else if transient_support.contains(&CapabilitySupport::Unknown) {
+            CapabilitySupport::Unknown
+        } else {
+            CapabilitySupport::Unsupported
+        };
     match system {
         NativeWindowSystem::Win32 => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -1795,6 +1924,19 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         native_id: NativeWindowId,
         event: WindowEvent,
     ) {
+        if matches!(event, WindowEvent::Destroyed)
+            && self.pending_native_destructions.remove(&native_id)
+        {
+            // The native handle is now actually gone. This acknowledgement is
+            // required by services whose Winit `Window::drop` is asynchronous
+            // (notably Win32); only now is last-window event-loop exit safe.
+            self.apply_window_commands(target);
+            return;
+        }
+        if self.handle_transient_window_event(native_id, &event) {
+            self.apply_window_commands(target);
+            return;
+        }
         let Some(id) = self.windows.get(&native_id).map(|state| state.id) else {
             return;
         };
@@ -1822,6 +1964,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             WindowEvent::Moved(_) => {
                 self.refresh_displays(target);
                 self.publish_window_state(id);
+                self.reposition_transient_hosts(id);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let size = self
@@ -1833,6 +1976,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.resize_window(id, PhysicalSize::new(size.width, size.height), scale_factor);
                 self.refresh_displays(target);
                 self.publish_window_state(id);
+                self.reposition_transient_hosts(id);
             }
             WindowEvent::Focused(focused) => {
                 if !focused {
@@ -2009,7 +2153,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             }
             WindowEvent::RedrawRequested => {
                 self.route_window_event(native_id, IncularWindowEvent::redraw_requested(id));
-                self.redraw_window(id);
+                self.redraw_window(target, id);
             }
             _ => {}
         }

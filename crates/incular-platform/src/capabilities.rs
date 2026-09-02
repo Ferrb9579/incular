@@ -5,6 +5,8 @@
 //! flattened into one global bitset: a Wayland session, for example, can have
 //! excellent window/input support while deliberately lacking global placement.
 
+use incular_config::TransientRole;
+
 /// Whether a portable platform capability is known to be available.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CapabilitySupport {
@@ -71,6 +73,24 @@ pub struct DisplayPlacementCapabilities {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TransientSurfaceCapabilities {
     pub native_surface: CapabilitySupport,
+    pub popover: CapabilitySupport,
+    pub menu: CapabilitySupport,
+    pub context_menu: CapabilitySupport,
+    pub combo_box: CapabilitySupport,
+    pub tooltip: CapabilitySupport,
+}
+
+impl TransientSurfaceCapabilities {
+    #[must_use]
+    pub const fn support(self, role: TransientRole) -> CapabilitySupport {
+        match role {
+            TransientRole::Popover => self.popover,
+            TransientRole::Menu => self.menu,
+            TransientRole::ContextMenu => self.context_menu,
+            TransientRole::ComboBox => self.combo_box,
+            TransientRole::Tooltip => self.tooltip,
+        }
+    }
 }
 
 /// Operating-system application-menu integration.
@@ -163,6 +183,11 @@ impl PlatformCapabilities {
             },
             transients: TransientSurfaceCapabilities {
                 native_surface: unsupported,
+                popover: unsupported,
+                menu: unsupported,
+                context_menu: unsupported,
+                combo_box: unsupported,
+                tooltip: unsupported,
             },
             menus: NativeMenuCapabilities {
                 application_menu: unsupported,

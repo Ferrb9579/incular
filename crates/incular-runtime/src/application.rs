@@ -13,6 +13,7 @@ use crate::restoration::{self, RestorationConfig, RestorationDiagnostics};
 use crate::scheduler_counters;
 use crate::simulation::{self, Screenshot, Simulation, SimulationError};
 use crate::tasks::{self, RuntimeWake, Task, TaskFailure, TaskHandle, TokioHandle};
+use crate::transient_presentation::TransientPresentationResolution;
 use crate::window_commands::{
     DisplayCatalog, NativeOperationCompletionStatus, NativeWindowCommand, QueuedNativeRequest,
     QueuedWindowCommand, WindowCommandBridge, WindowHandle,
@@ -442,6 +443,23 @@ impl Application {
             .write()
             .expect("window capability snapshot lock") = capabilities;
         true
+    }
+
+    /// Publishes the native adapter's resolved presentation for the visible
+    /// semantic transients in one retained window. Custom embedders should
+    /// replace the complete snapshot after each host-negotiation pass.
+    pub fn set_transient_presentations(
+        &mut self,
+        window_id: WindowId,
+        presentations: Vec<TransientPresentationResolution>,
+    ) -> bool {
+        self.with_window_mut(window_id, |record| {
+            *record
+                .transient_presentations
+                .write()
+                .expect("transient presentation snapshot lock") = presentations;
+        })
+        .is_some()
     }
 
     /// Development-only, read-only view of application windows.  Keeping this
@@ -1577,6 +1595,11 @@ impl Application {
             self.registry.borrow_mut().stale_window_commands += 1;
             return false;
         };
+        record
+            .transient_presentations
+            .write()
+            .expect("transient presentation snapshot lock")
+            .clear();
         record.scope.cancel();
         record.runtime.dispose_window();
         self.native_commands
@@ -1866,6 +1889,11 @@ impl Application {
                 .observed_state
                 .read()
                 .expect("window observed-state snapshot lock"),
+            transient_presentations: record
+                .transient_presentations
+                .read()
+                .expect("transient presentation snapshot lock")
+                .clone(),
         })
     }
 

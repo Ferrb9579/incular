@@ -85,6 +85,31 @@ hover route exactly once. Deferred cursor values continue through ancestor raw
 regions; `WindowResizeRegion` contributes the correct horizontal, vertical, or
 diagonal resize cursor without changing hit testing.
 
+## Transient presentation
+
+`OverlayPortal` is the semantic owner for menus, context menus, combo boxes,
+tooltips, and popovers. Its retained generational identity survives relayout,
+and its popup child is tagged as a renderer-neutral surface partition. A desktop
+backend may detach that exact retained subtree into a native popup without
+building or painting a second widget tree; unsupported sessions leave it in the
+same in-view overlay. Barrier content stays in the owning view and is never
+mistaken for popup geometry.
+
+Transient geometry is view-local logical geometry. Moving/resizing the native
+host therefore does not contribute to root content sizing, and paint overflow
+from a popup cannot grow a `WindowSizePolicy::Content` top-level. Placement,
+flip/shift/constrain policy, cross-surface dismissal, and logical accessibility
+ownership are layered on top of this hosting primitive rather than being
+hard-coded into individual Material menu widgets.
+
+Native hosting never creates a second WidgetTree, focus tree, gesture arena, or
+semantics tree. The transient's surface is only another presentation/input host
+for the same retained subtree. Desktop events are translated from popup-local
+coordinates back into the owning view before dispatch. A future OS integration
+that needs a separate native accessibility root must project only the transient
+semantic subtree; duplicating the owning window's full semantic tree is not a
+valid implementation.
+
 ## Vector painting
 
 `DecoratedBox`, `CustomPaint`, `Icon`, `ImageIcon`, and the decoration/value

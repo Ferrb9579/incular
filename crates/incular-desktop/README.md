@@ -32,6 +32,41 @@ Winit's top-left physical coordinate model. The default service (including the
 current X11 adapter) reports work areas unsupported rather than guessing from
 full monitor bounds.
 
+The same service seam owns native transient relationships that stable Winit
+does not express portably. A retained `OverlayPortal` remains the semantic
+owner, while `Auto` presentation can mirror its popup subtree into a separate
+native surface keyed by the owning Incular `WindowId` and generational
+`TransientSurfaceId`. Popup renderers reuse the application's one
+`SharedGpuContext`; only swapchain/surface state is per host. The parent display
+list is partitioned by retained subtree identity, so native hosting neither
+repaints a second widget tree nor enlarges/crops the parent surface.
+
+Win32 uses an owned, non-taskbar popup and shows it without activation; AppKit
+uses an `NSWindow` child relationship; X11 uses override-redirect popup role
+hints. Stable Winit 0.30 does not expose the xdg-positioner/xdg-popup lifecycle,
+so Wayland reports native transient hosting unsupported and `Auto` remains an
+in-view overlay rather than inventing global coordinates. `Overlay`
+presentation always remains in the owning view. Native popup input is converted
+from popup-local coordinates back into the owning retained tree, so handlers,
+gesture state, and element identity are not duplicated.
+
+Host negotiation is observable rather than inferred from capability flags.
+After each frame, `WindowHandle::transient_presentations` and
+`WindowDiagnostics::transient_presentations` report whether each visible
+transient resolved to `Native` or `Overlay`, including stable fallback reasons
+for an explicit overlay request, unsupported native hosting, host failure, or a
+surface that cannot preserve required transparent pixels. A failed native host
+is rejected for that retained ID/role lifetime instead of being recreated every
+frame; closing and reopening gives a fresh generational negotiation.
+
+The popup surface is presentation-only. The owning window retains one WidgetTree,
+one focus model, and one semantics tree; pointer, keyboard, touch, wheel, and IME
+events from a popup are translated back into that same runtime. Incular therefore
+does not publish a duplicate AccessKit tree containing the same semantic node IDs.
+If a native platform eventually requires a distinct accessibility root for a
+popup, it must use a filtered projection of that transient subtree rather than a
+second semantic owner.
+
 Mouse input is normalized without a left-button shortcut. A process-local
 device registry preserves Winit `DeviceId` identity, each native window owns its
 pressed-button chord, and every representable mouse button reaches the runtime
@@ -50,6 +85,11 @@ pointer-constraints operations unknown until execution.
 The native `winit::Window` remains alive for the full lifetime of the WGPU
 surface created from its raw handles. Per-window surfaces and presentation state
 remain local, while the renderer may share GPU resources across windows.
+Native teardown also follows the backend's real destruction contract. In
+particular, Winit's Win32 `Window::drop` posts a private destroy message; the
+Windows service tells the shared shell to wait for `WindowEvent::Destroyed`
+before last-window event-loop exit. This prevents dropped parent or transient
+HWNDs from being stranded by an early loop shutdown.
 
 OS crates deliberately stay thin. They own only behavior that is truly
 platform-specific, such as the Windows crash handler today and future native

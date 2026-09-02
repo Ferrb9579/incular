@@ -1,0 +1,108 @@
+use incular_config::TransientRole;
+use incular_platform::{
+    CapabilitySupport, NativeWindowSystem, PhysicalScreenRect, PlatformOperationResult,
+};
+use winit::{
+    monitor::MonitorHandle,
+    window::{Window, WindowAttributes},
+};
+
+/// Narrow seam for desktop semantics Winit intentionally does not expose as a
+/// portable contract.
+///
+/// The shared shell still owns window/event/GPU lifecycle. OS facade crates use
+/// this trait only for information or native relationship semantics that would
+/// otherwise require leaking HWND/NSWindow/X11 details into `incular-desktop`.
+pub trait DesktopPlatformServices {
+    /// Whether dropping a Winit window only schedules native destruction and
+    /// therefore requires observing `WindowEvent::Destroyed` before the event
+    /// loop may terminate. This is a native lifecycle contract, not a timing
+    /// heuristic: Win32 Winit posts an internal destroy message from `Drop`.
+    fn wait_for_destroyed_event_after_window_drop(&self, _system: NativeWindowSystem) -> bool {
+        false
+    }
+
+    fn work_area_support(&self, _system: NativeWindowSystem) -> CapabilitySupport {
+        CapabilitySupport::Unsupported
+    }
+
+    fn work_area(&self, _monitor: &MonitorHandle) -> Option<PhysicalScreenRect> {
+        None
+    }
+
+    fn transient_support(
+        &self,
+        system: NativeWindowSystem,
+        _role: TransientRole,
+    ) -> CapabilitySupport {
+        #[cfg(target_os = "linux")]
+        if system == NativeWindowSystem::X11 {
+            return CapabilitySupport::Supported;
+        }
+        let _ = system;
+        CapabilitySupport::Unsupported
+    }
+
+    fn configure_transient_attributes(
+        &self,
+        system: NativeWindowSystem,
+        _parent: &Window,
+        role: TransientRole,
+        attributes: WindowAttributes,
+    ) -> WindowAttributes {
+        #[cfg(target_os = "linux")]
+        if system == NativeWindowSystem::X11 {
+            use winit::platform::x11::{WindowAttributesExtX11, WindowType};
+
+            let window_type = match role {
+                TransientRole::Menu => WindowType::DropdownMenu,
+                TransientRole::ContextMenu | TransientRole::Popover => WindowType::PopupMenu,
+                TransientRole::ComboBox => WindowType::Combo,
+                TransientRole::Tooltip => WindowType::Tooltip,
+            };
+            return attributes
+                .with_override_redirect(true)
+                .with_x11_window_type(vec![window_type]);
+        }
+        let _ = (system, role);
+        attributes
+    }
+
+    fn attach_transient(
+        &self,
+        _system: NativeWindowSystem,
+        _parent: &Window,
+        _popup: &Window,
+        _role: TransientRole,
+    ) -> PlatformOperationResult {
+        Ok(())
+    }
+
+    /// Makes an already-created transient visible using the platform's
+    /// non-activating popup semantics when available. The shared desktop shell
+    /// deliberately creates hosts hidden so native relationship/style setup is
+    /// complete before the first visible frame.
+    fn show_transient(
+        &self,
+        _system: NativeWindowSystem,
+        popup: &Window,
+        _role: TransientRole,
+    ) -> PlatformOperationResult {
+        popup.set_visible(true);
+        Ok(())
+    }
+
+    fn detach_transient(
+        &self,
+        _system: NativeWindowSystem,
+        _parent: &Window,
+        _popup: &Window,
+        _role: TransientRole,
+    ) {
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefaultDesktopPlatformServices;
+
+impl DesktopPlatformServices for DefaultDesktopPlatformServices {}

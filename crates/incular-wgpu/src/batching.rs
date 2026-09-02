@@ -54,6 +54,8 @@ impl BatchPlan {
                     }
                 }
                 PaintCommand::Image { .. }
+                | PaintCommand::PushSurfacePartition { .. }
+                | PaintCommand::PopSurfacePartition
                 | PaintCommand::RRect { .. }
                 | PaintCommand::Border { .. }
                 | PaintCommand::FillPath { .. }

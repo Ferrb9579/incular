@@ -14,3 +14,10 @@ Backends such as `incular-wgpu` consume these values and remain responsible for
 physical DPI conversion, resource allocation, and submission. The legacy
 `incular-painting` crate re-exports this API so existing applications retain a
 stable import path while new integrations should depend on this crate directly.
+
+Display lists can also carry balanced `SurfacePartitionId` markers. They are
+renderer-neutral no-ops during ordinary in-view rendering, but a multi-surface
+host can detach selected retained subtrees while preserving painter order and
+nested partition ownership. This is the boundary used by desktop transient
+surfaces: rendering owns partition identity/command separation, while native
+window creation and GPU-surface policy remain outside this crate.

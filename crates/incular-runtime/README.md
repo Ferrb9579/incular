@@ -89,6 +89,15 @@ are normalized to stable platform-error categories and the last per-window
 failure is visible through `WindowDiagnostics` without retaining native error
 objects.
 
+Transient hosting has a separate resolved-state diagnostic because capability
+does not imply that one concrete popup was successfully presented. A
+`WindowHandle` exposes `transient_presentations()`, and the same snapshot appears
+in `WindowDiagnostics`. Each visible retained `TransientSurfaceId` reports its
+requested presentation, actual `Native`/`Overlay` result, and an optional stable
+fallback reason. Native adapters replace the complete snapshot after host
+negotiation; closing a window clears it before the generational window record is
+released, so an old handle cannot claim that a destroyed popup is still live.
+
 Window control stays semantic and native-handle free. `WindowHandle` can ask
 the compositor/window manager to begin an interactive move or edge/corner
 resize and can change minimize/maximize/fullscreen, decorations, resizability,

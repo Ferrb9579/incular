@@ -25,14 +25,24 @@ incular-widgets = { workspace = true }
 crash-handler = { workspace = true }
 minidump-writer = { workspace = true }
 incular-platform = { workspace = true }
+incular-config = { workspace = true }
 winit = { workspace = true }
 windows-sys = { workspace = true }
+raw-window-handle = { workspace = true }
 
 [features]
 default = []
 devtools = ["incular-desktop/devtools"]
 
+[dev-dependencies]
+incular-core = { workspace = true }
+
 [[test]]
 name = "display_placement"
 path = "tests/display_placement.rs"
+harness = false
+
+[[test]]
+name = "transient_surface"
+path = "tests/transient_surface.rs"
 harness = false
