@@ -2,6 +2,8 @@ use incular_config::TransientRole;
 use incular_platform::{
     CapabilitySupport, NativeWindowSystem, PhysicalScreenRect, PlatformOperationResult,
 };
+use incular_widgets::{NoopPlatformMenuDelegate, PlatformMenuDelegate};
+use std::rc::Rc;
 use winit::{
     monitor::MonitorHandle,
     window::{Window, WindowAttributes},
@@ -14,6 +16,30 @@ use winit::{
 /// this trait only for information or native relationship semantics that would
 /// otherwise require leaking HWND/NSWindow/X11 details into `incular-desktop`.
 pub trait DesktopPlatformServices {
+    /// Returns the application-scoped native menu delegate. The shared desktop
+    /// shell captures this once for the runner lifetime and binds retained
+    /// `PlatformMenuBar` owners to it as windows mount/rebuild.
+    fn platform_menu_delegate(&self) -> Rc<dyn PlatformMenuDelegate> {
+        Rc::new(NoopPlatformMenuDelegate)
+    }
+
+    /// Registers one native top-level window with the application-menu
+    /// backend. Windows may need an HMENU per HWND; macOS ignores this because
+    /// its main menu is application-global.
+    fn register_platform_menu_window(
+        &self,
+        _system: NativeWindowSystem,
+        _window: &Window,
+    ) -> PlatformOperationResult {
+        Ok(())
+    }
+
+    fn unregister_platform_menu_window(&self, _system: NativeWindowSystem, _window: &Window) {}
+
+    /// Drains native menu events captured in OS callbacks. Implementations
+    /// queue rather than execute Rust callbacks across an FFI stack frame.
+    fn flush_platform_menu_events(&self) {}
+
     /// Whether dropping a Winit window only schedules native destruction and
     /// therefore requires observing `WindowEvent::Destroyed` before the event
     /// loop may terminate. This is a native lifecycle contract, not a timing

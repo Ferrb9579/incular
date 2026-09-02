@@ -36,7 +36,7 @@ use incular_platform::{
 };
 use incular_rendering::DisplayList;
 use incular_widgets::Widget;
-use incular_widgets::internal::{Key, MouseCursor, TreeError};
+use incular_widgets::internal::{Key, MouseCursor, PlatformMenuBinding, TreeError};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -331,6 +331,17 @@ impl Application {
             .borrow()
             .get(window_id)
             .map(|record| record.runtime.effective_mouse_cursor())
+    }
+
+    /// Returns the default application-menu bridges mounted in one retained
+    /// window root. Desktop adapters bind them to their native menu delegate.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn platform_menu_bindings(&self, window_id: WindowId) -> Vec<PlatformMenuBinding> {
+        self.registry
+            .borrow()
+            .get(window_id)
+            .map_or_else(Vec::new, |record| record.runtime.platform_menu_bindings())
     }
 
     /// Returns the latest backend capability snapshot for application-level

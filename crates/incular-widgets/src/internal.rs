@@ -55,6 +55,8 @@ pub use crate::navigation::{
     current_page_storage_bucket, current_restoration_scope,
 };
 pub use crate::painting_effects::*;
+#[doc(hidden)]
+pub use crate::platform_widgets::PlatformMenuBinding;
 pub use crate::raw_input::*;
 pub use crate::scrolling::*;
 pub use crate::selection::*;

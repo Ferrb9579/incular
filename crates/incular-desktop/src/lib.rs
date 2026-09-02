@@ -1,10 +1,16 @@
 //! Shared desktop event-loop bridge for Incular.
 mod display;
 mod display_identity;
+mod platform_menus;
 mod platform_services;
 mod pointer;
 mod transients;
 
+#[doc(hidden)]
+pub use platform_menus::{
+    NativeMenuCommandId, NativeMenuCommandRegistry, NativeMenuRegistryError, format_menu_shortcut,
+    matching_menu_shortcut, native_menu_structure_equal,
+};
 pub use platform_services::{DefaultDesktopPlatformServices, DesktopPlatformServices};
 
 use accesskit_winit::{
@@ -34,9 +40,13 @@ use incular_runtime::{
     TransientPresentationResolution,
 };
 use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
-use incular_widgets::{TransientSurfaceId, TransientSurfaceSnapshot, internal::ActionId};
+use incular_widgets::{
+    PlatformMenuDelegate, ShortcutModifiers, TransientSurfaceId, TransientSurfaceSnapshot,
+    internal::ActionId,
+};
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
     sync::Arc,
     time::Instant,
 };
@@ -286,6 +296,7 @@ pub fn run_application_with_services(
     platform_services: impl DesktopPlatformServices + 'static,
 ) -> Result<(), RunError> {
     application.set_platform_capabilities(desktop_platform_capabilities());
+    let platform_menu_delegate = platform_services.platform_menu_delegate();
     let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
         .build()
         .map_err(RunError::EventLoop)?;
@@ -322,6 +333,7 @@ pub fn run_application_with_services(
         displays: DesktopDisplayRegistry::default(),
         pointer_devices: PointerDeviceRegistry::default(),
         platform_services: Box::new(platform_services),
+        platform_menu_delegate,
         window_system: None,
         pending_native_destructions: HashSet::new(),
         #[cfg(feature = "devtools")]
@@ -787,6 +799,7 @@ struct MultiApp {
     displays: DesktopDisplayRegistry,
     pointer_devices: PointerDeviceRegistry,
     platform_services: Box<dyn DesktopPlatformServices>,
+    platform_menu_delegate: Rc<dyn PlatformMenuDelegate>,
     window_system: Option<NativeWindowSystem>,
     /// Native windows whose platform service requires a post-drop
     /// `WindowEvent::Destroyed` acknowledgement. Empty on synchronous-drop
@@ -799,6 +812,14 @@ struct MultiApp {
 }
 
 impl MultiApp {
+    fn sync_platform_menus(&self) {
+        for id in self.application.active_window_ids() {
+            for binding in self.application.platform_menu_bindings(id) {
+                let _ = binding.connect(self.platform_menu_delegate.clone());
+            }
+        }
+    }
+
     fn refresh_displays(&mut self, target: &ActiveEventLoop) {
         let Some(system) = self.window_system else {
             return;
@@ -970,6 +991,16 @@ impl MultiApp {
                     WindowLifecycle::Hidden
                 },
             ));
+        // The retained roots already exist before the native runner starts.
+        // Bind their deferred menu bridges before registering this window so a
+        // backend can attach the current application menu before first show.
+        self.sync_platform_menus();
+        if let Err(error) = self
+            .platform_services
+            .register_platform_menu_window(system, &window)
+        {
+            let _ = self.application.record_platform_operation_error(id, error);
+        }
         let native_id = window.id();
         window.set_visible(options.visible);
         let observed_state = observed_window_state(&window, &self.displays, system);
@@ -1018,6 +1049,10 @@ impl MultiApp {
             self.destroy_transient_hosts_for_owner(command.window_id);
             self.native_ids.remove(&command.window_id);
             if let Some(mut state) = self.windows.remove(&native_id) {
+                if let Some(system) = self.window_system {
+                    self.platform_services
+                        .unregister_platform_menu_window(system, &state.window);
+                }
                 self.track_native_window_drop(native_id);
                 state.accessibility.projection.note_adapter_destroyed();
             }
@@ -1283,8 +1318,6 @@ impl MultiApp {
             Ok(Some((list, frame))) => {
                 #[cfg(feature = "devtools")]
                 let mut list = list;
-                #[cfg(not(feature = "devtools"))]
-                let list = list;
                 #[cfg(feature = "devtools")]
                 let devtools_frame = frame;
                 #[cfg(not(feature = "devtools"))]
@@ -1911,6 +1944,22 @@ fn map_external_error(error: winit::error::ExternalError) -> PlatformOperationEr
     }
 }
 
+impl Drop for MultiApp {
+    fn drop(&mut self) {
+        let Some(system) = self.window_system else {
+            return;
+        };
+        // OS menu backends may subclass or associate state with the native
+        // window itself. Detach those resources while the Winit Window values
+        // are unquestionably still live; relying on struct field drop order
+        // would destroy the windows before `platform_services` can clean up.
+        for state in self.windows.values() {
+            self.platform_services
+                .unregister_platform_menu_window(system, &state.window);
+        }
+    }
+}
+
 impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
     fn resumed(&mut self, target: &ActiveEventLoop) {
         self.apply_window_commands(target);
@@ -2137,12 +2186,19 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .get(&native_id)
                     .expect("known native window")
                     .modifiers;
-                self.route_window_event(
-                    native_id,
-                    IncularWindowEvent::platform(id, key_event(&event, modifiers)),
-                );
-                if let Some(text) = text_event(&event) {
-                    self.route_window_event(native_id, IncularWindowEvent::platform(id, text));
+                let menu_handled = event.state == winit::event::ElementState::Pressed
+                    && platform_menu_key(&event).is_some_and(|key| {
+                        self.platform_menu_delegate
+                            .handle_shortcut(&key, platform_menu_modifiers(modifiers))
+                    });
+                if !menu_handled {
+                    self.route_window_event(
+                        native_id,
+                        IncularWindowEvent::platform(id, key_event(&event, modifiers)),
+                    );
+                    if let Some(text) = text_event(&event) {
+                        self.route_window_event(native_id, IncularWindowEvent::platform(id, text));
+                    }
                 }
             }
             WindowEvent::Ime(event) => {
@@ -2161,6 +2217,8 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
 
     fn about_to_wait(&mut self, target: &ActiveEventLoop) {
         self.frame_timestamp = Instant::now();
+        self.platform_services.flush_platform_menu_events();
+        self.sync_platform_menus();
         self.refresh_displays(target);
         self.apply_window_commands(target);
         for id in self.application.active_window_ids() {
@@ -2174,11 +2232,38 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             RuntimeWakeEvent::Runtime => self.application.process_runtime_work(),
             RuntimeWakeEvent::Accessibility(event) => self.route_accesskit_event(event),
         }
+        self.platform_services.flush_platform_menu_events();
+        self.sync_platform_menus();
         self.apply_window_commands(target);
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
         }
     }
+}
+
+fn platform_menu_key(event: &winit::event::KeyEvent) -> Option<String> {
+    match &event.logical_key {
+        winit::keyboard::Key::Character(value) if !value.is_empty() => Some(value.to_string()),
+        winit::keyboard::Key::Named(value) => Some(format!("{value:?}")),
+        _ => None,
+    }
+}
+
+fn platform_menu_modifiers(modifiers: winit::keyboard::ModifiersState) -> ShortcutModifiers {
+    let mut result = ShortcutModifiers::empty();
+    if modifiers.alt_key() {
+        result = result.union(ShortcutModifiers::ALT);
+    }
+    if modifiers.control_key() {
+        result = result.union(ShortcutModifiers::CONTROL);
+    }
+    if modifiers.super_key() {
+        result = result.union(ShortcutModifiers::META);
+    }
+    if modifiers.shift_key() {
+        result = result.union(ShortcutModifiers::SHIFT);
+    }
+    result
 }
 
 fn window_attributes(options: &WindowOptions) -> Result<WindowAttributes, PlatformOperationError> {

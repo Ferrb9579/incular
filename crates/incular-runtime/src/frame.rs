@@ -33,8 +33,9 @@ use incular_semantics::{SemanticAction, SemanticNodeId};
 #[cfg(feature = "devtools")]
 use incular_widgets::internal::InvalidationCause;
 use incular_widgets::internal::{
-    ActionId, Diagnostics, ElementId, MouseCursor, PointerDeviceKind, PointerEvent,
-    RawPointerEvent, TextRange, TextSelection, TreeError, WidgetTree, WindowInteraction,
+    ActionId, Diagnostics, ElementId, MouseCursor, PlatformMenuBinding, PointerDeviceKind,
+    PointerEvent, RawPointerEvent, TextRange, TextSelection, TreeError, WidgetTree,
+    WindowInteraction,
 };
 use incular_widgets::{TextInputActionHint, TextInputTypeHint, Widget};
 use std::{
@@ -288,6 +289,15 @@ impl Runtime {
     #[must_use]
     pub const fn window_id(&self) -> Option<WindowId> {
         self.window_id
+    }
+
+    /// Returns default application-menu bridges retained by this window root.
+    /// Native desktop adapters use these after native window creation; normal
+    /// application code should use `PlatformMenuBar` instead.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn platform_menu_bindings(&self) -> Vec<PlatformMenuBinding> {
+        self.tree.platform_menu_bindings()
     }
 
     /// Marks only this retained root for a future presentation.

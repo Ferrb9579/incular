@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::environment::{ContentSensitivity, SensitiveContentHost};
+use crate::platform_widgets::PlatformMenuRetainedMarker;
 use crate::transient::{
     RetainedTransientPlacement, TransientPlacementInput, TransientPortalMarker, TransientSurfaceId,
     TransientSurfaceSnapshot, place_transient,
@@ -74,6 +75,26 @@ impl WidgetTree {
     #[must_use]
     pub fn environment(&self) -> &RuntimeEnvironment {
         &self.environment
+    }
+
+    /// Returns default platform-menu bridges retained by the current tree.
+    /// Desktop adapters bind these to their application-scoped native delegate
+    /// after the owning native window has been created.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn platform_menu_bindings(&self) -> Vec<crate::platform_widgets::PlatformMenuBinding> {
+        self.elements
+            .iter()
+            .filter_map(|(_, element)| {
+                element
+                    .environment_override
+                    .as_ref()?
+                    .value
+                    .downcast_ref::<PlatformMenuRetainedMarker>()
+                    .filter(|marker| marker.binding.auto_connect_native_delegate())
+                    .map(|marker| marker.binding.clone())
+            })
+            .collect()
     }
 
     /// Returns the highest-priority capture policy contributed by all mounted

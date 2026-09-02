@@ -13,7 +13,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fmt,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -379,7 +379,8 @@ pub struct PlatformMenuSnapshot {
     pub menus: Vec<PlatformMenuSnapshotNode>,
 }
 
-/// A serialized menu node.  `separator` distinguishes `Divider` entries.
+/// A serialized menu node. `selectable` distinguishes command items from menu
+/// containers even when a menu is empty; `separator` distinguishes dividers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlatformMenuSnapshotNode {
     pub id: MenuItemId,
@@ -387,6 +388,7 @@ pub struct PlatformMenuSnapshotNode {
     pub tooltip: Option<String>,
     pub shortcut: Option<PlatformMenuShortcut>,
     pub enabled: bool,
+    pub selectable: bool,
     pub separator: bool,
     pub children: Vec<Self>,
 }
@@ -398,7 +400,26 @@ pub enum PlatformMenuUpdate {
     Unchanged,
     NoOpUnsupported,
     RejectedOwnedByOther,
+    /// The backend owns the requested platform but could not safely apply the
+    /// native mutation (for example native command-space exhaustion or an OS
+    /// menu construction failure). Existing installed state remains current.
+    RejectedByPlatform,
 }
+
+/// One event produced by a native application-menu backend.
+///
+/// Native adapters report retained IDs rather than labels, positions, or
+/// backend command integers. The controller resolves the event against its
+/// current callback generation, so a command removed by an update cannot
+/// accidentally call a replacement callback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlatformMenuEvent {
+    Selected(MenuItemId),
+    Opened(MenuItemId),
+    Closed(MenuItemId),
+}
+
+type PlatformMenuEventHandler = Rc<dyn Fn(PlatformMenuEvent)>;
 
 /// Native menu bridge implemented by a platform crate.
 pub trait PlatformMenuDelegate: 'static {
@@ -414,11 +435,25 @@ pub trait PlatformMenuDelegate: 'static {
     /// Releases ownership after clear.
     fn release(&self, owner: MenuOwnerId) -> PlatformMenuUpdate;
 
-    /// Forwards a command invocation when a backend exposes an explicit
-    /// command channel.  Menu bars that deliver callbacks directly may keep
-    /// the deterministic default.
-    fn invoke(&self, _owner: MenuOwnerId, _id: MenuItemId) -> PlatformMenuUpdate {
-        PlatformMenuUpdate::NoOpUnsupported
+    /// Installs or removes the retained event sink for this owner.
+    ///
+    /// Backends that are driven only through explicit controller dispatch may
+    /// keep the default. Production native backends override this and emit
+    /// [`PlatformMenuEvent`] after resolving their private native command IDs.
+    fn set_event_handler(
+        &self,
+        _owner: MenuOwnerId,
+        _handler: Option<PlatformMenuEventHandler>,
+    ) -> PlatformMenuUpdate {
+        PlatformMenuUpdate::Applied
+    }
+
+    /// Handles one desktop keyboard accelerator before ordinary retained key
+    /// dispatch. Returning `true` makes the application-menu shortcut the
+    /// authority for that key event, preventing a second in-tree shortcut from
+    /// firing the same command.
+    fn handle_shortcut(&self, _key: &str, _modifiers: ShortcutModifiers) -> bool {
+        false
     }
 }
 
@@ -447,8 +482,97 @@ impl PlatformMenuDelegate for NoopPlatformMenuDelegate {
         PlatformMenuUpdate::NoOpUnsupported
     }
 
-    fn invoke(&self, _owner: MenuOwnerId, _id: MenuItemId) -> PlatformMenuUpdate {
+    fn set_event_handler(
+        &self,
+        _owner: MenuOwnerId,
+        _handler: Option<PlatformMenuEventHandler>,
+    ) -> PlatformMenuUpdate {
         PlatformMenuUpdate::NoOpUnsupported
+    }
+}
+
+/// Late-bound per-menu bridge used by the default `PlatformMenuBar` path.
+///
+/// The application builds and mounts retained roots before a desktop event
+/// loop owns native windows. Keeping this bridge in the retained tree lets the
+/// desktop adapter attach the correct OS delegate later without a process
+/// global or any application-supplied native handle.
+#[derive(Default)]
+struct DeferredPlatformMenuDelegate {
+    target: RefCell<Option<Rc<dyn PlatformMenuDelegate>>>,
+}
+
+impl DeferredPlatformMenuDelegate {
+    fn bind(&self, delegate: Rc<dyn PlatformMenuDelegate>) -> bool {
+        let mut target = self.target.borrow_mut();
+        if target
+            .as_ref()
+            .is_some_and(|current| Rc::ptr_eq(current, &delegate))
+        {
+            return false;
+        }
+        *target = Some(delegate);
+        true
+    }
+
+    fn unbind(&self) -> bool {
+        self.target.borrow_mut().take().is_some()
+    }
+
+    fn is_bound(&self) -> bool {
+        self.target.borrow().is_some()
+    }
+
+    fn is_bound_to(&self, delegate: &Rc<dyn PlatformMenuDelegate>) -> bool {
+        self.target
+            .borrow()
+            .as_ref()
+            .is_some_and(|current| Rc::ptr_eq(current, delegate))
+    }
+
+    fn forward(
+        &self,
+        call: impl FnOnce(&dyn PlatformMenuDelegate) -> PlatformMenuUpdate,
+    ) -> PlatformMenuUpdate {
+        self.target
+            .borrow()
+            .as_ref()
+            .map_or(PlatformMenuUpdate::NoOpUnsupported, |delegate| {
+                call(delegate.as_ref())
+            })
+    }
+}
+
+impl PlatformMenuDelegate for DeferredPlatformMenuDelegate {
+    fn acquire(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        self.forward(|delegate| delegate.acquire(owner))
+    }
+
+    fn set_menus(&self, owner: MenuOwnerId, snapshot: PlatformMenuSnapshot) -> PlatformMenuUpdate {
+        self.forward(|delegate| delegate.set_menus(owner, snapshot))
+    }
+
+    fn clear_menus(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        self.forward(|delegate| delegate.clear_menus(owner))
+    }
+
+    fn release(&self, owner: MenuOwnerId) -> PlatformMenuUpdate {
+        self.forward(|delegate| delegate.release(owner))
+    }
+
+    fn set_event_handler(
+        &self,
+        owner: MenuOwnerId,
+        handler: Option<PlatformMenuEventHandler>,
+    ) -> PlatformMenuUpdate {
+        self.forward(|delegate| delegate.set_event_handler(owner, handler))
+    }
+
+    fn handle_shortcut(&self, key: &str, modifiers: ShortcutModifiers) -> bool {
+        self.target
+            .borrow()
+            .as_ref()
+            .is_some_and(|delegate| delegate.handle_shortcut(key, modifiers))
     }
 }
 
@@ -491,7 +615,11 @@ struct PlatformMenuBarInner {
 
 impl Drop for PlatformMenuBarInner {
     fn drop(&mut self) {
+        if self.state.get_mut().installed.is_none() {
+            return;
+        }
         let _ = self.delegate.clear_menus(self.owner);
+        let _ = self.delegate.set_event_handler(self.owner, None);
         let _ = self.delegate.release(self.owner);
     }
 }
@@ -550,13 +678,16 @@ impl PlatformMenuBarController {
         menus: &[PlatformMenu],
     ) -> Result<PlatformMenuUpdate, PlatformMenuBuildError> {
         let (snapshot, callbacks) = build_snapshot(menus)?;
-        let mut state = self.inner.state.borrow_mut();
-        state.callbacks = callbacks;
-        if state.installed.as_ref() == Some(&snapshot) {
+        let had_installed = self.inner.state.borrow().installed.is_some();
+        if self.inner.state.borrow().installed.as_ref() == Some(&snapshot) {
+            // Callback-only changes are intentionally committed even when the
+            // native snapshot is unchanged. Native command identity remains
+            // stable while future events resolve against the newest closure.
+            let mut state = self.inner.state.borrow_mut();
+            state.callbacks = callbacks;
             state.last_update = Some(PlatformMenuUpdate::Unchanged);
             return Ok(PlatformMenuUpdate::Unchanged);
         }
-        drop(state);
         let acquire = self.inner.delegate.acquire(self.inner.owner);
         if matches!(acquire, PlatformMenuUpdate::NoOpUnsupported) {
             self.inner.state.borrow_mut().last_update = Some(acquire);
@@ -566,6 +697,22 @@ impl PlatformMenuBarController {
             self.inner.state.borrow_mut().last_update = Some(acquire);
             return Ok(acquire);
         }
+        let handler_update = self.inner.delegate.set_event_handler(
+            self.inner.owner,
+            Some(menu_event_handler(Rc::downgrade(&self.inner))),
+        );
+        if matches!(
+            handler_update,
+            PlatformMenuUpdate::NoOpUnsupported
+                | PlatformMenuUpdate::RejectedOwnedByOther
+                | PlatformMenuUpdate::RejectedByPlatform
+        ) {
+            if !had_installed {
+                let _ = self.inner.delegate.release(self.inner.owner);
+            }
+            self.inner.state.borrow_mut().last_update = Some(handler_update);
+            return Ok(handler_update);
+        }
         let update = self
             .inner
             .delegate
@@ -574,7 +721,20 @@ impl PlatformMenuBarController {
             update,
             PlatformMenuUpdate::Applied | PlatformMenuUpdate::Unchanged
         ) {
-            self.inner.state.borrow_mut().installed = Some(snapshot);
+            let mut state = self.inner.state.borrow_mut();
+            state.installed = Some(snapshot);
+            state.callbacks = callbacks;
+        } else if !had_installed {
+            // Backend mutation is transactional from the controller's point of
+            // view. When first installation fails, remove the provisional sink
+            // and ownership. A rejected replacement keeps the previous sink and
+            // callback generation because the previous native tree is still
+            // authoritative.
+            let _ = self
+                .inner
+                .delegate
+                .set_event_handler(self.inner.owner, None);
+            let _ = self.inner.delegate.release(self.inner.owner);
         }
         self.inner.state.borrow_mut().last_update = Some(update);
         Ok(update)
@@ -583,6 +743,10 @@ impl PlatformMenuBarController {
     /// Clears native menus while keeping this controller reusable.
     pub fn detach(&self) -> PlatformMenuUpdate {
         let update = self.inner.delegate.clear_menus(self.inner.owner);
+        let _ = self
+            .inner
+            .delegate
+            .set_event_handler(self.inner.owner, None);
         let _ = self.inner.delegate.release(self.inner.owner);
         let mut state = self.inner.state.borrow_mut();
         state.installed = None;
@@ -602,39 +766,46 @@ impl PlatformMenuBarController {
             .selected
             .get(id)
             .cloned();
-        match callback {
-            Some(callback) => {
-                let _ = self.inner.delegate.invoke(self.inner.owner, id.clone());
-                callback();
-                MenuDispatchResult::Handled
-            }
-            None => MenuDispatchResult::Unknown,
-        }
+        dispatch_owned_callback(callback)
     }
 
     /// Runs the retained submenu-open callback.
     #[must_use]
     pub fn open(&self, id: &MenuItemId) -> MenuDispatchResult {
-        dispatch_callback(&self.inner.state.borrow().callbacks.opened, id)
+        let callback = self.inner.state.borrow().callbacks.opened.get(id).cloned();
+        dispatch_owned_callback(callback)
     }
 
     /// Runs the retained submenu-close callback.
     #[must_use]
     pub fn close(&self, id: &MenuItemId) -> MenuDispatchResult {
-        dispatch_callback(&self.inner.state.borrow().callbacks.closed, id)
+        let callback = self.inner.state.borrow().callbacks.closed.get(id).cloned();
+        dispatch_owned_callback(callback)
     }
 }
 
-fn dispatch_callback(
-    callbacks: &BTreeMap<MenuItemId, Rc<dyn Fn()>>,
-    id: &MenuItemId,
-) -> MenuDispatchResult {
-    callbacks
-        .get(id)
-        .map_or(MenuDispatchResult::Unknown, |callback| {
-            callback();
-            MenuDispatchResult::Handled
-        })
+fn menu_event_handler(inner: Weak<PlatformMenuBarInner>) -> PlatformMenuEventHandler {
+    Rc::new(move |event| {
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        let callback = {
+            let state = inner.state.borrow();
+            match event {
+                PlatformMenuEvent::Selected(id) => state.callbacks.selected.get(&id).cloned(),
+                PlatformMenuEvent::Opened(id) => state.callbacks.opened.get(&id).cloned(),
+                PlatformMenuEvent::Closed(id) => state.callbacks.closed.get(&id).cloned(),
+            }
+        };
+        let _ = dispatch_owned_callback(callback);
+    })
+}
+
+fn dispatch_owned_callback(callback: Option<Rc<dyn Fn()>>) -> MenuDispatchResult {
+    callback.map_or(MenuDispatchResult::Unknown, |callback| {
+        callback();
+        MenuDispatchResult::Handled
+    })
 }
 
 /// Result of dispatching a platform command.
@@ -650,6 +821,8 @@ pub struct PlatformMenuBar {
     menus: Vec<PlatformMenu>,
     child: Option<Widget>,
     controller: PlatformMenuBarController,
+    deferred_delegate: Rc<DeferredPlatformMenuDelegate>,
+    auto_connect_native_delegate: bool,
 }
 
 impl fmt::Debug for PlatformMenuBar {
@@ -664,10 +837,20 @@ impl fmt::Debug for PlatformMenuBar {
 }
 
 impl PlatformMenuBar {
-    /// Creates a menu bar using the deterministic unsupported delegate.
+    /// Creates a menu bar that is late-bound to the active platform menu
+    /// backend when mounted by a native runner. Unsupported hosts retain the
+    /// model and report [`PlatformMenuUpdate::NoOpUnsupported`].
     #[must_use]
     pub fn new(menus: impl Into<Vec<PlatformMenu>>, child: impl Into<Widget>) -> Self {
-        Self::with_delegate(menus, child, Rc::new(NoopPlatformMenuDelegate))
+        let deferred_delegate = Rc::new(DeferredPlatformMenuDelegate::default());
+        let controller = PlatformMenuBarController::new(deferred_delegate.clone());
+        Self {
+            menus: menus.into(),
+            child: Some(child.into()),
+            controller,
+            deferred_delegate,
+            auto_connect_native_delegate: true,
+        }
     }
 
     /// Creates a menu bar connected to a native delegate.
@@ -677,20 +860,27 @@ impl PlatformMenuBar {
         child: impl Into<Widget>,
         delegate: Rc<dyn PlatformMenuDelegate>,
     ) -> Self {
+        let deferred_delegate = Rc::new(DeferredPlatformMenuDelegate::default());
+        let _ = deferred_delegate.bind(delegate);
         Self {
             menus: menus.into(),
             child: Some(child.into()),
-            controller: PlatformMenuBarController::new(delegate),
+            controller: PlatformMenuBarController::new(deferred_delegate.clone()),
+            deferred_delegate,
+            auto_connect_native_delegate: false,
         }
     }
 
     /// Creates a menu bar with no visual child.
     #[must_use]
     pub fn without_child(menus: impl Into<Vec<PlatformMenu>>) -> Self {
+        let deferred_delegate = Rc::new(DeferredPlatformMenuDelegate::default());
         Self {
             menus: menus.into(),
             child: None,
-            controller: PlatformMenuBarController::new(Rc::new(NoopPlatformMenuDelegate)),
+            controller: PlatformMenuBarController::new(deferred_delegate.clone()),
+            deferred_delegate,
+            auto_connect_native_delegate: true,
         }
     }
 
@@ -706,18 +896,24 @@ impl PlatformMenuBar {
 
     /// Replaces the menu tree through the retained owner.
     pub fn update(
-        &self,
+        &mut self,
         menus: impl Into<Vec<PlatformMenu>>,
     ) -> Result<PlatformMenuUpdate, PlatformMenuBuildError> {
-        let menus = menus.into();
-        self.controller.install(&menus)
+        self.menus = menus.into();
+        self.controller.install(&self.menus)
     }
 
     /// Installs the menu tree and returns the visual child unchanged.
     #[must_use]
     pub fn into_widget(self) -> Widget {
-        let _ = self.controller.install(&self.menus);
-        self.child.unwrap_or_else(|| SizedBox::shrink().into())
+        let child = self.child.unwrap_or_else(|| SizedBox::shrink().into());
+        let binding = PlatformMenuBinding::new(
+            self.controller,
+            self.deferred_delegate,
+            self.menus,
+            self.auto_connect_native_delegate,
+        );
+        Widget::environment_scope(PlatformMenuRetainedMarker { binding }, child)
     }
 
     /// Alias for [`Self::into_widget`].
@@ -725,6 +921,149 @@ impl PlatformMenuBar {
     pub fn widget(self) -> Widget {
         self.into_widget()
     }
+}
+
+struct PlatformMenuMountLease {
+    controller: PlatformMenuBarController,
+}
+
+impl Drop for PlatformMenuMountLease {
+    fn drop(&mut self) {
+        let _ = self.controller.detach();
+    }
+}
+
+/// Retained bridge discovered by desktop runners after the native window has
+/// been created. This is an implementation seam, not application API.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PlatformMenuBinding {
+    controller: PlatformMenuBarController,
+    delegate: Rc<DeferredPlatformMenuDelegate>,
+    state: Rc<RefCell<PlatformMenuBindingState>>,
+    _lease: Rc<PlatformMenuMountLease>,
+}
+
+struct PlatformMenuBindingState {
+    menus: Vec<PlatformMenu>,
+    auto_connect_native_delegate: bool,
+    explicit_delegate: Option<Rc<dyn PlatformMenuDelegate>>,
+}
+
+impl PlatformMenuBinding {
+    fn new(
+        controller: PlatformMenuBarController,
+        delegate: Rc<DeferredPlatformMenuDelegate>,
+        menus: Vec<PlatformMenu>,
+        auto_connect_native_delegate: bool,
+    ) -> Self {
+        let lease = Rc::new(PlatformMenuMountLease {
+            controller: controller.clone(),
+        });
+        let explicit_delegate = (!auto_connect_native_delegate)
+            .then(|| delegate.target.borrow().clone())
+            .flatten();
+        Self {
+            controller,
+            delegate,
+            state: Rc::new(RefCell::new(PlatformMenuBindingState {
+                menus,
+                auto_connect_native_delegate,
+                explicit_delegate,
+            })),
+            _lease: lease,
+        }
+    }
+
+    /// Keeps the retained owner/delegate while replacing the declarative menu
+    /// model from a compatible widget rebuild. An already-bound delegate is
+    /// synchronized immediately; a not-yet-bound native delegate is applied at
+    /// the desktop adapter's next synchronization point.
+    pub(crate) fn reconcile_from(&self, incoming: &Self) {
+        let (menus, auto_connect_native_delegate, explicit_delegate) = {
+            let incoming = incoming.state.borrow();
+            (
+                incoming.menus.clone(),
+                incoming.auto_connect_native_delegate,
+                incoming.explicit_delegate.clone(),
+            )
+        };
+        let (mode_changed, explicit_target_changed) = {
+            let current = self.state.borrow();
+            (
+                current.auto_connect_native_delegate != auto_connect_native_delegate,
+                !auto_connect_native_delegate
+                    && match (&current.explicit_delegate, &explicit_delegate) {
+                        (Some(current), Some(incoming)) => !Rc::ptr_eq(current, incoming),
+                        (None, None) => false,
+                        _ => true,
+                    },
+            )
+        };
+
+        if mode_changed || explicit_target_changed {
+            if self.delegate.is_bound() {
+                let _ = self.controller.detach();
+            }
+            if auto_connect_native_delegate {
+                let _ = self.delegate.unbind();
+            } else if let Some(delegate) = explicit_delegate.clone() {
+                let _ = self.delegate.bind(delegate);
+            }
+        }
+
+        {
+            let mut current = self.state.borrow_mut();
+            current.menus = menus;
+            current.auto_connect_native_delegate = auto_connect_native_delegate;
+            current.explicit_delegate = explicit_delegate;
+        }
+        self.install_if_bound();
+    }
+
+    pub(crate) fn install_if_bound(&self) {
+        if self.delegate.is_bound() {
+            let _ = self
+                .controller
+                .install(self.state.borrow().menus.as_slice());
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn auto_connect_native_delegate(&self) -> bool {
+        self.state.borrow().auto_connect_native_delegate
+    }
+
+    #[must_use]
+    pub fn owner(&self) -> MenuOwnerId {
+        self.controller.owner()
+    }
+
+    /// Connects the retained owner to one application-scoped native delegate.
+    /// Repeated synchronization is cheap and retries owners that were
+    /// previously rejected while another window held the application menu.
+    pub fn connect(
+        &self,
+        delegate: Rc<dyn PlatformMenuDelegate>,
+    ) -> Result<PlatformMenuUpdate, PlatformMenuBuildError> {
+        if !self.auto_connect_native_delegate() {
+            return Ok(self
+                .controller
+                .last_update()
+                .unwrap_or(PlatformMenuUpdate::NoOpUnsupported));
+        }
+        if self.delegate.is_bound() && !self.delegate.is_bound_to(&delegate) {
+            let _ = self.controller.detach();
+        }
+        let _ = self.delegate.bind(delegate);
+        self.controller
+            .install(self.state.borrow().menus.as_slice())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct PlatformMenuRetainedMarker {
+    pub binding: PlatformMenuBinding,
 }
 
 impl From<PlatformMenuBar> for Widget {
@@ -801,6 +1140,7 @@ fn build_menu_node(
                 tooltip: None,
                 shortcut: None,
                 enabled: false,
+                selectable: false,
                 separator: true,
                 children: Vec::new(),
             })],
@@ -812,6 +1152,7 @@ fn build_menu_node(
         tooltip: menu.tooltip.clone(),
         shortcut: None,
         enabled: true,
+        selectable: false,
         separator: false,
         children,
     })
@@ -839,6 +1180,7 @@ fn build_item_node(
         tooltip: item.tooltip.clone(),
         shortcut: item.shortcut.clone(),
         enabled: item.enabled && item.on_selected.is_some(),
+        selectable: true,
         separator: false,
         children: Vec::new(),
     })

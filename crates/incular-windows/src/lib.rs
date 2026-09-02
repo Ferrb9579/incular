@@ -1,14 +1,47 @@
 //! Windows desktop adapter for Incular's shared desktop shell.
 mod crash_reporter;
+#[cfg(target_os = "windows")]
+mod platform_menus;
 
 pub use incular_desktop::RunError;
 
 #[cfg(target_os = "windows")]
-#[derive(Clone, Copy, Debug, Default)]
-struct WindowsDesktopPlatformServices;
+#[derive(Clone, Default)]
+struct WindowsDesktopPlatformServices {
+    menus: std::rc::Rc<platform_menus::WindowsPlatformMenuDelegate>,
+}
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn platform_menu_delegate(&self) -> std::rc::Rc<dyn incular_widgets::PlatformMenuDelegate> {
+        self.menus.clone()
+    }
+
+    fn register_platform_menu_window(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        window: &winit::window::Window,
+    ) -> incular_platform::PlatformOperationResult {
+        if system != incular_platform::NativeWindowSystem::Win32 {
+            return Ok(());
+        }
+        self.menus.register_window(window)
+    }
+
+    fn unregister_platform_menu_window(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        window: &winit::window::Window,
+    ) {
+        if system == incular_platform::NativeWindowSystem::Win32 {
+            self.menus.unregister_window(window);
+        }
+    }
+
+    fn flush_platform_menu_events(&self) {
+        self.menus.flush_events();
+    }
+
     fn wait_for_destroyed_event_after_window_drop(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -191,7 +224,10 @@ pub fn run_application(application: incular_runtime::Application) -> Result<(), 
     let _crash_handler = crash_reporter::install();
     #[cfg(target_os = "windows")]
     {
-        incular_desktop::run_application_with_services(application, WindowsDesktopPlatformServices)
+        incular_desktop::run_application_with_services(
+            application,
+            WindowsDesktopPlatformServices::default(),
+        )
     }
     #[cfg(not(target_os = "windows"))]
     incular_desktop::run_application(application)

@@ -190,8 +190,9 @@ pub use painting_effects::{
 pub use platform_widgets::{
     MenuDispatchResult, MenuItemId, MenuOwnerId, NoopPlatformMenuDelegate, PlatformMenu,
     PlatformMenuBar, PlatformMenuBarController, PlatformMenuBuildError, PlatformMenuDelegate,
-    PlatformMenuEntry, PlatformMenuItem, PlatformMenuItemGroup, PlatformMenuShortcut,
-    PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate, ShortcutModifiers,
+    PlatformMenuEntry, PlatformMenuEvent, PlatformMenuItem, PlatformMenuItemGroup,
+    PlatformMenuShortcut, PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate,
+    ShortcutModifiers,
 };
 pub use radio_selection::{RadioGroup, RawRadio, SelectableRegion};
 pub use raw_input::{

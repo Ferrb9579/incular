@@ -131,7 +131,9 @@ keyboard-types = "0.8.3"
 crash-handler = "0.6.2"
 minidump-writer = "0.11.0"
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
-objc2-app-kit = { version = "0.2.2", features = ["NSGraphics", "NSScreen", "NSView", "NSWindow"] }
+objc2 = "0.5.2"
+objc2-foundation = "0.2.2"
+objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSEvent", "NSGraphics", "NSMenu", "NSMenuItem", "NSScreen", "NSView", "NSWindow"] }
 
 # Optimized build with symbols for external profilers (`perf`,samply).
 [profile.profiling]

@@ -3,13 +3,14 @@ use super::*;
 impl WgpuRenderer {
     pub(super) fn acquire_surface_texture(
         &mut self,
-    ) -> Result<Option<wgpu::SurfaceTexture>, RendererError> {
+    ) -> Result<Option<(wgpu::SurfaceTexture, bool)>, RendererError> {
         match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some(frame)),
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.surface.configure(&self.device, &self.config);
-                Ok(Some(frame))
-            }
+            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some((frame, false))),
+            // A suboptimal texture is still valid for this frame. WGPU
+            // explicitly forbids Surface::configure while a SurfaceTexture is
+            // outstanding, so defer reconfiguration until after presentation
+            // consumes this texture below.
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(Some((frame, true))),
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
                 Ok(None)
@@ -580,7 +581,7 @@ impl WgpuRenderer {
         let prepare_us = us_since(prepare_started);
         let encode_started = std::time::Instant::now();
         self.profiler_next_pass = self.gpu_timing_supported();
-        let Some(frame) = self.acquire_surface_texture()? else {
+        let Some((frame, reconfigure_after_present)) = self.acquire_surface_texture()? else {
             return Ok(RenderStats::default());
         };
         let view = frame
@@ -675,6 +676,9 @@ impl WgpuRenderer {
             self.capture_requested = false;
         }
         self.queue.present(frame);
+        if reconfigure_after_present {
+            self.surface.configure(&self.device, &self.config);
+        }
         if self.gpu_timing_supported() {
             // wgpu-profiler drops the newest pending frame when its bounded
             // queue is full; mirror that bookkeeping for the frame ids kept

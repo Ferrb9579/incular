@@ -46,3 +46,8 @@ harness = false
 name = "transient_surface"
 path = "tests/transient_surface.rs"
 harness = false
+
+[[test]]
+name = "platform_menu"
+path = "tests/platform_menu.rs"
+harness = false

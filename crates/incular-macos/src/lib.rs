@@ -1,13 +1,26 @@
 //! macOS desktop adapter for Incular's shared desktop shell.
 
+#[cfg(target_os = "macos")]
+mod platform_menus;
+
 pub use incular_desktop::{RunError, run_window};
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Default)]
-struct MacosDesktopPlatformServices;
+#[derive(Clone, Default)]
+struct MacosDesktopPlatformServices {
+    menus: std::rc::Rc<platform_menus::MacosPlatformMenuDelegate>,
+}
 
 #[cfg(target_os = "macos")]
 impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
+    fn platform_menu_delegate(&self) -> std::rc::Rc<dyn incular_widgets::PlatformMenuDelegate> {
+        self.menus.clone()
+    }
+
+    fn flush_platform_menu_events(&self) {
+        self.menus.flush_events();
+    }
+
     fn work_area_support(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -159,7 +172,10 @@ fn appkit_window(
 pub fn run_application(application: incular_runtime::Application) -> Result<(), RunError> {
     #[cfg(target_os = "macos")]
     {
-        incular_desktop::run_application_with_services(application, MacosDesktopPlatformServices)
+        incular_desktop::run_application_with_services(
+            application,
+            MacosDesktopPlatformServices::default(),
+        )
     }
     #[cfg(not(target_os = "macos"))]
     incular_desktop::run_application(application)

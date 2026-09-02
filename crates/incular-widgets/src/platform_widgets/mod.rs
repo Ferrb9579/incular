@@ -9,9 +9,13 @@ use crate::{SizedBox, Widget};
 
 mod menu;
 
+#[doc(hidden)]
+pub use menu::PlatformMenuBinding;
+pub(crate) use menu::PlatformMenuRetainedMarker;
 pub use menu::{
     MenuDispatchResult, MenuItemId, MenuOwnerId, NoopPlatformMenuDelegate, PlatformMenu,
     PlatformMenuBar, PlatformMenuBarController, PlatformMenuBuildError, PlatformMenuDelegate,
-    PlatformMenuEntry, PlatformMenuItem, PlatformMenuItemGroup, PlatformMenuShortcut,
-    PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate, ShortcutModifiers,
+    PlatformMenuEntry, PlatformMenuEvent, PlatformMenuItem, PlatformMenuItemGroup,
+    PlatformMenuShortcut, PlatformMenuSnapshot, PlatformMenuSnapshotNode, PlatformMenuUpdate,
+    ShortcutModifiers,
 };

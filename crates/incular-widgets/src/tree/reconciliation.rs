@@ -218,6 +218,14 @@ impl WidgetTree {
             } => (environment.clone(), *environment_boundary),
             _ => (None, false),
         };
+        let platform_menu_binding = environment_override
+            .as_ref()
+            .and_then(|scope| {
+                scope
+                    .value
+                    .downcast_ref::<crate::platform_widgets::PlatformMenuRetainedMarker>()
+            })
+            .map(|marker| marker.binding.clone());
         let (build_context, render_context) = self.inherited_contexts_for(
             parent,
             environment_boundary,
@@ -271,6 +279,9 @@ impl WidgetTree {
         if let WidgetKind::SelectionListener { notifier, .. } = widget.kind() {
             notifier.register();
         }
+        if let Some(binding) = platform_menu_binding {
+            binding.install_if_bound();
+        }
         self.diagnostics.mounts += 1;
         Ok(id)
     }
@@ -323,6 +334,8 @@ impl WidgetTree {
         widget: &Widget,
     ) -> Result<(), TreeError> {
         let mut widget = widget.clone();
+        let platform_menu_reconciliation =
+            self.prepare_platform_menu_reconciliation(id, &mut widget);
         let handlers = &mut self.pending_handlers;
         let next = &mut self.next_action;
         widget.bind_callbacks(&mut |callback| {
@@ -331,7 +344,38 @@ impl WidgetTree {
             handlers.push((action, callback));
             action
         });
-        with_recursive_tree_stack(|| self.update_existing_inner(id, &widget))
+        let result = with_recursive_tree_stack(|| self.update_existing_inner(id, &widget));
+        if result.is_ok()
+            && let Some((retained, incoming)) = platform_menu_reconciliation
+        {
+            retained.reconcile_from(&incoming);
+        }
+        result
+    }
+
+    fn prepare_platform_menu_reconciliation(
+        &self,
+        id: ElementId,
+        widget: &mut Widget,
+    ) -> Option<(
+        crate::platform_widgets::PlatformMenuBinding,
+        crate::platform_widgets::PlatformMenuBinding,
+    )> {
+        let old_scope = self
+            .elements
+            .get(id.0)
+            .and_then(|element| element.environment_override.clone())?;
+        let old_marker = old_scope
+            .value
+            .downcast_ref::<crate::platform_widgets::PlatformMenuRetainedMarker>()?;
+        let new_marker =
+            widget.environment_value::<crate::platform_widgets::PlatformMenuRetainedMarker>()?;
+        let retained = old_marker.binding.clone();
+        let incoming = new_marker.binding.clone();
+        if let WidgetKind::LayoutBuilder { environment, .. } = widget.kind_mut() {
+            *environment = Some(old_scope);
+        }
+        Some((retained, incoming))
     }
 
     pub(super) fn update_existing_inner(
