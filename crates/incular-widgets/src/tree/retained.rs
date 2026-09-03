@@ -36,6 +36,7 @@ impl WidgetTree {
             pending_handlers: Vec::new(),
             gesture_arena: GestureArena::new(),
             active_gestures: HashMap::new(),
+            active_trackpad_gestures: HashMap::new(),
             raw_recognizers: HashMap::new(),
             raw_gesture_streams: HashMap::new(),
             raw_pointer_routes: HashMap::new(),

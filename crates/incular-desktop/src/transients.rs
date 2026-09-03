@@ -34,6 +34,11 @@ pub(super) struct NativeTransientState {
 }
 
 impl MultiApp {
+    fn transient_owner_native_id(&self, native_id: NativeWindowId) -> Option<NativeWindowId> {
+        let owner = self.transient_windows.get(&native_id)?.key.owner;
+        self.native_ids.get(&owner).copied()
+    }
+
     pub(super) fn publish_native_transient_bounds(&mut self, owner: IncularWindowId) {
         let bounds = self.native_transient_available_rect(owner);
         let _ = self.application.set_native_transient_bounds(owner, bounds);
@@ -801,7 +806,23 @@ impl MultiApp {
                 }
             }
             WindowEvent::Touch(touch) => {
-                let device = self.pointer_devices.id(touch.device_id);
+                let native = self.platform_services.take_native_pointer_sample(touch.id);
+                let stylus = native.is_some_and(|sample| {
+                    matches!(
+                        sample.kind,
+                        PointerDeviceKind::Stylus | PointerDeviceKind::InvertedStylus
+                    )
+                });
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    if stylus {
+                        self.note_window_stylus(parent_native);
+                    } else {
+                        self.note_window_touch(parent_native);
+                    }
+                }
+                let (device, native) = self
+                    .pointer_devices
+                    .resolve_native_sample(touch.device_id, native);
                 let metrics = self
                     .transient_windows
                     .get(&native_id)
@@ -809,8 +830,75 @@ impl MultiApp {
                     .metrics;
                 self.route_transient_platform_event(
                     native_id,
-                    touch_event_with_device(*touch, device, metrics),
+                    touch_event_with_native_sample(*touch, device, native, metrics),
                 );
+            }
+            WindowEvent::PinchGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    self.note_window_trackpad(parent_native);
+                }
+                let device = self.pointer_devices.id(*device_id);
+                if let Some(event) = trackpad_pinch_event(device, *delta, *phase) {
+                    self.route_transient_platform_event(native_id, event);
+                }
+            }
+            WindowEvent::RotationGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    self.note_window_trackpad(parent_native);
+                }
+                let device = self.pointer_devices.id(*device_id);
+                if let Some(event) = trackpad_rotation_event(device, *delta, *phase) {
+                    self.route_transient_platform_event(native_id, event);
+                }
+            }
+            WindowEvent::PanGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    self.note_window_trackpad(parent_native);
+                }
+                let device = self.pointer_devices.id(*device_id);
+                let metrics = self
+                    .transient_windows
+                    .get(&native_id)
+                    .expect("known transient window")
+                    .metrics;
+                if let Some(event) = trackpad_pan_event(device, *delta, *phase, metrics) {
+                    self.route_transient_platform_event(native_id, event);
+                }
+            }
+            WindowEvent::DoubleTapGesture { device_id } => {
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    self.note_window_trackpad(parent_native);
+                }
+                let device = self.pointer_devices.id(*device_id);
+                self.route_transient_platform_event(
+                    native_id,
+                    trackpad_smart_magnify_event(device),
+                );
+            }
+            WindowEvent::TouchpadPressure {
+                device_id,
+                pressure,
+                stage,
+            } => {
+                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
+                    self.note_window_trackpad(parent_native);
+                }
+                let device = self.pointer_devices.id(*device_id);
+                if let Some(event) = trackpad_pressure_event(device, *pressure, *stage) {
+                    self.route_transient_platform_event(native_id, event);
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let metrics = self
@@ -904,6 +992,7 @@ fn offset_transient_platform_event(event: PlatformEvent, offset: Offset) -> Plat
             kind,
             buttons,
             button,
+            sample,
             phase,
             position,
         }) => PlatformEvent::Input(InputEvent::PointerWithMetadata {
@@ -912,6 +1001,7 @@ fn offset_transient_platform_event(event: PlatformEvent, offset: Offset) -> Plat
             kind,
             buttons,
             button,
+            sample,
             phase,
             position: position + offset,
         }),

@@ -12,6 +12,7 @@ fn event(buttons: u32, button: u32) -> RawPointerEvent {
         kind: PointerDeviceKind::Mouse,
         buttons,
         button: Some(button),
+        sample: incular_core::PointerSampleMetadata::default(),
         position: Offset::new(20., 10.),
         phase: PointerPhase::Down,
         time: Instant::now(),

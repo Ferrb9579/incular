@@ -149,7 +149,7 @@ keyboard-types = "0.8.3"
 sys-locale = "0.3.2"
 crash-handler = "0.6.2"
 minidump-writer = "0.11.0"
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_Input_Pointer", "Win32_UI_WindowsAndMessaging"] }
 # WinRT's typed projection is used only for UISettings accessibility values
 # whose evented object model is not exposed by windows-sys.
 windows = { version = "0.58", features = ["Foundation", "UI_ViewManagement", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -1,5 +1,5 @@
 use incular_core::PointerPhase;
-use incular_platform::mouse_button_mask;
+use incular_platform::{NativePointerSample, mouse_button_mask};
 use incular_widgets::MouseCursor;
 use std::collections::HashMap;
 use winit::{
@@ -12,6 +12,7 @@ use winit::{
 #[derive(Default)]
 pub(crate) struct PointerDeviceRegistry {
     ids: HashMap<DeviceId, u64>,
+    native_ids: HashMap<u64, u64>,
     next: u64,
 }
 
@@ -27,6 +28,40 @@ impl PointerDeviceRegistry {
         self.next = id;
         self.ids.insert(device, id);
         id
+    }
+
+    /// Resolves a backend-local opaque device token into the same public ID
+    /// namespace as Winit devices. Keeping separate source maps prevents a
+    /// native token such as `1` from aliasing Winit's first allocated device.
+    fn native_id(&mut self, device: u64) -> u64 {
+        if let Some(id) = self.native_ids.get(&device).copied() {
+            return id;
+        }
+        let id = self
+            .next
+            .checked_add(1)
+            .expect("pointer device id space exhausted");
+        self.next = id;
+        self.native_ids.insert(device, id);
+        id
+    }
+
+    /// Resolves the fallback Winit device and, when present, the OS adapter's
+    /// richer device token in one step. Native sample metadata remains intact;
+    /// only its backend-local identity is rewritten to the portable process
+    /// namespace.
+    pub(crate) fn resolve_native_sample(
+        &mut self,
+        fallback: DeviceId,
+        mut native: Option<NativePointerSample>,
+    ) -> (u64, Option<NativePointerSample>) {
+        let fallback = self.id(fallback);
+        if let Some(sample) = native.as_mut()
+            && let Some(device) = sample.device
+        {
+            sample.device = Some(self.native_id(device));
+        }
+        (fallback, native)
     }
 }
 

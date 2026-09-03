@@ -25,6 +25,18 @@ struct TapRegistration {
 }
 
 impl WidgetTree {
+    pub(super) fn dispatch_raw_trackpad_gesture(&self, position: Offset, event: TrackpadGesture) {
+        let callbacks = self
+            .listener_ids(&self.raw_hit_elements(position))
+            .into_iter()
+            .filter_map(|id| self.listener_callbacks(id))
+            .filter_map(|callbacks| callbacks.on_trackpad_gesture)
+            .collect::<Vec<_>>();
+        for callback in callbacks {
+            callback(event);
+        }
+    }
+
     /// Dispatches one metadata-rich pointer event through the standalone
     /// retained window.
     pub fn dispatch_raw_pointer(&mut self, event: RawPointerEvent) -> Option<ElementId> {
@@ -40,10 +52,7 @@ impl WidgetTree {
         window: u64,
         event: RawPointerEvent,
     ) -> Option<ElementId> {
-        let key = GestureArenaKey {
-            window,
-            pointer: event.pointer,
-        };
+        let key = GestureArenaKey::pointer_device(window, event.device, event.pointer);
         self.dispatch_mouse_regions(window, event);
         if matches!(event.phase, PointerPhase::Enter | PointerPhase::Exit) {
             return None;
@@ -339,14 +348,14 @@ impl WidgetTree {
     fn dispatch_mouse_regions(&mut self, window: u64, event: RawPointerEvent) {
         if !matches!(
             event.kind,
-            PointerDeviceKind::Mouse | PointerDeviceKind::Trackpad
+            PointerDeviceKind::Mouse
+                | PointerDeviceKind::Trackpad
+                | PointerDeviceKind::Stylus
+                | PointerDeviceKind::InvertedStylus
         ) {
             return;
         }
-        let key = GestureArenaKey {
-            window,
-            pointer: event.pointer,
-        };
+        let key = GestureArenaKey::pointer_device(window, event.device, event.pointer);
         if event.phase == PointerPhase::Enter {
             // Winit's CursorEntered carries no position. Waiting for the first
             // CursorMoved avoids firing an enter callback for stale coordinates

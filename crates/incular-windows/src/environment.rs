@@ -260,5 +260,6 @@ fn query_input_capabilities() -> InputCapabilities {
         touch: digitizer & (NID_INTEGRATED_TOUCH | NID_EXTERNAL_TOUCH) != 0,
         keyboard: false,
         stylus: digitizer & (NID_INTEGRATED_PEN | NID_EXTERNAL_PEN) != 0,
+        trackpad: false,
     }
 }

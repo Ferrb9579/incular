@@ -20,9 +20,11 @@ pub use geometry::{
 };
 pub use input::{
     BACK_POINTER_BUTTON, Code, FORWARD_POINTER_BUTTON, ImeEvent, InputEvent, Key as KeyboardKey,
-    KeyState, KeyboardEvent, Location, Modifiers, NamedKey, PRIMARY_POINTER_BUTTON,
-    PointerDeviceKind, PointerPhase, SECONDARY_POINTER_BUTTON, TERTIARY_POINTER_BUTTON,
-    WindowResizeDirection, additional_pointer_button_mask,
+    KeyState, KeyboardEvent, Location, Modifiers, NamedKey, NormalizedPressure,
+    PRIMARY_POINTER_BUTTON, PointerDeviceKind, PointerPhase, PointerSampleMetadata,
+    SECONDARY_POINTER_BUTTON, StylusMetadata, StylusOrientation, TERTIARY_POINTER_BUTTON,
+    TrackpadGesture, TrackpadGestureKind, TrackpadGesturePhase, WindowResizeDirection,
+    additional_pointer_button_mask,
 };
 pub use key::{Key, KeyHandle, KeyId, KeyObject, LocalKey, StringKey, UniqueKey, ValueKey};
 pub use restoration::{RestorationBackend, RestorationKey, RestorationKeyError, RestorationScope};

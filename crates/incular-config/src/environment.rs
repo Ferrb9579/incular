@@ -49,6 +49,9 @@ pub struct InputCapabilities {
     pub touch: bool,
     pub keyboard: bool,
     pub stylus: bool,
+    /// A trackpad has produced a native device/gesture event in this process or
+    /// was reported by an authoritative platform capability query.
+    pub trackpad: bool,
 }
 
 /// A normalized, logical window/application environment snapshot.

@@ -1,8 +1,8 @@
 use incular_config::TransientRole;
 use incular_platform::{
     ApplicationActivation, ApplicationShellError, ApplicationShellFeature, CapabilitySupport,
-    NativeWindowSystem, PhysicalScreenRect, PlatformCapabilities, PlatformLifecycle,
-    PlatformOperationResult, SystemEnvironmentPreferences,
+    NativePointerSample, NativeWindowSystem, PhysicalScreenRect, PlatformCapabilities,
+    PlatformLifecycle, PlatformOperationResult, SystemEnvironmentPreferences,
 };
 use incular_runtime::{
     NativeApplicationShellApplyResult, NativeApplicationShellCompletion,
@@ -24,6 +24,15 @@ use winit::{
 /// this trait only for information or native relationship semantics that would
 /// otherwise require leaking HWND/NSWindow/X11 details into `incular-desktop`.
 pub trait DesktopPlatformServices {
+    /// Refines advanced-input capabilities owned by an OS facade rather than
+    /// Winit itself (for example Win32 pen metadata captured from WM_POINTER).
+    fn refine_advanced_input_capabilities(
+        &self,
+        _system: NativeWindowSystem,
+        _capabilities: &mut PlatformCapabilities,
+    ) {
+    }
+
     /// Complete application-scoped OS preference snapshot. Unsupported fields
     /// remain `None`; the desktop environment provider resets those fields to
     /// stable defaults instead of carrying stale values forward.
@@ -159,6 +168,13 @@ pub trait DesktopPlatformServices {
     fn windows_message_hook(
         &self,
     ) -> Option<Box<dyn FnMut(*const std::ffi::c_void) -> bool + 'static>> {
+        None
+    }
+
+    /// Drains native metadata captured for one Winit pointer contact. This is
+    /// intentionally a pull on the event-loop thread: native message hooks only
+    /// record POD data and never mutate runtime/widget state across FFI.
+    fn take_native_pointer_sample(&self, _pointer: u64) -> Option<NativePointerSample> {
         None
     }
 

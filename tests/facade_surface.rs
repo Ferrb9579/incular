@@ -106,6 +106,26 @@ fn facade_exposes_colored_box_and_gesture_detector() {
 }
 
 #[test]
+fn facade_exposes_advanced_pointer_metadata_and_trackpad_gestures() {
+    let pressure = NormalizedPressure::new(0.75).expect("normalized pressure");
+    let sample = PointerSampleMetadata {
+        pressure: Some(pressure),
+        stylus: Some(StylusMetadata {
+            orientation: StylusOrientation::from_tilt_degrees(10.0, -5.0),
+            barrel_button: true,
+        }),
+    };
+    assert_eq!(sample.pressure, Some(pressure));
+
+    let gesture = TrackpadGesture::Pinch {
+        device: 9,
+        phase: TrackpadGesturePhase::Updated,
+        magnification_delta: 0.1,
+    };
+    assert_eq!(gesture.kind(), TrackpadGestureKind::Pinch);
+}
+
+#[test]
 fn facade_exposes_retained_affine_widgets() {
     use incular::widgets::internal::ScaleController;
     let child = Widget::box_(Size::new(8., 8.), Color::WHITE);

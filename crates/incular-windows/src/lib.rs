@@ -6,6 +6,8 @@ mod crash_reporter;
 mod environment;
 #[cfg(target_os = "windows")]
 mod platform_menus;
+#[cfg(target_os = "windows")]
+mod pointer;
 
 pub use incular_desktop::RunError;
 
@@ -23,16 +25,47 @@ pub fn application_shell_capabilities(
     capabilities.application_services
 }
 
+/// Returns the advanced-input capability matrix after the Windows facade has
+/// refined the shared desktop capabilities.
+#[doc(hidden)]
+#[must_use]
+#[cfg(target_os = "windows")]
+pub fn advanced_input_capabilities(
+    system: incular_platform::NativeWindowSystem,
+) -> incular_platform::AdvancedInputCapabilities {
+    use incular_desktop::DesktopPlatformServices as _;
+
+    let services = WindowsDesktopPlatformServices::default();
+    let mut capabilities = incular_platform::PlatformCapabilities::unsupported();
+    capabilities.advanced_input = incular_desktop::desktop_advanced_input_capabilities(system);
+    services.refine_advanced_input_capabilities(system, &mut capabilities);
+    capabilities.advanced_input
+}
+
 #[cfg(target_os = "windows")]
 #[derive(Clone, Default)]
 struct WindowsDesktopPlatformServices {
     application_shell: application_shell::WindowsApplicationShell,
     menus: std::rc::Rc<platform_menus::WindowsPlatformMenuDelegate>,
     environment: environment::WindowsEnvironmentState,
+    pointer: pointer::WindowsPointerState,
 }
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn refine_advanced_input_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        capabilities.advanced_input.stylus =
+            if system == incular_platform::NativeWindowSystem::Win32 {
+                incular_platform::CapabilitySupport::Supported
+            } else {
+                incular_platform::CapabilitySupport::Unsupported
+            };
+    }
+
     fn refine_application_shell_capabilities(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -94,7 +127,22 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
     fn windows_message_hook(
         &self,
     ) -> Option<Box<dyn FnMut(*const std::ffi::c_void) -> bool + 'static>> {
-        Some(self.environment.message_hook())
+        let mut environment = self.environment.message_hook();
+        let mut pointer = self.pointer.message_hook();
+        Some(Box::new(move |message| {
+            // Both hooks are observation-only. Evaluate both even if one ever
+            // grows a consuming case so input/settings capture cannot starve.
+            let pointer_handled = pointer(message);
+            let environment_handled = environment(message);
+            pointer_handled || environment_handled
+        }))
+    }
+
+    fn take_native_pointer_sample(
+        &self,
+        pointer: u64,
+    ) -> Option<incular_platform::NativePointerSample> {
+        self.pointer.take(pointer)
     }
 
     fn external_file_drag_support(

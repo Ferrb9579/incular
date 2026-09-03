@@ -45,7 +45,8 @@ use incular_platform::{
     WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState,
     WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
     native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
-    touch_event_with_device, wheel_event,
+    touch_event_with_native_sample, trackpad_pan_event, trackpad_pinch_event,
+    trackpad_pressure_event, trackpad_rotation_event, trackpad_smart_magnify_event, wheel_event,
 };
 use incular_rendering::DisplayList;
 use incular_runtime::{
@@ -656,10 +657,24 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 }
             }
             WindowEvent::Touch(touch) => {
-                self.note_touch_environment();
+                let native = self.platform_services.take_native_pointer_sample(touch.id);
+                let stylus = native.is_some_and(|sample| {
+                    matches!(
+                        sample.kind,
+                        PointerDeviceKind::Stylus | PointerDeviceKind::InvertedStylus
+                    )
+                });
+                if stylus {
+                    self.note_stylus_environment();
+                } else {
+                    self.note_touch_environment();
+                }
                 if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
-                    let device = self.pointer_devices.id(touch.device_id);
-                    let event = match touch_event_with_device(touch, device, metrics) {
+                    let (device, native) = self
+                        .pointer_devices
+                        .resolve_native_sample(touch.device_id, native);
+                    let event = match touch_event_with_native_sample(touch, device, native, metrics)
+                    {
                         PlatformEvent::Input(event) => event,
                         _ => unreachable!(),
                     };
@@ -672,6 +687,73 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                             .expect("window exists")
                             .request_redraw();
                     }
+                }
+            }
+            WindowEvent::PinchGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_trackpad_environment();
+                let device = self.pointer_devices.id(device_id);
+                if let Some(PlatformEvent::Input(event)) =
+                    trackpad_pinch_event(device, delta, phase)
+                    && let Some(runtime) = self.runtime.as_mut()
+                {
+                    let _ = runtime.handle_input(event);
+                }
+            }
+            WindowEvent::RotationGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_trackpad_environment();
+                let device = self.pointer_devices.id(device_id);
+                if let Some(PlatformEvent::Input(event)) =
+                    trackpad_rotation_event(device, delta, phase)
+                    && let Some(runtime) = self.runtime.as_mut()
+                {
+                    let _ = runtime.handle_input(event);
+                }
+            }
+            WindowEvent::PanGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_trackpad_environment();
+                let device = self.pointer_devices.id(device_id);
+                if let Some(metrics) = self.metrics
+                    && let Some(PlatformEvent::Input(event)) =
+                        trackpad_pan_event(device, delta, phase, metrics)
+                    && let Some(runtime) = self.runtime.as_mut()
+                {
+                    let _ = runtime.handle_input(event);
+                }
+            }
+            WindowEvent::DoubleTapGesture { device_id } => {
+                self.note_trackpad_environment();
+                let device = self.pointer_devices.id(device_id);
+                if let Some(runtime) = self.runtime.as_mut() {
+                    let PlatformEvent::Input(event) = trackpad_smart_magnify_event(device) else {
+                        unreachable!()
+                    };
+                    let _ = runtime.handle_input(event);
+                }
+            }
+            WindowEvent::TouchpadPressure {
+                device_id,
+                pressure,
+                stage,
+            } => {
+                self.note_trackpad_environment();
+                let device = self.pointer_devices.id(device_id);
+                if let Some(PlatformEvent::Input(event)) =
+                    trackpad_pressure_event(device, pressure, stage)
+                    && let Some(runtime) = self.runtime.as_mut()
+                {
+                    let _ = runtime.handle_input(event);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -841,6 +923,26 @@ impl<F: FnMut(ActionId)> App<F> {
             .environment
             .as_mut()
             .is_some_and(DesktopEnvironmentProvider::note_keyboard)
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn note_stylus_environment(&mut self) {
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(DesktopEnvironmentProvider::note_stylus)
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn note_trackpad_environment(&mut self) {
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(DesktopEnvironmentProvider::note_trackpad)
         {
             self.publish_environment();
         }
@@ -1232,6 +1334,26 @@ impl MultiApp {
             .windows
             .get_mut(&native_id)
             .is_some_and(|state| state.environment.note_keyboard())
+        {
+            self.publish_window_environment(native_id);
+        }
+    }
+
+    fn note_window_stylus(&mut self, native_id: NativeWindowId) {
+        if self
+            .windows
+            .get_mut(&native_id)
+            .is_some_and(|state| state.environment.note_stylus())
+        {
+            self.publish_window_environment(native_id);
+        }
+    }
+
+    fn note_window_trackpad(&mut self, native_id: NativeWindowId) {
+        if self
+            .windows
+            .get_mut(&native_id)
+            .is_some_and(|state| state.environment.note_trackpad())
         {
             self.publish_window_environment(native_id);
         }
@@ -2300,6 +2422,12 @@ fn refine_window_capabilities(
             capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
             capabilities.advanced_input.cursor_confine = CapabilitySupport::Supported;
             capabilities.advanced_input.cursor_lock = CapabilitySupport::Supported;
+            // The Windows facade augments Winit's WM_POINTER touch surface with
+            // GetPointerPenInfo, so pen kind/pressure/tilt/eraser metadata is
+            // authoritative. Winit exposes no native aggregate trackpad gesture
+            // events on Win32.
+            capabilities.advanced_input.stylus = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.trackpad_gestures = CapabilitySupport::Unsupported;
         }
         NativeWindowSystem::AppKit => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Unsupported;
@@ -2312,6 +2440,8 @@ fn refine_window_capabilities(
             capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
             capabilities.advanced_input.cursor_confine = CapabilitySupport::Unsupported;
             capabilities.advanced_input.cursor_lock = CapabilitySupport::Supported;
+            capabilities.advanced_input.stylus = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.trackpad_gestures = CapabilitySupport::Supported;
         }
         NativeWindowSystem::X11 => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -2324,6 +2454,8 @@ fn refine_window_capabilities(
             capabilities.advanced_input.cursor_position = CapabilitySupport::Supported;
             capabilities.advanced_input.cursor_confine = CapabilitySupport::Supported;
             capabilities.advanced_input.cursor_lock = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.stylus = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.trackpad_gestures = CapabilitySupport::Unsupported;
         }
         NativeWindowSystem::Wayland => {
             capabilities.window.begin_resize_drag = CapabilitySupport::Supported;
@@ -2344,9 +2476,12 @@ fn refine_window_capabilities(
             capabilities.advanced_input.cursor_position = CapabilitySupport::Unknown;
             capabilities.advanced_input.cursor_confine = CapabilitySupport::Unknown;
             capabilities.advanced_input.cursor_lock = CapabilitySupport::Unknown;
+            capabilities.advanced_input.stylus = CapabilitySupport::Unsupported;
+            capabilities.advanced_input.trackpad_gestures = CapabilitySupport::Unsupported;
         }
         NativeWindowSystem::Other => {}
     }
+    services.refine_advanced_input_capabilities(system, &mut capabilities);
     let external_file_drag = services.external_file_drag_support(system);
     capabilities.data_transfer.external_drag_drop = external_file_drag;
     capabilities.data_transfer.external_drag_drop_files = external_file_drag;
@@ -2358,6 +2493,21 @@ fn refine_window_capabilities(
         crate::global_shortcuts::support_for(system);
     capabilities.application_services.single_instance_activation = CapabilitySupport::Supported;
     capabilities
+}
+
+/// Static advanced-input matrix for the shared Winit desktop layer. OS facade
+/// crates may refine this further (notably Win32 pen metadata).
+#[doc(hidden)]
+#[must_use]
+pub fn desktop_advanced_input_capabilities(
+    system: NativeWindowSystem,
+) -> incular_platform::AdvancedInputCapabilities {
+    refine_window_capabilities(
+        desktop_platform_capabilities(),
+        system,
+        &DefaultDesktopPlatformServices,
+    )
+    .advanced_input
 }
 
 fn clipboard_format_bidirectional_support(
@@ -2504,6 +2654,7 @@ fn mouse_pointer_metadata(
         kind: PointerDeviceKind::Mouse,
         buttons,
         button,
+        sample: incular_core::PointerSampleMetadata::default(),
         phase,
     }
 }
@@ -2834,8 +2985,21 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.sync_window_cursor(id);
             }
             WindowEvent::Touch(touch) => {
-                self.note_window_touch(native_id);
-                let device = self.pointer_devices.id(touch.device_id);
+                let native = self.platform_services.take_native_pointer_sample(touch.id);
+                let stylus = native.is_some_and(|sample| {
+                    matches!(
+                        sample.kind,
+                        PointerDeviceKind::Stylus | PointerDeviceKind::InvertedStylus
+                    )
+                });
+                if stylus {
+                    self.note_window_stylus(native_id);
+                } else {
+                    self.note_window_touch(native_id);
+                }
+                let (device, native) = self
+                    .pointer_devices
+                    .resolve_native_sample(touch.device_id, native);
                 let metrics = self
                     .windows
                     .get(&native_id)
@@ -2845,9 +3009,66 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     native_id,
                     IncularWindowEvent::platform(
                         id,
-                        touch_event_with_device(touch, device, metrics),
+                        touch_event_with_native_sample(touch, device, native, metrics),
                     ),
                 );
+            }
+            WindowEvent::PinchGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_window_trackpad(native_id);
+                let device = self.pointer_devices.id(device_id);
+                if let Some(event) = trackpad_pinch_event(device, delta, phase) {
+                    self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                }
+            }
+            WindowEvent::RotationGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_window_trackpad(native_id);
+                let device = self.pointer_devices.id(device_id);
+                if let Some(event) = trackpad_rotation_event(device, delta, phase) {
+                    self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                }
+            }
+            WindowEvent::PanGesture {
+                device_id,
+                delta,
+                phase,
+            } => {
+                self.note_window_trackpad(native_id);
+                let device = self.pointer_devices.id(device_id);
+                let metrics = self
+                    .windows
+                    .get(&native_id)
+                    .expect("known native window")
+                    .metrics;
+                if let Some(event) = trackpad_pan_event(device, delta, phase, metrics) {
+                    self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                }
+            }
+            WindowEvent::DoubleTapGesture { device_id } => {
+                self.note_window_trackpad(native_id);
+                let device = self.pointer_devices.id(device_id);
+                self.route_window_event(
+                    native_id,
+                    IncularWindowEvent::platform(id, trackpad_smart_magnify_event(device)),
+                );
+            }
+            WindowEvent::TouchpadPressure {
+                device_id,
+                pressure,
+                stage,
+            } => {
+                self.note_window_trackpad(native_id);
+                let device = self.pointer_devices.id(device_id);
+                if let Some(event) = trackpad_pressure_event(device, pressure, stage) {
+                    self.route_window_event(native_id, IncularWindowEvent::platform(id, event));
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 self.note_window_mouse(native_id);

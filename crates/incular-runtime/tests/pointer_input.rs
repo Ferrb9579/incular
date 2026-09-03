@@ -51,6 +51,7 @@ fn pointer(
             kind: PointerDeviceKind::Mouse,
             buttons,
             button,
+            sample: incular_core::PointerSampleMetadata::default(),
             phase,
             position,
         }),

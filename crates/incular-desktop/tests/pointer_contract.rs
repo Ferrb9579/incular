@@ -2,9 +2,11 @@
 mod pointer;
 
 use incular_core::{
-    BACK_POINTER_BUTTON, FORWARD_POINTER_BUTTON, PRIMARY_POINTER_BUTTON, SECONDARY_POINTER_BUTTON,
-    TERTIARY_POINTER_BUTTON, additional_pointer_button_mask,
+    BACK_POINTER_BUTTON, FORWARD_POINTER_BUTTON, PRIMARY_POINTER_BUTTON, PointerDeviceKind,
+    PointerSampleMetadata, SECONDARY_POINTER_BUTTON, TERTIARY_POINTER_BUTTON,
+    additional_pointer_button_mask,
 };
+use incular_platform::NativePointerSample;
 use incular_widgets::MouseCursor;
 use pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
 use winit::{
@@ -71,6 +73,35 @@ fn device_ids_are_stable_and_distinct() {
     let first = devices.id(a);
     assert_ne!(first, 0);
     assert_eq!(devices.id(a), first);
+
+    let sample = NativePointerSample {
+        device: Some(1),
+        kind: PointerDeviceKind::Stylus,
+        sample: PointerSampleMetadata::EMPTY,
+        in_contact: Some(true),
+    };
+    let (fallback, resolved) = devices.resolve_native_sample(a, Some(sample));
+    let native = resolved
+        .and_then(|sample| sample.device)
+        .expect("native device token is resolved");
+    assert_eq!(fallback, first);
+    assert_ne!(native, first, "native and Winit ID namespaces cannot alias");
+
+    let (_, resolved_again) = devices.resolve_native_sample(a, Some(sample));
+    assert_eq!(
+        resolved_again.and_then(|sample| sample.device),
+        Some(native),
+        "one backend token keeps one stable public device ID"
+    );
+
+    let (_, another) = devices.resolve_native_sample(
+        a,
+        Some(NativePointerSample {
+            device: Some(2),
+            ..sample
+        }),
+    );
+    assert_ne!(another.and_then(|sample| sample.device), Some(native));
 }
 
 #[test]

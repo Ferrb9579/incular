@@ -14,7 +14,8 @@ mod raw;
 mod scale;
 
 pub use arena::{
-    GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember, GestureDisposition,
+    GestureArena, GestureArenaEntry, GestureArenaKey, GestureArenaMember, GestureArenaSource,
+    GestureDisposition,
 };
 pub use details::{
     DragCallbacks, DragDownDetails, DragEndDetails, DragStartDetails, DragUpdateDetails,

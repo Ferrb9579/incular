@@ -354,10 +354,7 @@ fn scale_recognizer_reports_relative_two_pointer_distance() {
 
 #[test]
 fn arena_rejects_competing_drag_but_keeps_compatible_scale_members() {
-    let key = GestureArenaKey {
-        window: 7,
-        pointer: 3,
-    };
+    let key = GestureArenaKey::pointer(7, 3);
     let mut arena = GestureArena::new();
     let tap = arena.add(key, false);
     let drag = arena.add(key, false);
@@ -381,6 +378,25 @@ fn arena_rejects_competing_drag_but_keeps_compatible_scale_members() {
         )
     );
     assert_eq!(arena.cancel(key).len(), 4);
+}
+
+#[test]
+fn arena_keys_keep_pointer_devices_and_trackpad_streams_disjoint() {
+    let mouse = GestureArenaKey::pointer_device(7, 11, 3);
+    let pen = GestureArenaKey::pointer_device(7, 22, 3);
+    let pinch = GestureArenaKey::trackpad(7, 11, incular_core::TrackpadGestureKind::Pinch);
+
+    assert_ne!(
+        mouse, pen,
+        "equal contact IDs on different devices are distinct"
+    );
+    assert_ne!(
+        mouse, pinch,
+        "aggregate gestures never alias pointer contacts"
+    );
+    assert_eq!(mouse.pointer_id(), Some(3));
+    assert_eq!(mouse.pointer_device_id(), Some(11));
+    assert_eq!(pinch.pointer_id(), None);
 }
 #[test]
 fn drag_recognizer_reports_start_updates_and_end() {

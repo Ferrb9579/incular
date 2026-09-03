@@ -94,6 +94,22 @@ impl DesktopEnvironmentProvider {
         true
     }
 
+    pub(crate) fn note_stylus(&mut self) -> bool {
+        if self.observed_input.stylus {
+            return false;
+        }
+        self.observed_input.stylus = true;
+        true
+    }
+
+    pub(crate) fn note_trackpad(&mut self) -> bool {
+        if self.observed_input.trackpad {
+            return false;
+        }
+        self.observed_input.trackpad = true;
+        true
+    }
+
     #[must_use]
     pub(crate) fn is_occluded(&self) -> bool {
         self.occluded
@@ -120,6 +136,7 @@ impl DesktopEnvironmentProvider {
         environment.input.touch |= self.observed_input.touch;
         environment.input.keyboard |= self.observed_input.keyboard;
         environment.input.stylus |= self.observed_input.stylus;
+        environment.input.trackpad |= self.observed_input.trackpad;
         environment.normalized()
     }
 }

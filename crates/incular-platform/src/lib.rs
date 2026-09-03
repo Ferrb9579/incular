@@ -7,7 +7,8 @@ use directories::ProjectDirs;
 use incular_config::ApplicationDefaults;
 use incular_core::{
     Code, Color, ImeEvent, InputEvent, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers,
-    NamedKey, Offset, PointerPhase, Rect, Size,
+    NamedKey, NormalizedPressure, Offset, PointerPhase, PointerSampleMetadata, Rect, Size,
+    TrackpadGesture, TrackpadGesturePhase,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{fmt, path::PathBuf};
@@ -67,7 +68,8 @@ pub use operation::{
     PlatformOperationResult,
 };
 pub use pointer::{
-    CursorGrabMode, LogicalWindowPosition, LogicalWindowPositionError, PointerMetadata,
+    CursorGrabMode, LogicalWindowPosition, LogicalWindowPositionError, NativePointerSample,
+    PointerMetadata,
 };
 pub use system_environment::{
     MemorySystemEnvironmentProvider, SystemEnvironmentPreferences, SystemEnvironmentProvider,
@@ -776,6 +778,7 @@ pub fn pointer_event_with_metadata(
         kind: metadata.kind,
         buttons: metadata.buttons,
         button: metadata.button,
+        sample: metadata.sample,
         phase: metadata.phase,
         position: normalize_cursor(position, metrics),
     })
@@ -832,7 +835,21 @@ pub fn touch_event_with_device(
     device: u64,
     metrics: WindowMetrics,
 ) -> PlatformEvent {
-    let (phase, buttons, button) = match touch.phase {
+    touch_event_with_native_sample(touch, device, None, metrics)
+}
+
+/// Converts one Winit touch/pen contact while allowing an OS facade to restore
+/// native device semantics that Winit does not expose. The native sample may
+/// enrich pressure, but never replaces a genuine Winit pressure value with a
+/// guess when the OS field is absent.
+#[must_use]
+pub fn touch_event_with_native_sample(
+    touch: winit::event::Touch,
+    fallback_device: u64,
+    native: Option<NativePointerSample>,
+    metrics: WindowMetrics,
+) -> PlatformEvent {
+    let (phase, mut buttons, button) = match touch.phase {
         winit::event::TouchPhase::Started => (
             PointerPhase::Down,
             incular_core::PRIMARY_POINTER_BUTTON,
@@ -850,18 +867,148 @@ pub fn touch_event_with_device(
         ),
         winit::event::TouchPhase::Cancelled => (PointerPhase::Cancel, 0, None),
     };
+    if native.is_some_and(|native| native.in_contact == Some(false)) && phase == PointerPhase::Move
+    {
+        buttons = 0;
+    }
+    if phase != PointerPhase::Cancel
+        && native.is_some_and(|native| {
+            native
+                .sample
+                .stylus
+                .is_some_and(|stylus| stylus.barrel_button)
+        })
+    {
+        buttons |= incular_core::SECONDARY_POINTER_BUTTON;
+    }
+    let fallback_pressure = normalize_touch_force(touch.force);
+    let (device, kind, sample) = native.map_or_else(
+        || {
+            (
+                fallback_device,
+                incular_core::PointerDeviceKind::Touch,
+                PointerSampleMetadata {
+                    pressure: fallback_pressure,
+                    stylus: None,
+                },
+            )
+        },
+        |native| {
+            let mut sample = native.sample;
+            sample.pressure = sample.pressure.or(fallback_pressure);
+            (
+                native.device.unwrap_or(fallback_device),
+                native.kind,
+                sample,
+            )
+        },
+    );
     pointer_event_with_metadata(
         PointerMetadata {
             pointer: touch.id,
             device,
-            kind: incular_core::PointerDeviceKind::Touch,
+            kind,
             buttons,
             button,
+            sample,
             phase,
         },
         touch.location,
         metrics,
     )
+}
+
+fn normalize_touch_force(force: Option<winit::event::Force>) -> Option<NormalizedPressure> {
+    match force? {
+        winit::event::Force::Normalized(value) => NormalizedPressure::new(value),
+        winit::event::Force::Calibrated {
+            force,
+            max_possible_force,
+            altitude_angle,
+        } => {
+            let adjusted = altitude_angle
+                .filter(|angle| angle.is_finite() && angle.sin() > 0.0)
+                .map_or(force, |angle| force / angle.sin());
+            NormalizedPressure::from_range(adjusted, max_possible_force)
+        }
+    }
+}
+
+#[must_use]
+pub fn trackpad_pinch_event(
+    device: u64,
+    delta: f64,
+    phase: winit::event::TouchPhase,
+) -> Option<PlatformEvent> {
+    delta.is_finite().then(|| {
+        PlatformEvent::Input(InputEvent::TrackpadGesture(TrackpadGesture::Pinch {
+            device,
+            phase: trackpad_phase(phase),
+            magnification_delta: delta as f32,
+        }))
+    })
+}
+
+#[must_use]
+pub fn trackpad_rotation_event(
+    device: u64,
+    delta_degrees: f32,
+    phase: winit::event::TouchPhase,
+) -> Option<PlatformEvent> {
+    delta_degrees.is_finite().then(|| {
+        PlatformEvent::Input(InputEvent::TrackpadGesture(TrackpadGesture::Rotation {
+            device,
+            phase: trackpad_phase(phase),
+            delta_radians: delta_degrees.to_radians(),
+        }))
+    })
+}
+
+#[must_use]
+pub fn trackpad_pan_event(
+    device: u64,
+    delta: winit::dpi::PhysicalPosition<f32>,
+    phase: winit::event::TouchPhase,
+    metrics: WindowMetrics,
+) -> Option<PlatformEvent> {
+    if !delta.x.is_finite() || !delta.y.is_finite() {
+        return None;
+    }
+    let logical = metrics.physical_to_logical(Offset::new(delta.x, delta.y));
+    Some(PlatformEvent::Input(InputEvent::TrackpadGesture(
+        TrackpadGesture::Pan {
+            device,
+            phase: trackpad_phase(phase),
+            delta: logical,
+        },
+    )))
+}
+
+#[must_use]
+pub fn trackpad_smart_magnify_event(device: u64) -> PlatformEvent {
+    PlatformEvent::Input(InputEvent::TrackpadGesture(TrackpadGesture::SmartMagnify {
+        device,
+    }))
+}
+
+#[must_use]
+pub fn trackpad_pressure_event(device: u64, pressure: f32, stage: i64) -> Option<PlatformEvent> {
+    NormalizedPressure::new(f64::from(pressure)).map(|pressure| {
+        PlatformEvent::Input(InputEvent::TrackpadGesture(TrackpadGesture::Pressure {
+            device,
+            pressure,
+            stage,
+        }))
+    })
+}
+
+const fn trackpad_phase(phase: winit::event::TouchPhase) -> TrackpadGesturePhase {
+    match phase {
+        winit::event::TouchPhase::Started => TrackpadGesturePhase::Started,
+        winit::event::TouchPhase::Moved => TrackpadGesturePhase::Updated,
+        winit::event::TouchPhase::Ended => TrackpadGesturePhase::Ended,
+        winit::event::TouchPhase::Cancelled => TrackpadGesturePhase::Cancelled,
+    }
 }
 /// Converts wheel motion into Incular's content-offset convention. Winit's
 /// positive wheel Y denotes upward wheel motion, whereas a positive vertical

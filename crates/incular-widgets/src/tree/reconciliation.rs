@@ -1242,6 +1242,15 @@ impl WidgetTree {
                             .iter()
                             .all(|candidate| candidate.element != id)
                     });
+                    let stale_trackpad_streams = self
+                        .active_trackpad_gestures
+                        .iter()
+                        .filter_map(|(key, active)| (active.element == id).then_some(*key))
+                        .collect::<Vec<_>>();
+                    for key in stale_trackpad_streams {
+                        let _ = self.gesture_arena.cancel(key);
+                        self.active_trackpad_gestures.remove(&key);
+                    }
                     self.pointer_captures.retain(|_, target| *target != id);
                     self.scale_gestures.remove(&id);
 

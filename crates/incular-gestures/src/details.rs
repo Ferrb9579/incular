@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use std::time::Instant;
 
-use incular_core::{KeyboardEvent, Offset, PointerPhase};
+use incular_core::{KeyboardEvent, Offset, PointerPhase, PointerSampleMetadata, TrackpadGesture};
 
 use crate::focus::{FocusBehavior, FocusNode};
 use crate::keyboard::{
@@ -43,6 +43,7 @@ pub struct RawPointerEvent {
     /// Button whose state changed for a Down/Up event, when the source can
     /// identify it independently from the complete pressed-button chord.
     pub button: Option<u32>,
+    pub sample: PointerSampleMetadata,
     pub position: Offset,
     pub phase: PointerPhase,
     pub time: Instant,
@@ -65,6 +66,7 @@ impl RawPointerEvent {
             kind,
             buttons,
             button: None,
+            sample: PointerSampleMetadata::EMPTY,
             position,
             phase,
             time,
@@ -75,6 +77,12 @@ impl RawPointerEvent {
     #[must_use]
     pub const fn with_button(mut self, button: Option<u32>) -> Self {
         self.button = button;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_sample(mut self, sample: PointerSampleMetadata) -> Self {
+        self.sample = sample;
         self
     }
 
@@ -99,6 +107,7 @@ impl From<PointerEvent> for RawPointerEvent {
             kind: PointerDeviceKind::Mouse,
             buttons: 0,
             button: None,
+            sample: PointerSampleMetadata::default(),
             position: event.position,
             phase: event.phase,
             time: event.time,
@@ -247,6 +256,9 @@ pub struct GestureCallbacks {
     /// multi-pointer region. Single-pointer recognizers ignore this callback.
     pub on_scale_update: Option<Rc<dyn Fn(ScaleUpdateDetails)>>,
     pub on_scale_end: Option<Rc<dyn Fn(ScaleEndDetails)>>,
+    /// Aggregate native trackpad gestures are delivered without manufacturing
+    /// touch contacts. They use their own gesture-arena stream.
+    pub on_trackpad_gesture: Option<Rc<dyn Fn(TrackpadGesture)>>,
     /// Called once for a retained pointer sequence when this region loses its
     /// arena claim or the platform cancels the sequence.
     pub on_cancel: Option<Rc<dyn Fn()>>,

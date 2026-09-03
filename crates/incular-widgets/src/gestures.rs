@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-pub use incular_core::{Offset, PointerPhase};
+pub use incular_core::{Offset, PointerPhase, TrackpadGesture};
 pub use incular_gestures::{
     ActionResult, Actions, Command, DragCallbacks, DragDownDetails, DragEndDetails,
     DragGestureDetector, DragStartDetails, DragUpdateDetails, ErasedActionScope, ErasedIntent,
@@ -262,6 +262,14 @@ impl GestureDetector {
     #[must_use]
     pub fn on_scale_end(mut self, callback: impl Fn(ScaleEndDetails) + 'static) -> Self {
         self.callbacks.on_scale_end = Some(Rc::new(callback));
+        self
+    }
+
+    /// Receives native aggregate trackpad gestures after the retained arena
+    /// resolves ownership. No synthetic touch contacts are created.
+    #[must_use]
+    pub fn on_trackpad_gesture(mut self, callback: impl Fn(TrackpadGesture) + 'static) -> Self {
+        self.callbacks.on_trackpad_gesture = Some(Rc::new(callback));
         self
     }
 

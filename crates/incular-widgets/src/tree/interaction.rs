@@ -4,6 +4,117 @@ use super::rendering::{fitted_transform, transform_around, transform_around_alig
 use super::*;
 
 impl WidgetTree {
+    /// Routes one OS-recognized aggregate trackpad gesture. The native gesture
+    /// has already been recognized, so the retained arena resolves only widget
+    /// ownership: the deepest eligible detector wins for the complete phased
+    /// stream. Pointer and trackpad streams cannot collide because their arena
+    /// sources are distinct.
+    pub fn dispatch_trackpad_gesture_in_window(
+        &mut self,
+        window: u64,
+        position: Offset,
+        event: TrackpadGesture,
+    ) -> Option<ElementId> {
+        self.dispatch_raw_trackpad_gesture(position, event);
+        let key = GestureArenaKey::trackpad(window, event.device(), event.kind());
+        match event.phase() {
+            Some(TrackpadGesturePhase::Started) => {
+                self.cancel_trackpad_gesture_stream(key);
+                let hit = self
+                    .hit_test(position)
+                    .and_then(|render| self.element_for_render(render))?;
+                let candidates = self
+                    .gesture_ancestors(hit)
+                    .into_iter()
+                    .filter_map(|element| {
+                        self.gesture_callbacks(element)
+                            .and_then(|callbacks| callbacks.on_trackpad_gesture.map(|_| element))
+                    })
+                    .collect::<Vec<_>>();
+                let winner = *candidates.first()?;
+                let mut members = Vec::with_capacity(candidates.len());
+                for element in candidates {
+                    members.push((element, self.gesture_arena.add(key, false)));
+                }
+                let winner_member = members[0].1;
+                let entries = self.gesture_arena.accept(key, winner_member);
+                debug_assert_eq!(
+                    disposition_for(&entries, winner_member),
+                    GestureDisposition::Accepted
+                );
+                self.active_trackpad_gestures
+                    .insert(key, ActiveTrackpadGesture { element: winner });
+                self.dispatch_trackpad_gesture_to(winner, event);
+                Some(winner)
+            }
+            Some(TrackpadGesturePhase::Updated) => {
+                let element = self.active_trackpad_gestures.get(&key)?.element;
+                if !self.elements.contains(element.0) {
+                    self.cancel_trackpad_gesture_stream(key);
+                    return None;
+                }
+                self.dispatch_trackpad_gesture_to(element, event);
+                Some(element)
+            }
+            Some(TrackpadGesturePhase::Ended | TrackpadGesturePhase::Cancelled) => {
+                let element = self.active_trackpad_gestures.get(&key)?.element;
+                if self.elements.contains(element.0) {
+                    self.dispatch_trackpad_gesture_to(element, event);
+                }
+                self.cancel_trackpad_gesture_stream(key);
+                Some(element)
+            }
+            None => {
+                // Smart magnify and pressure have no native begin/end phase in
+                // Winit. Resolve each aggregate event independently rather than
+                // inventing a contact lifetime.
+                self.cancel_trackpad_gesture_stream(key);
+                let hit = self
+                    .hit_test(position)
+                    .and_then(|render| self.element_for_render(render))?;
+                let candidates = self
+                    .gesture_ancestors(hit)
+                    .into_iter()
+                    .filter_map(|element| {
+                        self.gesture_callbacks(element)
+                            .and_then(|callbacks| callbacks.on_trackpad_gesture.map(|_| element))
+                    })
+                    .collect::<Vec<_>>();
+                let winner = *candidates.first()?;
+                let mut winner_member = None;
+                for element in candidates {
+                    let member = self.gesture_arena.add(key, false);
+                    if element == winner {
+                        winner_member = Some(member);
+                    }
+                }
+                let member = winner_member.expect("winner joins aggregate gesture arena");
+                let entries = self.gesture_arena.accept(key, member);
+                debug_assert_eq!(
+                    disposition_for(&entries, member),
+                    GestureDisposition::Accepted
+                );
+                self.dispatch_trackpad_gesture_to(winner, event);
+                let _ = self.gesture_arena.cancel(key);
+                Some(winner)
+            }
+        }
+    }
+
+    fn dispatch_trackpad_gesture_to(&self, element: ElementId, event: TrackpadGesture) {
+        if let Some(callback) = self
+            .gesture_callbacks(element)
+            .and_then(|callbacks| callbacks.on_trackpad_gesture)
+        {
+            callback(event);
+        }
+    }
+
+    fn cancel_trackpad_gesture_stream(&mut self, key: GestureArenaKey) {
+        let _ = self.gesture_arena.cancel(key);
+        self.active_trackpad_gestures.remove(&key);
+    }
+
     /// Allocates an opaque callback action. The runtime owns dispatch, while
     /// the tree uses this shared sequence for lazy children mounted during
     /// layout so IDs can never collide with eagerly prepared buttons.
@@ -48,36 +159,89 @@ impl WidgetTree {
         pointer: u64,
         element: ElementId,
     ) -> Option<PointerCapture> {
-        let key = GestureArenaKey { window, pointer };
-        let legacy_member = self.active_gestures.get(&key).is_some_and(|active| {
-            active
-                .members
-                .iter()
-                .any(|candidate| candidate.element == element)
-        });
-        let raw_member = self.raw_gesture_streams.get(&key).is_some_and(|active| {
-            active
-                .members
-                .iter()
-                .any(|candidate| candidate.element == element)
-        });
-        if !legacy_member && !raw_member {
-            return None;
-        }
+        let key = self.unique_pointer_stream(window, pointer, element)?;
         self.pointer_captures.insert(key, element);
         Some(PointerCapture { key })
+    }
+    /// Device-exact pointer capture for raw/device-rich input consumers.
+    pub fn request_pointer_capture_for_device(
+        &mut self,
+        window: u64,
+        device: u64,
+        pointer: u64,
+        element: ElementId,
+    ) -> Option<PointerCapture> {
+        let key = GestureArenaKey::pointer_device(window, device, pointer);
+        let member = self.active_gestures.get(&key).is_some_and(|active| {
+            active
+                .members
+                .iter()
+                .any(|candidate| candidate.element == element)
+        }) || self.raw_gesture_streams.get(&key).is_some_and(|active| {
+            active
+                .members
+                .iter()
+                .any(|candidate| candidate.element == element)
+        });
+        member.then(|| {
+            self.pointer_captures.insert(key, element);
+            PointerCapture { key }
+        })
     }
     /// Returns the retained target currently captured for a window/pointer.
     #[must_use]
     pub fn pointer_capture_target(&self, window: u64, pointer: u64) -> Option<ElementId> {
+        let mut matches = self.pointer_captures.iter().filter_map(|(key, target)| {
+            (key.window == window && key.pointer_id() == Some(pointer)).then_some(*target)
+        });
+        let target = matches.next()?;
+        matches.next().is_none().then_some(target)
+    }
+    #[must_use]
+    pub fn pointer_capture_target_for_device(
+        &self,
+        window: u64,
+        device: u64,
+        pointer: u64,
+    ) -> Option<ElementId> {
         self.pointer_captures
-            .get(&GestureArenaKey { window, pointer })
+            .get(&GestureArenaKey::pointer_device(window, device, pointer))
             .copied()
     }
     /// Releases a capture token. Releasing a token from another window or a
     /// stale pointer sequence is harmless and returns `false`.
     pub fn release_pointer_capture(&mut self, capture: PointerCapture) -> bool {
         self.pointer_captures.remove(&capture.key).is_some()
+    }
+    fn unique_pointer_stream(
+        &self,
+        window: u64,
+        pointer: u64,
+        element: ElementId,
+    ) -> Option<GestureArenaKey> {
+        let mut keys = self
+            .active_gestures
+            .iter()
+            .filter_map(|(key, active)| {
+                (key.window == window
+                    && key.pointer_id() == Some(pointer)
+                    && active
+                        .members
+                        .iter()
+                        .any(|candidate| candidate.element == element))
+                .then_some(*key)
+            })
+            .chain(self.raw_gesture_streams.iter().filter_map(|(key, active)| {
+                (key.window == window
+                    && key.pointer_id() == Some(pointer)
+                    && active
+                        .members
+                        .iter()
+                        .any(|candidate| candidate.element == element))
+                .then_some(*key)
+            }));
+        let first = keys.next()?;
+        keys.all(|key| key == first).then_some(first)
     }
     /// Dispatches a pointer event in the standalone window (identity zero).
     /// Multi-window runtimes should use [`Self::dispatch_gesture_in_window`].
@@ -93,12 +257,20 @@ impl WidgetTree {
         window: u64,
         event: PointerEvent,
     ) -> Option<ElementId> {
+        self.dispatch_device_gesture_in_window(window, 0, event)
+    }
+    /// Device-aware pointer dispatch used by metadata-rich platform input.
+    /// Native pointer numbers are only unique within their physical device, so
+    /// the shared arena key carries both identities.
+    pub fn dispatch_device_gesture_in_window(
+        &mut self,
+        window: u64,
+        device: u64,
+        event: PointerEvent,
+    ) -> Option<ElementId> {
         use incular_core::PointerPhase;
 
-        let key = GestureArenaKey {
-            window,
-            pointer: event.pointer,
-        };
+        let key = GestureArenaKey::pointer_device(window, device, event.pointer);
         if matches!(event.phase, PointerPhase::Down) {
             self.cancel_gesture_stream(key, true);
             let hit = self

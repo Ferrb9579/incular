@@ -73,11 +73,12 @@ pub mod prelude {
     pub use incular_core::{
         BACK_POINTER_BUTTON, ChangeImpact, Code, Color, DirtyFlags, FORWARD_POINTER_BUTTON,
         HslColor, HsvColor, ImeEvent, InputEvent, Invalidation, Key, KeyState, KeyboardEvent,
-        KeyboardKey, Lerp, LocalKey, Location, Modifiers, NamedKey, Offset, PRIMARY_POINTER_BUTTON,
-        PointerDeviceKind, PointerPhase, Rect, RestorationKey, RestorationKeyError,
-        RestorationScope, SECONDARY_POINTER_BUTTON, Size, TERTIARY_POINTER_BUTTON,
-        Transform as AffineTransform, UniqueKey, ValueKey, WindowResizeDirection,
-        additional_pointer_button_mask,
+        KeyboardKey, Lerp, LocalKey, Location, Modifiers, NamedKey, NormalizedPressure, Offset,
+        PRIMARY_POINTER_BUTTON, PointerDeviceKind, PointerPhase, PointerSampleMetadata, Rect,
+        RestorationKey, RestorationKeyError, RestorationScope, SECONDARY_POINTER_BUTTON, Size,
+        StylusMetadata, StylusOrientation, TERTIARY_POINTER_BUTTON, TrackpadGesture,
+        TrackpadGestureKind, TrackpadGesturePhase, Transform as AffineTransform, UniqueKey,
+        ValueKey, WindowResizeDirection, additional_pointer_button_mask,
     };
     pub use incular_image::{
         AssetImage, DecodedImage, FileImage, ImageCache, ImageCacheDiagnostics, ImageConfiguration,

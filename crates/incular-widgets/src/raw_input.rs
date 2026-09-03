@@ -7,6 +7,7 @@
 
 use std::{fmt, rc::Rc};
 
+pub use incular_core::TrackpadGesture;
 pub use incular_gestures::{
     ErasedGestureRecognizerFactory, GestureRecognizer, GestureRecognizerFactory,
     GestureRecognizerFactoryError, GestureRecognizerFactoryWithHandlers, MouseCursor,
@@ -35,6 +36,7 @@ pub struct ListenerCallbacks {
     pub on_pointer_hover: Option<Rc<dyn Fn(RawPointerEvent)>>,
     pub on_pointer_cancel: Option<Rc<dyn Fn(RawPointerEvent)>>,
     pub on_pointer_signal: Option<Rc<dyn Fn(RawPointerEvent)>>,
+    pub on_trackpad_gesture: Option<Rc<dyn Fn(TrackpadGesture)>>,
 }
 
 /// Callback set used by [`MouseRegion`].
@@ -206,6 +208,7 @@ impl fmt::Debug for ListenerCallbacks {
             .field("on_pointer_hover", &self.on_pointer_hover.is_some())
             .field("on_pointer_cancel", &self.on_pointer_cancel.is_some())
             .field("on_pointer_signal", &self.on_pointer_signal.is_some())
+            .field("on_trackpad_gesture", &self.on_trackpad_gesture.is_some())
             .finish()
     }
 }
@@ -248,6 +251,7 @@ fn listener_callbacks_eq(left: &ListenerCallbacks, right: &ListenerCallbacks) ->
         && same_callback(&left.on_pointer_hover, &right.on_pointer_hover)
         && same_callback(&left.on_pointer_cancel, &right.on_pointer_cancel)
         && same_callback(&left.on_pointer_signal, &right.on_pointer_signal)
+        && same_callback(&left.on_trackpad_gesture, &right.on_trackpad_gesture)
 }
 
 fn mouse_callbacks_eq(left: &MouseRegionCallbacks, right: &MouseRegionCallbacks) -> bool {
@@ -452,6 +456,14 @@ impl Listener {
     #[must_use]
     pub fn on_pointer_signal(mut self, callback: impl Fn(RawPointerEvent) + 'static) -> Self {
         self.callbacks.on_pointer_signal = Some(Rc::new(callback));
+        self
+    }
+
+    /// Receives aggregate native trackpad gestures without arena arbitration.
+    /// Use [`crate::GestureDetector`] when nested gesture ownership matters.
+    #[must_use]
+    pub fn on_trackpad_gesture(mut self, callback: impl Fn(TrackpadGesture) + 'static) -> Self {
+        self.callbacks.on_trackpad_gesture = Some(Rc::new(callback));
         self
     }
 

@@ -73,8 +73,16 @@ impl PointerCapture {
         self.key.window
     }
     #[must_use]
-    pub const fn pointer(self) -> u64 {
-        self.key.pointer
+    pub fn pointer(self) -> u64 {
+        self.key
+            .pointer_id()
+            .expect("pointer capture tokens are created only for pointer arena streams")
+    }
+    #[must_use]
+    pub fn device(self) -> u64 {
+        self.key
+            .pointer_device_id()
+            .expect("pointer capture tokens are created only for pointer arena streams")
     }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

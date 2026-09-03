@@ -1500,6 +1500,7 @@ fn gesture_callbacks_eq(left: &GestureCallbacks, right: &GestureCallbacks) -> bo
         && same_optional_callback(&left.on_scale_start, &right.on_scale_start)
         && same_optional_callback(&left.on_scale_update, &right.on_scale_update)
         && same_optional_callback(&left.on_scale_end, &right.on_scale_end)
+        && same_optional_callback(&left.on_trackpad_gesture, &right.on_trackpad_gesture)
         && same_optional_callback(&left.on_cancel, &right.on_cancel)
         && same_optional_callback(&left.on_key, &right.on_key)
         && same_optional_callback(&left.on_key_down, &right.on_key_down)

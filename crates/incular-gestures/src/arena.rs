@@ -1,10 +1,63 @@
 use std::collections::HashMap;
 
-/// Identifies one pointer stream within a native window.
+use incular_core::TrackpadGestureKind;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GestureArenaSource {
+    Pointer {
+        device: u64,
+        pointer: u64,
+    },
+    Trackpad {
+        device: u64,
+        kind: TrackpadGestureKind,
+    },
+}
+
+/// Identifies one gesture stream within a native window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GestureArenaKey {
     pub window: u64,
-    pub pointer: u64,
+    pub source: GestureArenaSource,
+}
+
+impl GestureArenaKey {
+    #[must_use]
+    pub const fn pointer(window: u64, pointer: u64) -> Self {
+        Self::pointer_device(window, 0, pointer)
+    }
+
+    #[must_use]
+    pub const fn pointer_device(window: u64, device: u64, pointer: u64) -> Self {
+        Self {
+            window,
+            source: GestureArenaSource::Pointer { device, pointer },
+        }
+    }
+
+    #[must_use]
+    pub const fn trackpad(window: u64, device: u64, kind: TrackpadGestureKind) -> Self {
+        Self {
+            window,
+            source: GestureArenaSource::Trackpad { device, kind },
+        }
+    }
+
+    #[must_use]
+    pub const fn pointer_id(self) -> Option<u64> {
+        match self.source {
+            GestureArenaSource::Pointer { pointer, .. } => Some(pointer),
+            GestureArenaSource::Trackpad { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn pointer_device_id(self) -> Option<u64> {
+        match self.source {
+            GestureArenaSource::Pointer { device, .. } => Some(device),
+            GestureArenaSource::Trackpad { .. } => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GestureDisposition {

@@ -21,7 +21,7 @@ use crate::window_state::WindowManager;
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_core::{
     Code, ImeEvent, InputEvent, KeyboardEvent, Modifiers, Offset, PRIMARY_POINTER_BUTTON,
-    PointerPhase, Rect,
+    PointerPhase, PointerSampleMetadata, Rect,
 };
 use incular_platform::{
     Clipboard, ClipboardCapabilities, ClipboardError, ClipboardWriteReport, DataTransfer,
@@ -93,7 +93,7 @@ pub struct Runtime {
     pub(crate) pressed_button: Option<ElementId>,
     /// The contact currently allowed to drive single-contact controls. Other
     /// contacts still reach retained gesture regions for scale/pan input.
-    pub(crate) legacy_pointer: Option<u64>,
+    pub(crate) legacy_pointer: Option<(u64, u64)>,
     pub(crate) last_pointer: Offset,
     pub(crate) pointer_inside: bool,
     pub(crate) pointer_position_known: bool,
@@ -142,11 +142,18 @@ pub(crate) fn diagnostic_input_trigger(event: &InputEvent) -> String {
             kind,
             buttons,
             button,
+            sample: _,
             phase,
             position,
         } => format!(
             "pointer({pointer}, device={device}, {kind:?}, buttons={buttons:#x}, changed={button:?}, {phase:?}, {:.1}, {:.1})",
             position.x, position.y
+        ),
+        InputEvent::TrackpadGesture(event) => format!(
+            "trackpad(device={}, kind={:?}, phase={:?})",
+            event.device(),
+            event.kind(),
+            event.phase()
         ),
         InputEvent::Scroll { delta } => format!("scroll({:.1}, {:.1})", delta.x, delta.y),
         InputEvent::Key(event) => format!("key({:?}, {:?})", event.state, event.code),
@@ -955,69 +962,101 @@ impl Runtime {
         self.tree.set_diagnostic_trigger(trigger);
     }
     fn handle_input_inner(&mut self, event: InputEvent) -> Option<EventTarget> {
-        let (pointer, device, kind, buttons, button, phase, position, metadata_rich) = match event {
-            InputEvent::Pointer { phase, position } => (
-                0,
-                0,
-                PointerDeviceKind::Mouse,
-                0,
-                None,
-                phase,
-                position,
-                false,
-            ),
-            InputEvent::PointerWithId {
-                pointer,
-                phase,
-                position,
-            } => (
-                pointer,
-                0,
-                PointerDeviceKind::Mouse,
-                0,
-                None,
-                phase,
-                position,
-                false,
-            ),
-            InputEvent::PointerWithMetadata {
-                pointer,
-                device,
-                kind,
-                buttons,
-                button,
-                phase,
-                position,
-            } => (
-                pointer, device, kind, buttons, button, phase, position, true,
-            ),
-            event => {
-                match event {
-                    InputEvent::Scroll { delta } => {
-                        // The platform normalizes wheel values to logical pixels. The
-                        // latest pointer position selects the nearest viewport.
-                        if self.tree.scroll_at(self.last_pointer, delta) {
-                            self.frame_requested = true;
+        let gesture_window = self.window_id.map_or(0, |window| {
+            (u64::from(window.index()) << 32) | u64::from(window.generation())
+        });
+        let (pointer, device, kind, buttons, button, sample, phase, position, metadata_rich) =
+            match event {
+                InputEvent::Pointer { phase, position } => (
+                    0,
+                    0,
+                    PointerDeviceKind::Mouse,
+                    0,
+                    None,
+                    PointerSampleMetadata::default(),
+                    phase,
+                    position,
+                    false,
+                ),
+                InputEvent::PointerWithId {
+                    pointer,
+                    phase,
+                    position,
+                } => (
+                    pointer,
+                    0,
+                    PointerDeviceKind::Mouse,
+                    0,
+                    None,
+                    PointerSampleMetadata::default(),
+                    phase,
+                    position,
+                    false,
+                ),
+                InputEvent::PointerWithMetadata {
+                    pointer,
+                    device,
+                    kind,
+                    buttons,
+                    button,
+                    sample,
+                    phase,
+                    position,
+                } => (
+                    pointer, device, kind, buttons, button, sample, phase, position, true,
+                ),
+                event => {
+                    match event {
+                        InputEvent::Scroll { delta } => {
+                            // The platform normalizes wheel values to logical pixels. The
+                            // latest pointer position selects the nearest viewport.
+                            if self.tree.scroll_at(self.last_pointer, delta) {
+                                self.frame_requested = true;
+                            }
                         }
+                        InputEvent::Key(key) => {
+                            self.handle_key(key);
+                        }
+                        InputEvent::Text(text) => {
+                            self.insert_text(&text);
+                        }
+                        InputEvent::Ime(ime) => {
+                            self.handle_ime(ime);
+                        }
+                        InputEvent::TrackpadGesture(gesture) => {
+                            // Aggregate gestures do not carry a focal position in
+                            // Winit. Use only a genuine cursor position already
+                            // observed for this window; never invent a touch point.
+                            if self.pointer_position_known
+                                && let Some(element) =
+                                    self.tree.dispatch_trackpad_gesture_in_window(
+                                        gesture_window,
+                                        self.last_pointer,
+                                        gesture,
+                                    )
+                            {
+                                self.frame_requested = true;
+                                return Some(EventTarget {
+                                    element,
+                                    action: None,
+                                });
+                            }
+                        }
+                        InputEvent::WindowResized { .. } => {}
+                        InputEvent::Pointer { .. } => unreachable!(),
+                        InputEvent::PointerWithId { .. } => unreachable!(),
+                        InputEvent::PointerWithMetadata { .. } => unreachable!(),
                     }
-                    InputEvent::Key(key) => {
-                        self.handle_key(key);
-                    }
-                    InputEvent::Text(text) => {
-                        self.insert_text(&text);
-                    }
-                    InputEvent::Ime(ime) => {
-                        self.handle_ime(ime);
-                    }
-                    InputEvent::WindowResized { .. } => {}
-                    InputEvent::Pointer { .. } => unreachable!(),
-                    InputEvent::PointerWithId { .. } => unreachable!(),
-                    InputEvent::PointerWithMetadata { .. } => unreachable!(),
+                    return None;
                 }
-                return None;
-            }
-        };
-        let hover_capable = matches!(kind, PointerDeviceKind::Mouse | PointerDeviceKind::Trackpad);
+            };
+        let hover_capable = matches!(
+            kind,
+            PointerDeviceKind::Mouse
+                | PointerDeviceKind::Trackpad
+                | PointerDeviceKind::Stylus
+                | PointerDeviceKind::InvertedStylus
+        );
         if hover_capable {
             match phase {
                 PointerPhase::Enter => {
@@ -1040,9 +1079,6 @@ impl Runtime {
         if phase == PointerPhase::Down && self.tree.dismiss_transients_for_pointer(position) > 0 {
             self.frame_requested = true;
         }
-        let gesture_window = self.window_id.map_or(0, |window| {
-            (u64::from(window.index()) << 32) | u64::from(window.generation())
-        });
         let raw_target = self.tree.dispatch_raw_pointer_in_window(
             gesture_window,
             RawPointerEvent {
@@ -1051,6 +1087,7 @@ impl Runtime {
                 kind,
                 buttons,
                 button,
+                sample,
                 position,
                 phase,
                 time: Instant::now(),
@@ -1067,10 +1104,11 @@ impl Runtime {
         }
 
         let primary_changed = !metadata_rich || button == Some(PRIMARY_POINTER_BUTTON);
-        let active_primary = self.legacy_pointer == Some(pointer);
+        let stream = (device, pointer);
+        let active_primary = self.legacy_pointer == Some(stream);
         let legacy_pointer = match phase {
             PointerPhase::Down if primary_changed && self.legacy_pointer.is_none() => {
-                self.legacy_pointer = Some(pointer);
+                self.legacy_pointer = Some(stream);
                 true
             }
             PointerPhase::Down => primary_changed && active_primary,
@@ -1084,7 +1122,7 @@ impl Runtime {
 
         if let Some(element) = raw_target {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase, primary_changed);
+            self.release_legacy_pointer(device, pointer, phase, primary_changed);
             return Some(EventTarget {
                 element,
                 action: None,
@@ -1092,8 +1130,9 @@ impl Runtime {
         }
         let ordinary_gesture_allowed = legacy_pointer || !metadata_rich || !hover_capable;
         if ordinary_gesture_allowed
-            && let Some(element) = self.tree.dispatch_gesture_in_window(
+            && let Some(element) = self.tree.dispatch_device_gesture_in_window(
                 gesture_window,
+                device,
                 PointerEvent {
                     pointer,
                     position,
@@ -1103,7 +1142,7 @@ impl Runtime {
             )
         {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase, primary_changed);
+            self.release_legacy_pointer(device, pointer, phase, primary_changed);
             return Some(EventTarget {
                 element,
                 action: None,
@@ -1116,7 +1155,7 @@ impl Runtime {
         }
         if self.tree.scrollbar_pointer(phase, position) {
             self.frame_requested = true;
-            self.release_legacy_pointer(pointer, phase, primary_changed);
+            self.release_legacy_pointer(device, pointer, phase, primary_changed);
             return None;
         }
         let text_target = self.tree.text_field_at(position);
@@ -1182,7 +1221,7 @@ impl Runtime {
                         }
                     };
                     if manager.send_window_operation(window_id, operation) {
-                        self.release_legacy_pointer(pointer, phase, primary_changed);
+                        self.release_legacy_pointer(device, pointer, phase, primary_changed);
                         return Some(EventTarget {
                             element,
                             action: None,
@@ -1255,12 +1294,18 @@ impl Runtime {
                 None
             }
         };
-        self.release_legacy_pointer(pointer, phase, primary_changed);
+        self.release_legacy_pointer(device, pointer, phase, primary_changed);
         result
     }
-    fn release_legacy_pointer(&mut self, pointer: u64, phase: PointerPhase, primary_changed: bool) {
+    fn release_legacy_pointer(
+        &mut self,
+        device: u64,
+        pointer: u64,
+        phase: PointerPhase,
+        primary_changed: bool,
+    ) {
         if (phase == PointerPhase::Cancel || (phase == PointerPhase::Up && primary_changed))
-            && self.legacy_pointer == Some(pointer)
+            && self.legacy_pointer == Some((device, pointer))
         {
             self.legacy_pointer = None;
         }

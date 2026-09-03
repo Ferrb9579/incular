@@ -21,7 +21,8 @@ use incular_config::{
 };
 use incular_core::{
     Arena, ArenaId, BuildContext as DependencyContext, Color, ConsumerId, DirtyFlags,
-    KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size, Transform as CoreTransform,
+    KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size, TrackpadGesture,
+    TrackpadGesturePhase, Transform as CoreTransform,
 };
 use incular_image::ImageHandle;
 use incular_rendering as incular_painting;
@@ -749,6 +750,10 @@ struct ActiveGesture {
     start: Offset,
 }
 
+struct ActiveTrackpadGesture {
+    element: ElementId,
+}
+
 struct ActiveRawGestureMember {
     element: ElementId,
     member: GestureArenaMember,
@@ -878,6 +883,7 @@ pub struct WidgetTree {
     pending_handlers: Vec<(ActionId, Rc<dyn Fn()>)>,
     gesture_arena: GestureArena,
     active_gestures: HashMap<GestureArenaKey, ActiveGesture>,
+    active_trackpad_gestures: HashMap<GestureArenaKey, ActiveTrackpadGesture>,
     raw_recognizers: HashMap<ElementId, HashMap<TypeId, Box<dyn GestureRecognizer>>>,
     raw_gesture_streams: HashMap<GestureArenaKey, ActiveRawGesture>,
     raw_pointer_routes: HashMap<GestureArenaKey, Vec<ElementId>>,
