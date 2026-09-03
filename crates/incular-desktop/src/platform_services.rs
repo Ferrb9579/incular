@@ -1,9 +1,14 @@
 use incular_config::TransientRole;
 use incular_platform::{
-    ApplicationActivation, CapabilitySupport, NativeWindowSystem, PhysicalScreenRect,
-    PlatformLifecycle, PlatformOperationResult, SystemEnvironmentPreferences,
+    ApplicationActivation, ApplicationShellError, ApplicationShellFeature, CapabilitySupport,
+    NativeWindowSystem, PhysicalScreenRect, PlatformCapabilities, PlatformLifecycle,
+    PlatformOperationResult, SystemEnvironmentPreferences,
 };
-use incular_runtime::TokioHandle;
+use incular_runtime::{
+    NativeApplicationShellApplyResult, NativeApplicationShellCompletion,
+    NativeApplicationShellEvent, NativeApplicationShellOperation, NativeApplicationShellRequest,
+    TokioHandle,
+};
 use incular_widgets::{NoopPlatformMenuDelegate, PlatformMenuDelegate};
 use std::{rc::Rc, sync::Arc};
 use winit::{
@@ -65,6 +70,84 @@ pub trait DesktopPlatformServices {
         &self,
         _deliver: Arc<dyn Fn(ApplicationActivation) + Send + Sync>,
     ) {
+    }
+
+    /// Publishes application-shell capabilities owned by the OS facade.
+    ///
+    /// The shared desktop runner only coordinates requests. Native tray/status
+    /// items, notifications, and taskbar/Dock resources stay in the platform
+    /// crate so their lifetime and thread-affinity rules do not leak into
+    /// `incular-desktop`.
+    fn refine_application_shell_capabilities(
+        &self,
+        _system: NativeWindowSystem,
+        capabilities: &mut PlatformCapabilities,
+    ) {
+        let unsupported = CapabilitySupport::Unsupported;
+        let services = &mut capabilities.application_services;
+        services.tray_or_status_item = unsupported;
+        services.notifications = unsupported;
+        services.notification_actions = unsupported;
+        services.notification_update = unsupported;
+        services.notification_dismiss = unsupported;
+        services.taskbar_progress = unsupported;
+        services.application_badge = unsupported;
+        services.taskbar_overlay_icon = unsupported;
+    }
+
+    /// Installs the normalized native-event delivery path for application-shell
+    /// resources. OS callbacks must never call runtime-owned callbacks directly;
+    /// they emit stable IDs here and the desktop event loop performs dispatch.
+    fn start_application_shell_watch(
+        &self,
+        _deliver: Arc<dyn Fn(NativeApplicationShellEvent) + Send + Sync>,
+        _complete: Arc<dyn Fn(NativeApplicationShellCompletion) + Send + Sync>,
+    ) {
+    }
+
+    /// Supplies any installed application identity required by the platform's
+    /// notification system (for example a Windows AppUserModelID).
+    fn set_application_shell_notification_identity(&self, _identity: Option<String>) {}
+
+    /// Applies one application-shell request on the native event-loop thread.
+    ///
+    /// OS implementations own all native resources created by this operation.
+    /// The default implementation is deliberately strict so a bare
+    /// `incular-desktop` runner cannot silently fake a platform integration.
+    fn apply_application_shell_request(
+        &self,
+        _system: NativeWindowSystem,
+        request: NativeApplicationShellRequest,
+        _target_window: Option<&Window>,
+    ) -> NativeApplicationShellApplyResult {
+        let feature = match request.operation {
+            NativeApplicationShellOperation::CreateTray { .. }
+            | NativeApplicationShellOperation::UpdateTray { .. }
+            | NativeApplicationShellOperation::RemoveTray { .. } => {
+                ApplicationShellFeature::TrayOrStatusItem
+            }
+            NativeApplicationShellOperation::ShowNotification { .. } => {
+                ApplicationShellFeature::Notifications
+            }
+            NativeApplicationShellOperation::UpdateNotification { .. } => {
+                ApplicationShellFeature::NotificationUpdate
+            }
+            NativeApplicationShellOperation::CloseNotification { .. } => {
+                ApplicationShellFeature::NotificationDismiss
+            }
+            NativeApplicationShellOperation::SetTaskbarDockState(state) => {
+                if state.overlay_icon.is_some() {
+                    ApplicationShellFeature::TaskbarOverlayIcon
+                } else if state.badge != incular_platform::ApplicationBadge::None {
+                    ApplicationShellFeature::ApplicationBadge
+                } else {
+                    ApplicationShellFeature::TaskbarProgress
+                }
+            }
+        };
+        NativeApplicationShellApplyResult::Completed(Err(ApplicationShellError::Unsupported(
+            feature,
+        )))
     }
 
     /// Win32 exposes several relevant preference/lifecycle notifications only

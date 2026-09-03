@@ -1,4 +1,6 @@
 //! Windows desktop adapter for Incular's shared desktop shell.
+#[cfg(target_os = "windows")]
+mod application_shell;
 mod crash_reporter;
 #[cfg(target_os = "windows")]
 mod environment;
@@ -7,15 +9,64 @@ mod platform_menus;
 
 pub use incular_desktop::RunError;
 
+/// Returns the static application-shell capability matrix advertised by the
+/// Windows adapter for a concrete native window system.
+#[doc(hidden)]
+#[must_use]
+#[cfg(target_os = "windows")]
+pub fn application_shell_capabilities(
+    system: incular_platform::NativeWindowSystem,
+) -> incular_platform::ApplicationServiceCapabilities {
+    let shell = application_shell::WindowsApplicationShell::default();
+    let mut capabilities = incular_platform::PlatformCapabilities::default();
+    shell.refine_capabilities(system, &mut capabilities);
+    capabilities.application_services
+}
+
 #[cfg(target_os = "windows")]
 #[derive(Clone, Default)]
 struct WindowsDesktopPlatformServices {
+    application_shell: application_shell::WindowsApplicationShell,
     menus: std::rc::Rc<platform_menus::WindowsPlatformMenuDelegate>,
     environment: environment::WindowsEnvironmentState,
 }
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        _complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver);
+    }
+
+    fn set_application_shell_notification_identity(&self, identity: Option<String>) {
+        self.application_shell.set_notification_identity(identity);
+    }
+
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell
+            .apply(system, request, target_window)
+            .into()
+    }
+
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
         self.environment.preferences()
     }

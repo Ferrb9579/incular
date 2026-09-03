@@ -13,6 +13,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use std::{fmt, path::PathBuf};
 
 mod application_activation;
+mod application_shell;
 mod capabilities;
 mod content_sensitivity;
 mod data_transfer;
@@ -27,6 +28,11 @@ pub use application_activation::{
     ApplicationActivation, GlobalShortcutChord, GlobalShortcutChordError, GlobalShortcutError,
     GlobalShortcutId, LaunchActivation, SingleInstancePolicy, SingleInstancePolicyError,
     UrlActivation,
+};
+pub use application_shell::{
+    ApplicationBadge, ApplicationShellError, ApplicationShellFeature, NotificationAction,
+    NotificationActionId, NotificationId, NotificationPresentation, TaskbarDockState,
+    TaskbarProgress, TaskbarProgressError, TrayItemId, TrayItemPresentation,
 };
 pub use capabilities::{
     AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,

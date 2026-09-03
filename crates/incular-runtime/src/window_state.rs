@@ -1,4 +1,5 @@
 use crate::TransientPresentationResolution;
+use crate::application_shell::ApplicationShellService;
 use crate::application_types::ApplicationLifecycle;
 use crate::application_types::{RestorableWindowMetadata, WindowError, WindowRestorationId};
 use crate::context::BuildContext;
@@ -331,6 +332,7 @@ pub(crate) struct WindowManager {
     pub(crate) bridge: Arc<WindowCommandBridge>,
     pub(crate) file_dialog_bridge: Arc<FileDialogBridge>,
     pub(crate) global_shortcut_bridge: Arc<GlobalShortcutBridge>,
+    pub(crate) application_shell: ApplicationShellService,
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) restoration: Option<restoration::RestorationManager>,
     pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,

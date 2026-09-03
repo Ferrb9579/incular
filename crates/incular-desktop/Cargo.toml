@@ -47,7 +47,6 @@ native-dialog = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { workspace = true }
-url = { workspace = true }
 
 [features]
 default = []

@@ -101,6 +101,11 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 getrandom = "0.3"
 global-hotkey = "0.8.0"
+tray-icon = { version = "0.24.2", default-features = false }
+tauri-winrt-notification = "0.8.1"
+notify-rust = { version = "4.18.0", default-features = false, features = ["z-with-tokio"] }
+ksni = { version = "0.3.6", features = ["blocking"] }
+objc2-user-notifications = { version = "0.2.2", features = ["UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter", "block2"] }
 interprocess = "2.4.3"
 fs4 = "1.1.0"
 sysinfo = { version = "0.31", default-features = false, features = ["system"] }
@@ -147,11 +152,11 @@ minidump-writer = "0.11.0"
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 # WinRT's typed projection is used only for UISettings accessibility values
 # whose evented object model is not exposed by windows-sys.
-windows = { version = "0.58", features = ["Foundation", "UI_ViewManagement"] }
+windows = { version = "0.58", features = ["Foundation", "UI_ViewManagement", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 objc2 = "0.5.2"
 block2 = "0.5.1"
 objc2-foundation = { version = "0.2.2", features = ["NSLocale", "NSNotification", "NSOperation", "NSString", "block2"] }
-objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSEvent", "NSGraphics", "NSMenu", "NSMenuItem", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSDockTile", "NSEvent", "NSGraphics", "NSMenu", "NSMenuItem", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
 
 # Optimized build with symbols for external profilers (`perf`,samply).
 [profile.profiling]

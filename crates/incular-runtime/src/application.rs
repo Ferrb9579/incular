@@ -1,4 +1,8 @@
 use crate::application_activations::{ActivationRouteBridge, ApplicationActivationService};
+use crate::application_shell::{
+    ApplicationShellService, NativeApplicationShellCompletion, NativeApplicationShellEvent,
+    NativeApplicationShellRequest,
+};
 use crate::application_types::{
     ApplicationSchedulerCounters, LastWindowPolicy, RestorableWindowFactory,
     RestorableWindowMetadata, WindowError, WindowRestorationId,
@@ -99,6 +103,7 @@ pub struct Application {
         HashMap<crate::global_shortcuts::GlobalShortcutRequestId, PendingGlobalShortcutRequest>,
     native_global_shortcut_requests: VecDeque<NativeGlobalShortcutRequest>,
     platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
+    application_shell: ApplicationShellService,
     activations: ApplicationActivationService,
     launch_activation: LaunchActivation,
     single_instance_policy: Option<SingleInstancePolicy>,
@@ -120,6 +125,11 @@ pub struct Application {
     pub(crate) profiler: PerformanceProfiler,
     pub(crate) hub: PerformanceHub,
     pub(crate) scheduler_counters: ApplicationSchedulerCounters,
+}
+impl Drop for Application {
+    fn drop(&mut self) {
+        self.application_shell.stop();
+    }
 }
 impl Application {
     /// Creates an application from a retained root builder.
@@ -206,6 +216,7 @@ impl Application {
         let (simulation_sender, simulation_receiver) = mpsc::channel();
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
+        let application_shell = ApplicationShellService::new(platform_capabilities.clone());
         let activations = ApplicationActivationService::default();
         let display_catalog = Arc::new(RwLock::new(DisplayCatalog::default()));
         let application_lifecycle = Rc::new(std::cell::Cell::new(
@@ -224,6 +235,7 @@ impl Application {
             bridge,
             file_dialog_bridge: file_dialog_bridge.clone(),
             global_shortcut_bridge: global_shortcut_bridge.clone(),
+            application_shell: application_shell.clone(),
             native_commands: native_commands.clone(),
             restoration: restoration.clone(),
             application_capabilities: platform_capabilities.clone(),
@@ -252,6 +264,7 @@ impl Application {
             pending_global_shortcut_requests: HashMap::new(),
             native_global_shortcut_requests: VecDeque::new(),
             platform_capabilities,
+            application_shell,
             activations,
             launch_activation: LaunchActivation::current_process(),
             single_instance_policy: None,
@@ -434,6 +447,29 @@ impl Application {
             self.global_shortcut_bridge.clone(),
             self.platform_capabilities.clone(),
         )
+    }
+
+    /// Returns the application-owned native shell service. Tray/status items,
+    /// notifications, and taskbar/Dock state are independent of retained widget
+    /// lifetime and may therefore be created before or after windows.
+    #[must_use]
+    pub fn application_shell(&self) -> ApplicationShellService {
+        self.application_shell.clone()
+    }
+
+    #[doc(hidden)]
+    pub fn take_native_application_shell_requests(&self) -> Vec<NativeApplicationShellRequest> {
+        self.application_shell.take_native_requests()
+    }
+
+    #[doc(hidden)]
+    pub fn complete_application_shell_request(&self, completion: NativeApplicationShellCompletion) {
+        self.application_shell.complete(completion);
+    }
+
+    #[doc(hidden)]
+    pub fn handle_application_shell_event(&self, event: NativeApplicationShellEvent) -> bool {
+        self.application_shell.handle_native_event(event)
     }
 
     /// Replaces the launch payload that the desktop runner publishes for this
@@ -1105,6 +1141,7 @@ impl Application {
         self.manager.bridge.set_wake(wake.clone());
         self.file_dialog_bridge.set_wake(wake.clone());
         self.global_shortcut_bridge.set_wake(wake.clone());
+        self.application_shell.set_wake(wake.clone());
         self.simulation_bridge.set_wake(wake);
     }
 

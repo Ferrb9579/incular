@@ -94,7 +94,8 @@ pub mod prelude {
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
-        AdvancedInputCapabilities, ApplicationActivation, ApplicationServiceCapabilities,
+        AdvancedInputCapabilities, ApplicationActivation, ApplicationBadge,
+        ApplicationServiceCapabilities, ApplicationShellError, ApplicationShellFeature,
         CapabilitySupport, ClipboardCapabilities, ClipboardError, ClipboardWriteReport,
         ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
         ContentSensitivityOutcome, CursorGrabMode, DataTransfer, DataTransferCapabilities,
@@ -108,17 +109,19 @@ pub mod prelude {
         LogicalSizeLimits, LogicalSizeLimitsError, LogicalWindowPosition,
         LogicalWindowPositionError, MediaType, MemoryContentSensitivityBackend,
         MemoryTextInputAdapter, NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
-        NoopContentSensitivityBackend, PhysicalDisplayPosition, PhysicalScreenPosition,
+        NoopContentSensitivityBackend, NotificationAction, NotificationActionId, NotificationId,
+        NotificationPresentation, PhysicalDisplayPosition, PhysicalScreenPosition,
         PhysicalScreenRect, PlatformCapabilities, PlatformOperationError,
         PlatformOperationErrorKind, PlatformOperationResult, PointerMetadata, SingleInstancePolicy,
-        SingleInstancePolicyError, TextInputAction, TextInputAdapter, TextInputClientId,
-        TextInputCommand, TextInputConfiguration, TextInputState, TextInputType, TransferData,
-        TransferDataError, TransferFormat, TransferFormatCapabilities, TransferImage, TransferItem,
-        TransferOperation, TransferOperations, TransferReadRequest, TransferRepresentation,
-        TransientSurfaceCapabilities, UrlActivation, UserAttentionType, WindowCommand,
-        WindowControlCapabilities, WindowEvent, WindowEventKind, WindowIcon, WindowIconError,
-        WindowId, WindowLevel, WindowLifecycle, WindowObservedState, WindowOperation,
-        WindowOptions, WindowOptionsError, WindowRequestedState,
+        SingleInstancePolicyError, TaskbarDockState, TaskbarProgress, TaskbarProgressError,
+        TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
+        TextInputConfiguration, TextInputState, TextInputType, TransferData, TransferDataError,
+        TransferFormat, TransferFormatCapabilities, TransferImage, TransferItem, TransferOperation,
+        TransferOperations, TransferReadRequest, TransferRepresentation,
+        TransientSurfaceCapabilities, TrayItemId, TrayItemPresentation, UrlActivation,
+        UserAttentionType, WindowCommand, WindowControlCapabilities, WindowEvent, WindowEventKind,
+        WindowIcon, WindowIconError, WindowId, WindowLevel, WindowLifecycle, WindowObservedState,
+        WindowOperation, WindowOptions, WindowOptionsError, WindowRequestedState,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -144,9 +147,9 @@ pub mod prelude {
     #[cfg(feature = "desktop")]
     pub use incular_runtime::{
         ActivationRouteBridge, ApplicationActivationService, ApplicationActivationSubscription,
-        FileDialogRequest, FileDialogService, GlobalShortcutRegistration,
+        ApplicationShellService, FileDialogRequest, FileDialogService, GlobalShortcutRegistration,
         GlobalShortcutRegistrationRequest, GlobalShortcutService,
-        GlobalShortcutUnregistrationRequest,
+        GlobalShortcutUnregistrationRequest, NotificationHandle, TrayItemHandle,
     };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,

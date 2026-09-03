@@ -1,3 +1,4 @@
+use crate::application_shell::ApplicationShellService;
 use crate::application_types::WindowError;
 use crate::environment::{
     BUILD_SCOPE, ENV_ALL, ENV_BRIGHTNESS, ENV_DIRECTION, ENV_LOCALE, ENV_SAFE_INSETS, ENV_SCALE,
@@ -226,6 +227,15 @@ impl BuildContext {
             manager.global_shortcut_bridge.clone(),
             manager.application_capabilities.clone(),
         ))
+    }
+
+    /// Returns application-scoped tray/status, notification, and taskbar/Dock
+    /// services. The service contains no native handles and is callback-safe.
+    #[must_use]
+    pub fn application_shell(&self) -> Option<ApplicationShellService> {
+        self.window_manager
+            .as_ref()
+            .map(|manager| manager.application_shell.clone())
     }
 
     /// Returns the Tokio handle for advanced integrations. Tasks spawned

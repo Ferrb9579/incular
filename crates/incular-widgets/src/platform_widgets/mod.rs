@@ -8,6 +8,7 @@
 use crate::{SizedBox, Widget};
 
 mod menu;
+pub(crate) use menu::{MenuCallbackSet, build_snapshot};
 
 #[doc(hidden)]
 pub use menu::PlatformMenuBinding;

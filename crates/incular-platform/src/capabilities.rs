@@ -119,6 +119,12 @@ pub struct ApplicationServiceCapabilities {
     pub single_instance_activation: CapabilitySupport,
     pub tray_or_status_item: CapabilitySupport,
     pub notifications: CapabilitySupport,
+    pub notification_actions: CapabilitySupport,
+    pub notification_update: CapabilitySupport,
+    pub notification_dismiss: CapabilitySupport,
+    pub taskbar_progress: CapabilitySupport,
+    pub application_badge: CapabilitySupport,
+    pub taskbar_overlay_icon: CapabilitySupport,
 }
 
 /// Device-rich input and native cursor facilities beyond basic pointer input.
@@ -210,6 +216,12 @@ impl PlatformCapabilities {
                 single_instance_activation: unsupported,
                 tray_or_status_item: unsupported,
                 notifications: unsupported,
+                notification_actions: unsupported,
+                notification_update: unsupported,
+                notification_dismiss: unsupported,
+                taskbar_progress: unsupported,
+                application_badge: unsupported,
+                taskbar_overlay_icon: unsupported,
             },
             advanced_input: AdvancedInputCapabilities {
                 pointer_metadata: unsupported,

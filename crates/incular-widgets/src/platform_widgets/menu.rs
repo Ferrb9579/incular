@@ -595,10 +595,21 @@ impl fmt::Display for PlatformMenuBuildError {
 impl std::error::Error for PlatformMenuBuildError {}
 
 #[derive(Clone, Default)]
-struct MenuCallbackSet {
+pub(crate) struct MenuCallbackSet {
     selected: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
     opened: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
     closed: BTreeMap<MenuItemId, Rc<dyn Fn()>>,
+}
+
+impl MenuCallbackSet {
+    pub(crate) fn dispatch(&self, event: &PlatformMenuEvent) -> MenuDispatchResult {
+        let callback = match event {
+            PlatformMenuEvent::Selected(id) => self.selected.get(id).cloned(),
+            PlatformMenuEvent::Opened(id) => self.opened.get(id).cloned(),
+            PlatformMenuEvent::Closed(id) => self.closed.get(id).cloned(),
+        };
+        dispatch_owned_callback(callback)
+    }
 }
 
 struct PlatformMenuBarState {
@@ -1072,7 +1083,7 @@ impl From<PlatformMenuBar> for Widget {
     }
 }
 
-fn build_snapshot(
+pub(crate) fn build_snapshot(
     menus: &[PlatformMenu],
 ) -> Result<(PlatformMenuSnapshot, MenuCallbackSet), PlatformMenuBuildError> {
     let mut ids = BTreeSet::new();

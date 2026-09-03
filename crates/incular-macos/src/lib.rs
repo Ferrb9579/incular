@@ -3,15 +3,32 @@
 #[cfg(target_os = "macos")]
 mod activation;
 #[cfg(target_os = "macos")]
+mod application_shell;
+#[cfg(target_os = "macos")]
 mod environment;
 #[cfg(target_os = "macos")]
 mod platform_menus;
 
 pub use incular_desktop::RunError;
 
+/// Returns the static application-shell capability matrix advertised by the
+/// macOS adapter for a concrete native window system.
+#[doc(hidden)]
+#[must_use]
+#[cfg(target_os = "macos")]
+pub fn application_shell_capabilities(
+    system: incular_platform::NativeWindowSystem,
+) -> incular_platform::ApplicationServiceCapabilities {
+    let shell = application_shell::MacosApplicationShell::default();
+    let mut capabilities = incular_platform::PlatformCapabilities::default();
+    shell.refine_capabilities(system, &mut capabilities);
+    capabilities.application_services
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Clone, Default)]
 struct MacosDesktopPlatformServices {
+    application_shell: application_shell::MacosApplicationShell,
     activation: activation::MacosActivationState,
     menus: std::rc::Rc<platform_menus::MacosPlatformMenuDelegate>,
     environment: environment::MacosEnvironmentState,
@@ -19,6 +36,34 @@ struct MacosDesktopPlatformServices {
 
 #[cfg(target_os = "macos")]
 impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver, complete);
+    }
+
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell.apply(system, request, target_window)
+    }
+
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
         self.environment.preferences()
     }

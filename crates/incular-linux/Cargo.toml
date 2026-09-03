@@ -28,8 +28,16 @@ x11-dl = { workspace = true }
 ashpd = { workspace = true }
 futures-util = { workspace = true }
 sys-locale = { workspace = true }
+notify-rust = { workspace = true }
+ksni = { workspace = true }
+pollster = { workspace = true }
 
 [features]
 default = []
 # Target-side DevTools agent plus debug overlays / Select Widget mode.
 devtools = ["incular-desktop/devtools"]
+
+[[test]]
+name = "application_shell"
+path = "tests/application_shell.rs"
+harness = false

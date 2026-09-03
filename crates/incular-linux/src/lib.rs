@@ -1,12 +1,29 @@
 //! Linux desktop adapter for Incular's shared desktop shell.
 
 #[cfg(target_os = "linux")]
+mod application_shell;
+#[cfg(target_os = "linux")]
 mod environment;
 
 pub use incular_desktop::RunError;
 
+/// Returns the static application-shell capability matrix advertised by the
+/// Linux adapter for a concrete native window system.
+#[doc(hidden)]
+#[must_use]
+#[cfg(target_os = "linux")]
+pub fn application_shell_capabilities(
+    system: incular_platform::NativeWindowSystem,
+) -> incular_platform::ApplicationServiceCapabilities {
+    let shell = application_shell::LinuxApplicationShell::default();
+    let mut capabilities = incular_platform::PlatformCapabilities::default();
+    shell.refine_capabilities(system, &mut capabilities);
+    capabilities.application_services
+}
+
 #[cfg(target_os = "linux")]
 struct LinuxDesktopPlatformServices {
+    application_shell: application_shell::LinuxApplicationShell,
     xlib: Option<x11_dl::xlib::Xlib>,
     environment: environment::LinuxEnvironmentState,
 }
@@ -15,6 +32,7 @@ struct LinuxDesktopPlatformServices {
 impl Default for LinuxDesktopPlatformServices {
     fn default() -> Self {
         Self {
+            application_shell: application_shell::LinuxApplicationShell::default(),
             xlib: x11_dl::xlib::Xlib::open().ok(),
             environment: environment::LinuxEnvironmentState::default(),
         }
@@ -23,6 +41,36 @@ impl Default for LinuxDesktopPlatformServices {
 
 #[cfg(target_os = "linux")]
 impl incular_desktop::DesktopPlatformServices for LinuxDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        _complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver);
+    }
+
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell
+            .apply(system, request, target_window)
+            .into()
+    }
+
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
         self.environment.preferences()
     }

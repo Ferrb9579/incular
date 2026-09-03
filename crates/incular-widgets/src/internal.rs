@@ -12,6 +12,37 @@ use incular_text::TextStyle;
 
 pub use crate::recursion::FramePhase;
 
+/// Callback-bearing compilation of Flutter's semantic platform-menu model.
+/// Native application-shell integrations receive only the immutable snapshot;
+/// callbacks stay on the runtime/UI thread and are dispatched by stable menu
+/// IDs when a native event re-enters Incular.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PlatformMenuCommandModel {
+    snapshot: crate::PlatformMenuSnapshot,
+    callbacks: crate::platform_widgets::MenuCallbackSet,
+}
+
+impl PlatformMenuCommandModel {
+    pub fn compile(menus: &[crate::PlatformMenu]) -> Result<Self, crate::PlatformMenuBuildError> {
+        let (snapshot, callbacks) = crate::platform_widgets::build_snapshot(menus)?;
+        Ok(Self {
+            snapshot,
+            callbacks,
+        })
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> &crate::PlatformMenuSnapshot {
+        &self.snapshot
+    }
+
+    #[must_use]
+    pub fn dispatch(&self, event: &crate::PlatformMenuEvent) -> crate::MenuDispatchResult {
+        self.callbacks.dispatch(event)
+    }
+}
+
 // The editor model is owned by `incular-text`; the internal bridge keeps the
 // path available to sibling implementation crates without creating a second
 // retained controller type in Widgets.

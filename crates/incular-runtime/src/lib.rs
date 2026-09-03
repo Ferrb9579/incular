@@ -2,6 +2,7 @@
 
 mod application;
 mod application_activations;
+mod application_shell;
 mod application_types;
 mod context;
 mod environment;
@@ -72,6 +73,12 @@ pub use application::{Application, PERFORMANCE_OVERLAY_KEY};
 pub use application_activations::{
     ActivationRouteBridge, ApplicationActivationListener, ApplicationActivationService,
     ApplicationActivationSubscription,
+};
+pub use application_shell::{
+    ApplicationShellRequestId, ApplicationShellService, MemoryApplicationShellAdapter,
+    NativeApplicationShellApplyResult, NativeApplicationShellCompletion,
+    NativeApplicationShellEvent, NativeApplicationShellOperation, NativeApplicationShellRequest,
+    NotificationHandle, TrayItemHandle,
 };
 pub use application_types::{
     ApplicationLifecycle, LastWindowPolicy, LifecycleTransition, RestorableWindowFactory,
