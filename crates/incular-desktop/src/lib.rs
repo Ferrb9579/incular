@@ -5,9 +5,11 @@ mod display_identity;
 mod environment;
 mod external_drag;
 mod file_dialogs;
+mod global_shortcuts;
 mod platform_menus;
 mod platform_services;
 mod pointer;
+mod single_instance;
 mod transients;
 
 #[doc(hidden)]
@@ -18,6 +20,11 @@ pub use platform_menus::{
     matching_menu_shortcut, native_menu_structure_equal,
 };
 pub use platform_services::{DefaultDesktopPlatformServices, DesktopPlatformServices};
+#[doc(hidden)]
+pub use single_instance::{
+    SingleInstanceError, SingleInstancePrimary, SingleInstanceRole, acquire_single_instance,
+    acquire_single_instance_in,
+};
 
 use accesskit_winit::{
     Adapter as AccessKitAdapter, Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent,
@@ -29,22 +36,23 @@ use incular_core::PRIMARY_POINTER_BUTTON;
 use incular_core::{Color, InputEvent, Offset};
 use incular_core::{PointerDeviceKind, PointerPhase, WindowResizeDirection};
 use incular_platform::{
-    CapabilitySupport, ContentSensitivityBackend, ContentSensitivityNoOpReason,
-    ContentSensitivityOutcome, CursorGrabMode, NativeOperationCompletion, NativeWindowSystem,
-    NoopContentSensitivityBackend, PhysicalScreenPosition, PhysicalSize, PlatformCapabilities,
-    PlatformEvent, PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind,
-    PointerMetadata, TransparencyMode, UserAttentionType, WindowCommand,
-    WindowEvent as IncularWindowEvent, WindowIcon, WindowId as IncularWindowId, WindowLevel,
-    WindowLifecycle, WindowMetrics, WindowObservedState, WindowOperation, WindowOptions,
-    apply_text_input_command, ime_event, key_event, native_window_system,
-    pointer_event_with_metadata, raw_window_handles, text_event, touch_event_with_device,
-    wheel_event,
+    ApplicationActivation, CapabilitySupport, ContentSensitivityBackend,
+    ContentSensitivityNoOpReason, ContentSensitivityOutcome, CursorGrabMode,
+    NativeOperationCompletion, NativeWindowSystem, NoopContentSensitivityBackend,
+    PhysicalScreenPosition, PhysicalSize, PlatformCapabilities, PlatformEvent, PlatformLifecycle,
+    PlatformOperationError, PlatformOperationErrorKind, PointerMetadata, TransparencyMode,
+    UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon,
+    WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState,
+    WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
+    native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
+    touch_event_with_device, wheel_event,
 };
 use incular_rendering::DisplayList;
 use incular_runtime::{
-    Application, GpuSample, NativeFileDialogCompletion, NativeWindowCommand, RenderFrameMetrics,
-    ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot, TransientFallbackReason,
-    TransientPresentationResolution,
+    Application, GlobalShortcutCompletionStatus, GpuSample, NativeFileDialogCompletion,
+    NativeGlobalShortcutCompletion, NativeGlobalShortcutOperation, NativeWindowCommand,
+    RenderFrameMetrics, ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot,
+    TransientFallbackReason, TransientPresentationResolution,
 };
 use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::{
@@ -78,21 +86,33 @@ use crate::display::DesktopDisplayRegistry;
 use crate::environment::DesktopEnvironmentProvider;
 #[doc(hidden)]
 pub use crate::file_dialogs::desktop_file_dialog_capabilities;
+use crate::global_shortcuts::{
+    DesktopGlobalShortcuts, GlobalShortcutEventSinkGuard, NativeGlobalShortcutEvent,
+};
 use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
 use crate::transients::{NativeTransientState, TransientHostKey, TransientNativeRejection};
 
 #[derive(Debug)]
 pub enum RunError {
     EventLoop(winit::error::EventLoopError),
+    SingleInstance(SingleInstanceError),
 }
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EventLoop(e) => write!(f, "event-loop setup failed: {e}"),
+            Self::SingleInstance(error) => write!(f, "single-instance setup failed: {error}"),
         }
     }
 }
-impl std::error::Error for RunError {}
+impl std::error::Error for RunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EventLoop(error) => Some(error),
+            Self::SingleInstance(error) => Some(error),
+        }
+    }
+}
 
 fn runtime_render_metrics(stats: &RenderStats) -> RenderFrameMetrics {
     RenderFrameMetrics {
@@ -179,6 +199,9 @@ enum RuntimeWakeEvent {
     Runtime,
     Accessibility(AccessKitEvent),
     FileDialog(NativeFileDialogCompletion),
+    ApplicationActivation(ApplicationActivation),
+    GlobalShortcut(NativeGlobalShortcutEvent),
+    SingleInstanceActivation,
     SystemEnvironmentChanged,
 }
 
@@ -312,6 +335,21 @@ pub fn run_application_with_services(
     platform_services: impl DesktopPlatformServices + 'static,
 ) -> Result<(), RunError> {
     application.set_platform_capabilities(desktop_platform_capabilities());
+    let launch_activation = ApplicationActivation::Launch(application.launch_activation());
+    let single_instance = if let Some(policy) = application.single_instance_policy().cloned() {
+        match acquire_single_instance(&policy, launch_activation.clone())
+            .map_err(RunError::SingleInstance)?
+        {
+            SingleInstanceRole::Primary(primary) => Some(primary),
+            SingleInstanceRole::SecondaryForwarded => return Ok(()),
+        }
+    } else {
+        None
+    };
+    // Launch is an application activation, not a window event. Publish it
+    // before Winit creates the first native surface so pre-run subscribers can
+    // observe it and later subscribers can drain it from the activation buffer.
+    application.handle_application_activation(launch_activation);
     let platform_menu_delegate = platform_services.platform_menu_delegate();
     let mut event_loop_builder = EventLoop::<RuntimeWakeEvent>::with_user_event();
     #[cfg(target_os = "windows")]
@@ -329,6 +367,21 @@ pub fn run_application_with_services(
             let _ = environment_proxy.send_event(RuntimeWakeEvent::SystemEnvironmentChanged);
         }),
     );
+    let activation_proxy = proxy.clone();
+    platform_services.start_application_activation_watch(Arc::new(move |activation| {
+        let _ = activation_proxy.send_event(RuntimeWakeEvent::ApplicationActivation(activation));
+    }));
+    if let Some(primary) = single_instance.as_ref() {
+        let instance_proxy = proxy.clone();
+        primary.set_wake(Arc::new(move || {
+            let _ = instance_proxy.send_event(RuntimeWakeEvent::SingleInstanceActivation);
+        }));
+    }
+    let shortcut_proxy = proxy.clone();
+    let global_shortcut_event_sink =
+        crate::global_shortcuts::install_event_sink(Arc::new(move |event| {
+            let _ = shortcut_proxy.send_event(RuntimeWakeEvent::GlobalShortcut(event));
+        }));
     let initial_application_active = platform_services.application_active();
     #[cfg(feature = "devtools")]
     let devtools_mode = devtools_launch_mode();
@@ -363,6 +416,9 @@ pub fn run_application_with_services(
         platform_services: Box::new(platform_services),
         platform_menu_delegate,
         window_system: None,
+        global_shortcuts: None,
+        single_instance,
+        _global_shortcut_event_sink: global_shortcut_event_sink,
         pending_native_destructions: HashSet::new(),
         #[cfg(feature = "devtools")]
         devtools_state: crate::devtools_runner::DevToolsState::new(devtools_agent),
@@ -666,6 +722,12 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 // `run_window` owns a standalone Runtime, not an Application,
                 // so it cannot create native file-dialog requests. The shared
                 // event enum is used only to keep one Winit event-loop bridge.
+            }
+            RuntimeWakeEvent::ApplicationActivation(_)
+            | RuntimeWakeEvent::GlobalShortcut(_)
+            | RuntimeWakeEvent::SingleInstanceActivation => {
+                // Activations and global shortcuts are application-scoped and
+                // intentionally unavailable on the legacy standalone runner.
             }
             RuntimeWakeEvent::SystemEnvironmentChanged => self.refresh_system_environment(true),
         }
@@ -986,6 +1048,9 @@ struct MultiApp {
     platform_services: Box<dyn DesktopPlatformServices>,
     platform_menu_delegate: Rc<dyn PlatformMenuDelegate>,
     window_system: Option<NativeWindowSystem>,
+    global_shortcuts: Option<DesktopGlobalShortcuts>,
+    single_instance: Option<SingleInstancePrimary>,
+    _global_shortcut_event_sink: GlobalShortcutEventSinkGuard,
     /// Native windows whose platform service requires a post-drop
     /// `WindowEvent::Destroyed` acknowledgement. Empty on synchronous-drop
     /// backends. Keeping this portable leaves the lifecycle quirk in the OS
@@ -1036,6 +1101,50 @@ impl MultiApp {
         for lifecycle in self.platform_services.take_application_lifecycle_events() {
             self.application.handle_application_lifecycle(lifecycle);
         }
+    }
+
+    fn drain_single_instance_activations(&mut self) {
+        let Some(primary) = self.single_instance.as_ref() else {
+            return;
+        };
+        for activation in primary.take_activations() {
+            self.application.handle_application_activation(activation);
+        }
+    }
+
+    fn process_pending_global_shortcuts(&mut self) {
+        let Some(shortcuts) = self.global_shortcuts.as_mut() else {
+            return;
+        };
+        for request in self.application.take_native_global_shortcut_requests() {
+            let result = match request.operation {
+                NativeGlobalShortcutOperation::Register { id, chord } => {
+                    shortcuts.register(id, chord)
+                }
+                NativeGlobalShortcutOperation::Unregister { id } => shortcuts.unregister(id),
+            };
+            let status =
+                self.application
+                    .complete_global_shortcut_request(NativeGlobalShortcutCompletion {
+                        request_id: request.request_id,
+                        result,
+                    });
+            if let GlobalShortcutCompletionStatus::AbandonedRegistration(id) = status {
+                let _ = shortcuts.unregister(id);
+            }
+        }
+    }
+
+    fn handle_global_shortcut_event(&mut self, event: NativeGlobalShortcutEvent) {
+        let Some(id) = self
+            .global_shortcuts
+            .as_ref()
+            .and_then(|shortcuts| shortcuts.stable_id(event.native_id))
+        else {
+            return;
+        };
+        self.application
+            .handle_application_activation(ApplicationActivation::GlobalShortcutInvoked(id));
     }
 
     fn note_window_mouse(&mut self, native_id: NativeWindowId) {
@@ -1216,12 +1325,15 @@ impl MultiApp {
         let system = native_window_system(&window);
         if self.window_system.is_none() {
             self.window_system = Some(system);
-            self.application
-                .set_platform_capabilities(refine_window_capabilities(
-                    desktop_platform_capabilities(),
-                    system,
-                    self.platform_services.as_ref(),
-                ));
+            let global_shortcuts = DesktopGlobalShortcuts::new(system);
+            let mut capabilities = refine_window_capabilities(
+                desktop_platform_capabilities(),
+                system,
+                self.platform_services.as_ref(),
+            );
+            capabilities.application_services.global_shortcuts = global_shortcuts.support();
+            self.application.set_platform_capabilities(capabilities);
+            self.global_shortcuts = Some(global_shortcuts);
         }
         self.refresh_displays(target);
         let metrics = WindowMetrics::new(
@@ -1360,6 +1472,7 @@ impl MultiApp {
                 content_sensitivity: NoopContentSensitivityBackend,
             },
         );
+        self.process_pending_global_shortcuts();
         self.application
             .handle_window_event(IncularWindowEvent::state_changed(id, observed_state));
         self.request_frame_if_needed(id);
@@ -2059,6 +2172,8 @@ fn desktop_platform_capabilities() -> PlatformCapabilities {
     capabilities.data_transfer.external_drag_drop_rich = CapabilitySupport::Unsupported;
     capabilities.application_services.file_dialogs =
         crate::file_dialogs::desktop_file_dialog_capabilities(None);
+    capabilities.application_services.global_shortcuts = CapabilitySupport::Unknown;
+    capabilities.application_services.single_instance_activation = CapabilitySupport::Supported;
     capabilities
 }
 
@@ -2161,6 +2276,9 @@ fn refine_window_capabilities(
     capabilities.data_transfer.clipboard_custom = CapabilitySupport::Unsupported;
     capabilities.application_services.file_dialogs =
         crate::file_dialogs::desktop_file_dialog_capabilities(Some(system));
+    capabilities.application_services.global_shortcuts =
+        crate::global_shortcuts::support_for(system);
+    capabilities.application_services.single_instance_activation = CapabilitySupport::Supported;
     capabilities
 }
 
@@ -2366,6 +2484,8 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         self.refresh_displays(target);
         self.refresh_system_environment(true);
         self.drain_application_lifecycle();
+        self.drain_single_instance_activations();
+        self.process_pending_global_shortcuts();
         self.start_pending_file_dialogs();
     }
 
@@ -2675,12 +2795,16 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .get(&native_id)
                     .expect("known native window")
                     .modifiers;
+                let global_handled = self
+                    .global_shortcuts
+                    .as_ref()
+                    .is_some_and(|shortcuts| shortcuts.suppress_local_key_event(&event, modifiers));
                 let menu_handled = event.state == winit::event::ElementState::Pressed
                     && platform_menu_key(&event).is_some_and(|key| {
                         self.platform_menu_delegate
                             .handle_shortcut(&key, platform_menu_modifiers(modifiers))
                     });
-                if !menu_handled {
+                if !global_handled && !menu_handled {
                     self.route_window_event(
                         native_id,
                         IncularWindowEvent::platform(id, key_event(&event, modifiers)),
@@ -2703,7 +2827,9 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         }
         self.refresh_system_environment(false);
         self.drain_application_lifecycle();
+        self.drain_single_instance_activations();
         self.apply_window_commands(target);
+        self.process_pending_global_shortcuts();
     }
 
     fn about_to_wait(&mut self, target: &ActiveEventLoop) {
@@ -2713,8 +2839,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         self.refresh_displays(target);
         self.refresh_system_environment(false);
         self.drain_application_lifecycle();
+        self.drain_single_instance_activations();
         self.flush_external_file_drops();
         self.apply_window_commands(target);
+        self.process_pending_global_shortcuts();
         self.start_pending_file_dialogs();
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
@@ -2729,13 +2857,20 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             RuntimeWakeEvent::FileDialog(completion) => {
                 let _ = self.application.complete_file_dialog(completion);
             }
+            RuntimeWakeEvent::ApplicationActivation(activation) => {
+                self.application.handle_application_activation(activation);
+            }
+            RuntimeWakeEvent::GlobalShortcut(event) => self.handle_global_shortcut_event(event),
+            RuntimeWakeEvent::SingleInstanceActivation => self.drain_single_instance_activations(),
             RuntimeWakeEvent::SystemEnvironmentChanged => self.refresh_system_environment(true),
         }
         self.refresh_system_environment(false);
         self.drain_application_lifecycle();
+        self.drain_single_instance_activations();
         self.platform_services.flush_platform_menu_events();
         self.sync_platform_menus();
         self.apply_window_commands(target);
+        self.process_pending_global_shortcuts();
         self.start_pending_file_dialogs();
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);

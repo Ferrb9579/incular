@@ -5,6 +5,7 @@ use crate::context::BuildContext;
 use crate::environment::{BuildScope, BuildScopeGuard, InitialBuildDependencies, ReactiveQueue};
 use crate::file_dialogs::{FileDialogBridge, FileDialogService};
 use crate::frame::Runtime;
+use crate::global_shortcuts::GlobalShortcutBridge;
 use crate::profiling::{FrameRecord, GpuSample, RenderFrameMetrics};
 use crate::restoration;
 use crate::tasks::{self, TaskScope};
@@ -329,6 +330,7 @@ pub(crate) struct WindowManager {
     pub(crate) scheduler: Rc<RefCell<tasks::TaskScheduler>>,
     pub(crate) bridge: Arc<WindowCommandBridge>,
     pub(crate) file_dialog_bridge: Arc<FileDialogBridge>,
+    pub(crate) global_shortcut_bridge: Arc<GlobalShortcutBridge>,
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) restoration: Option<restoration::RestorationManager>,
     pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,

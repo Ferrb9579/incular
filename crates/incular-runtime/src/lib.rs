@@ -1,11 +1,13 @@
 //! Controlled BUILD → LAYOUT → PAINT coordination and local reactive state.
 
 mod application;
+mod application_activations;
 mod application_types;
 mod context;
 mod environment;
 mod file_dialogs;
 mod frame;
+mod global_shortcuts;
 mod profiling;
 mod reactive;
 mod restoration;
@@ -67,6 +69,10 @@ use std::{
 };
 
 pub use application::{Application, PERFORMANCE_OVERLAY_KEY};
+pub use application_activations::{
+    ActivationRouteBridge, ApplicationActivationListener, ApplicationActivationService,
+    ApplicationActivationSubscription,
+};
 pub use application_types::{
     ApplicationLifecycle, LastWindowPolicy, LifecycleTransition, RestorableWindowFactory,
     RuntimeErrorReport, WindowError, WindowRestorationId,
@@ -80,6 +86,12 @@ pub use file_dialogs::{
     NativeFileDialogCompletion, NativeFileDialogRequest,
 };
 pub use frame::{EditingDiagnostics, EventTarget, FocusDiagnostics, FrameStats, Runtime};
+pub use global_shortcuts::{
+    GlobalShortcutCompletionStatus, GlobalShortcutRegistration, GlobalShortcutRegistrationRequest,
+    GlobalShortcutRequestId, GlobalShortcutService, GlobalShortcutUnregistrationRequest,
+    MemoryGlobalShortcutAdapter, NativeGlobalShortcutCompletion, NativeGlobalShortcutOperation,
+    NativeGlobalShortcutRequest,
+};
 pub use incular_accessibility::AccessibilityDiagnostics;
 pub use profiling::{
     AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameStatistics,

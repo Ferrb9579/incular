@@ -216,6 +216,13 @@ pub trait RouteInformationProvider: 'static {
     /// Returns the current platform route.
     fn value(&self) -> RouteInformation;
 
+    /// Publishes a platform-originated route change into this provider.
+    ///
+    /// Native deep links and application activations use this path; it is
+    /// deliberately distinct from [`Self::router_reports_new_route_information`],
+    /// which reports a route chosen by the application back to platform history.
+    fn set_platform_route_information(&self, information: RouteInformation);
+
     /// Subscribes to platform-originated route changes.
     fn subscribe(&self, listener: RouteInformationListener) -> RouteInformationSubscription;
 
@@ -320,6 +327,10 @@ impl Default for MemoryRouteInformationProvider {
 impl RouteInformationProvider for MemoryRouteInformationProvider {
     fn value(&self) -> RouteInformation {
         self.state.borrow().value.clone()
+    }
+
+    fn set_platform_route_information(&self, information: RouteInformation) {
+        self.set_value(information);
     }
 
     fn subscribe(&self, listener: RouteInformationListener) -> RouteInformationSubscription {

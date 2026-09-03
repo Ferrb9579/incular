@@ -5,6 +5,7 @@ use crate::environment::{
 };
 use crate::file_dialogs::FileDialogService;
 use crate::frame::Runtime;
+use crate::global_shortcuts::GlobalShortcutService;
 use crate::restoration::{self, Restorable, RestorationHandle};
 use crate::tasks::{RuntimeSpawner, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle};
 use crate::window_commands::{WindowHandle, WindowOpener};
@@ -213,6 +214,18 @@ impl BuildContext {
     #[must_use]
     pub fn file_dialogs(&self) -> Option<FileDialogService> {
         self.window_handle().map(|window| window.file_dialogs())
+    }
+
+    /// Returns the application-scoped native global-shortcut service. Unlike
+    /// focused `Shortcuts`, registrations remain active while the application
+    /// is in the background and are identified independently of any window.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> Option<GlobalShortcutService> {
+        let manager = self.window_manager.as_ref()?;
+        Some(GlobalShortcutService::new(
+            manager.global_shortcut_bridge.clone(),
+            manager.application_capabilities.clone(),
+        ))
     }
 
     /// Returns the Tokio handle for advanced integrations. Tasks spawned

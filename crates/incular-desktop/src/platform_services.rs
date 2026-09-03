@@ -1,7 +1,7 @@
 use incular_config::TransientRole;
 use incular_platform::{
-    CapabilitySupport, NativeWindowSystem, PhysicalScreenRect, PlatformLifecycle,
-    PlatformOperationResult, SystemEnvironmentPreferences,
+    ApplicationActivation, CapabilitySupport, NativeWindowSystem, PhysicalScreenRect,
+    PlatformLifecycle, PlatformOperationResult, SystemEnvironmentPreferences,
 };
 use incular_runtime::TokioHandle;
 use incular_widgets::{NoopPlatformMenuDelegate, PlatformMenuDelegate};
@@ -54,6 +54,17 @@ pub trait DesktopPlatformServices {
     /// the OS facade. Per-window focus is intentionally not accepted here.
     fn take_application_lifecycle_events(&self) -> Vec<PlatformLifecycle> {
         Vec::new()
+    }
+
+    /// Installs delivery for native application activations which do not
+    /// belong to any Winit window input stream (for example AppKit open-URL,
+    /// open-file, and reopen callbacks). Implementations must invoke `deliver`
+    /// only with normalized, native-handle-free values; the desktop shell then
+    /// re-enters runtime state through its Winit user-event queue.
+    fn start_application_activation_watch(
+        &self,
+        _deliver: Arc<dyn Fn(ApplicationActivation) + Send + Sync>,
+    ) {
     }
 
     /// Win32 exposes several relevant preference/lifecycle notifications only

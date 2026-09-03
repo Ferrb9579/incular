@@ -94,29 +94,31 @@ pub mod prelude {
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{
-        AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
-        ClipboardCapabilities, ClipboardError, ClipboardWriteReport, ContentSensitivityBackend,
-        ContentSensitivityCapability, ContentSensitivityNoOpReason, ContentSensitivityOutcome,
-        CursorGrabMode, DataTransfer, DataTransferCapabilities, DisplayId, DisplayPlacementArea,
-        DisplayPlacementCapabilities, DisplaySnapshot, DocumentActivation, DocumentDescriptor,
-        ExternalDragEvent, ExternalDragPhase, ExternalDragResponse, FileContentType,
-        FileContentTypeKind, FileDialogCapabilities, FileDialogError, FileDialogFilter,
-        FileDialogFilterId, FileDialogKind, FileDialogOption, FileDialogOptions,
-        FileDialogValidationError, FileExtension, Fullscreen, LogicalDisplayPosition,
-        LogicalScreenPosition, LogicalScreenRect, LogicalSizeLimits, LogicalSizeLimitsError,
-        LogicalWindowPosition, LogicalWindowPositionError, MediaType,
-        MemoryContentSensitivityBackend, MemoryTextInputAdapter, NativeMenuCapabilities,
-        NativeOperationCompletion, NativeRequestId, NoopContentSensitivityBackend,
-        PhysicalDisplayPosition, PhysicalScreenPosition, PhysicalScreenRect, PlatformCapabilities,
-        PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
-        PointerMetadata, TextInputAction, TextInputAdapter, TextInputClientId, TextInputCommand,
-        TextInputConfiguration, TextInputState, TextInputType, TransferData, TransferDataError,
-        TransferFormat, TransferFormatCapabilities, TransferImage, TransferItem, TransferOperation,
-        TransferOperations, TransferReadRequest, TransferRepresentation,
-        TransientSurfaceCapabilities, UserAttentionType, WindowCommand, WindowControlCapabilities,
-        WindowEvent, WindowEventKind, WindowIcon, WindowIconError, WindowId, WindowLevel,
-        WindowLifecycle, WindowObservedState, WindowOperation, WindowOptions, WindowOptionsError,
-        WindowRequestedState,
+        AdvancedInputCapabilities, ApplicationActivation, ApplicationServiceCapabilities,
+        CapabilitySupport, ClipboardCapabilities, ClipboardError, ClipboardWriteReport,
+        ContentSensitivityBackend, ContentSensitivityCapability, ContentSensitivityNoOpReason,
+        ContentSensitivityOutcome, CursorGrabMode, DataTransfer, DataTransferCapabilities,
+        DisplayId, DisplayPlacementArea, DisplayPlacementCapabilities, DisplaySnapshot,
+        DocumentActivation, DocumentDescriptor, ExternalDragEvent, ExternalDragPhase,
+        ExternalDragResponse, FileContentType, FileContentTypeKind, FileDialogCapabilities,
+        FileDialogError, FileDialogFilter, FileDialogFilterId, FileDialogKind, FileDialogOption,
+        FileDialogOptions, FileDialogValidationError, FileExtension, Fullscreen,
+        GlobalShortcutChord, GlobalShortcutChordError, GlobalShortcutError, GlobalShortcutId,
+        LaunchActivation, LogicalDisplayPosition, LogicalScreenPosition, LogicalScreenRect,
+        LogicalSizeLimits, LogicalSizeLimitsError, LogicalWindowPosition,
+        LogicalWindowPositionError, MediaType, MemoryContentSensitivityBackend,
+        MemoryTextInputAdapter, NativeMenuCapabilities, NativeOperationCompletion, NativeRequestId,
+        NoopContentSensitivityBackend, PhysicalDisplayPosition, PhysicalScreenPosition,
+        PhysicalScreenRect, PlatformCapabilities, PlatformOperationError,
+        PlatformOperationErrorKind, PlatformOperationResult, PointerMetadata, SingleInstancePolicy,
+        SingleInstancePolicyError, TextInputAction, TextInputAdapter, TextInputClientId,
+        TextInputCommand, TextInputConfiguration, TextInputState, TextInputType, TransferData,
+        TransferDataError, TransferFormat, TransferFormatCapabilities, TransferImage, TransferItem,
+        TransferOperation, TransferOperations, TransferReadRequest, TransferRepresentation,
+        TransientSurfaceCapabilities, UrlActivation, UserAttentionType, WindowCommand,
+        WindowControlCapabilities, WindowEvent, WindowEventKind, WindowIcon, WindowIconError,
+        WindowId, WindowLevel, WindowLifecycle, WindowObservedState, WindowOperation,
+        WindowOptions, WindowOptionsError, WindowRequestedState,
     };
     pub use incular_rendering::{
         BlendMode, Border as RenderBorder, Brush, Canvas, ColorFilter, ColorMatrix, CornerRadii,
@@ -140,7 +142,12 @@ pub mod prelude {
         WindowPlacementError, WindowRestorationId,
     };
     #[cfg(feature = "desktop")]
-    pub use incular_runtime::{FileDialogRequest, FileDialogService};
+    pub use incular_runtime::{
+        ActivationRouteBridge, ApplicationActivationService, ApplicationActivationSubscription,
+        FileDialogRequest, FileDialogService, GlobalShortcutRegistration,
+        GlobalShortcutRegistrationRequest, GlobalShortcutService,
+        GlobalShortcutUnregistrationRequest,
+    };
     pub use incular_semantics::{
         Role as SemanticRole, SemanticAction, SemanticActionKind, SemanticNodeId, SemanticState,
         SemanticsDiagnostics, SemanticsTree,

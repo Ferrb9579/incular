@@ -41,6 +41,8 @@ incular-scroll = { workspace = true }
 incular-text = { workspace = true }
 criterion = { workspace = true }
 serde_json = { workspace = true }
+pollster = { workspace = true }
+url = { workspace = true }
 
 [[bench]]
 name = "signals"

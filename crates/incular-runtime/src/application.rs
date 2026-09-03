@@ -1,3 +1,4 @@
+use crate::application_activations::{ActivationRouteBridge, ApplicationActivationService};
 use crate::application_types::{
     ApplicationSchedulerCounters, LastWindowPolicy, RestorableWindowFactory,
     RestorableWindowMetadata, WindowError, WindowRestorationId,
@@ -9,6 +10,11 @@ use crate::file_dialogs::{
     result_matches_request,
 };
 use crate::frame::{FrameStats, Runtime};
+use crate::global_shortcuts::{
+    GlobalShortcutBridge, GlobalShortcutCompletionStatus, GlobalShortcutService,
+    NativeGlobalShortcutCompletion, NativeGlobalShortcutOperation, NativeGlobalShortcutRequest,
+    PendingGlobalShortcutRequest, QueuedGlobalShortcutRequest, drain_queued,
+};
 use crate::profiling::{
     AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameWork, GpuSample,
     PerformanceHub, PerformanceProfiler, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics,
@@ -34,16 +40,17 @@ use incular_accessibility::{
 };
 use incular_config::{Constraints, RuntimeEnvironment};
 use incular_platform::{
-    Clipboard, DisplayId, DisplaySnapshot, ExternalDragEvent, ExternalDragResponse,
-    FileDialogError, FileDialogOutcome, FileDialogRequest, FileDialogRequestId,
-    NativeOperationCompletion, NativeRequestId, PlatformCapabilities, PlatformEvent,
-    PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind, PlatformOperationResult,
-    TextInputCommand, WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle,
-    WindowOperation, WindowOptions,
+    ApplicationActivation, Clipboard, DisplayId, DisplaySnapshot, ExternalDragEvent,
+    ExternalDragResponse, FileDialogError, FileDialogOutcome, FileDialogRequest,
+    FileDialogRequestId, LaunchActivation, NativeOperationCompletion, NativeRequestId,
+    PlatformCapabilities, PlatformEvent, PlatformLifecycle, PlatformOperationError,
+    PlatformOperationErrorKind, PlatformOperationResult, SingleInstancePolicy, TextInputCommand,
+    WindowCommand, WindowEvent, WindowEventKind, WindowId, WindowLifecycle, WindowOperation,
+    WindowOptions,
 };
 use incular_rendering::DisplayList;
-use incular_widgets::Widget;
 use incular_widgets::internal::{Key, MouseCursor, PlatformMenuBinding, TreeError};
+use incular_widgets::{RouteInformation, RouteInformationProvider, Widget};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -86,7 +93,15 @@ pub struct Application {
     active_file_dialog_requests: HashMap<WindowId, FileDialogRequestId>,
     queued_file_dialog_requests: HashMap<WindowId, VecDeque<FileDialogRequestId>>,
     native_file_dialog_requests: VecDeque<NativeFileDialogRequest>,
+    global_shortcut_receiver: mpsc::Receiver<QueuedGlobalShortcutRequest>,
+    global_shortcut_bridge: Arc<GlobalShortcutBridge>,
+    pending_global_shortcut_requests:
+        HashMap<crate::global_shortcuts::GlobalShortcutRequestId, PendingGlobalShortcutRequest>,
+    native_global_shortcut_requests: VecDeque<NativeGlobalShortcutRequest>,
     platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
+    activations: ApplicationActivationService,
+    launch_activation: LaunchActivation,
+    single_instance_policy: Option<SingleInstancePolicy>,
     display_catalog: Arc<RwLock<DisplayCatalog>>,
     pub(crate) simulation_receiver: mpsc::Receiver<simulation::SimulationRequest>,
     pub(crate) simulation_bridge: Arc<simulation::SimulationBridge>,
@@ -186,9 +201,12 @@ impl Application {
             file_dialog_sender,
             file_dialog_cancellation_sender,
         ));
+        let (global_shortcut_sender, global_shortcut_receiver) = mpsc::channel();
+        let global_shortcut_bridge = Arc::new(GlobalShortcutBridge::new(global_shortcut_sender));
         let (simulation_sender, simulation_receiver) = mpsc::channel();
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
+        let activations = ApplicationActivationService::default();
         let display_catalog = Arc::new(RwLock::new(DisplayCatalog::default()));
         let application_lifecycle = Rc::new(std::cell::Cell::new(
             crate::application_types::ApplicationLifecycle::Starting,
@@ -205,6 +223,7 @@ impl Application {
             scheduler: scheduler.clone(),
             bridge,
             file_dialog_bridge: file_dialog_bridge.clone(),
+            global_shortcut_bridge: global_shortcut_bridge.clone(),
             native_commands: native_commands.clone(),
             restoration: restoration.clone(),
             application_capabilities: platform_capabilities.clone(),
@@ -228,7 +247,14 @@ impl Application {
             active_file_dialog_requests: HashMap::new(),
             queued_file_dialog_requests: HashMap::new(),
             native_file_dialog_requests: VecDeque::new(),
+            global_shortcut_receiver,
+            global_shortcut_bridge,
+            pending_global_shortcut_requests: HashMap::new(),
+            native_global_shortcut_requests: VecDeque::new(),
             platform_capabilities,
+            activations,
+            launch_activation: LaunchActivation::current_process(),
+            single_instance_policy: None,
             display_catalog,
             simulation_receiver,
             simulation_bridge,
@@ -391,6 +417,69 @@ impl Application {
             .platform_capabilities
             .read()
             .expect("application capability snapshot lock")
+    }
+
+    /// Returns the application-scoped activation stream. Native open-file,
+    /// deep-link, reopen, secondary-launch, and global-shortcut events all use
+    /// this one ordered delivery path rather than a window input queue.
+    #[must_use]
+    pub fn activations(&self) -> ApplicationActivationService {
+        self.activations.clone()
+    }
+
+    /// Returns the application-scoped native global shortcut service.
+    #[must_use]
+    pub fn global_shortcuts(&self) -> GlobalShortcutService {
+        GlobalShortcutService::new(
+            self.global_shortcut_bridge.clone(),
+            self.platform_capabilities.clone(),
+        )
+    }
+
+    /// Replaces the launch payload that the desktop runner publishes for this
+    /// process. This is useful for custom launchers which already classified
+    /// document or URL arguments and want to preserve those semantics.
+    pub fn set_launch_activation(&mut self, activation: LaunchActivation) {
+        self.launch_activation = activation;
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn launch_activation(&self) -> LaunchActivation {
+        self.launch_activation.clone()
+    }
+
+    /// Enables or disables optional single-instance forwarding. Incular never
+    /// enforces this policy unless the application explicitly supplies one.
+    pub fn set_single_instance_policy(&mut self, policy: Option<SingleInstancePolicy>) {
+        self.single_instance_policy = policy;
+    }
+
+    #[must_use]
+    pub fn single_instance_policy(&self) -> Option<&SingleInstancePolicy> {
+        self.single_instance_policy.as_ref()
+    }
+
+    /// Connects URL activations to an existing Router platform-route provider.
+    ///
+    /// The application supplies URL-to-route interpretation. This keeps deep
+    /// link parsing in the route layer and prevents desktop adapters from
+    /// acquiring application navigation policy.
+    #[must_use]
+    pub fn bridge_activation_routes(
+        &self,
+        provider: Rc<dyn RouteInformationProvider>,
+        map: impl Fn(&str) -> Option<RouteInformation> + 'static,
+    ) -> ActivationRouteBridge {
+        ActivationRouteBridge::new(&self.activations, provider, map)
+    }
+
+    /// Publishes a normalized activation from a native/application host. This
+    /// method is public only for platform embedders and deterministic tests;
+    /// normal application code observes [`Self::activations`] instead.
+    #[doc(hidden)]
+    pub fn handle_application_activation(&mut self, activation: ApplicationActivation) {
+        self.activations.publish(activation);
     }
 
     /// Replaces the backend's immutable connected-display snapshot.
@@ -1015,6 +1104,7 @@ impl Application {
         self.scheduler.borrow_mut().set_wake(wake.clone());
         self.manager.bridge.set_wake(wake.clone());
         self.file_dialog_bridge.set_wake(wake.clone());
+        self.global_shortcut_bridge.set_wake(wake.clone());
         self.simulation_bridge.set_wake(wake);
     }
 
@@ -1122,6 +1212,7 @@ impl Application {
         self.drain_native_request_cancellations();
         self.drain_file_dialog_requests();
         self.drain_file_dialog_cancellations();
+        self.drain_global_shortcut_requests();
         self.process_simulation_requests();
     }
 
@@ -2162,6 +2253,72 @@ impl Application {
         status
     }
 
+    fn drain_global_shortcut_requests(&mut self) {
+        drain_queued(
+            &self.global_shortcut_receiver,
+            &mut self.pending_global_shortcut_requests,
+            &mut self.native_global_shortcut_requests,
+        );
+    }
+
+    fn fail_all_global_shortcut_requests(&mut self) {
+        self.global_shortcut_bridge.stop();
+        while let Ok(queued) = self.global_shortcut_receiver.try_recv() {
+            if let Some(sender) = queued.sender {
+                let _ = sender.send(Err(
+                    incular_platform::GlobalShortcutError::ApplicationStopped,
+                ));
+            }
+        }
+        for (_, pending) in self.pending_global_shortcut_requests.drain() {
+            if let Some(sender) = pending.sender {
+                let _ = sender.send(Err(
+                    incular_platform::GlobalShortcutError::ApplicationStopped,
+                ));
+            }
+        }
+        self.native_global_shortcut_requests.clear();
+    }
+
+    /// Takes application-scoped global-shortcut work ready for the native UI
+    /// thread. Custom desktop embedders may implement this boundary without
+    /// exposing native hotkey handles to runtime/application code.
+    #[doc(hidden)]
+    pub fn take_native_global_shortcut_requests(&mut self) -> Vec<NativeGlobalShortcutRequest> {
+        self.drain_global_shortcut_requests();
+        self.native_global_shortcut_requests.drain(..).collect()
+    }
+
+    /// Completes one native global-shortcut request. If the requesting future
+    /// was abandoned after a registration succeeded, the caller is instructed
+    /// to roll that native registration back immediately.
+    #[doc(hidden)]
+    pub fn complete_global_shortcut_request(
+        &mut self,
+        completion: NativeGlobalShortcutCompletion,
+    ) -> GlobalShortcutCompletionStatus {
+        let Some(pending) = self
+            .pending_global_shortcut_requests
+            .remove(&completion.request_id)
+        else {
+            return GlobalShortcutCompletionStatus::UnknownRequest;
+        };
+        let registered_id = match pending.operation {
+            NativeGlobalShortcutOperation::Register { id, .. } if completion.result.is_ok() => {
+                Some(id)
+            }
+            NativeGlobalShortcutOperation::Register { .. }
+            | NativeGlobalShortcutOperation::Unregister { .. } => None,
+        };
+        if let Some(sender) = pending.sender
+            && sender.send(completion.result).is_err()
+            && let Some(id) = registered_id
+        {
+            return GlobalShortcutCompletionStatus::AbandonedRegistration(id);
+        }
+        GlobalShortcutCompletionStatus::Completed
+    }
+
     /// Completes one result-bearing native operation. Backends call this only
     /// after applying the operation on the owning native/UI thread.
     pub fn complete_native_operation(
@@ -2337,6 +2494,7 @@ impl Application {
         self.flush_restoration_before_shutdown();
         self.manager.bridge.stop();
         self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
+        self.fail_all_global_shortcut_requests();
         self.fail_all_native_requests(PlatformOperationError::with_context(
             PlatformOperationErrorKind::Unavailable,
             "application runtime stopped before native completion",
@@ -2372,6 +2530,7 @@ impl Application {
     pub fn into_runtime(mut self) -> Runtime {
         self.manager.bridge.stop();
         self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
+        self.fail_all_global_shortcut_requests();
         let primary = self.primary_window;
         let mut primary_record = self
             .registry

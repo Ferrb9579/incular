@@ -12,6 +12,7 @@ use incular_core::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{fmt, path::PathBuf};
 
+mod application_activation;
 mod capabilities;
 mod content_sensitivity;
 mod data_transfer;
@@ -22,6 +23,11 @@ mod pointer;
 mod system_environment;
 mod window_control;
 
+pub use application_activation::{
+    ApplicationActivation, GlobalShortcutChord, GlobalShortcutChordError, GlobalShortcutError,
+    GlobalShortcutId, LaunchActivation, SingleInstancePolicy, SingleInstancePolicyError,
+    UrlActivation,
+};
 pub use capabilities::{
     AdvancedInputCapabilities, ApplicationServiceCapabilities, CapabilitySupport,
     DataTransferCapabilities, DisplayPlacementCapabilities, NativeMenuCapabilities,

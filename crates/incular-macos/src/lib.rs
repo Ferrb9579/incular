@@ -1,6 +1,8 @@
 //! macOS desktop adapter for Incular's shared desktop shell.
 
 #[cfg(target_os = "macos")]
+mod activation;
+#[cfg(target_os = "macos")]
 mod environment;
 #[cfg(target_os = "macos")]
 mod platform_menus;
@@ -10,6 +12,7 @@ pub use incular_desktop::RunError;
 #[cfg(target_os = "macos")]
 #[derive(Clone, Default)]
 struct MacosDesktopPlatformServices {
+    activation: activation::MacosActivationState,
     menus: std::rc::Rc<platform_menus::MacosPlatformMenuDelegate>,
     environment: environment::MacosEnvironmentState,
 }
@@ -38,6 +41,13 @@ impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
 
     fn take_application_lifecycle_events(&self) -> Vec<incular_platform::PlatformLifecycle> {
         self.environment.take_lifecycle_events()
+    }
+
+    fn start_application_activation_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_platform::ApplicationActivation) + Send + Sync>,
+    ) {
+        self.activation.start_watch(deliver);
     }
 
     fn external_file_drag_support(
