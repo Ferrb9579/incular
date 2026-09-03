@@ -1,18 +1,45 @@
 //! macOS desktop adapter for Incular's shared desktop shell.
 
 #[cfg(target_os = "macos")]
+mod environment;
+#[cfg(target_os = "macos")]
 mod platform_menus;
 
-pub use incular_desktop::{RunError, run_window};
+pub use incular_desktop::RunError;
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Default)]
 struct MacosDesktopPlatformServices {
     menus: std::rc::Rc<platform_menus::MacosPlatformMenuDelegate>,
+    environment: environment::MacosEnvironmentState,
 }
 
 #[cfg(target_os = "macos")]
 impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
+    fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
+        self.environment.preferences()
+    }
+
+    fn application_active(&self) -> Option<bool> {
+        self.environment.application_active()
+    }
+
+    fn start_system_environment_watch(
+        &self,
+        _tokio: incular_runtime::TokioHandle,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.environment.start_watch(wake);
+    }
+
+    fn take_system_environment_change(&self) -> bool {
+        self.environment.take_settings_change()
+    }
+
+    fn take_application_lifecycle_events(&self) -> Vec<incular_platform::PlatformLifecycle> {
+        self.environment.take_lifecycle_events()
+    }
+
     fn external_file_drag_support(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -215,6 +242,22 @@ pub fn run_application(application: incular_runtime::Application) -> Result<(), 
     }
     #[cfg(not(target_os = "macos"))]
     incular_desktop::run_application(application)
+}
+
+pub fn run_window(
+    runtime: incular_runtime::Runtime,
+    on_action: impl FnMut(incular_widgets::internal::ActionId) + 'static,
+) -> Result<(), RunError> {
+    #[cfg(target_os = "macos")]
+    {
+        incular_desktop::run_window_with_services(
+            runtime,
+            on_action,
+            MacosDesktopPlatformServices::default(),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    incular_desktop::run_window(runtime, on_action)
 }
 
 #[cfg(feature = "devtools")]

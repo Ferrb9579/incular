@@ -523,6 +523,15 @@ impl BuildContext {
         self.tracker.take_all_dirty()
     }
 
+    /// Whether this retained dependency tracker currently has invalidated
+    /// consumers. Framework schedulers use this to request a frame without
+    /// consuming the identities that reconciliation still needs to drain.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_dirty_consumers(&self) -> bool {
+        !self.tracker.dirty.borrow().is_empty()
+    }
+
     #[must_use]
     pub fn dependencies(&self) -> DependencySnapshot {
         DependencySnapshot {

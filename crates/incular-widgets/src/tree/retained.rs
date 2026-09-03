@@ -19,6 +19,8 @@ impl WidgetTree {
     #[must_use]
     pub fn new() -> Self {
         let dependency_root = DependencyContext::new();
+        let environment = RuntimeEnvironment::default();
+        super::context::install_runtime_environment(&dependency_root, &environment);
         Self {
             elements: Arena::new(),
             renders: Arena::new(),
@@ -49,7 +51,7 @@ impl WidgetTree {
             static_selections: HashMap::new(),
             dependency_root,
             inherited_consumers: HashMap::new(),
-            environment: RuntimeEnvironment::default(),
+            environment,
             transient_placements: HashMap::new(),
             native_transient_bounds: None,
             native_transient_presentations: HashSet::new(),
@@ -60,16 +62,24 @@ impl WidgetTree {
     }
 
     /// Sets the ambient runtime environment (safe insets, scaling, etc.) and invalidates layout if needed.
-    pub fn set_environment(&mut self, environment: RuntimeEnvironment) {
-        let dirty_safe_area = self.environment.safe_insets != environment.safe_insets;
+    pub fn set_environment(&mut self, environment: RuntimeEnvironment) -> bool {
+        let safe_area_changed = self.environment.safe_insets != environment.safe_insets;
+        super::context::update_runtime_environment(
+            &self.dependency_root,
+            &self.environment,
+            &environment,
+        );
         self.environment = environment;
-        if dirty_safe_area {
+        let mut dirty_safe_area = false;
+        if safe_area_changed {
             for (_, render) in self.renders.iter_mut() {
                 if matches!(render.object.kind, RenderKind::SafeArea { .. }) {
                     render.dirty.insert(DirtyFlags::LAYOUT);
+                    dirty_safe_area = true;
                 }
             }
         }
+        dirty_safe_area || self.dependency_root.has_dirty_consumers()
     }
 
     /// Returns a reference to the ambient runtime environment.

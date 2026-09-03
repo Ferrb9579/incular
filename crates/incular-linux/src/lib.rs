@@ -1,10 +1,14 @@
 //! Linux desktop adapter for Incular's shared desktop shell.
 
-pub use incular_desktop::{RunError, run_window};
+#[cfg(target_os = "linux")]
+mod environment;
+
+pub use incular_desktop::RunError;
 
 #[cfg(target_os = "linux")]
 struct LinuxDesktopPlatformServices {
     xlib: Option<x11_dl::xlib::Xlib>,
+    environment: environment::LinuxEnvironmentState,
 }
 
 #[cfg(target_os = "linux")]
@@ -12,12 +16,29 @@ impl Default for LinuxDesktopPlatformServices {
     fn default() -> Self {
         Self {
             xlib: x11_dl::xlib::Xlib::open().ok(),
+            environment: environment::LinuxEnvironmentState::default(),
         }
     }
 }
 
 #[cfg(target_os = "linux")]
 impl incular_desktop::DesktopPlatformServices for LinuxDesktopPlatformServices {
+    fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
+        self.environment.preferences()
+    }
+
+    fn start_system_environment_watch(
+        &self,
+        tokio: incular_runtime::TokioHandle,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.environment.start_watch(tokio, wake);
+    }
+
+    fn take_system_environment_change(&self) -> bool {
+        self.environment.take_change()
+    }
+
     fn external_file_drag_support(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -88,6 +109,22 @@ pub fn run_application(application: incular_runtime::Application) -> Result<(), 
     }
     #[cfg(not(target_os = "linux"))]
     incular_desktop::run_application(application)
+}
+
+pub fn run_window(
+    runtime: incular_runtime::Runtime,
+    on_action: impl FnMut(incular_widgets::internal::ActionId) + 'static,
+) -> Result<(), RunError> {
+    #[cfg(target_os = "linux")]
+    {
+        incular_desktop::run_window_with_services(
+            runtime,
+            on_action,
+            LinuxDesktopPlatformServices::default(),
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    incular_desktop::run_window(runtime, on_action)
 }
 
 #[cfg(feature = "devtools")]

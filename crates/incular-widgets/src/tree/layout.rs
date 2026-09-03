@@ -15,6 +15,11 @@ impl WidgetTree {
     }
     pub fn layout(&mut self, constraints: Constraints) -> Result<(), TreeError> {
         let _phase_guard = self.guard_phase_root(FramePhase::Layout);
+        // Runtime-owned environment fields and inherited scopes share the same
+        // exact dependency tracker. Drain those invalidations before consulting
+        // retained layout caches so an environment-dependent LayoutBuilder can
+        // rematerialize without forcing unrelated subtree rebuilds.
+        self.apply_inherited_invalidations();
         self.refresh_text_fields();
         self.refresh_sliver_ranges();
         self.refresh_stateful_layout_builders();

@@ -2070,10 +2070,14 @@ dependencies = [
 name = "incular-linux"
 version = "0.1.0"
 dependencies = [
+ "ashpd",
+ "futures-util",
  "incular-desktop",
  "incular-platform",
  "incular-runtime",
+ "incular-widgets",
  "raw-window-handle",
+ "sys-locale",
  "winit",
  "x11-dl",
 ]
@@ -2082,6 +2086,7 @@ dependencies = [
 name = "incular-macos"
 version = "0.1.0"
 dependencies = [
+ "block2 0.5.1",
  "incular-config",
  "incular-desktop",
  "incular-platform",
@@ -2091,6 +2096,7 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "raw-window-handle",
+ "sys-locale",
  "winit",
 ]
 
@@ -2106,6 +2112,7 @@ dependencies = [
  "incular-controls",
  "incular-core",
  "incular-rendering",
+ "incular-runtime",
  "incular-scroll",
  "incular-semantics",
  "incular-text",
@@ -2263,6 +2270,8 @@ dependencies = [
  "incular-widgets",
  "minidump-writer",
  "raw-window-handle",
+ "sys-locale",
+ "windows 0.58.0",
  "windows-sys 0.52.0",
  "winit",
 ]
@@ -4216,6 +4225,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

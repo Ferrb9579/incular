@@ -1,9 +1,11 @@
 use incular_config::TransientRole;
 use incular_platform::{
-    CapabilitySupport, NativeWindowSystem, PhysicalScreenRect, PlatformOperationResult,
+    CapabilitySupport, NativeWindowSystem, PhysicalScreenRect, PlatformLifecycle,
+    PlatformOperationResult, SystemEnvironmentPreferences,
 };
+use incular_runtime::TokioHandle;
 use incular_widgets::{NoopPlatformMenuDelegate, PlatformMenuDelegate};
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 use winit::{
     dpi::PhysicalPosition,
     monitor::MonitorHandle,
@@ -17,6 +19,55 @@ use winit::{
 /// this trait only for information or native relationship semantics that would
 /// otherwise require leaking HWND/NSWindow/X11 details into `incular-desktop`.
 pub trait DesktopPlatformServices {
+    /// Complete application-scoped OS preference snapshot. Unsupported fields
+    /// remain `None`; the desktop environment provider resets those fields to
+    /// stable defaults instead of carrying stale values forward.
+    fn system_environment_preferences(&self) -> SystemEnvironmentPreferences {
+        SystemEnvironmentPreferences::default()
+    }
+
+    /// Native foreground/application-active state when the OS exposes one.
+    /// `None` means unsupported and must not be replaced by a focus heuristic.
+    fn application_active(&self) -> Option<bool> {
+        None
+    }
+
+    /// Starts event-driven observation for preferences whose OS API is not
+    /// naturally surfaced by Winit. Implementations update their snapshot and
+    /// invoke `wake` only after a semantic preference change.
+    fn start_system_environment_watch(
+        &self,
+        _tokio: TokioHandle,
+        _wake: Arc<dyn Fn() + Send + Sync>,
+    ) {
+    }
+
+    /// Drains one coalesced native settings-change notification. A `true`
+    /// result means the shell should acquire one new complete preference
+    /// snapshot. The snapshot itself is deliberately separate so native
+    /// callbacks never mutate Incular runtime state across an FFI stack.
+    fn take_system_environment_change(&self) -> bool {
+        false
+    }
+
+    /// Drains genuine application lifecycle/activity transitions captured by
+    /// the OS facade. Per-window focus is intentionally not accepted here.
+    fn take_application_lifecycle_events(&self) -> Vec<PlatformLifecycle> {
+        Vec::new()
+    }
+
+    /// Win32 exposes several relevant preference/lifecycle notifications only
+    /// on the application message queue. The facade may install a Winit message
+    /// hook that records those events into its own thread-safe provider state.
+    /// The shared shell still owns the event loop and never interprets Win32
+    /// payloads itself.
+    #[cfg(target_os = "windows")]
+    fn windows_message_hook(
+        &self,
+    ) -> Option<Box<dyn FnMut(*const std::ffi::c_void) -> bool + 'static>> {
+        None
+    }
+
     /// Whether this facade can pair Winit's file-transfer payload events with a
     /// trustworthy current client-space pointer position for hit testing.
     fn external_file_drag_support(&self, _system: NativeWindowSystem) -> CapabilitySupport {

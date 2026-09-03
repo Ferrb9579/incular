@@ -25,3 +25,6 @@ incular-semantics = { workspace = true }
 incular-scroll = { workspace = true }
 incular-text = { workspace = true }
 incular-widgets = { workspace = true }
+
+[dev-dependencies]
+incular-runtime = { workspace = true }

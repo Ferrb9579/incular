@@ -748,6 +748,7 @@ impl ThemeData {
         {
             controls.colors.accent_foreground = check;
         }
+        controls.motion.reduced_motion = core.page_transitions_theme.reduced_motion;
         controls
     }
 }

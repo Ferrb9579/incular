@@ -69,11 +69,19 @@ pub struct RuntimeEnvironment {
     pub locales: Vec<Locale>,
     pub text_direction: TextDirection,
     pub reduced_motion: bool,
+    /// Native high-contrast/accessibility preference. This is intentionally
+    /// independent of [`Brightness`]; platforms that cannot observe it leave
+    /// the documented default (`false`) rather than inferring it from theme.
+    pub high_contrast: bool,
     pub input: InputCapabilities,
     /// Native activation for this window. Logical widget focus is retained by
     /// the runtime separately, so an unfocused window can resume its prior
     /// text-field focus when activated again.
     pub window_focused: bool,
+    /// Whether the native compositor reports this window as fully occluded.
+    /// Minimized-state scheduling is handled by the window adapter separately;
+    /// this flag represents only an actual occlusion signal.
+    pub window_occluded: bool,
 }
 
 impl Default for RuntimeEnvironment {
@@ -91,8 +99,10 @@ impl Default for RuntimeEnvironment {
             locales: Vec::new(),
             text_direction: defaults.text_direction,
             reduced_motion: defaults.reduced_motion,
+            high_contrast: false,
             input: InputCapabilities::default(),
             window_focused: false,
+            window_occluded: false,
         }
     }
 }

@@ -19,6 +19,7 @@ mod display;
 mod file_dialog;
 mod operation;
 mod pointer;
+mod system_environment;
 mod window_control;
 
 pub use capabilities::{
@@ -55,6 +56,10 @@ pub use operation::{
 };
 pub use pointer::{
     CursorGrabMode, LogicalWindowPosition, LogicalWindowPositionError, PointerMetadata,
+};
+pub use system_environment::{
+    MemorySystemEnvironmentProvider, SystemEnvironmentPreferences, SystemEnvironmentProvider,
+    canonicalize_system_locales,
 };
 pub use window_control::{
     LogicalSizeLimits, LogicalSizeLimitsError, UserAttentionType, WindowIcon, WindowIconError,
@@ -661,6 +666,9 @@ pub enum PlatformEvent {
     /// without manufacturing a keyboard event.
     TextInputAction(TextInputAction),
     Metrics(WindowMetrics),
+    /// Complete normalized environment replacement produced by the native
+    /// shell. Runtime dependency tracking decides which consumers invalidate.
+    Environment(incular_config::RuntimeEnvironment),
     Lifecycle(PlatformLifecycle),
     ExternalDrag(ExternalDragEvent),
     CloseRequested,
@@ -673,6 +681,10 @@ pub enum PlatformLifecycle {
     Active,
     Inactive,
     Suspended,
+    /// The OS reports that a previously suspended application is runnable
+    /// again. Runtime maps this to `ApplicationLifecycle::Active` while keeping
+    /// the native transition explicit at the platform boundary.
+    Resumed,
     Stopping,
 }
 /// Raw handles are passed only to the GPU backend. The Linux window owner must

@@ -1,6 +1,8 @@
 //! Windows desktop adapter for Incular's shared desktop shell.
 mod crash_reporter;
 #[cfg(target_os = "windows")]
+mod environment;
+#[cfg(target_os = "windows")]
 mod platform_menus;
 
 pub use incular_desktop::RunError;
@@ -9,10 +11,41 @@ pub use incular_desktop::RunError;
 #[derive(Clone, Default)]
 struct WindowsDesktopPlatformServices {
     menus: std::rc::Rc<platform_menus::WindowsPlatformMenuDelegate>,
+    environment: environment::WindowsEnvironmentState,
 }
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
+        self.environment.preferences()
+    }
+
+    fn application_active(&self) -> Option<bool> {
+        Some(self.environment.application_active())
+    }
+
+    fn take_system_environment_change(&self) -> bool {
+        self.environment.take_settings_change()
+    }
+
+    fn take_application_lifecycle_events(&self) -> Vec<incular_platform::PlatformLifecycle> {
+        self.environment.take_lifecycle_events()
+    }
+
+    fn start_system_environment_watch(
+        &self,
+        _tokio: incular_runtime::TokioHandle,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.environment.start_watch(wake);
+    }
+
+    fn windows_message_hook(
+        &self,
+    ) -> Option<Box<dyn FnMut(*const std::ffi::c_void) -> bool + 'static>> {
+        Some(self.environment.message_hook())
+    }
+
     fn external_file_drag_support(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -279,6 +312,15 @@ pub fn run_window(
     on_action: impl FnMut(incular_widgets::internal::ActionId) + 'static,
 ) -> Result<(), RunError> {
     let _crash_handler = crash_reporter::install();
+    #[cfg(target_os = "windows")]
+    {
+        incular_desktop::run_window_with_services(
+            runtime,
+            on_action,
+            WindowsDesktopPlatformServices::default(),
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
     incular_desktop::run_window(runtime, on_action)
 }
 

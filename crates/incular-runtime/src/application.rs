@@ -190,6 +190,9 @@ impl Application {
         let simulation_bridge = Arc::new(simulation::SimulationBridge::new(simulation_sender));
         let platform_capabilities = Arc::new(RwLock::new(PlatformCapabilities::default()));
         let display_catalog = Arc::new(RwLock::new(DisplayCatalog::default()));
+        let application_lifecycle = Rc::new(std::cell::Cell::new(
+            crate::application_types::ApplicationLifecycle::Starting,
+        ));
         let bridge = Arc::new(WindowCommandBridge {
             sender,
             cancellation_sender,
@@ -206,6 +209,7 @@ impl Application {
             restoration: restoration.clone(),
             application_capabilities: platform_capabilities.clone(),
             displays: display_catalog.clone(),
+            application_lifecycle,
         };
         let primary_window = manager
             .open_window_with_inner(options, build, primary_restoration)?
@@ -1169,6 +1173,11 @@ impl Application {
                 });
                 self.manager.sync_restorable_windows(true);
             }
+            WindowEventKind::Platform(PlatformEvent::Environment(environment)) => {
+                let _ = self.with_window_mut(window_id, |record| {
+                    record.runtime.set_environment(environment);
+                });
+            }
             WindowEventKind::Platform(PlatformEvent::Input(input)) => {
                 let _ = self.with_window_mut(window_id, |record| {
                     record.input_events = record.input_events.wrapping_add(1);
@@ -1182,18 +1191,7 @@ impl Application {
                 });
             }
             WindowEventKind::Platform(PlatformEvent::Lifecycle(lifecycle)) => {
-                if matches!(lifecycle, PlatformLifecycle::Stopping) {
-                    self.shutdown();
-                } else {
-                    let _ = self.with_window_mut(window_id, |record| {
-                        let _ = record
-                            .runtime
-                            .handle_platform_event(PlatformEvent::Lifecycle(lifecycle));
-                    });
-                    if matches!(lifecycle, PlatformLifecycle::Suspended) {
-                        let _ = self.flush_restoration();
-                    }
-                }
+                self.handle_application_lifecycle(lifecycle);
             }
             WindowEventKind::Platform(PlatformEvent::ExternalDrag(event)) => {
                 let _ = self.handle_external_drag_event(window_id, event);
@@ -1234,6 +1232,37 @@ impl Application {
                         .expect("window observed-state snapshot lock") = state;
                 });
             }
+        }
+    }
+
+    /// Applies one genuine application-level lifecycle transition to every
+    /// retained window root. Window focus remains a separate per-window
+    /// lifecycle channel and never synthesizes these application states.
+    pub fn handle_application_lifecycle(&mut self, lifecycle: PlatformLifecycle) {
+        self.manager.application_lifecycle.set(match lifecycle {
+            PlatformLifecycle::Active | PlatformLifecycle::Resumed => {
+                crate::application_types::ApplicationLifecycle::Active
+            }
+            PlatformLifecycle::Inactive => crate::application_types::ApplicationLifecycle::Inactive,
+            PlatformLifecycle::Suspended => {
+                crate::application_types::ApplicationLifecycle::Suspended
+            }
+            PlatformLifecycle::Stopping => crate::application_types::ApplicationLifecycle::Stopping,
+        });
+        if matches!(lifecycle, PlatformLifecycle::Stopping) {
+            self.shutdown();
+            return;
+        }
+        let ids = self.active_window_ids();
+        for id in ids {
+            let _ = self.with_window_mut(id, |record| {
+                let _ = record
+                    .runtime
+                    .handle_platform_event(PlatformEvent::Lifecycle(lifecycle));
+            });
+        }
+        if matches!(lifecycle, PlatformLifecycle::Suspended) {
+            let _ = self.flush_restoration();
         }
     }
 
@@ -2196,6 +2225,7 @@ impl Application {
             visible: record.options.visible,
             native_focused: record.native_focused,
             lifecycle: record.lifecycle,
+            application_lifecycle: record.runtime.lifecycle(),
             frame_requested: record.runtime.frame_requested(),
             requested_frames: record.requested_frames,
             presented_frames: record.presented_frames,

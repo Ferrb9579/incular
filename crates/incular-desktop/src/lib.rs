@@ -2,6 +2,7 @@
 mod clipboard;
 mod display;
 mod display_identity;
+mod environment;
 mod external_drag;
 mod file_dialogs;
 mod platform_menus;
@@ -31,18 +32,19 @@ use incular_platform::{
     CapabilitySupport, ContentSensitivityBackend, ContentSensitivityNoOpReason,
     ContentSensitivityOutcome, CursorGrabMode, NativeOperationCompletion, NativeWindowSystem,
     NoopContentSensitivityBackend, PhysicalScreenPosition, PhysicalSize, PlatformCapabilities,
-    PlatformEvent, PlatformOperationError, PlatformOperationErrorKind, PointerMetadata,
-    TransparencyMode, UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent,
-    WindowIcon, WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics,
-    WindowObservedState, WindowOperation, WindowOptions, apply_text_input_command, ime_event,
-    key_event, native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
-    touch_event_with_device, wheel_event,
+    PlatformEvent, PlatformLifecycle, PlatformOperationError, PlatformOperationErrorKind,
+    PointerMetadata, TransparencyMode, UserAttentionType, WindowCommand,
+    WindowEvent as IncularWindowEvent, WindowIcon, WindowId as IncularWindowId, WindowLevel,
+    WindowLifecycle, WindowMetrics, WindowObservedState, WindowOperation, WindowOptions,
+    apply_text_input_command, ime_event, key_event, native_window_system,
+    pointer_event_with_metadata, raw_window_handles, text_event, touch_event_with_device,
+    wheel_event,
 };
 use incular_rendering::DisplayList;
 use incular_runtime::{
-    Application, ApplicationLifecycle, GpuSample, NativeFileDialogCompletion, NativeWindowCommand,
-    RenderFrameMetrics, ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot,
-    TransientFallbackReason, TransientPresentationResolution,
+    Application, GpuSample, NativeFileDialogCompletion, NativeWindowCommand, RenderFrameMetrics,
+    ResolvedTransientPresentation, Runtime, RuntimeWake, Screenshot, TransientFallbackReason,
+    TransientPresentationResolution,
 };
 use incular_wgpu::{RenderStats, RendererError, SharedGpuContext, WgpuRenderer};
 use incular_widgets::{
@@ -73,6 +75,7 @@ use crate::clipboard::DesktopClipboard;
 #[doc(hidden)]
 pub use crate::clipboard::desktop_clipboard_write_report;
 use crate::display::DesktopDisplayRegistry;
+use crate::environment::DesktopEnvironmentProvider;
 #[doc(hidden)]
 pub use crate::file_dialogs::desktop_file_dialog_capabilities;
 use crate::pointer::{MouseButtonState, NativeCursorCoordinator, PointerDeviceRegistry};
@@ -110,14 +113,45 @@ fn runtime_render_metrics(stats: &RenderStats) -> RenderFrameMetrics {
 /// Runs a native desktop window until close. The native window stays alive for the
 /// complete lifetime of the renderer's unsafe raw-handle surface.
 pub fn run_window(
-    mut runtime: Runtime,
+    runtime: Runtime,
     on_action: impl FnMut(ActionId) + 'static,
 ) -> Result<(), RunError> {
+    run_window_with_services(runtime, on_action, DefaultDesktopPlatformServices)
+}
+
+/// Runs the standalone-runtime desktop path with the same OS environment and
+/// lifecycle facade used by [`run_application_with_services`]. Platform crates
+/// call this so `run_window` and `run_application` never disagree about native
+/// theme, locale, accessibility, input, or lifecycle state.
+#[doc(hidden)]
+pub fn run_window_with_services(
+    mut runtime: Runtime,
+    on_action: impl FnMut(ActionId) + 'static,
+    platform_services: impl DesktopPlatformServices + 'static,
+) -> Result<(), RunError> {
     runtime.set_clipboard(Box::new(DesktopClipboard::new()));
-    let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
-        .build()
-        .map_err(RunError::EventLoop)?;
+    let mut event_loop_builder = EventLoop::<RuntimeWakeEvent>::with_user_event();
+    #[cfg(target_os = "windows")]
+    if let Some(hook) = platform_services.windows_message_hook() {
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        event_loop_builder.with_msg_hook(hook);
+    }
+    let event_loop = event_loop_builder.build().map_err(RunError::EventLoop)?;
     let proxy = event_loop.create_proxy();
+    let environment_proxy = proxy.clone();
+    platform_services.start_system_environment_watch(
+        runtime.tokio_handle(),
+        Arc::new(move || {
+            let _ = environment_proxy.send_event(RuntimeWakeEvent::SystemEnvironmentChanged);
+        }),
+    );
+    if let Some(active) = platform_services.application_active() {
+        let _ = runtime.handle_platform_event(PlatformEvent::Lifecycle(if active {
+            PlatformLifecycle::Active
+        } else {
+            PlatformLifecycle::Inactive
+        }));
+    }
     runtime.set_wake_handler(Arc::new(DesktopWake(proxy.clone())));
     let mut app = App {
         window: None,
@@ -128,10 +162,12 @@ pub fn run_window(
         mouse_buttons: MouseButtonState::default(),
         pointer_devices: PointerDeviceRegistry::default(),
         native_cursor: NativeCursorCoordinator::default(),
+        environment: None,
         modifiers: winit::keyboard::ModifiersState::default(),
         on_action,
         accessibility_proxy: proxy,
         accessibility: None,
+        platform_services: Box::new(platform_services),
     };
     event_loop.run_app(&mut app).map_err(RunError::EventLoop)
 }
@@ -143,6 +179,7 @@ enum RuntimeWakeEvent {
     Runtime,
     Accessibility(AccessKitEvent),
     FileDialog(NativeFileDialogCompletion),
+    SystemEnvironmentChanged,
 }
 
 impl From<AccessKitEvent> for RuntimeWakeEvent {
@@ -276,11 +313,23 @@ pub fn run_application_with_services(
 ) -> Result<(), RunError> {
     application.set_platform_capabilities(desktop_platform_capabilities());
     let platform_menu_delegate = platform_services.platform_menu_delegate();
-    let event_loop = EventLoop::<RuntimeWakeEvent>::with_user_event()
-        .build()
-        .map_err(RunError::EventLoop)?;
+    let mut event_loop_builder = EventLoop::<RuntimeWakeEvent>::with_user_event();
+    #[cfg(target_os = "windows")]
+    if let Some(hook) = platform_services.windows_message_hook() {
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        event_loop_builder.with_msg_hook(hook);
+    }
+    let event_loop = event_loop_builder.build().map_err(RunError::EventLoop)?;
     let proxy = event_loop.create_proxy();
     let wake = Arc::new(DesktopWake(proxy.clone()));
+    let environment_proxy = proxy.clone();
+    platform_services.start_system_environment_watch(
+        application.tokio_handle(),
+        Arc::new(move || {
+            let _ = environment_proxy.send_event(RuntimeWakeEvent::SystemEnvironmentChanged);
+        }),
+    );
+    let initial_application_active = platform_services.application_active();
     #[cfg(feature = "devtools")]
     let devtools_mode = devtools_launch_mode();
     #[cfg(feature = "devtools")]
@@ -319,6 +368,13 @@ pub fn run_application_with_services(
         devtools_state: crate::devtools_runner::DevToolsState::new(devtools_agent),
     };
     app.application.set_wake_handler(wake);
+    if let Some(active) = initial_application_active {
+        app.application.handle_application_lifecycle(if active {
+            PlatformLifecycle::Active
+        } else {
+            PlatformLifecycle::Inactive
+        });
+    }
     event_loop.run_app(&mut app).map_err(RunError::EventLoop)
 }
 struct App<F: FnMut(ActionId)> {
@@ -329,10 +385,12 @@ struct App<F: FnMut(ActionId)> {
     mouse_buttons: MouseButtonState,
     pointer_devices: PointerDeviceRegistry,
     native_cursor: NativeCursorCoordinator,
+    environment: Option<DesktopEnvironmentProvider>,
     modifiers: winit::keyboard::ModifiersState,
     on_action: F,
     accessibility_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
     accessibility: Option<NativeAccessibilityState>,
+    platform_services: Box<dyn DesktopPlatformServices>,
     /// Declared last so renderer/accessibility raw-handle users are dropped
     /// before the native window itself.
     window: Option<Window>,
@@ -386,10 +444,14 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
         };
         window.request_redraw();
         self.metrics = Some(metrics);
+        let environment = DesktopEnvironmentProvider::new(
+            &window,
+            self.platform_services.system_environment_preferences(),
+        );
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.set_environment(environment_for(metrics));
-            runtime.transition_lifecycle(ApplicationLifecycle::Active);
+            runtime.set_environment(environment.snapshot(metrics));
         }
+        self.environment = Some(environment);
         self.renderer = Some(renderer);
         let mut accessibility = NativeAccessibilityState {
             adapter: AccessKitAdapter::with_event_loop_proxy(
@@ -404,6 +466,8 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
         window.set_visible(true);
         self.accessibility = Some(accessibility);
         self.window = Some(window);
+        self.refresh_system_environment(true);
+        self.drain_application_lifecycle();
     }
     fn window_event(
         &mut self,
@@ -440,9 +504,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                     PhysicalSize::new(size.width, size.height),
                     scale_factor,
                 ));
-                if let Some(runtime) = self.runtime.as_mut() {
-                    runtime.set_environment(environment_for(self.metrics.expect("metrics exist")));
-                }
+                self.publish_environment();
                 if !PhysicalSize::new(size.width, size.height).is_zero() {
                     self.renderer
                         .as_mut()
@@ -458,13 +520,16 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 device_id,
                 position,
             } => {
+                self.note_mouse_environment();
                 self.cursor = position;
                 self.route_mouse_pointer(device_id, PointerPhase::Move, None);
             }
             WindowEvent::CursorEntered { device_id } => {
+                self.note_mouse_environment();
                 self.route_mouse_pointer(device_id, PointerPhase::Enter, None);
             }
             WindowEvent::CursorLeft { device_id } => {
+                self.note_mouse_environment();
                 self.route_mouse_pointer(device_id, PointerPhase::Exit, None);
             }
             WindowEvent::MouseInput {
@@ -472,12 +537,43 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 state,
                 button,
             } => {
+                self.note_mouse_environment();
                 if let Some(transition) = self.mouse_buttons.transition(state, button) {
                     self.route_mouse_pointer(device_id, transition.phase, Some(transition.button));
                 }
             }
-            WindowEvent::Focused(false) => self.cancel_mouse_pointer(),
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    self.cancel_mouse_pointer();
+                }
+                if self
+                    .environment
+                    .as_mut()
+                    .is_some_and(|environment| environment.set_focused(focused))
+                {
+                    self.publish_environment();
+                }
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                if self
+                    .environment
+                    .as_mut()
+                    .is_some_and(|environment| environment.set_theme(theme))
+                {
+                    self.publish_environment();
+                }
+            }
+            WindowEvent::Occluded(occluded) => {
+                if self
+                    .environment
+                    .as_mut()
+                    .is_some_and(|environment| environment.set_occluded(occluded))
+                {
+                    self.publish_environment();
+                }
+            }
             WindowEvent::Touch(touch) => {
+                self.note_touch_environment();
                 if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
                     let device = self.pointer_devices.id(touch.device_id);
                     let event = match touch_event_with_device(touch, device, metrics) {
@@ -496,6 +592,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                self.note_mouse_environment();
                 if let (Some(runtime), Some(metrics)) = (self.runtime.as_mut(), self.metrics) {
                     let PlatformEvent::Input(event) = wheel_event(delta, metrics) else {
                         unreachable!()
@@ -505,6 +602,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {
+                self.note_keyboard_environment();
                 if let Some(runtime) = self.runtime.as_mut() {
                     let PlatformEvent::Input(input) = key_event(&event, self.modifiers) else {
                         unreachable!()
@@ -525,10 +623,15 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
             WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
         }
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
     }
     fn about_to_wait(&mut self, loop_target: &ActiveEventLoop) {
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
         self.apply_text_input_commands();
-        if self.runtime.as_ref().is_some_and(Runtime::frame_requested) {
+        if self.runtime.as_ref().is_some_and(Runtime::frame_requested) && self.window_can_present()
+        {
             self.window
                 .as_ref()
                 .expect("window exists")
@@ -548,7 +651,9 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                         .expect("runtime exists")
                         .process_runtime_work();
                     self.apply_text_input_commands();
-                    if self.runtime.as_ref().is_some_and(Runtime::frame_requested) {
+                    if self.runtime.as_ref().is_some_and(Runtime::frame_requested)
+                        && self.window_can_present()
+                    {
                         self.window
                             .as_ref()
                             .expect("window exists")
@@ -562,10 +667,106 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 // so it cannot create native file-dialog requests. The shared
                 // event enum is used only to keep one Winit event-loop bridge.
             }
+            RuntimeWakeEvent::SystemEnvironmentChanged => self.refresh_system_environment(true),
+        }
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let Some(runtime) = self.runtime.as_mut()
+            && !matches!(
+                runtime.lifecycle(),
+                incular_runtime::ApplicationLifecycle::Terminated
+            )
+        {
+            runtime.shutdown();
         }
     }
 }
 impl<F: FnMut(ActionId)> App<F> {
+    fn refresh_system_environment(&mut self, force: bool) {
+        if self.environment.is_none()
+            || (!force && !self.platform_services.take_system_environment_change())
+        {
+            return;
+        }
+        let preferences = self.platform_services.system_environment_preferences();
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(|environment| environment.replace_preferences(preferences))
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn drain_application_lifecycle(&mut self) {
+        for lifecycle in self.platform_services.take_application_lifecycle_events() {
+            let Some(runtime) = self.runtime.as_mut() else {
+                return;
+            };
+            if lifecycle == PlatformLifecycle::Stopping {
+                runtime.shutdown();
+            } else {
+                let _ = runtime.handle_platform_event(PlatformEvent::Lifecycle(lifecycle));
+            }
+        }
+    }
+
+    fn publish_environment(&mut self) {
+        let (Some(runtime), Some(environment), Some(metrics)) = (
+            self.runtime.as_mut(),
+            self.environment.as_ref(),
+            self.metrics,
+        ) else {
+            return;
+        };
+        runtime.set_environment(environment.snapshot(metrics));
+    }
+
+    fn note_mouse_environment(&mut self) {
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(DesktopEnvironmentProvider::note_mouse)
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn note_touch_environment(&mut self) {
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(DesktopEnvironmentProvider::note_touch)
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn note_keyboard_environment(&mut self) {
+        if self
+            .environment
+            .as_mut()
+            .is_some_and(DesktopEnvironmentProvider::note_keyboard)
+        {
+            self.publish_environment();
+        }
+    }
+
+    fn window_can_present(&self) -> bool {
+        !self
+            .environment
+            .as_ref()
+            .is_some_and(DesktopEnvironmentProvider::is_occluded)
+            && self
+                .window
+                .as_ref()
+                .and_then(Window::is_minimized)
+                .is_none_or(|minimized| !minimized)
+    }
+
     fn route_mouse_pointer(
         &mut self,
         device_id: winit::event::DeviceId,
@@ -642,9 +843,7 @@ impl<F: FnMut(ActionId)> App<F> {
     fn resize(&mut self, size: PhysicalSize) {
         let scale = self.metrics.expect("metrics exist").scale_factor;
         self.metrics = Some(WindowMetrics::new(size, scale));
-        if let Some(runtime) = self.runtime.as_mut() {
-            runtime.set_environment(environment_for(self.metrics.expect("metrics exist")));
-        }
+        self.publish_environment();
         if !size.is_zero() {
             self.renderer
                 .as_mut()
@@ -660,7 +859,7 @@ impl<F: FnMut(ActionId)> App<F> {
         let Some(metrics) = self.metrics else {
             return;
         };
-        if metrics.physical_size.is_zero() {
+        if metrics.physical_size.is_zero() || !self.window_can_present() {
             return;
         }
         let result = self
@@ -760,6 +959,7 @@ struct NativeWindowState {
     cursor: PhysicalPosition<f64>,
     mouse_buttons: MouseButtonState,
     native_cursor: NativeCursorCoordinator,
+    environment: DesktopEnvironmentProvider,
     modifiers: winit::keyboard::ModifiersState,
     external_file_drag: ExternalFileDragState,
     accessibility: NativeAccessibilityState,
@@ -797,6 +997,77 @@ struct MultiApp {
 }
 
 impl MultiApp {
+    fn publish_window_environment(&mut self, native_id: NativeWindowId) {
+        let Some((id, environment)) = self
+            .windows
+            .get(&native_id)
+            .map(|state| (state.id, state.environment.snapshot(state.metrics)))
+        else {
+            return;
+        };
+        self.application
+            .handle_window_event(IncularWindowEvent::platform(
+                id,
+                PlatformEvent::Environment(environment),
+            ));
+    }
+
+    fn refresh_system_environment(&mut self, force: bool) {
+        if !force && !self.platform_services.take_system_environment_change() {
+            return;
+        }
+        let preferences = self.platform_services.system_environment_preferences();
+        let changed = self
+            .windows
+            .iter_mut()
+            .filter_map(|(native_id, state)| {
+                state
+                    .environment
+                    .replace_preferences(preferences.clone())
+                    .then_some(*native_id)
+            })
+            .collect::<Vec<_>>();
+        for native_id in changed {
+            self.publish_window_environment(native_id);
+        }
+    }
+
+    fn drain_application_lifecycle(&mut self) {
+        for lifecycle in self.platform_services.take_application_lifecycle_events() {
+            self.application.handle_application_lifecycle(lifecycle);
+        }
+    }
+
+    fn note_window_mouse(&mut self, native_id: NativeWindowId) {
+        if self
+            .windows
+            .get_mut(&native_id)
+            .is_some_and(|state| state.environment.note_mouse())
+        {
+            self.publish_window_environment(native_id);
+        }
+    }
+
+    fn note_window_touch(&mut self, native_id: NativeWindowId) {
+        if self
+            .windows
+            .get_mut(&native_id)
+            .is_some_and(|state| state.environment.note_touch())
+        {
+            self.publish_window_environment(native_id);
+        }
+    }
+
+    fn note_window_keyboard(&mut self, native_id: NativeWindowId) {
+        if self
+            .windows
+            .get_mut(&native_id)
+            .is_some_and(|state| state.environment.note_keyboard())
+        {
+            self.publish_window_environment(native_id);
+        }
+    }
+
     fn start_pending_file_dialogs(&mut self) {
         let requests = self.application.take_native_file_dialog_requests();
         if requests.is_empty() {
@@ -1060,6 +1331,15 @@ impl MultiApp {
             let _ = self.application.record_platform_operation_error(id, error);
         }
         let native_id = window.id();
+        let environment = DesktopEnvironmentProvider::new(
+            &window,
+            self.platform_services.system_environment_preferences(),
+        );
+        self.application
+            .handle_window_event(IncularWindowEvent::platform(
+                id,
+                PlatformEvent::Environment(environment.snapshot(metrics)),
+            ));
         window.set_visible(options.visible);
         let observed_state = observed_window_state(&window, &self.displays, system);
         self.native_ids.insert(id, native_id);
@@ -1073,6 +1353,7 @@ impl MultiApp {
                 cursor: PhysicalPosition::new(0., 0.),
                 mouse_buttons: MouseButtonState::default(),
                 native_cursor: NativeCursorCoordinator::default(),
+                environment,
                 modifiers: winit::keyboard::ModifiersState::default(),
                 external_file_drag: ExternalFileDragState::default(),
                 accessibility,
@@ -1329,6 +1610,11 @@ impl MultiApp {
         if self.application.frame_requested(id)
             && let Some(native_id) = self.native_ids.get(&id).copied()
             && let Some(state) = self.windows.get(&native_id)
+            && !state.environment.is_occluded()
+            && state
+                .window
+                .is_minimized()
+                .is_none_or(|minimized| !minimized)
         {
             state.window.request_redraw();
             self.application.note_frame_requested(id);
@@ -1371,6 +1657,19 @@ impl MultiApp {
         let Some(native_id) = self.native_ids.get(&id).copied() else {
             return;
         };
+        if self.windows.get(&native_id).is_some_and(|state| {
+            state.environment.is_occluded()
+                || state
+                    .window
+                    .is_minimized()
+                    .is_some_and(|minimized| minimized)
+        }) {
+            // Preserve Runtime::frame_requested while native presentation is
+            // suppressed. The first unoccluded/restored event-loop turn will
+            // request one frame containing every retained invalidation queued
+            // while the window could not contribute visible pixels.
+            return;
+        }
         let Some(metrics) = self.windows.get(&native_id).map(|state| state.metrics) else {
             return;
         };
@@ -2065,7 +2364,16 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
     fn resumed(&mut self, target: &ActiveEventLoop) {
         self.apply_window_commands(target);
         self.refresh_displays(target);
+        self.refresh_system_environment(true);
+        self.drain_application_lifecycle();
         self.start_pending_file_dialogs();
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if !self.application.should_exit() {
+            self.application
+                .handle_application_lifecycle(PlatformLifecycle::Stopping);
+        }
     }
 
     fn window_event(
@@ -2129,6 +2437,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.reposition_transient_hosts(id);
             }
             WindowEvent::Focused(focused) => {
+                let environment_changed = self
+                    .windows
+                    .get_mut(&native_id)
+                    .is_some_and(|state| state.environment.set_focused(focused));
                 if !focused {
                     self.cancel_window_mouse_pointer(native_id, id);
                 }
@@ -2143,11 +2455,33 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                         },
                     ),
                 );
+                if environment_changed {
+                    self.publish_window_environment(native_id);
+                }
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                if self
+                    .windows
+                    .get_mut(&native_id)
+                    .is_some_and(|state| state.environment.set_theme(theme))
+                {
+                    self.publish_window_environment(native_id);
+                }
+            }
+            WindowEvent::Occluded(occluded) => {
+                if self
+                    .windows
+                    .get_mut(&native_id)
+                    .is_some_and(|state| state.environment.set_occluded(occluded))
+                {
+                    self.publish_window_environment(native_id);
+                }
             }
             WindowEvent::CursorMoved {
                 device_id,
                 position,
             } => {
+                self.note_window_mouse(native_id);
                 let device = self.pointer_devices.id(device_id);
                 let (event, external_over) = {
                     let state = self
@@ -2230,6 +2564,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 }
             }
             WindowEvent::CursorEntered { device_id } | WindowEvent::CursorLeft { device_id } => {
+                self.note_window_mouse(native_id);
                 let phase = if matches!(event, WindowEvent::CursorEntered { .. }) {
                     PointerPhase::Enter
                 } else {
@@ -2252,6 +2587,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 state,
                 button,
             } => {
+                self.note_window_mouse(native_id);
                 let device = self.pointer_devices.id(device_id);
                 let Some(transition) = self
                     .windows
@@ -2299,6 +2635,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 self.sync_window_cursor(id);
             }
             WindowEvent::Touch(touch) => {
+                self.note_window_touch(native_id);
                 let device = self.pointer_devices.id(touch.device_id);
                 let metrics = self
                     .windows
@@ -2314,6 +2651,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                 );
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                self.note_window_mouse(native_id);
                 let metrics = self
                     .windows
                     .get(&native_id)
@@ -2331,6 +2669,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
                     .modifiers = modifiers.state();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.note_window_keyboard(native_id);
                 let modifiers = self
                     .windows
                     .get(&native_id)
@@ -2362,6 +2701,8 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             }
             _ => {}
         }
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
         self.apply_window_commands(target);
     }
 
@@ -2370,6 +2711,8 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
         self.platform_services.flush_platform_menu_events();
         self.sync_platform_menus();
         self.refresh_displays(target);
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
         self.flush_external_file_drops();
         self.apply_window_commands(target);
         self.start_pending_file_dialogs();
@@ -2386,7 +2729,10 @@ impl ApplicationHandler<RuntimeWakeEvent> for MultiApp {
             RuntimeWakeEvent::FileDialog(completion) => {
                 let _ = self.application.complete_file_dialog(completion);
             }
+            RuntimeWakeEvent::SystemEnvironmentChanged => self.refresh_system_environment(true),
         }
+        self.refresh_system_environment(false);
+        self.drain_application_lifecycle();
         self.platform_services.flush_platform_menu_events();
         self.sync_platform_menus();
         self.apply_window_commands(target);
@@ -2465,20 +2811,4 @@ fn window_attributes(options: &WindowOptions) -> Result<WindowAttributes, Platfo
     attributes.min_inner_size = minimum.map(Into::into);
     attributes.max_inner_size = maximum.map(Into::into);
     Ok(attributes)
-}
-
-fn environment_for(metrics: WindowMetrics) -> incular_config::RuntimeEnvironment {
-    incular_config::RuntimeEnvironment {
-        viewport: metrics.logical_size(),
-        physical_width: metrics.physical_size.width,
-        physical_height: metrics.physical_size.height,
-        scale_factor: metrics.scale_factor,
-        input: incular_config::InputCapabilities {
-            mouse: true,
-            touch: true,
-            keyboard: true,
-            stylus: false,
-        },
-        ..incular_config::RuntimeEnvironment::default()
-    }
 }

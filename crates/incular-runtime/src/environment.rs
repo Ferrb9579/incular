@@ -42,7 +42,9 @@ pub(crate) const ENV_DIRECTION: u16 = 1 << 7;
 pub(crate) const ENV_REDUCED_MOTION: u16 = 1 << 8;
 pub(crate) const ENV_INPUT: u16 = 1 << 9;
 pub(crate) const ENV_WINDOW_FOCUS: u16 = 1 << 10;
-pub(crate) const ENV_ALL: u16 = (1 << 11) - 1;
+pub(crate) const ENV_HIGH_CONTRAST: u16 = 1 << 11;
+pub(crate) const ENV_WINDOW_OCCLUSION: u16 = 1 << 12;
+pub(crate) const ENV_ALL: u16 = (1 << 13) - 1;
 
 pub(crate) fn environment_change_mask(
     previous: &RuntimeEnvironment,
@@ -84,6 +86,12 @@ pub(crate) fn environment_change_mask(
     }
     if previous.window_focused != next.window_focused {
         mask |= ENV_WINDOW_FOCUS;
+    }
+    if previous.high_contrast != next.high_contrast {
+        mask |= ENV_HIGH_CONTRAST;
+    }
+    if previous.window_occluded != next.window_occluded {
+        mask |= ENV_WINDOW_OCCLUSION;
     }
     mask
 }

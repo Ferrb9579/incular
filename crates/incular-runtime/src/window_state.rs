@@ -37,6 +37,10 @@ pub struct WindowDiagnostics {
     pub visible: bool,
     pub native_focused: bool,
     pub lifecycle: WindowLifecycle,
+    /// Application-wide runtime lifecycle inherited from the native adapter.
+    /// This is intentionally separate from the window-local visibility/focus
+    /// lifecycle above.
+    pub application_lifecycle: ApplicationLifecycle,
     pub frame_requested: bool,
     pub requested_frames: u64,
     pub presented_frames: u64,
@@ -329,6 +333,7 @@ pub(crate) struct WindowManager {
     pub(crate) restoration: Option<restoration::RestorationManager>,
     pub(crate) application_capabilities: Arc<RwLock<PlatformCapabilities>>,
     pub(crate) displays: Arc<RwLock<DisplayCatalog>>,
+    pub(crate) application_lifecycle: Rc<Cell<ApplicationLifecycle>>,
 }
 
 impl WindowManager {
@@ -375,6 +380,7 @@ impl WindowManager {
             scope.clone(),
             Some(self.clone()),
         )?;
+        runtime.lifecycle = self.application_lifecycle.get();
         runtime.update_window_metrics(metrics);
         registry.borrow_mut().insert(
             id,
@@ -546,7 +552,10 @@ impl WindowManager {
         })?;
         runtime.application_root = Some(root);
         runtime.owner_scopes.insert(root, root_scope);
-        runtime.lifecycle = ApplicationLifecycle::Active;
+        // A native application adapter owns the transition out of `Starting`.
+        // Do not guess foreground/activity state while constructing a retained
+        // root before the OS event loop has attached.
+        runtime.lifecycle = self.application_lifecycle.get();
         registry.borrow_mut().insert(
             id,
             WindowRecord {

@@ -286,7 +286,7 @@ impl WidgetTree {
         Ok(id)
     }
 
-    fn apply_inherited_invalidations(&mut self) {
+    pub(super) fn apply_inherited_invalidations(&mut self) {
         let dirty = self.dependency_root.take_dirty_consumers();
         for consumer in dirty {
             let Some(&(id, kind)) = self.inherited_consumers.get(&consumer) else {

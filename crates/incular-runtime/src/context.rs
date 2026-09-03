@@ -250,6 +250,11 @@ impl BuildContext {
         self.record_environment(ENV_SAFE_INSETS);
         self.environment.borrow().safe_insets
     }
+    #[must_use]
+    pub fn view_insets(&self) -> incular_config::EdgeInsets {
+        self.record_environment(crate::environment::ENV_VIEW_INSETS);
+        self.environment.borrow().view_insets
+    }
     /// Resolves `SafeArea` from the authoritative logical insets while
     /// recording only that environment dependency.
     #[must_use]
@@ -285,6 +290,26 @@ impl BuildContext {
     pub fn window_focused(&self) -> bool {
         self.record_environment(ENV_WINDOW_FOCUS);
         self.environment.borrow().window_focused
+    }
+    #[must_use]
+    pub fn reduced_motion(&self) -> bool {
+        self.record_environment(crate::environment::ENV_REDUCED_MOTION);
+        self.environment.borrow().reduced_motion
+    }
+    #[must_use]
+    pub fn high_contrast(&self) -> bool {
+        self.record_environment(crate::environment::ENV_HIGH_CONTRAST);
+        self.environment.borrow().high_contrast
+    }
+    #[must_use]
+    pub fn input_capabilities(&self) -> incular_config::InputCapabilities {
+        self.record_environment(crate::environment::ENV_INPUT);
+        self.environment.borrow().input
+    }
+    #[must_use]
+    pub fn window_occluded(&self) -> bool {
+        self.record_environment(crate::environment::ENV_WINDOW_OCCLUSION);
+        self.environment.borrow().window_occluded
     }
     fn record_environment(&self, field: u16) {
         self.environment_dependencies

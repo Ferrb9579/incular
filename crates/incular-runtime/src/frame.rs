@@ -508,8 +508,11 @@ impl Runtime {
         // by retained policies such as SafeArea and transient placement. Keep
         // that snapshot synchronized even when no declarative environment
         // dependency requires rebuilding the application root.
-        self.tree.set_environment(environment);
+        let retained_environment_dirty = self.tree.set_environment(environment);
         self.environment_generation = self.environment_generation.wrapping_add(1);
+        if retained_environment_dirty {
+            self.frame_requested = true;
+        }
         if self.environment_dependencies.get() & changed != 0
             && let Some(root) = self.application_root
         {
@@ -834,11 +837,16 @@ impl Runtime {
                 self.update_window_metrics(metrics);
                 None
             }
+            PlatformEvent::Environment(environment) => {
+                self.set_environment(environment);
+                None
+            }
             PlatformEvent::Lifecycle(lifecycle) => {
                 self.transition_lifecycle(match lifecycle {
                     PlatformLifecycle::Active => ApplicationLifecycle::Active,
                     PlatformLifecycle::Inactive => ApplicationLifecycle::Inactive,
                     PlatformLifecycle::Suspended => ApplicationLifecycle::Suspended,
+                    PlatformLifecycle::Resumed => ApplicationLifecycle::Active,
                     PlatformLifecycle::Stopping => ApplicationLifecycle::Stopping,
                 });
                 None

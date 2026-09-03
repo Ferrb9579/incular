@@ -1,8 +1,10 @@
 use super::environment::MaterialScrollBehavior;
 use crate::foundation::Theme;
 use crate::{ThemeData, ThemeMode};
-use incular_config::{Brightness, Locale, RuntimeEnvironment};
-use incular_widgets::{BuildContext, CheckedModeBanner, DefaultTextStyle, SizedBox, Widget};
+use incular_config::{Brightness, Locale, LocaleResolver};
+use incular_widgets::{
+    BuildContext, CheckedModeBanner, DefaultTextStyle, Directionality, SizedBox, Widget,
+};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
@@ -246,20 +248,34 @@ impl MaterialApp {
             .cloned()
             .or_else(|| self.home.clone())
             .unwrap_or_else(|| SizedBox::shrink().into());
-        let system_brightness = context
-            .depend_on::<RuntimeEnvironment>()
-            .map_or(Brightness::Light, |environment| environment.brightness);
         let theme = match self.theme_mode {
             ThemeMode::Dark => self
                 .dark_theme
                 .clone()
                 .unwrap_or_else(ThemeData::dark_shared),
             ThemeMode::Light => self.theme.clone(),
-            ThemeMode::System if system_brightness == Brightness::Dark => self
-                .dark_theme
-                .clone()
-                .unwrap_or_else(ThemeData::dark_shared),
-            ThemeMode::System => self.theme.clone(),
+            ThemeMode::System => {
+                if context.brightness() == Brightness::Dark {
+                    self.dark_theme
+                        .clone()
+                        .unwrap_or_else(ThemeData::dark_shared)
+                } else {
+                    self.theme.clone()
+                }
+            }
+        };
+        let reduced_motion = context.reduced_motion();
+        let theme = if reduced_motion && !theme.core().page_transitions_theme.reduced_motion {
+            let mut transitions = theme.core().page_transitions_theme.clone();
+            transitions.reduced_motion = true;
+            Rc::new(
+                theme
+                    .as_ref()
+                    .clone()
+                    .with_page_transitions_theme(transitions),
+            )
+        } else {
+            theme
         };
         let text_style = theme.core().text_theme.body_medium.clone();
         let themed: Widget = Theme::scope_shared(theme, child);
@@ -268,12 +284,22 @@ impl MaterialApp {
         // lightweight outside an application root, while descendants of a
         // Material app inherit the theme's readable foreground color.
         let themed = DefaultTextStyle::new(text_style, themed).into();
-        let localized = if let Some(locale) = self.locale.clone() {
+        let locale = self.locale.clone().or_else(|| {
+            (!self.supported_locales.is_empty())
+                .then(|| context.resolve_locale(&self.supported_locales))
+                .flatten()
+        });
+        let direction = locale
+            .as_ref()
+            .map_or_else(|| context.text_direction(), LocaleResolver::text_direction);
+        let localized = if let Some(locale) = locale {
             Widget::environment_scope(locale, themed)
         } else {
             themed
         };
-        let configured = self.scroll_behavior.wrap(localized);
+        let configured = self
+            .scroll_behavior
+            .wrap(Directionality::new(direction, localized));
         let configured = if let Some(builder) = self.builder.as_ref() {
             builder(configured)
         } else {
