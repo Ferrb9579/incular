@@ -2,29 +2,11 @@
 
 use crate::{Checkbox, ControlTheme};
 use incular_core::Color;
-use incular_semantics::{Role as SemanticRole, SemanticActionKind, SemanticState};
-use incular_widgets::{
-    Border, BorderRadius, Widget,
-    internal::{ActionSurface, ExplicitSemantics},
-};
+use incular_widgets::{Border, BorderRadius, Widget};
 use std::rc::Rc;
 use typed_builder::TypedBuilder;
 
-/// Explicit checkbox value, including the mixed state used by tree views.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CheckedState {
-    #[default]
-    Unchecked,
-    Checked,
-    Indeterminate,
-}
-
-impl CheckedState {
-    #[must_use]
-    pub const fn is_checked(self) -> bool {
-        matches!(self, Self::Checked)
-    }
-}
+pub use incular_semantics::CheckedState;
 
 /// Compound checkbox root. `child` is optional; when omitted the default
 /// polished Incular indicator and optional label are composed for the caller.
@@ -193,8 +175,11 @@ impl Root {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let mut checkbox =
-            Checkbox::new(self.state.is_checked()).enabled(self.enabled && !self.read_only);
+        let mut checkbox = Checkbox::new(self.state.is_checked())
+            .indeterminate(self.state == CheckedState::Indeterminate)
+            .enabled(self.enabled)
+            .read_only(self.read_only)
+            .required(self.required);
         if let Some(color) = self.active_color {
             checkbox = checkbox.active_color(color);
         }
@@ -217,60 +202,12 @@ impl Root {
             checkbox = checkbox.label(label.clone());
         }
         if let Some(callback) = self.on_change.clone() {
-            let state = self.state;
-            checkbox = checkbox.on_changed(move |next| {
-                callback(if next {
-                    CheckedState::Checked
-                } else if state == CheckedState::Indeterminate {
-                    CheckedState::Indeterminate
-                } else {
-                    CheckedState::Unchecked
-                });
-            });
+            checkbox = checkbox.on_changed(move |next| callback(next.into()));
         }
         if let Some(child) = self.child.clone() {
-            // A custom child is a visual slot. The root still owns the one
-            // retained hit target and semantic state; replacing the visual
-            // never drops checkbox behavior.
-            let state = self.state;
-            let mut button = ActionSurface::with_child(child)
-                .color(Color::TRANSPARENT)
-                .disabled_color(theme.colors.disabled_surface)
-                .enabled(self.enabled && !self.read_only);
-            if let Some(callback) = self.on_change.clone()
-                && self.enabled
-                && !self.read_only
-            {
-                button = button.on_click(move || {
-                    callback(if state.is_checked() {
-                        CheckedState::Unchecked
-                    } else {
-                        CheckedState::Checked
-                    })
-                });
-            }
-            let raw: Widget = button.into();
-            return raw.semantics(
-                ExplicitSemantics::new(SemanticRole::Checkbox)
-                    .label(self.label.clone().unwrap_or_default())
-                    .state(SemanticState {
-                        enabled: self.enabled,
-                        focusable: self.enabled || self.read_only,
-                        checked: match self.state {
-                            CheckedState::Indeterminate => None,
-                            CheckedState::Unchecked => Some(false),
-                            CheckedState::Checked => Some(true),
-                        },
-                        ..SemanticState::default()
-                    })
-                    .actions(if self.enabled && !self.read_only {
-                        [SemanticActionKind::Focus, SemanticActionKind::Activate].to_vec()
-                    } else {
-                        vec![SemanticActionKind::Focus]
-                    }),
-            );
+            checkbox = checkbox.child(child);
         }
-        checkbox.into()
+        Widget::environment_scope(theme.clone(), checkbox.into())
     }
 }
 

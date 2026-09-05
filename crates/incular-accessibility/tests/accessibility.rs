@@ -33,6 +33,50 @@ fn full(projection: &mut AccessKitProjection, tree: &SemanticsTree) -> TreeUpdat
 }
 
 #[test]
+fn checkable_states_preserve_mixed_and_absent_values() {
+    use incular_semantics::CheckedState;
+    for (state, expected) in [
+        (None, None),
+        (Some(CheckedState::Unchecked), Some(Toggled::False)),
+        (Some(CheckedState::Checked), Some(Toggled::True)),
+        (Some(CheckedState::Indeterminate), Some(Toggled::Mixed)),
+    ] {
+        let mut tree = SemanticsTree::new();
+        let mut checkbox = node(Role::Checkbox);
+        checkbox.state.checked = state;
+        let id = tree.insert(checkbox);
+        tree.set_root(Some(id));
+        let mut projection = AccessKitProjection::new();
+        let update = full(&mut projection, &tree);
+        let native = NodeId(projection.native_node_id(id).unwrap());
+        assert_eq!(
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == native)
+                .unwrap()
+                .1
+                .toggled(),
+            expected
+        );
+        let mut mobile = MobileAccessibilityProjection::new();
+        mobile.activate();
+        let update = mobile.sync(&tree).expect("mobile update");
+        assert_eq!(
+            update
+                .nodes
+                .iter()
+                .find(|node| node.semantic.id == id)
+                .unwrap()
+                .semantic
+                .state
+                .checked,
+            state
+        );
+    }
+}
+
+#[test]
 fn button_role_name_action_and_bounds_are_projected() {
     let mut tree = SemanticsTree::new();
     let mut button = node(Role::Button);
@@ -59,7 +103,7 @@ fn state_text_collection_and_scroll_properties_are_projected() {
     input.state.enabled = true;
     input.state.editable = true;
     input.state.read_only = true;
-    input.state.checked = Some(true);
+    input.state.checked = Some(true.into());
     input.state.selection = Some(incular_accessibility::TextSelection { base: 1, extent: 3 });
     input.actions = vec![
         SemanticActionKind::SetText,

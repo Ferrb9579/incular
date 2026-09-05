@@ -1036,7 +1036,7 @@ mod selection_tests {
         assert!(
             tree.semantics()
                 .iter()
-                .any(|(_, node)| node.state.checked == Some(true))
+                .any(|(_, node)| node.state.checked == Some(true.into()))
         );
     }
 }

@@ -149,7 +149,7 @@ impl Root {
                     .state(SemanticState {
                         enabled: self.enabled,
                         focusable: self.enabled || self.read_only,
-                        checked: Some(self.checked),
+                        checked: Some(self.checked.into()),
                         ..SemanticState::default()
                     })
                     .actions(if self.enabled && !self.read_only {

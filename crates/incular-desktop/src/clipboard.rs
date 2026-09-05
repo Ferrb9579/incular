@@ -1,7 +1,7 @@
 use incular_platform::{
     CapabilitySupport, Clipboard, ClipboardCapabilities, ClipboardError, ClipboardWriteReport,
-    DataTransfer, MemoryClipboard, TransferData, TransferFormat, TransferFormatCapabilities,
-    TransferImage, TransferItem, TransferReadRequest, TransferRepresentation,
+    DataTransfer, TransferData, TransferFormat, TransferFormatCapabilities, TransferImage,
+    TransferItem, TransferReadRequest, TransferRepresentation,
 };
 use std::{borrow::Cow, sync::Arc};
 
@@ -66,24 +66,22 @@ pub fn desktop_clipboard_write_report(
     plan_native_clipboard_write(transfer).map(|(_, report)| report)
 }
 
-/// Native desktop clipboard with a deterministic process-local fallback when
-/// the OS service cannot be opened. Capability reporting always describes the
-/// OS bridge, not the fallback cache.
+/// Native desktop clipboard. Initialization failures remain observable on every
+/// read/write; process-local storage requires explicitly selecting MemoryClipboard.
 pub(crate) struct DesktopClipboard {
-    native: Option<arboard::Clipboard>,
-    fallback: MemoryClipboard,
+    native: Result<arboard::Clipboard, ClipboardError>,
 }
 
 impl DesktopClipboard {
     pub(crate) fn new() -> Self {
         Self {
-            native: arboard::Clipboard::new().ok(),
-            fallback: MemoryClipboard::default(),
+            native: arboard::Clipboard::new()
+                .map_err(|error| ClipboardError::Backend(error.to_string())),
         }
     }
 
     pub(crate) fn native_capabilities(&self) -> ClipboardCapabilities {
-        if self.native.is_none() {
+        if self.native.is_err() {
             return ClipboardCapabilities {
                 read: TransferFormatCapabilities::all(CapabilitySupport::Unsupported),
                 write: TransferFormatCapabilities::all(CapabilitySupport::Unsupported),
@@ -249,27 +247,12 @@ impl Clipboard for DesktopClipboard {
     }
 
     fn read(&mut self, request: TransferReadRequest) -> Result<DataTransfer, ClipboardError> {
-        if let Some(native) = self.native.as_mut() {
-            // Once an OS clipboard is available it is the source of truth.
-            // Falling back when a requested representation is absent would
-            // resurrect stale process-local data after another application
-            // replaced the native clipboard.
-            return Self::read_native(native, &request);
-        }
-        self.fallback.read(request)
+        let native = self.native.as_mut().map_err(|error| error.clone())?;
+        Self::read_native(native, &request)
     }
 
     fn write(&mut self, transfer: DataTransfer) -> Result<ClipboardWriteReport, ClipboardError> {
-        let Some(native) = self.native.as_mut() else {
-            return self.fallback.write(transfer);
-        };
-        let report = Self::write_native(native, &transfer)?;
-        if !report.written.is_empty() {
-            let written_transfer = transfer.filtered(&TransferReadRequest::formats(
-                report.written.iter().cloned(),
-            ));
-            let _ = self.fallback.write(written_transfer);
-        }
-        Ok(report)
+        let native = self.native.as_mut().map_err(|error| error.clone())?;
+        Self::write_native(native, &transfer)
     }
 }

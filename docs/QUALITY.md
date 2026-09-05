@@ -37,14 +37,11 @@ through a safe API. Every production unsafe block or unsafe function must:
 4. have focused tests for the surrounding safe contract;
 5. satisfy workspace `unsafe_op_in_unsafe_fn = "deny"`.
 
-Native WGPU surface creation and Windows crash-handler registration cannot
-execute meaningfully under Miri; those boundaries are covered by explicit
-safety documentation, compiler lints, and targeted tests. The current
-production unsafe inventory is intentionally small and every site carries a
-nearby `SAFETY:` justification.
-
-Current production unsafe boundaries are intentionally limited to WGPU raw
-window-handle surface creation and Windows crash-handler registration.
+Native GPU execution and OS FFI cannot execute meaningfully under Miri; use
+native tests plus focused ownership tests for those boundaries. Incular uses
+WGPU's safe surface creation API with an owned window target. Native OS
+adapters still contain unsafe FFI for menus, input, environment, shell services
+and crash reporting; review their lifetime and thread invariants when changed.
 
 ## Dependencies and licenses
 

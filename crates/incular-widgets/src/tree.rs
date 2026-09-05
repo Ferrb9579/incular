@@ -395,6 +395,20 @@ impl InvalidationCause {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HiddenLayout {
+    Offstage,
+    PreserveSpace,
+}
+
+/// Policy for an already-retained child. Removal is resolved before lowering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HiddenVisibility {
+    pub layout: HiddenLayout,
+    pub animation: bool,
+    pub semantics: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RenderKind {
     Box {
@@ -524,6 +538,7 @@ pub enum RenderKind {
     LayoutBuilder,
     Visibility {
         visible: bool,
+        maintain_size: bool,
     },
     AspectRatio {
         ratio: f32,

@@ -164,7 +164,7 @@ impl<T: Clone + PartialEq + 'static> Root<T> {
                     .state(SemanticState {
                         enabled: self.enabled,
                         focusable: self.enabled,
-                        checked: Some(selected),
+                        checked: Some(selected.into()),
                         ..SemanticState::default()
                     })
                     .actions(if self.enabled {

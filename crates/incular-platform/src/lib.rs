@@ -701,8 +701,9 @@ pub enum PlatformLifecycle {
     Resumed,
     Stopping,
 }
-/// Raw handles are passed only to the GPU backend. The Linux window owner must
-/// outlive the created surface; this is documented at the unsafe GPU boundary.
+/// Detached native handles used by platform adapters. These values do not
+/// retain their window or display; adapters must keep their owners alive while
+/// using them. GPU construction uses an owned surface target instead.
 #[derive(Clone, Copy, Debug)]
 pub struct RawWindowHandles {
     pub window: RawWindowHandle,

@@ -11,7 +11,7 @@ fn state(checked: Option<bool>, enabled: bool) -> SemanticState {
     SemanticState {
         enabled,
         focusable: true,
-        checked,
+        checked: checked.map(Into::into),
         ..SemanticState::default()
     }
 }

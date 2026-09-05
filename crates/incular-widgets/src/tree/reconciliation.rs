@@ -534,7 +534,12 @@ impl WidgetTree {
             }
             element.dirty.remove(DirtyFlags::BUILD);
         }
-        if layer_structure_changed {
+        let visibility_changed = matches!(
+            (&old_kind, &new_kind),
+            (RenderKind::Visibility { visible: before, .. },
+             RenderKind::Visibility { visible: after, .. }) if before != after
+        );
+        if layer_structure_changed || visibility_changed {
             self.sync_render_children(id);
         }
         if environment_topology_changed {

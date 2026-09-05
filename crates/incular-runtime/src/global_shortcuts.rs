@@ -1,6 +1,6 @@
 //! Application-scoped native global shortcut requests.
 
-use crate::tasks::RuntimeWake;
+use crate::{request_admission::RequestAdmission, tasks::RuntimeWake};
 use incular_platform::{
     CapabilitySupport, GlobalShortcutChord, GlobalShortcutError, GlobalShortcutId,
     PlatformCapabilities,
@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     task::{Context, Poll},
@@ -250,7 +250,7 @@ pub(crate) struct GlobalShortcutBridge {
     sender: mpsc::Sender<QueuedGlobalShortcutRequest>,
     wake: Mutex<Option<Arc<dyn RuntimeWake>>>,
     next_request: AtomicU64,
-    active: AtomicBool,
+    admission: RequestAdmission,
 }
 
 impl GlobalShortcutBridge {
@@ -259,7 +259,7 @@ impl GlobalShortcutBridge {
             sender,
             wake: Mutex::new(None),
             next_request: AtomicU64::new(1),
-            active: AtomicBool::new(true),
+            admission: RequestAdmission::new(),
         }
     }
 
@@ -268,31 +268,30 @@ impl GlobalShortcutBridge {
         operation: NativeGlobalShortcutOperation,
         wants_result: bool,
     ) -> Result<oneshot::Receiver<Result<(), GlobalShortcutError>>, GlobalShortcutError> {
-        if !self.active.load(Ordering::Acquire) {
-            return Err(GlobalShortcutError::ApplicationStopped);
-        }
-        let request_id = self
-            .next_request
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
+        let receiver = self
+            .admission
+            .admit(|| {
+                let request_id = self
+                    .next_request
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+                    .map(GlobalShortcutRequestId::new)
+                    .map_err(|_| GlobalShortcutError::ApplicationStopped)?;
+                let (sender, receiver) = oneshot::channel();
+                let queued_sender = wants_result.then_some(sender);
+                self.sender
+                    .send(QueuedGlobalShortcutRequest {
+                        request_id,
+                        operation,
+                        sender: queued_sender,
+                    })
+                    .map_err(|_| GlobalShortcutError::ApplicationStopped)?;
+                Ok(receiver)
             })
-            .map(GlobalShortcutRequestId::new)
-            .map_err(|_| GlobalShortcutError::ApplicationStopped)?;
-        let (sender, receiver) = oneshot::channel();
-        let queued_sender = wants_result.then_some(sender);
-        self.sender
-            .send(QueuedGlobalShortcutRequest {
-                request_id,
-                operation,
-                sender: queued_sender,
-            })
-            .map_err(|_| GlobalShortcutError::ApplicationStopped)?;
-        if let Some(wake) = self
-            .wake
-            .lock()
-            .expect("global shortcut wake lock")
-            .as_ref()
-        {
+            .unwrap_or(Err(GlobalShortcutError::ApplicationStopped))?;
+        let wake = self.wake.lock().expect("global shortcut wake lock").clone();
+        if let Some(wake) = wake {
             wake.wake();
         }
         Ok(receiver)
@@ -303,7 +302,7 @@ impl GlobalShortcutBridge {
     }
 
     pub(crate) fn stop(&self) {
-        self.active.store(false, Ordering::Release);
+        self.admission.stop();
         self.wake.lock().expect("global shortcut wake lock").take();
     }
 }

@@ -11,6 +11,7 @@ mod frame;
 mod global_shortcuts;
 mod profiling;
 mod reactive;
+mod request_admission;
 mod restoration;
 mod simulation;
 mod tasks;

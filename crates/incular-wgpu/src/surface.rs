@@ -141,3 +141,30 @@ impl std::fmt::Display for SurfaceAlphaError {
 }
 
 impl std::error::Error for SurfaceAlphaError {}
+
+/// Shared ownership of a native window and its display-handle provider.
+///
+/// Surfaces and renderers retain this target, including while asynchronous
+/// initialization is pending and when a lost surface is recreated. Dropping
+/// the caller's window reference therefore cannot invalidate a GPU surface.
+/// Native backend thread requirements still apply (for example, create Metal
+/// surfaces on the main thread).
+#[derive(Clone)]
+pub struct WindowSurfaceTarget {
+    owner: std::sync::Arc<dyn wgpu::DisplayAndWindowHandle>,
+}
+
+impl WindowSurfaceTarget {
+    /// Retains a window that provides borrowed, lifetime-bound native handles.
+    #[must_use]
+    pub fn new<W: wgpu::DisplayAndWindowHandle + 'static>(window: std::sync::Arc<W>) -> Self {
+        Self { owner: window }
+    }
+
+    pub(crate) fn create_surface(
+        &self,
+        instance: &wgpu::Instance,
+    ) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+        instance.create_surface(self.owner.clone())
+    }
+}

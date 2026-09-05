@@ -45,7 +45,7 @@ pub enum PopDecision {
 pub enum PopResult {
     /// The top route was removed.
     Popped(Box<Route>),
-    /// A registered guard declined the mutation.
+    /// A guard declined the mutation or changed the stack during its callback.
     Blocked,
     /// The navigator was empty.
     Empty,
@@ -345,11 +345,16 @@ impl Navigator {
         state.revision = state.revision.wrapping_add(1);
     }
     /// Attempts a guarded pop. Unlike [`Self::pop`], this distinguishes an
-    /// empty navigator from a route that deliberately blocked navigation.
+    /// empty navigator from a blocked operation. If a guard mutates the stack,
+    /// its changes remain and this outer operation returns `Blocked`.
     pub fn maybe_pop(&self) -> PopResult {
-        let (candidate, guard) = {
+        let (candidate, guard, revision) = {
             let state = self.state.borrow();
-            (state.routes.last().cloned(), state.pop_guard.clone())
+            (
+                state.routes.last().cloned(),
+                state.pop_guard.clone(),
+                state.revision,
+            )
         };
         let Some(candidate) = candidate else {
             return PopResult::Empty;
@@ -359,6 +364,11 @@ impl Navigator {
         }
         let (route, cleanup) = {
             let mut state = self.state.borrow_mut();
+            if state.revision != revision
+                || state.routes.last().map(|route| route.id) != Some(candidate.id)
+            {
+                return PopResult::Blocked;
+            }
             let route = state
                 .routes
                 .pop()
@@ -388,10 +398,16 @@ impl Navigator {
             PopResult::Blocked | PopResult::Empty => None,
         }
     }
+    /// Replaces the guarded top route. Returns `None` without replacing when
+    /// a guard denies the operation or mutates the stack during its callback.
     pub fn replace(&self, mut route: Route) -> Option<Route> {
-        let (candidate, guard) = {
+        let (candidate, guard, revision) = {
             let state = self.state.borrow();
-            (state.routes.last().cloned(), state.pop_guard.clone())
+            (
+                state.routes.last().cloned(),
+                state.pop_guard.clone(),
+                state.revision,
+            )
         };
         let Some(candidate) = candidate else {
             self.push(route);
@@ -402,6 +418,11 @@ impl Navigator {
         }
         let (previous, route, cleanup) = {
             let mut state = self.state.borrow_mut();
+            if state.revision != revision
+                || state.routes.last().map(|route| route.id) != Some(candidate.id)
+            {
+                return None;
+            }
             let previous = state
                 .routes
                 .pop()
@@ -463,7 +484,8 @@ pub struct BackDispatchReport {
     pub handled: bool,
     /// Depth of the navigator that handled or blocked the action. Root is 0.
     pub depth: usize,
-    /// `true` when a pop guard consumed the action without mutating a stack.
+    /// `true` when a pop guard blocked the outer operation (including when
+    /// the guard itself changed the stack).
     pub blocked: bool,
 }
 impl BackDispatchReport {

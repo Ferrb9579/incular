@@ -9,13 +9,14 @@
 
 #[allow(unused_imports)]
 mod prelude {
+    pub(crate) use crate::WindowSurfaceTarget;
     pub(crate) use bytemuck::{Pod, Zeroable};
     pub(crate) use fontdue::{Font, FontSettings};
     pub(crate) use incular_assets::FontId;
     pub(crate) use incular_config::TransparencyMode;
     pub(crate) use incular_core::{Color, Offset, Rect, Size, Transform};
     pub(crate) use incular_image::{ImageHandle, ImageId};
-    pub(crate) use incular_platform::{PhysicalSize, RawWindowHandles};
+    pub(crate) use incular_platform::PhysicalSize;
     pub(crate) use incular_rendering as incular_painting;
     pub(crate) use incular_rendering::{
         BlendMode, Brush, ColorFilter, DisplayList, DropShadowEffect, FillRule, GaussianBlur,
@@ -63,7 +64,9 @@ pub use resources::{
     SharedGpuContext, SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry,
     WindowGpuPresentation, WindowGpuState,
 };
-pub use surface::{SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation};
+pub use surface::{
+    SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation, WindowSurfaceTarget,
+};
 
 pub(crate) use compositor::*;
 pub(crate) use constants::*;

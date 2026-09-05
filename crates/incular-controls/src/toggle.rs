@@ -161,7 +161,7 @@ impl Toggle {
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
-                    checked: Some(pressed),
+                    checked: Some(pressed.into()),
                     ..SemanticState::default()
                 })
                 .actions(if self.enabled {

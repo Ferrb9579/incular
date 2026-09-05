@@ -5,7 +5,19 @@ use typed_builder::TypedBuilder;
 use super::SizedBox;
 use crate::{Widget, WidgetKind};
 
-/// Conditionally displays a child or hides it from layout, paint, hit-testing, and semantics.
+/// Conditionally displays a child.
+///
+/// Hidden children are replaced unless any preservation option is enabled.
+/// Each preservation option implies retention; callers need not also enable
+/// `maintain_state`. Retained children are measured but occupy no space unless
+/// `maintain_size` is enabled (parent minimum constraints still apply).
+/// Hidden children never paint or receive pointer hits. Retained focus and
+/// keyboard participation are unchanged; use `ExcludeFocus` to suppress them.
+///
+/// `maintain_animation` keeps tree-driven ticks running while hidden. Otherwise
+/// ticks are muted, not paused: elapsed time catches up when shown again. A
+/// controller shared with a visible subtree can still advance there.
+/// `maintain_semantics` keeps the measured child's semantics available.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Visibility {
     #[builder(default = true)]
@@ -58,6 +70,18 @@ impl Visibility {
     }
 
     #[must_use]
+    pub fn maintain_animation(mut self, maintain: bool) -> Self {
+        self.maintain_animation = maintain;
+        self
+    }
+
+    #[must_use]
+    pub fn maintain_semantics(mut self, maintain: bool) -> Self {
+        self.maintain_semantics = maintain;
+        self
+    }
+
+    #[must_use]
     pub fn replacement(mut self, replacement: impl Into<Widget>) -> Self {
         self.replacement = Some(replacement.into());
         self
@@ -66,13 +90,27 @@ impl Visibility {
 
 impl From<Visibility> for Widget {
     fn from(value: Visibility) -> Self {
-        if !value.visible && !value.maintain_state && !value.maintain_size {
+        if !value.visible
+            && !(value.maintain_state
+                || value.maintain_size
+                || value.maintain_animation
+                || value.maintain_semantics)
+        {
             value
                 .replacement
                 .unwrap_or_else(|| SizedBox::shrink().into())
         } else {
             Widget::from_kind(WidgetKind::Visibility {
                 visible: value.visible,
+                hidden: crate::tree::HiddenVisibility {
+                    layout: if value.maintain_size {
+                        crate::tree::HiddenLayout::PreserveSpace
+                    } else {
+                        crate::tree::HiddenLayout::Offstage
+                    },
+                    animation: value.maintain_animation,
+                    semantics: value.maintain_semantics,
+                },
                 child: value.child,
             })
         }
@@ -80,6 +118,9 @@ impl From<Visibility> for Widget {
 }
 
 /// Hides its child offstage without unmounting the retained element.
+/// The child is measured, retains focus and keeps animations running, but
+/// occupies no space beyond parent minimum constraints and has no paint,
+/// pointer hits or semantics while offstage.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Offstage {
     #[builder(default = true)]
@@ -110,6 +151,7 @@ impl From<Offstage> for Widget {
         Visibility::new(value.child)
             .visible(!value.offstage)
             .maintain_state(true)
+            .maintain_animation(true)
             .into()
     }
 }

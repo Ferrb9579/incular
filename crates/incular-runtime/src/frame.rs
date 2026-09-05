@@ -1539,10 +1539,12 @@ impl Runtime {
             self.set_focus(Some(next));
             return;
         }
+        // Activate the focused surface itself. Only menus delegate activation
+        // from a focused descendant; nested editors retain their own keys.
         if matches!(event.code, Code::Enter | Code::NumpadEnter | Code::Space)
             && let Some(focused) = self.focused
-            && self.tree.is_menu_item_focus(focused)
-            && let Some((_, action)) = self.tree.action_ancestor(focused)
+            && let Some((owner, Some(action))) = self.tree.button_ancestor(focused)
+            && (owner == focused || self.tree.is_menu_item_focus(focused))
             && let Some(callback) = self.handlers.get(&action).cloned()
         {
             callback();

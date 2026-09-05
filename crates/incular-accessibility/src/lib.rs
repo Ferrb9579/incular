@@ -722,10 +722,10 @@ impl AccessKitProjection {
             node.set_selected(true);
         }
         if let Some(checked) = semantic.state.checked {
-            node.set_toggled(if checked {
-                Toggled::True
-            } else {
-                Toggled::False
+            node.set_toggled(match checked {
+                incular_semantics::CheckedState::Checked => Toggled::True,
+                incular_semantics::CheckedState::Unchecked => Toggled::False,
+                incular_semantics::CheckedState::Indeterminate => Toggled::Mixed,
             });
         }
         if let Some(expanded) = semantic.state.expanded {

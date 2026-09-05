@@ -421,6 +421,7 @@ pub(crate) enum WidgetKind {
     },
     Visibility {
         visible: bool,
+        hidden: super::HiddenVisibility,
         child: Widget,
     },
     AspectRatio {

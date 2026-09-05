@@ -16,7 +16,7 @@ impl WgpuRenderer {
                 Ok(None)
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.shared.create_surface(self.handles)?;
+                self.surface = self.shared.create_surface(self.target.clone())?;
                 self.refresh_surface_alpha_plan()?;
                 self.surface.configure(&self.device, &self.config);
                 self.window_gpu.presentation.surface_lost();

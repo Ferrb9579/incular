@@ -188,7 +188,12 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
             index: *index,
         },
         WidgetKind::LayoutBuilder { .. } => RenderKind::LayoutBuilder,
-        WidgetKind::Visibility { visible, .. } => RenderKind::Visibility { visible: *visible },
+        WidgetKind::Visibility {
+            visible, hidden, ..
+        } => RenderKind::Visibility {
+            visible: *visible,
+            maintain_size: hidden.layout == HiddenLayout::PreserveSpace,
+        },
         WidgetKind::AspectRatio { ratio, .. } => RenderKind::AspectRatio { ratio: *ratio },
         _ => unreachable!("layout lowering received a non-layout widget"),
     }

@@ -133,14 +133,14 @@ impl Semantics {
     }
 
     #[must_use]
-    pub fn checked(mut self, checked: bool) -> Self {
-        self.state.checked = Some(checked);
+    pub fn checked(mut self, checked: impl Into<incular_semantics::CheckedState>) -> Self {
+        self.state.checked = Some(checked.into());
         self
     }
 
     #[must_use]
     pub fn toggled(mut self, toggled: bool) -> Self {
-        self.state.checked = Some(toggled);
+        self.state.checked = Some(toggled.into());
         self
     }
 

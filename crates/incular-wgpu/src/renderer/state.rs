@@ -108,28 +108,27 @@ impl WgpuRenderer {
         }
     }
 
-    /// # Safety boundary
-    /// `handles` must describe a window that outlives this renderer.
+    /// Creates a renderer retaining its native window through an owned target.
     pub async fn new(
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
         size: PhysicalSize,
         transparency_mode: TransparencyMode,
         background_color: Color,
     ) -> Result<Self, RendererError> {
-        let shared = SharedGpuContext::new(handles, transparency_mode).await?;
-        Self::new_with_shared(shared, handles, size, transparency_mode, background_color).await
+        let shared = SharedGpuContext::new(target.clone(), transparency_mode).await?;
+        Self::new_with_shared(shared, target, size, transparency_mode, background_color).await
     }
     /// Creates a renderer for one native window using an existing shared GPU
     /// device context. No `wgpu::Instance`, adapter, device, or queue is
     /// recreated by this method.
     pub async fn new_with_shared(
         shared: SharedGpuContext,
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
         size: PhysicalSize,
         transparency_mode: TransparencyMode,
         background_color: Color,
     ) -> Result<Self, RendererError> {
-        let surface = shared.create_surface(handles)?;
+        let surface = shared.create_surface(target.clone())?;
         let device = shared.inner.device.clone();
         let queue = shared.inner.queue.clone();
         let texture_limit = device.limits().max_texture_dimension_2d;
@@ -142,7 +141,7 @@ impl WgpuRenderer {
         let capabilities = surface.get_capabilities(&shared.inner.adapter);
         let mut config = surface
             .get_default_config(&shared.inner.adapter, size.width.max(1), size.height.max(1))
-            .expect("surface config");
+            .ok_or(RendererError::SurfaceConfigurationUnsupported)?;
         let alpha_plan = SurfaceAlphaPlan::select(transparency_mode, &capabilities.alpha_modes)
             .map_err(RendererError::SurfaceAlpha)?;
         config.alpha_mode = alpha_plan.composite_mode();
@@ -159,7 +158,7 @@ impl WgpuRenderer {
         if let Some(pipelines) = shared.pipeline_resources(config.format) {
             return Self::from_shared_pipeline_resources(
                 shared,
-                handles,
+                target,
                 surface,
                 config,
                 alpha_plan,
@@ -240,7 +239,7 @@ impl WgpuRenderer {
         Ok(Self {
             shared,
             window_gpu: WindowGpuState {
-                handles,
+                target,
                 surface,
                 config,
                 transparency_mode,
@@ -340,7 +339,7 @@ impl WgpuRenderer {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn from_shared_pipeline_resources(
         shared: SharedGpuContext,
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
         surface: wgpu::Surface<'static>,
         config: wgpu::SurfaceConfiguration,
         alpha_plan: SurfaceAlphaPlan,
@@ -386,7 +385,7 @@ impl WgpuRenderer {
         Ok(Self {
             shared,
             window_gpu: WindowGpuState {
-                handles,
+                target,
                 surface,
                 config,
                 transparency_mode,

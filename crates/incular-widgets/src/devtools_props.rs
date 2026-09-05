@@ -278,8 +278,24 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
                 DebugValue::Float(f64::from(config.cache_extent)),
             ));
         }
-        WidgetKind::Visibility { visible, child } => {
+        WidgetKind::Visibility {
+            visible,
+            hidden,
+            child,
+        } => {
             out.push(prop("visible", DebugValue::Bool(*visible)));
+            out.push(prop(
+                "maintainSize",
+                DebugValue::Bool(hidden.layout == crate::tree::HiddenLayout::PreserveSpace),
+            ));
+            out.push(prop(
+                "maintainAnimation",
+                DebugValue::Bool(hidden.animation),
+            ));
+            out.push(prop(
+                "maintainSemantics",
+                DebugValue::Bool(hidden.semantics),
+            ));
             summarize_child(&mut out, child);
         }
         WidgetKind::Gesture {

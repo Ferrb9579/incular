@@ -1,0 +1,12 @@
+error[E0521]: borrowed data escapes outside of function
+ --> tests/ui/borrowed_surface_target.rs:6:5
+  |
+5 | fn from_borrowed(window: &support::Window) -> WindowSurfaceTarget {
+  |                  ------  - let's call the lifetime of this reference `'1`
+  |                  |
+  |                  `window` is a reference that is only valid in the function body
+6 |     WindowSurfaceTarget::new(Arc::new(window))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     |
+  |     `window` escapes the function body here
+  |     argument requires that `'1` must outlive `'static`

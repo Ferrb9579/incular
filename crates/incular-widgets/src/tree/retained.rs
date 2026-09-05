@@ -516,17 +516,23 @@ impl WidgetTree {
                 let mut transient_parent = None;
                 while let Some(ancestor) = parent {
                     let ancestor_element = self.elements.get(ancestor.0)?;
-                    if ancestor_element
-                        .environment_override
-                        .as_ref()
-                        .and_then(|scope| scope.value.downcast_ref::<TransientPortalMarker>())
-                        .is_some_and(|ancestor_marker| ancestor_marker.show)
+                    if matches!(
+                        ancestor_element.widget.kind(),
+                        WidgetKind::Visibility { visible: false, .. }
+                    ) {
+                        return None;
+                    }
+                    if transient_parent.is_none()
+                        && ancestor_element
+                            .environment_override
+                            .as_ref()
+                            .and_then(|scope| scope.value.downcast_ref::<TransientPortalMarker>())
+                            .is_some_and(|ancestor_marker| ancestor_marker.show)
                     {
                         transient_parent = Some(TransientSurfaceId::from_parts(
                             ancestor.0.index(),
                             ancestor.0.generation(),
                         ));
-                        break;
                     }
                     parent = ancestor_element.parent;
                 }

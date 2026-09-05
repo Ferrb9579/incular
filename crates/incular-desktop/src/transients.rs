@@ -28,9 +28,9 @@ pub(super) struct NativeTransientState {
     native_rect: incular_core::Rect,
     requested_position: Option<PhysicalPosition<i32>>,
     visible: bool,
-    /// The WGPU surface borrows this native handle contractually; declaring the
-    /// window last guarantees the renderer is dropped first.
-    window: Window,
+    /// The renderer also owns this window through its surface target. Keeping
+    /// the host reference last preserves renderer-before-window teardown.
+    window: Arc<Window>,
 }
 
 impl MultiApp {
@@ -304,7 +304,7 @@ impl MultiApp {
         };
 
         let window = match target.create_window(attributes) {
-            Ok(window) => window,
+            Ok(window) => Arc::new(window),
             Err(error) => {
                 eprintln!("Incular transient window error: {error}");
                 return false;
@@ -319,9 +319,9 @@ impl MultiApp {
             self.track_native_window_drop(native_id);
             return false;
         };
-        let handles = raw_window_handles(&window);
+        let surface_target = incular_wgpu::WindowSurfaceTarget::new(window.clone());
         let transparent_renderer = pollster::block_on(shared.create_renderer(
-            handles,
+            surface_target.clone(),
             metrics.physical_size,
             TransparencyMode::Transparent,
             Color::TRANSPARENT,
@@ -329,7 +329,7 @@ impl MultiApp {
         let (renderer, requires_opaque_surface_base) = match transparent_renderer {
             Ok(renderer) => (renderer, false),
             Err(RendererError::SurfaceAlpha(_)) => match pollster::block_on(shared.create_renderer(
-                handles,
+                surface_target.clone(),
                 metrics.physical_size,
                 TransparencyMode::Opaque,
                 Color::TRANSPARENT,

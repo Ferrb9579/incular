@@ -768,6 +768,26 @@ impl WidgetTree {
             .root
             .and_then(|root| self.devtools_trace_begin_element(root, TracePhase::Composite));
         let now = self.animation_now(now);
+        // Walk once, carrying ancestor muting through nested visibility wrappers.
+        // Only ticking is gated; explicit controller changes still reach layers.
+        let mut muted = HashSet::new();
+        let mut pending = self
+            .root
+            .into_iter()
+            .map(|root| (root, false))
+            .collect::<Vec<_>>();
+        while let Some((id, ancestor_muted)) = pending.pop() {
+            let Some(element) = self.elements.get(id.0) else {
+                continue;
+            };
+            let is_muted = ancestor_muted
+                || matches!(element.widget.kind(),
+                WidgetKind::Visibility { visible: false, hidden, .. } if !hidden.animation);
+            if is_muted {
+                muted.insert(element.render);
+            }
+            pending.extend(element.children.iter().map(|child| (*child, is_muted)));
+        }
         let nodes = self
             .renders
             .iter()
@@ -782,6 +802,7 @@ impl WidgetTree {
         let mut changed = false;
         let mut active = false;
         for (_render, kind, layers) in nodes {
+            let ticking = !muted.contains(&_render);
             let constraints = self
                 .renders
                 .get(_render.0)
@@ -817,7 +838,7 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::SliverViewport { config } => {
-                    if config.delegate.tick(now) {
+                    if ticking && config.delegate.tick(now) {
                         changed = true;
                         self.diagnostics.animation_ticks += 1;
                         self.mark_render_dirty(
@@ -826,7 +847,7 @@ impl WidgetTree {
                             true,
                         );
                     }
-                    active |= config.delegate.is_animating();
+                    active |= ticking && config.delegate.is_animating();
                     if let Some(content) = layers.content()
                         && self.compositor.update_transform(
                             content,
@@ -894,10 +915,10 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::Translate { controller } => {
-                    if controller.tick(now) {
+                    if ticking && controller.tick(now) {
                         self.diagnostics.animation_ticks += 1;
                     }
-                    active |= controller.is_active();
+                    active |= ticking && controller.is_active();
                     // Layout placement lives on `layer`; the inner retained
                     // transform carries only the compositor-only movement.
                     if let Some(content) = layers.content()
@@ -925,10 +946,10 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::Scale { controller, origin } => {
-                    if controller.tick(now) {
+                    if ticking && controller.tick(now) {
                         self.diagnostics.animation_ticks += 1;
                     }
-                    active |= controller.is_active();
+                    active |= ticking && controller.is_active();
                     if let Some(content) = layers.content() {
                         let size = self
                             .render_live(_render, "retained render must remain live")
@@ -951,10 +972,10 @@ impl WidgetTree {
                     origin,
                     alignment,
                 } => {
-                    if controller.tick(now) {
+                    if ticking && controller.tick(now) {
                         self.diagnostics.animation_ticks += 1;
                     }
-                    active |= controller.is_active();
+                    active |= ticking && controller.is_active();
                     if let Some(content) = layers.content() {
                         let size = self
                             .render_live(_render, "retained render must remain live")
@@ -997,10 +1018,10 @@ impl WidgetTree {
                 }
                 RenderKind::Opacity { alpha, controller } => {
                     if let Some(controller) = controller {
-                        if controller.tick(now) {
+                        if ticking && controller.tick(now) {
                             self.diagnostics.animation_ticks += 1;
                         }
-                        active |= controller.is_active();
+                        active |= ticking && controller.is_active();
                         if let Some(opacity) = layers.opacity()
                             && self
                                 .compositor
@@ -1024,10 +1045,10 @@ impl WidgetTree {
                     let mut sigma_x = sigma_x;
                     let mut sigma_y = sigma_y;
                     if let Some(controller) = controller {
-                        if controller.tick(now) {
+                        if ticking && controller.tick(now) {
                             self.diagnostics.animation_ticks += 1;
                         }
-                        active |= controller.is_active();
+                        active |= ticking && controller.is_active();
                         sigma_x = controller.sigma();
                         sigma_y = sigma_x;
                     }
@@ -1049,10 +1070,10 @@ impl WidgetTree {
                 } => {
                     let mut shadow = DropShadowEffect::asymmetric(offset, sigma_x, sigma_y, color);
                     if let Some(controller) = controller {
-                        if controller.tick(now) {
+                        if ticking && controller.tick(now) {
                             self.diagnostics.animation_ticks += 1;
                         }
-                        active |= controller.is_active();
+                        active |= ticking && controller.is_active();
                         shadow = DropShadowEffect::new(
                             controller.offset(),
                             controller.sigma(),
@@ -1069,10 +1090,10 @@ impl WidgetTree {
                 RenderKind::ColorFiltered { filter, controller } => {
                     let mut filter = filter;
                     if let Some(controller) = controller {
-                        if controller.tick(now) {
+                        if ticking && controller.tick(now) {
                             self.diagnostics.animation_ticks += 1;
                         }
-                        active |= controller.is_active();
+                        active |= ticking && controller.is_active();
                         filter = controller.filter();
                     }
                     if let Some(layer) = layers.color_filter()

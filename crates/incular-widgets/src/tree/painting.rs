@@ -101,7 +101,10 @@ impl WidgetTree {
             .and_then(|element| self.elements.get(element.0))
             .map(|element| element.widget.kind());
         if matches!(kind, Some(WidgetKind::IgnorePointer { ignoring: true, .. }))
-            || matches!(node.object.kind, RenderKind::Visibility { visible: false })
+            || matches!(
+                node.object.kind,
+                RenderKind::Visibility { visible: false, .. }
+            )
         {
             return RawHitResult::default();
         }
@@ -253,7 +256,7 @@ impl WidgetTree {
             self.render_live(id, "retained render must remain live")
                 .object
                 .kind,
-            RenderKind::Visibility { visible: false }
+            RenderKind::Visibility { visible: false, .. }
         ) {
             return;
         }
@@ -600,7 +603,10 @@ impl WidgetTree {
         if !Rect::from_origin_size(current, node.size).contains(point) {
             return None;
         }
-        if matches!(node.object.kind, RenderKind::Visibility { visible: false }) {
+        if matches!(
+            node.object.kind,
+            RenderKind::Visibility { visible: false, .. }
+        ) {
             return None;
         }
         let child_origin = match &node.object.kind {

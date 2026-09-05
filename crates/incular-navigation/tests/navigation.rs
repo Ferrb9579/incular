@@ -11,6 +11,38 @@ fn page() -> Widget {
 }
 
 #[test]
+fn guarded_pop_does_not_remove_a_route_pushed_by_the_guard() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("candidate", page()));
+    let reentrant = navigator.clone();
+    navigator.set_pop_guard(move |_| {
+        reentrant.push_page(Page::new("unapproved", page()));
+        PopDecision::Allow
+    });
+    assert!(matches!(navigator.maybe_pop(), PopResult::Blocked));
+    assert_eq!(navigator.current().unwrap().name, "unapproved");
+    assert_eq!(navigator.routes().len(), 2);
+}
+
+#[test]
+fn guarded_replace_handles_a_guard_removing_the_candidate() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("candidate", page()));
+    let reentrant = navigator.clone();
+    navigator.set_pop_guard(move |_| {
+        reentrant.clear_pop_guard();
+        let _ = reentrant.pop();
+        PopDecision::Allow
+    });
+    assert!(
+        navigator
+            .replace(Route::new("replacement", page()))
+            .is_none()
+    );
+    assert!(navigator.current().is_none());
+}
+
+#[test]
 fn route_settings_round_trip_typed_arguments_and_scope() {
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Args {

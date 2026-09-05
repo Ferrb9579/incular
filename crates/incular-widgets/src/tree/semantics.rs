@@ -127,7 +127,7 @@ impl WidgetTree {
         if entry.widget.semantic_properties().hidden
             || matches!(
                 entry.widget.kind(),
-                WidgetKind::Visibility { visible: false, .. }
+                WidgetKind::Visibility { visible: false, hidden, .. } if !hidden.semantics
             )
         {
             return Vec::new();

@@ -819,7 +819,7 @@ fn stack_aligns_children_and_hits_the_frontmost_child() {
 }
 
 #[test]
-fn invisible_widgets_skip_child_layout_hit_testing_and_semantics() {
+fn invisible_retained_widgets_skip_hit_testing_and_semantics() {
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(

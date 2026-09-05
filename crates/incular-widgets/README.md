@@ -1,5 +1,8 @@
 # incular-widgets
 
+Visibility preservation options, offstage measurement, retained focus, and
+animation muting are specified in [Visibility behavior](../../docs/VISIBILITY.md).
+
 ## Frame recursion diagnostics
 
 Build, layout, paint, semantics, and compositor traversal track their active

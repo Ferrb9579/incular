@@ -555,6 +555,12 @@ impl RenderLayers {
         kind: &RenderKind,
         mut child_layers: Vec<LayerId>,
     ) {
+        if matches!(kind, RenderKind::Visibility { visible: false, .. }) {
+            // Disconnect cached child pictures as well as skipping new paint.
+            // The retained layers remain owned and reconnect when shown.
+            compositor.set_children(self.root, Vec::new());
+            return;
+        }
         if matches!(kind, RenderKind::Banner { .. }) {
             let mut layers = child_layers;
             if let (Some(shadow), Some(picture)) = (self.shadow(), self.picture) {

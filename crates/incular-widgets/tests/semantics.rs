@@ -31,7 +31,7 @@ fn semantic_state_and_explicit_actions_survive_widget_conversion() {
     assert_eq!(explicit.value.as_deref(), Some("on"));
     assert!(explicit.state.enabled);
     assert!(explicit.state.selected);
-    assert_eq!(explicit.state.checked, Some(true));
+    assert_eq!(explicit.state.checked, Some(true.into()));
     assert!(explicit.state.focused);
     assert!(explicit.state.read_only);
     assert!(explicit.state.multiline);

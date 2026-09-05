@@ -360,9 +360,14 @@ impl std::fmt::Debug for WidgetKind {
                 .field("children", children)
                 .finish(),
             Self::LayoutBuilder { .. } => f.debug_struct("LayoutBuilder").finish(),
-            Self::Visibility { visible, child } => f
+            Self::Visibility {
+                visible,
+                hidden,
+                child,
+            } => f
                 .debug_struct("Visibility")
                 .field("visible", visible)
+                .field("hidden", hidden)
                 .field("child", child)
                 .finish(),
             Self::AspectRatio { ratio, child } => f
@@ -1414,14 +1419,16 @@ impl PartialEq for WidgetKind {
             }
             (
                 Self::Visibility {
+                    hidden: policy_a,
                     visible: a,
                     child: b,
                 },
                 Self::Visibility {
+                    hidden: policy_b,
                     visible: c,
                     child: d,
                 },
-            ) => a == c && b == d,
+            ) => a == c && b == d && policy_a == policy_b,
             (
                 Self::AspectRatio { ratio: a, child: b },
                 Self::AspectRatio { ratio: c, child: d },

@@ -24,6 +24,53 @@ fn shortcut_capabilities(support: CapabilitySupport) -> PlatformCapabilities {
 }
 
 #[test]
+fn shortcut_shutdown_resolves_queued_and_dispatched_work_while_application_stays_alive() {
+    for dispatched in [false, true] {
+        let mut application = application();
+        application.set_platform_capabilities(shortcut_capabilities(CapabilitySupport::Supported));
+        let shortcuts = application.global_shortcuts();
+        let chord = GlobalShortcutChord::new(Code::KeyR, Modifiers::CONTROL).unwrap();
+        let request = shortcuts.register(GlobalShortcutId::new(1), chord).unwrap();
+        let native = dispatched.then(|| {
+            application
+                .take_native_global_shortcut_requests()
+                .pop()
+                .unwrap()
+        });
+        application.shutdown();
+        assert!(matches!(
+            pollster::block_on(request),
+            Err(GlobalShortcutError::ApplicationStopped)
+        ));
+        assert!(matches!(
+            shortcuts.register(GlobalShortcutId::new(2), chord),
+            Err(GlobalShortcutError::ApplicationStopped)
+        ));
+        assert!(
+            application
+                .take_native_global_shortcut_requests()
+                .is_empty()
+        );
+        if let Some(native) = native {
+            let completion = incular_runtime::NativeGlobalShortcutCompletion {
+                request_id: native.request_id,
+                result: Ok(()),
+            };
+            assert_eq!(
+                application.complete_global_shortcut_request(completion),
+                GlobalShortcutCompletionStatus::UnknownRequest
+            );
+        }
+        application.shutdown();
+        assert!(
+            application
+                .take_native_global_shortcut_requests()
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn activations_buffer_before_first_listener_and_drain_in_exact_order() {
     let mut application = application();
     let activations = application.activations();

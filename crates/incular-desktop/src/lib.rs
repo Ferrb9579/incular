@@ -44,9 +44,9 @@ use incular_platform::{
     UserAttentionType, WindowCommand, WindowEvent as IncularWindowEvent, WindowIcon,
     WindowId as IncularWindowId, WindowLevel, WindowLifecycle, WindowMetrics, WindowObservedState,
     WindowOperation, WindowOptions, apply_text_input_command, ime_event, key_event,
-    native_window_system, pointer_event_with_metadata, raw_window_handles, text_event,
-    touch_event_with_native_sample, trackpad_pan_event, trackpad_pinch_event,
-    trackpad_pressure_event, trackpad_rotation_event, trackpad_smart_magnify_event, wheel_event,
+    native_window_system, pointer_event_with_metadata, text_event, touch_event_with_native_sample,
+    trackpad_pan_event, trackpad_pinch_event, trackpad_pressure_event, trackpad_rotation_event,
+    trackpad_smart_magnify_event, wheel_event,
 };
 use incular_rendering::DisplayList;
 use incular_runtime::{
@@ -132,8 +132,8 @@ fn runtime_render_metrics(stats: &RenderStats) -> RenderFrameMetrics {
         ..RenderFrameMetrics::default()
     }
 }
-/// Runs a native desktop window until close. The native window stays alive for the
-/// complete lifetime of the renderer's unsafe raw-handle surface.
+/// Runs a native desktop window until close. The renderer's owned surface target
+/// keeps the native window alive for the complete surface lifetime.
 pub fn run_window(
     runtime: Runtime,
     on_action: impl FnMut(ActionId) + 'static,
@@ -477,7 +477,7 @@ struct App<F: FnMut(ActionId)> {
     platform_services: Box<dyn DesktopPlatformServices>,
     /// Declared last so renderer/accessibility raw-handle users are dropped
     /// before the native window itself.
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
 }
 
 /// One AccessKit adapter/projection pair belongs to exactly one native window.
@@ -502,7 +502,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
                 ))
                 .with_visible(false),
         ) {
-            Ok(window) => window,
+            Ok(window) => Arc::new(window),
             Err(error) => {
                 eprintln!("Incular window error: {error}");
                 loop_target.exit();
@@ -514,7 +514,7 @@ impl<F: FnMut(ActionId)> ApplicationHandler<RuntimeWakeEvent> for App<F> {
             window.scale_factor(),
         );
         let renderer = match pollster::block_on(WgpuRenderer::new(
-            raw_window_handles(&window),
+            incular_wgpu::WindowSurfaceTarget::new(window.clone()),
             metrics.physical_size,
             TransparencyMode::Opaque,
             defaults.background_color,
@@ -956,7 +956,7 @@ impl<F: FnMut(ActionId)> App<F> {
             && self
                 .window
                 .as_ref()
-                .and_then(Window::is_minimized)
+                .and_then(|window| window.is_minimized())
                 .is_none_or(|minimized| !minimized)
     }
 
@@ -1159,7 +1159,7 @@ struct NativeWindowState {
     content_sensitivity: NoopContentSensitivityBackend,
     /// Must outlive every field that was created from this window's raw
     /// handles. Struct fields drop in declaration order, so keep it last.
-    window: Window,
+    window: Arc<Window>,
 }
 
 /// Winit 0.30 adapter for an [`Application`] with many retained roots. Native
@@ -1281,7 +1281,7 @@ impl MultiApp {
                     .window_id
                     .and_then(|id| self.native_ids.get(&id))
                     .and_then(|native_id| self.windows.get(native_id))
-                    .map(|state| &state.window),
+                    .map(|state| state.window.as_ref()),
                 _ => None,
             };
             let result = self.platform_services.apply_application_shell_request(
@@ -1497,7 +1497,7 @@ impl MultiApp {
             }
         };
         let window = match target.create_window(attributes) {
-            Ok(window) => window,
+            Ok(window) => Arc::new(window),
             Err(error) => {
                 eprintln!("Incular window error: {error}");
                 let _ = self.application.close_window(id);
@@ -1511,20 +1511,22 @@ impl MultiApp {
             PhysicalSize::new(window.inner_size().width, window.inner_size().height),
             window.scale_factor(),
         );
-        let handles = raw_window_handles(&window);
+        let surface_target = incular_wgpu::WindowSurfaceTarget::new(window.clone());
         let renderer = match self.shared_gpu.clone() {
             Some(shared) => pollster::block_on(shared.create_renderer(
-                handles,
+                surface_target.clone(),
                 metrics.physical_size,
                 options.transparency_mode,
                 options.background_color,
             )),
             None => {
-                match pollster::block_on(SharedGpuContext::new(handles, options.transparency_mode))
-                {
+                match pollster::block_on(SharedGpuContext::new(
+                    surface_target.clone(),
+                    options.transparency_mode,
+                )) {
                     Ok(shared) => {
                         let renderer = pollster::block_on(shared.create_renderer(
-                            handles,
+                            surface_target.clone(),
                             metrics.physical_size,
                             options.transparency_mode,
                             options.background_color,

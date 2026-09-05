@@ -90,13 +90,50 @@ pub struct TextSelection {
     pub extent: usize,
 }
 
+/// Value of a checkable control. `None` in [`SemanticState::checked`] means the
+/// node is not checkable; an indeterminate control is still checkable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CheckedState {
+    #[default]
+    Unchecked,
+    Checked,
+    Indeterminate,
+}
+
+impl CheckedState {
+    #[must_use]
+    pub const fn is_checked(self) -> bool {
+        matches!(self, Self::Checked)
+    }
+}
+
+impl From<bool> for CheckedState {
+    fn from(checked: bool) -> Self {
+        if checked {
+            Self::Checked
+        } else {
+            Self::Unchecked
+        }
+    }
+}
+
+impl std::fmt::Display for CheckedState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Unchecked => "false",
+            Self::Checked => "true",
+            Self::Indeterminate => "mixed",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SemanticState {
     pub enabled: bool,
     pub focused: bool,
     pub focusable: bool,
     pub selected: bool,
-    pub checked: Option<bool>,
+    pub checked: Option<CheckedState>,
     pub expanded: Option<bool>,
     pub read_only: bool,
     pub editable: bool,

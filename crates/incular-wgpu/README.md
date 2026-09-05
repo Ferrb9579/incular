@@ -10,7 +10,7 @@ through Incular's public API.
 
 `WgpuRenderer::new` remains the single-window convenience constructor.
 Multi-window platform code creates one `SharedGpuContext` from the first
-window's normalized `RawWindowHandles`, then calls
+window's owned `WindowSurfaceTarget`, then calls
 `SharedGpuContext::create_renderer` (or `WgpuRenderer::new_with_shared`) for
 each later window. A zero-sized surface is deliberately not configured or
 presented. Surface loss and resize are window-local; device loss is a future
@@ -286,3 +286,17 @@ copy usages for the explicit ping-pong copies; their live and peak bytes are
 reported separately from the source/effect cache budget. `effect_debug_tree`
 reports matrix stage warmth and whether each blend uses the fixed-function or
 destination-read path.
+## Native window ownership
+
+Renderer constructors accept `WindowSurfaceTarget::new(Arc::clone(&window))`
+instead of detached `RawWindowHandles`. The target owns the window and its
+display-handle provider. WGPU's safe surface API retains that owner, and the
+renderer keeps a target for recreating lost surfaces. Ownership also covers
+pending asynchronous initialization; cancelling initialization releases its
+references. Native surface creation must still run on the platform's required
+thread (the main thread for Metal).
+
+`SharedGpuContext::new` needs the target only during adapter selection; the
+shared GPU context does not keep the first window alive afterward. Each
+renderer owns its own target. Unsupported surface configuration returns
+`RendererError::SurfaceConfigurationUnsupported` instead of panicking.

@@ -365,18 +365,21 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::Visibility { visible } => {
-                if visible {
-                    if let Some(&child) = children.first() {
-                        self.layout_render(child, constraints.loosen())?;
-                        let size = constraints.constrain(
-                            self.render_live(child, "retained render must remain live")
-                                .size,
-                        );
-                        (size, vec![Offset::ZERO])
+            RenderKind::Visibility {
+                visible,
+                maintain_size,
+            } => {
+                if let Some(&child) = children.first() {
+                    self.layout_render(child, constraints.loosen())?;
+                    let measured = self
+                        .render_live(child, "retained render must remain live")
+                        .size;
+                    let size = constraints.constrain(if visible || maintain_size {
+                        measured
                     } else {
-                        (constraints.constrain(Size::ZERO), Vec::new())
-                    }
+                        Size::ZERO
+                    });
+                    (size, vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }

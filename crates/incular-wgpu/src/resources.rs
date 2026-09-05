@@ -117,11 +117,10 @@ impl WindowGpuPresentation {
     }
 }
 
-/// Surface and compositor ownership for exactly one native window. The raw
-/// handles and `wgpu` surface remain private: native Winit objects never
-/// escape through this API.
+/// Surface and compositor ownership for exactly one native window. The owned
+/// target keeps the native window alive through rendering and surface recovery.
 pub struct WindowGpuState {
-    pub(crate) handles: RawWindowHandles,
+    pub(crate) target: WindowSurfaceTarget,
     pub(crate) surface: wgpu::Surface<'static>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) transparency_mode: TransparencyMode,
@@ -202,26 +201,19 @@ pub(crate) struct SharedGpuAtlasPage {
 }
 impl SharedGpuContext {
     /// Creates the one device context to be shared by every desktop window in
-    /// an application. `handles` and `transparency` select an adapter that can
-    /// satisfy the first window's presentation contract; the temporary surface
-    /// is dropped before this method returns.
+    /// an application. The owned target and transparency mode select an adapter
+    /// that satisfies the first window's presentation contract. The temporary
+    /// surface and target are released before this method returns; the shared
+    /// context does not retain the first window.
     pub async fn new(
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
         transparency_mode: TransparencyMode,
     ) -> Result<Self, RendererError> {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        // SAFETY: `RawWindowHandles` is captured from a live native window by
-        // the platform runner. The temporary surface is used only while that
-        // window remains alive to select a compatible adapter, then dropped
-        // before this function returns.
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: handles.display,
-                raw_window_handle: handles.window,
-            })
-        }
-        .map_err(RendererError::Surface)?;
+        let surface = target
+            .create_surface(&instance)
+            .map_err(RendererError::Surface)?;
         let power_preference = wgpu::PowerPreference::from_env().unwrap_or_default();
         let preferred_adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -298,14 +290,14 @@ impl SharedGpuContext {
     /// second device context.
     pub async fn create_renderer(
         &self,
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
         size: PhysicalSize,
         transparency_mode: TransparencyMode,
         background_color: Color,
     ) -> Result<WgpuRenderer, RendererError> {
         WgpuRenderer::new_with_shared(
             self.clone(),
-            handles,
+            target,
             size,
             transparency_mode,
             background_color,
@@ -350,20 +342,11 @@ impl SharedGpuContext {
     }
     pub(crate) fn create_surface(
         &self,
-        handles: RawWindowHandles,
+        target: WindowSurfaceTarget,
     ) -> Result<wgpu::Surface<'static>, RendererError> {
-        // SAFETY: the platform runner guarantees that both raw handles remain
-        // valid for the lifetime of the renderer/surface. `WgpuRenderer` owns
-        // no native window handle and is torn down before the platform window.
-        unsafe {
-            self.inner
-                .instance
-                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: handles.display,
-                    raw_window_handle: handles.window,
-                })
-        }
-        .map_err(RendererError::Surface)
+        target
+            .create_surface(&self.inner.instance)
+            .map_err(RendererError::Surface)
     }
     pub(crate) fn pipeline_resources(
         &self,

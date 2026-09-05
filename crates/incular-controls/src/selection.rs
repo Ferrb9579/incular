@@ -58,6 +58,12 @@ pub struct Checkbox {
     label: Option<String>,
     #[builder(default = true)]
     enabled: bool,
+    #[builder(default)]
+    read_only: bool,
+    #[builder(default)]
+    required: bool,
+    #[builder(default, setter(strip_option, into))]
+    child: Option<Widget>,
     #[builder(default, setter(strip_option))]
     active_color: Option<Color>,
     #[builder(default, setter(strip_option))]
@@ -105,6 +111,27 @@ impl Checkbox {
     #[must_use]
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Keeps the control focusable while suppressing value changes.
+    #[must_use]
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    #[must_use]
+    pub fn required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
+    }
+
+    /// Replaces only the visual content; the checkbox retains its interaction
+    /// and semantic state.
+    #[must_use]
+    pub fn child(mut self, child: impl Into<Widget>) -> Self {
+        self.child = Some(child.into());
         self
     }
 
@@ -172,8 +199,7 @@ impl Checkbox {
         self
     }
 
-    #[must_use]
-    pub fn build(&self, theme: &ControlTheme) -> Widget {
+    fn default_content(&self, theme: &ControlTheme) -> Widget {
         let is_checked = self.value.get();
         let indicator_visible = self.indeterminate || is_checked;
         let target_opacity = if indicator_visible { 1. } else { 0. };
@@ -235,13 +261,7 @@ impl Checkbox {
             )
             .child(check_icon);
 
-        let value = self.value.clone();
-        let revision = self.revision.clone();
-        let check_opacity = self.check_opacity.clone();
-        let check_scale = self.check_scale.clone();
-        let on_changed = self.on_changed.clone();
-        let transition = indicator_transition(theme);
-        let content: Widget = if let Some(lbl) = self.label.as_ref() {
+        if let Some(lbl) = self.label.as_ref() {
             Row::new([
                 Widget::from(box_widget),
                 Widget::from(SizedBox::new().width(8.0)),
@@ -251,13 +271,28 @@ impl Checkbox {
             .into()
         } else {
             box_widget.into()
-        };
+        }
+    }
+
+    #[must_use]
+    pub fn build(&self, theme: &ControlTheme) -> Widget {
+        let value = self.value.clone();
+        let revision = self.revision.clone();
+        let check_opacity = self.check_opacity.clone();
+        let check_scale = self.check_scale.clone();
+        let on_changed = self.on_changed.clone();
+        let transition = indicator_transition(theme);
+        let content = self
+            .child
+            .clone()
+            .unwrap_or_else(|| self.default_content(theme));
         let mut button = ActionSurface::with_child(content)
             .color(Color::TRANSPARENT)
             .disabled_color(theme.colors.disabled_surface)
-            .enabled(self.enabled);
+            .enabled(self.enabled && !self.read_only)
+            .focusable_when_disabled(self.enabled && self.read_only);
 
-        if self.enabled {
+        if self.enabled && !self.read_only {
             button = button.on_click(move || {
                 let next = !value.get();
                 value.set(next);
@@ -285,11 +320,15 @@ impl Checkbox {
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
-                    checked: (!self.indeterminate).then_some(is_checked),
+                    checked: Some(self.checked_state()),
+                    read_only: self.read_only,
+                    required: self.required,
                     ..SemanticState::default()
                 })
-                .actions(if self.enabled {
+                .actions(if self.enabled && !self.read_only {
                     vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+                } else if self.enabled {
+                    vec![SemanticActionKind::Focus]
                 } else {
                     Vec::new()
                 }),
@@ -493,7 +532,7 @@ impl<T: PartialEq + Clone + 'static> Radio<T> {
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
-                    checked: Some(is_selected),
+                    checked: Some(is_selected.into()),
                     ..SemanticState::default()
                 })
                 .actions(if self.enabled {
@@ -712,7 +751,7 @@ impl Switch {
                 .state(SemanticState {
                     enabled: self.enabled,
                     focusable: self.enabled,
-                    checked: Some(is_on),
+                    checked: Some(is_on.into()),
                     ..SemanticState::default()
                 })
                 .actions(if self.enabled {

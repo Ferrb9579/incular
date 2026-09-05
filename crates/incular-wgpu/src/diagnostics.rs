@@ -262,6 +262,8 @@ pub enum RendererError {
     Device(wgpu::RequestDeviceError),
     Surface(wgpu::CreateSurfaceError),
     SurfaceAlpha(SurfaceAlphaError),
+    /// The shared adapter cannot configure presentation for this surface.
+    SurfaceConfigurationUnsupported,
     ImageTooLarge {
         width: u32,
         height: u32,
@@ -295,6 +297,9 @@ impl std::fmt::Display for RendererError {
             Self::Adapter(e) => write!(f, "unable to acquire GPU adapter: {e}"),
             Self::Device(e) => write!(f, "unable to acquire GPU device: {e}"),
             Self::Surface(e) => write!(f, "unable to create GPU surface: {e}"),
+            Self::SurfaceConfigurationUnsupported => {
+                write!(f, "GPU adapter cannot configure the requested surface")
+            }
             Self::SurfaceAlpha(error) => {
                 write!(f, "GPU surface alpha configuration failed: {error}")
             }

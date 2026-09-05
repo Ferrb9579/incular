@@ -1,5 +1,11 @@
 # incular-desktop
 
+Native clipboard initialization failures are preserved as `ClipboardError` on
+rich clipboard reads and writes. The desktop adapter never substitutes local
+storage for a failed OS clipboard. Headless/custom runtime users can explicitly
+install `MemoryClipboard` through `Runtime::set_clipboard`; use the result-bearing
+`read_clipboard` / `write_clipboard` APIs when reporting success to users.
+
 Shared desktop shell for Incular.
 
 This crate owns the platform-neutral Winit/WGPU/AccessKit integration used by
@@ -92,8 +98,9 @@ publishes all three movement/grab facilities as supported; AppKit and X11
 publish their Winit-supported subsets; Wayland leaves optional
 pointer-constraints operations unknown until execution.
 
-The native `winit::Window` remains alive for the full lifetime of the WGPU
-surface created from its raw handles. Per-window surfaces and presentation state
+The native `winit::Window` is shared through `Arc` with the renderer's owned
+surface target. WGPU retains the window for the surface lifetime, including
+surface recovery. Per-window surfaces and presentation state
 remain local, while the renderer may share GPU resources across windows.
 Native teardown also follows the backend's real destruction contract. In
 particular, Winit's Win32 `Window::drop` posts a private destroy message; the
