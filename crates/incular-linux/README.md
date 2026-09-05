@@ -1,5 +1,13 @@
 # incular-linux
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Linux desktop entry and native services over the shared desktop host. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Desktop adapter; Linux runtime behavior requires Linux validation. |
+
 Linux facade over the shared Winit desktop shell. X11 exposes desktop-global
 window positions and monitor bounds through the shared adapter. Wayland
 deliberately exposes neither top-level global positions nor setters. A reliable

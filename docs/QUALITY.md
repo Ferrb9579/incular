@@ -14,6 +14,12 @@ locked dependency graph and then updating `workspace.package.rust-version`.
 
 ## Required local validation
 
+After workspace or crate changes, run the baseline in `AGENTS.md`: formatting,
+workspace check, constrained workspace tests and strict all-target/all-feature
+Clippy. Public API changes also require all-feature tests and warning-denied
+rustdoc. The additional readiness checks below apply to releases or affected
+feature/platform boundaries; report unavailable target validation explicitly.
+
 - formatting (`cargo fmt --all -- --check`);
 - all-target/all-feature Clippy with `-D warnings`;
 - workspace tests (`cargo test-constrained --all-features`);
@@ -62,6 +68,13 @@ infrastructure.
 
 ## Documentation and public API
 
+Follow [the architecture contract](ARCHITECTURE.md) and
+[accepted decisions](ARCHITECTURE_DECISIONS.md). Application APIs, backend
+extensions and implementation bridges have distinct consumers; `doc(hidden)`
+does not make a public bridge private. Every public mutation inherits the
+documented outcome/ownership family, with existing gaps tracked in
+[API migrations](API_MIGRATIONS.md). New exceptions require a named migration.
+
 Rustdoc warnings are denied during release/readiness validation. `missing_docs`
 is not yet enabled globally:
 the pre-1.0 Flutter-parity surface is intentionally broad, and globally allowing
@@ -86,6 +99,16 @@ coverage are useful targeted/manual tools rather than repository automation.
 
 ## Generated and specification files
 
+Parity is an explicit coverage ledger, not a requirement to mark every Dart
+member implemented. Preserve behavioral tests; allow reviewed Rust equivalents,
+merges, internal mechanisms, deferred work and deliberate omissions with owner,
+rationale and evidence. Stage I rechecks historical implementation claims.
+`specs/architecture.json` is the reviewed dependency/API/support contract, and
+`specs/widgets_api_extensions.json` records reviewed names outside the pinned
+Flutter graph. `cargo test --test architecture_contract` and the existing
+boundary/member tests enforce these policies. Do not regenerate dependency
+allow-lists merely to accept an unreviewed edge.
+
 There are currently no checked-in generated source outputs. Files under
 `specs/` and parity manifests are canonical source/test inputs, not generated
 artifacts, and workspace tests validate their contracts. If generated outputs
@@ -99,6 +122,7 @@ The open-source readiness baseline is the following direct command set:
 
 ```text
 cargo fmt --all -- --check
+cargo check --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test-constrained --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps

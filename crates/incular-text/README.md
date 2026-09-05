@@ -1,5 +1,13 @@
 # incular-text
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Font selection, shaping, metrics, text layout and editing values. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; controller observation consolidates in C/G. |
+
 Renderer-independent font selection, OpenType shaping, Unicode line breaking,
 metrics, baselines, and a bounded logical text-layout cache. Parley 0.7,
 Fontique, and HarfRust are the single authority for discovery, fallback, bidi,

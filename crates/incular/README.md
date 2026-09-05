@@ -1,5 +1,13 @@
 # incular
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Feature-controlled public facade and application preludes. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Re-exports inherit original API classes; platform features are target-specific. |
+
 The public facade crate for Incular applications. It will re-export the stable
 public API from the framework layers and expose desktop support through the
 `desktop` feature.

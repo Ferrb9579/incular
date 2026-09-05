@@ -1,5 +1,13 @@
 # incular-controls
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Themed Incular controls and visual slots over neutral widgets. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available themed controls; shared behavior consolidates in F. |
+
 Platform-neutral, styled, ready-to-use desktop UI controls and design tokens for the Incular framework.
 
 ## Overview

@@ -1,5 +1,13 @@
 # incular-semantics
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Platform-neutral semantic nodes, roles, labels, state and actions. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; screen-reader projection belongs to accessibility. |
+
 Renderer- and platform-neutral semantic values and the retained semantic tree
 for Incular. This crate owns generational semantic node IDs, roles, state,
 bounds, supported actions, diagnostics, and the tree lifecycle. It depends only

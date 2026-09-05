@@ -1,5 +1,13 @@
 # incular-gestures
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Pointer recognition, gesture arbitration, keyboard and focus mechanisms. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; shared observation contracts consolidate in C/G. |
+
 Platform-neutral pointer recognizers and interaction state for Incular.
 
 This crate owns pointer event values, a pending/accept/reject/cancel gesture

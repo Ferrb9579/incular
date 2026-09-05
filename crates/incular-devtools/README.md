@@ -1,5 +1,13 @@
 # incular-devtools
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Opt-in diagnostics transport and runtime command bridge. |
+| API class | bridge; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Implementation integration; not application widget vocabulary. |
+
 The target-side DevTools agent for Incular applications.
 
 This crate owns the opt-in localhost transport used by the standalone

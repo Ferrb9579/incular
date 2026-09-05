@@ -1,0 +1,317 @@
+[
+  {
+    "symbols": [
+      "CacheExtentStyle",
+      "DraggableNotificationSubscription",
+      "DraggableScrollableState",
+      "DraggableSheetDelta",
+      "DraggableSheetExtent",
+      "DraggableSizeAnimation",
+      "DraggableSnap",
+      "DraggableSnapTarget",
+      "RawScrollbarGeometry",
+      "RawScrollbarOrientation",
+      "RawScrollbarStyle",
+      "TwoDimensionalChildLayout",
+      "TwoDimensionalConstraints",
+      "TwoDimensionalScrollDelta",
+      "TwoDimensionalViewportLayout",
+      "WheelChildDelegate",
+      "WheelChildLayout",
+      "WheelLayout",
+      "WheelMatrix",
+      "WheelProjection"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Explicit scrolling controllers, subscriptions and measured geometry replace Dart state objects.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/advanced_scrolling.rs"
+  },
+  {
+    "symbols": [
+      "AnimatedGridController",
+      "AnimatedItem",
+      "AnimatedItemPhase",
+      "AnimatedListController",
+      "KeepAliveRegistry",
+      "SliverAnimatedGridController",
+      "TreeRowAnimation",
+      "TreeSliverIndentation",
+      "TreeSliverNodeId"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed animation, keep-alive and tree identities support retained sliver behavior.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/advanced_slivers.rs"
+  },
+  {
+    "symbols": [
+      "ApplicationBootstrapHost",
+      "ApplicationBootstrapOptions",
+      "ApplicationBootstrapSpec",
+      "AuxiliaryViewError",
+      "AuxiliaryViewHandle",
+      "AuxiliaryViewHost",
+      "AuxiliaryViewOutcome",
+      "AuxiliaryViewRequest",
+      "BackCallbackSubscription",
+      "BasicRouterDelegate",
+      "ClosureRouteInformationParser",
+      "MemoryRouteInformationProvider",
+      "NavigationNotificationKind",
+      "NavigationNotificationListener",
+      "NavigationNotificationSubscription",
+      "NoopAuxiliaryViewHost",
+      "NoopWindowChromeSink",
+      "RouteInformationListener",
+      "RouteInformationSubscription",
+      "RouterData",
+      "RouterDelegateListener",
+      "RouterDelegateSubscription",
+      "RouterError",
+      "StringRouteInformationParser",
+      "TitleController",
+      "TitleData",
+      "TitleError",
+      "ViewAnchorController",
+      "ViewAnchorData",
+      "ViewAnchorSubscription",
+      "ViewController",
+      "ViewData",
+      "ViewEvent",
+      "ViewId",
+      "ViewLifecycle",
+      "ViewMetrics",
+      "ViewSubscription",
+      "WidgetsAppController",
+      "WidgetsAppData",
+      "WindowChromeSink",
+      "WindowDragRegion",
+      "WindowResizeRegion",
+      "normalize_route_location"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Explicit view, router, lifecycle and host contracts replace Dart global bindings; host interfaces are backend extensions.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/app_shell.rs"
+  },
+  {
+    "symbols": [
+      "DragDropContext"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed drag context carries retained drag/drop state independently of design systems.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/external_drop.rs"
+  },
+  {
+    "symbols": [
+      "ContentSensitivity"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Content sensitivity is a portable environment policy with one config owner.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/environment.rs"
+  },
+  {
+    "symbols": [
+      "ActionInvocationPhase",
+      "ActionResult",
+      "Command",
+      "CommandId",
+      "FocusScopeSubscription",
+      "FocusTraversalPolicyKind",
+      "LogicalShortcutKey",
+      "ShortcutKey",
+      "ShortcutTrigger"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed commands, shortcut keys, outcomes and focus subscriptions replace dynamic command lookup.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/focus_keyboard.rs"
+  },
+  {
+    "symbols": [
+      "FilteringTextInputFormatter",
+      "FormController",
+      "LengthLimitingTextInputFormatter",
+      "MaxLengthEnforcement",
+      "TextInputFormatter"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Form controllers and formatter contracts preserve editing with explicit ownership and Unicode boundaries.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/forms.rs"
+  },
+  {
+    "symbols": [
+      "TransientPresentation",
+      "TransientRole"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Native transient presentation and role are shared renderer-independent config values.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/transient_surfaces.rs"
+  },
+  {
+    "symbols": [
+      "Annotation",
+      "LayerAnchor",
+      "PaintStyle"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Paint and anchor values retain their rendering owner when used for custom widget painting.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/painting_effects.rs"
+  },
+  {
+    "symbols": [
+      "ScrollNotificationSubscription",
+      "ScrollNotificationType",
+      "SliverConstraints"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Scroll constraints and notification subscriptions are domain re-exports, not a second scroll engine.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/advanced_scrolling.rs"
+  },
+  {
+    "symbols": [
+      "BackDispatchReport",
+      "BackHandlerResult",
+      "BackRegistration",
+      "NavigationBackButtonDispatcher",
+      "NavigatorPopHandlerController",
+      "PageStorageIdentifier",
+      "PopAttempt",
+      "PopScopeController",
+      "current_page_storage_bucket",
+      "current_restoration_scope"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed back outcomes, registrations and scope access expose route composition; stack ownership consolidates in G.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/navigation_scopes.rs"
+  },
+  {
+    "symbols": [
+      "MenuDispatchResult",
+      "MenuItemId",
+      "MenuOwnerId",
+      "NoopPlatformMenuDelegate",
+      "PlatformMenuBarController",
+      "PlatformMenuBuildError",
+      "PlatformMenuEntry",
+      "PlatformMenuEvent",
+      "PlatformMenuShortcut",
+      "PlatformMenuSnapshot",
+      "PlatformMenuSnapshotNode",
+      "PlatformMenuUpdate",
+      "ShortcutModifiers"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed menu commands and snapshots separate declaration from native execution and unsupported outcomes.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/app_shell.rs"
+  },
+  {
+    "symbols": [
+      "ErasedGestureRecognizerFactory",
+      "GestureRecognizer",
+      "GestureRecognizerFactoryError",
+      "ListenerCallbacks",
+      "MouseRegionCallbacks",
+      "PointerDeviceKind",
+      "RawPointerEvent",
+      "TapRegionCallbacks",
+      "TapRegionGroupId"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Pointer records, callback bundles and recognizer factories expose neutral input through Rust types.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/advanced_input.rs"
+  },
+  {
+    "symbols": [
+      "RawTooltipBuilder",
+      "RawTooltipController",
+      "RawTooltipDurations",
+      "RawTooltipTriggerMode",
+      "RawTooltipVisibility",
+      "TooltipDurations",
+      "TooltipVisibility"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Neutral tooltip controllers expose visibility, timing and visual slots without Material defaults.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/raw_tooltip.rs"
+  },
+  {
+    "symbols": [
+      "Sliver",
+      "SliverAnimatedListController",
+      "SliverLayout",
+      "SliverOverlapHandle",
+      "SliverReorderController"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Retained sliver composition, layout and controllers express scrolling without Dart render-object classes.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/tree_scrolling_slivers.rs"
+  },
+  {
+    "symbols": [
+      "SelectableChildPolicy",
+      "SelectedContent",
+      "SelectedContentRange",
+      "SelectionAreaController",
+      "SelectionGeometry",
+      "SelectionHandleType",
+      "SelectionPoint",
+      "SelectionStatus"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed selection geometry, content and controllers coordinate selection independently of design systems.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/tree_editing_semantics_gestures.rs"
+  },
+  {
+    "symbols": [
+      "DEFAULT_SEMANTICS_DEBUGGER_NODE_LIMIT"
+    ],
+    "owner": "incular-widgets",
+    "reason": "A named diagnostic node limit bounds semantic debug output in the neutral debugger.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/semantics.rs"
+  },
+  {
+    "symbols": [
+      "TransientAlignment",
+      "TransientDismissPolicy",
+      "TransientDismissReason",
+      "TransientPlacement",
+      "TransientPlacementInput",
+      "TransientPlacementMode",
+      "TransientPlacementResult",
+      "TransientSide",
+      "TransientSurfaceId",
+      "TransientSurfaceSnapshot",
+      "place_transient"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Typed placement, dismissal and surface identities provide one popup positioning contract.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/transient_placement.rs"
+  },
+  {
+    "symbols": [
+      "TextFieldInputSnapshot",
+      "TextInputActionHint",
+      "TextInputTypeHint"
+    ],
+    "owner": "incular-widgets",
+    "reason": "Text input hints and snapshots expose editor configuration without exposing retained WidgetKind.",
+    "decision": "B08 / existing Incular surface",
+    "evidence": "crates/incular-widgets/tests/tree_editing_semantics_gestures.rs"
+  }
+]

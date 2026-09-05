@@ -1,5 +1,13 @@
 # incular-accessibility
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | AccessKit and mobile semantic projections and action translation. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available projections; host integration is platform-specific. |
+
 `incular-semantics::SemanticsTree` is Incular's canonical, retained and
 platform-neutral semantic model. This crate is its native adapter layer. It
 uses AccessKit 0.24.1 to project one retained Incular tree into one native

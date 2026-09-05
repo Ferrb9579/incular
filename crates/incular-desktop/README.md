@@ -1,5 +1,13 @@
 # incular-desktop
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Shared Winit host, WGPU frame coordination and native service integration. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Desktop host; duplicate runner paths consolidate in E. |
+
 Native clipboard initialization failures are preserved as `ClipboardError` on
 rich clipboard reads and writes. The desktop adapter never substitutes local
 storage for a failed OS clipboard. Headless/custom runtime users can explicitly

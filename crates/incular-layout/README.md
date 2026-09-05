@@ -1,9 +1,15 @@
 # incular-layout
 
-Renderer-independent layout primitives and algorithms for Incular, including
-constraints, sizes, positions, alignment, and future layout containers.
-# incular-layout
+## Architecture and support
 
-Owns Flutter-style `Constraints`, `EdgeInsets`, axes, and alignment values. It
-depends only on `incular-core`; widgets choose layout algorithms. Constraints
-are validated on construction and permit infinity only as an upper bound.
+| Contract | Status |
+| --- | --- |
+| Ownership | Layout algorithms over measured sizes; config values are exact re-exports. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; retained measurement belongs to widgets. |
+
+Renderer-independent algorithms operate on measured child sizes. Constraints,
+insets, axes and alignment are exact re-exports from `incular-config`, which
+owns their validation and policy. Widgets own retained measurement and execute
+these algorithms. Layout descriptors are algorithm inputs, not another retained
+widget tree.

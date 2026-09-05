@@ -89,15 +89,12 @@ fn facade_prelude_does_not_import_material_implicitly() {
 }
 
 #[test]
-fn incular_only_extensions_are_not_root_widgets_exports() {
+fn retained_and_styled_implementations_are_not_root_widgets_exports() {
     let source = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/lib.rs"),
     )
     .unwrap();
-    let public_lines = source
-        .lines()
-        .filter(|line| line.contains("pub use ") && !line.contains("pub(crate)"))
-        .collect::<Vec<_>>();
+    let exports = root_reexports(&source);
     for forbidden in [
         "SplitView",
         "SplitPosition",
@@ -112,7 +109,7 @@ fn incular_only_extensions_are_not_root_widgets_exports() {
         "SliverAppBar",
     ] {
         assert!(
-            !public_lines.iter().any(|line| line.contains(forbidden)),
+            !exports.contains(forbidden),
             "Inc﻿ular extension leaked into public Widgets exports: {forbidden}"
         );
     }
@@ -174,7 +171,7 @@ fn material_and_widgets_do_not_duplicate_canonical_primitives() {
 }
 
 #[test]
-fn every_widgets_root_reexport_is_in_the_pinned_flutter_graph() {
+fn every_widgets_root_reexport_has_a_reference_or_incular_decision() {
     let root = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incular-widgets/src/lib.rs"),
     )
@@ -188,36 +185,82 @@ fn every_widgets_root_reexport_is_in_the_pinned_flutter_graph() {
     .filter_map(|row| row["flutter_symbol"].as_str().map(str::to_owned))
     .collect::<HashSet<_>>();
 
-    let mut root_names = HashSet::new();
-    for statement in root
-        .split("pub use ")
-        .skip(1)
-        .filter_map(|tail| tail.split_once(';').map(|(statement, _)| statement))
-    {
-        if statement.contains("pub(crate)") {
-            continue;
-        }
-        let candidates = statement
-            .rsplit_once('{')
-            .and_then(|(_, body)| body.rsplit_once('}').map(|(_, body)| body))
-            .map_or_else(
-                || vec![statement.rsplit("::").next().unwrap_or(statement)],
-                |body| body.split(',').collect::<Vec<_>>(),
+    let root_names = root_reexports(&root);
+    let extensions: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../specs/widgets_api_extensions.json")).unwrap();
+    let mut reviewed = HashSet::new();
+    for extension in &extensions {
+        let symbols = extension["symbols"].as_array().unwrap();
+        assert!(!symbols.is_empty());
+        for symbol in symbols {
+            let symbol = symbol.as_str().unwrap();
+            assert!(reviewed.insert(symbol), "duplicate extension {symbol}");
+            assert!(root_names.contains(symbol), "stale extension {symbol}");
+            assert!(
+                !graph.contains(symbol),
+                "extension duplicates reference {symbol}"
             );
-        for candidate in candidates {
-            let name = candidate.split(" as ").next().unwrap_or(candidate).trim();
-            if !name.is_empty() && name != "self" {
-                root_names.insert(name.to_owned());
-            }
         }
-    }
-
-    for name in root_names {
+        assert_eq!(extension["owner"], "incular-widgets");
+        assert!(extension["reason"].as_str().unwrap().len() > 20);
+        assert!(!extension["decision"].as_str().unwrap().is_empty());
+        let evidence = extension["evidence"].as_str().unwrap();
+        assert!(evidence.starts_with("tests/") || evidence.contains("/tests/"));
         assert!(
-            graph.contains(&name),
-            "non-Flutter symbol leaked into incular-widgets root: {name}"
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(evidence)
+                .is_file()
         );
     }
+    for name in root_names {
+        assert!(
+            graph.contains(&name) || reviewed.contains(name.as_str()),
+            "Widgets export needs a reference or reviewed Incular decision: {name}"
+        );
+    }
+}
+
+fn root_reexports(source: &str) -> HashSet<String> {
+    fn names(tree: &syn::UseTree, output: &mut HashSet<String>) {
+        match tree {
+            syn::UseTree::Path(path) => names(&path.tree, output),
+            syn::UseTree::Name(name) => {
+                output.insert(name.ident.to_string());
+            }
+            syn::UseTree::Rename(rename) => {
+                output.insert(rename.rename.to_string());
+            }
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    names(item, output);
+                }
+            }
+            syn::UseTree::Glob(_) => panic!("Widgets root exports must be explicit"),
+        }
+    }
+    let mut output = HashSet::new();
+    for item in syn::parse_file(source).unwrap().items {
+        if let syn::Item::Use(item) = item
+            && matches!(item.vis, syn::Visibility::Public(_))
+        {
+            names(&item.tree, &mut output);
+        }
+    }
+    output
+}
+
+#[test]
+fn export_inventory_uses_rust_visibility_and_aliases() {
+    let exports = root_reexports(
+        "// pub use fake::Comment;\n pub(crate) use hidden::Bridge;\n pub use domain::{Original as Alias, nested::{One, Two}};",
+    );
+    assert_eq!(
+        exports,
+        ["Alias", "One", "Two"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    );
 }
 
 #[test]

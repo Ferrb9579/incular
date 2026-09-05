@@ -1,5 +1,13 @@
 # incular-navigation
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Application route stacks, routing, restoration and route composition. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; duplicated widget navigation state consolidates in G. |
+
 Stack navigation, deep-link routing, route transitions, and overlay state for
 Incular.
 

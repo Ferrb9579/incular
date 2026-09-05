@@ -1,5 +1,13 @@
 # incular-windows
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Windows desktop entry and native services over the shared desktop host. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Desktop adapter; Stage A native lifecycle validated on Windows. |
+
 Windows facade over the shared Incular desktop shell. In addition to the crash
 reporter, this crate supplies the Win32 display work-area service used by
 placement APIs. `GetMonitorInfoW`/`MONITORINFO.rcWork` is queried from Winit's

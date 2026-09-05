@@ -1,0 +1,592 @@
+{
+  "schema_version": 1,
+  "crates": [
+    {
+      "name": "incular",
+      "default_api_class": "application",
+      "owner": "Feature-controlled public facade and application preludes.",
+      "support": "Re-exports inherit original API classes; platform features are target-specific.",
+      "allowed_dependencies": [
+        "incular-accessibility",
+        "incular-animation",
+        "incular-assets",
+        "incular-config",
+        "incular-controls",
+        "incular-core",
+        "incular-gestures",
+        "incular-image",
+        "incular-layout",
+        "incular-linux",
+        "incular-macos",
+        "incular-macros",
+        "incular-material",
+        "incular-navigation",
+        "incular-painting",
+        "incular-platform",
+        "incular-rendering",
+        "incular-runtime",
+        "incular-scroll",
+        "incular-semantics",
+        "incular-text",
+        "incular-wgpu",
+        "incular-widgets",
+        "incular-windows"
+      ]
+    },
+    {
+      "name": "incular-accessibility",
+      "default_api_class": "backend",
+      "owner": "AccessKit and mobile semantic projections and action translation.",
+      "support": "Available projections; host integration is platform-specific.",
+      "allowed_dependencies": [
+        "incular-core",
+        "incular-semantics"
+      ]
+    },
+    {
+      "name": "incular-android",
+      "default_api_class": "backend",
+      "owner": "Android semantic adapter for a native host.",
+      "support": "Partial; activity, input, surface and system UI require host wiring.",
+      "allowed_dependencies": [
+        "incular-accessibility"
+      ]
+    },
+    {
+      "name": "incular-animation",
+      "default_api_class": "application",
+      "owner": "Curves, interpolation, tweens and animation physics.",
+      "support": "Available; interruption contracts consolidate in G.",
+      "allowed_dependencies": [
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-assets",
+      "default_api_class": "application",
+      "owner": "Font identities and shared font bytes.",
+      "support": "Partial resource foundation; no general image/font/shader loader.",
+      "allowed_dependencies": []
+    },
+    {
+      "name": "incular-config",
+      "default_api_class": "application",
+      "owner": "Shared constraints, alignment, insets, localization and application policies.",
+      "support": "Available; writable invariant fields migrate in G.",
+      "allowed_dependencies": [
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-controls",
+      "default_api_class": "application",
+      "owner": "Themed Incular controls and visual slots over neutral widgets.",
+      "support": "Available themed controls; shared behavior consolidates in F.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core",
+        "incular-rendering",
+        "incular-scroll",
+        "incular-semantics",
+        "incular-text",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-core",
+      "default_api_class": "application",
+      "owner": "Geometry, identity, input, interpolation and lower-level context values.",
+      "support": "Available; duplicate reactive APIs migrate in C.",
+      "allowed_dependencies": []
+    },
+    {
+      "name": "incular-desktop",
+      "default_api_class": "backend",
+      "owner": "Shared Winit host, WGPU frame coordination and native service integration.",
+      "support": "Desktop host; duplicate runner paths consolidate in E.",
+      "allowed_dependencies": [
+        "incular-accessibility",
+        "incular-config",
+        "incular-core",
+        "incular-devtools",
+        "incular-devtools-protocol",
+        "incular-platform",
+        "incular-rendering",
+        "incular-runtime",
+        "incular-wgpu",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-devtools",
+      "default_api_class": "bridge",
+      "owner": "Opt-in diagnostics transport and runtime command bridge.",
+      "support": "Implementation integration; not application widget vocabulary.",
+      "allowed_dependencies": [
+        "incular-devtools-protocol",
+        "incular-runtime"
+      ]
+    },
+    {
+      "name": "incular-devtools-protocol",
+      "default_api_class": "backend",
+      "owner": "Versioned diagnostics messages shared with tooling.",
+      "support": "Opt-in tooling protocol; no runtime dependency.",
+      "allowed_dependencies": []
+    },
+    {
+      "name": "incular-gestures",
+      "default_api_class": "application",
+      "owner": "Pointer recognition, gesture arbitration, keyboard and focus mechanisms.",
+      "support": "Available; shared observation contracts consolidate in C/G.",
+      "allowed_dependencies": [
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-image",
+      "default_api_class": "application",
+      "owner": "Raster image identities, decoding and CPU image caches.",
+      "support": "Available; cache budgets and release migrate in H.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-ios",
+      "default_api_class": "backend",
+      "owner": "iOS semantic adapter for a native host.",
+      "support": "Partial; UIKit lifecycle, input and surface require host wiring.",
+      "allowed_dependencies": [
+        "incular-accessibility"
+      ]
+    },
+    {
+      "name": "incular-layout",
+      "default_api_class": "application",
+      "owner": "Layout algorithms over measured sizes; config values are exact re-exports.",
+      "support": "Available; retained measurement belongs to widgets.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-linux",
+      "default_api_class": "backend",
+      "owner": "Linux desktop entry and native services over the shared desktop host.",
+      "support": "Desktop adapter; Linux runtime behavior requires Linux validation.",
+      "allowed_dependencies": [
+        "incular-desktop",
+        "incular-platform",
+        "incular-runtime",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-macos",
+      "default_api_class": "backend",
+      "owner": "macOS desktop entry and native services over the shared desktop host.",
+      "support": "Desktop adapter; macOS runtime behavior requires macOS validation.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-desktop",
+        "incular-platform",
+        "incular-runtime",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-macros",
+      "default_api_class": "application",
+      "owner": "Procedural macros for framework composition and builders.",
+      "support": "Available; generated APIs inherit the owning type contract.",
+      "allowed_dependencies": []
+    },
+    {
+      "name": "incular-material",
+      "default_api_class": "application",
+      "owner": "Material presentation composed from controls and neutral widgets.",
+      "support": "Curated subset; parity manifests record omissions.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-controls",
+        "incular-core",
+        "incular-rendering",
+        "incular-scroll",
+        "incular-semantics",
+        "incular-text",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-navigation",
+      "default_api_class": "application",
+      "owner": "Application route stacks, routing, restoration and route composition.",
+      "support": "Available; duplicated widget navigation state consolidates in G.",
+      "allowed_dependencies": [
+        "incular-core",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-painting",
+      "default_api_class": "backend",
+      "owner": "Pure compatibility re-export of incular-rendering.",
+      "support": "Transition shim; removal condition B08 / Stage J.",
+      "allowed_dependencies": [
+        "incular-rendering"
+      ]
+    },
+    {
+      "name": "incular-platform",
+      "default_api_class": "backend",
+      "owner": "Portable native IDs, events, capabilities, commands, metrics and errors.",
+      "support": "Available contracts; existing Winit translation moves to desktop in E.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-rendering",
+      "default_api_class": "backend",
+      "owner": "Renderer-neutral commands, paths, canvas and retained compositor layers.",
+      "support": "Available; backend resources belong to WGPU.",
+      "allowed_dependencies": [
+        "incular-assets",
+        "incular-core",
+        "incular-image"
+      ]
+    },
+    {
+      "name": "incular-runtime",
+      "default_api_class": "application",
+      "owner": "Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination.",
+      "support": "Available; reactive and native service consolidation in C/D.",
+      "allowed_dependencies": [
+        "incular-accessibility",
+        "incular-config",
+        "incular-core",
+        "incular-devtools-protocol",
+        "incular-platform",
+        "incular-rendering",
+        "incular-semantics",
+        "incular-text",
+        "incular-widgets"
+      ]
+    },
+    {
+      "name": "incular-scroll",
+      "default_api_class": "application",
+      "owner": "Scroll controllers, physics, metrics, extent indexing and geometry.",
+      "support": "Available; lifecycle and interruption contracts consolidate in G.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-semantics",
+      "default_api_class": "application",
+      "owner": "Platform-neutral semantic nodes, roles, labels, state and actions.",
+      "support": "Available; screen-reader projection belongs to accessibility.",
+      "allowed_dependencies": [
+        "incular-core"
+      ]
+    },
+    {
+      "name": "incular-text",
+      "default_api_class": "application",
+      "owner": "Font selection, shaping, metrics, text layout and editing values.",
+      "support": "Available; controller observation consolidates in C/G.",
+      "allowed_dependencies": [
+        "incular-assets",
+        "incular-config",
+        "incular-core",
+        "incular-rendering"
+      ]
+    },
+    {
+      "name": "incular-wgpu",
+      "default_api_class": "backend",
+      "owner": "Owned native surfaces, GPU resources and execution of rendering commands.",
+      "support": "Available WGPU backend; shared reclamation and device recovery improve in H.",
+      "allowed_dependencies": [
+        "incular-assets",
+        "incular-config",
+        "incular-core",
+        "incular-image",
+        "incular-platform",
+        "incular-rendering"
+      ]
+    },
+    {
+      "name": "incular-widgets",
+      "default_api_class": "application",
+      "owner": "Neutral widget composition and retained build/layout/paint/input/semantics.",
+      "support": "Curated behavior; internal bridge is not an application API.",
+      "allowed_dependencies": [
+        "incular-animation",
+        "incular-config",
+        "incular-core",
+        "incular-devtools-protocol",
+        "incular-gestures",
+        "incular-image",
+        "incular-layout",
+        "incular-platform",
+        "incular-rendering",
+        "incular-scroll",
+        "incular-semantics",
+        "incular-text"
+      ]
+    },
+    {
+      "name": "incular-windows",
+      "default_api_class": "backend",
+      "owner": "Windows desktop entry and native services over the shared desktop host.",
+      "support": "Desktop adapter; Stage A native lifecycle validated on Windows.",
+      "allowed_dependencies": [
+        "incular-config",
+        "incular-core",
+        "incular-desktop",
+        "incular-platform",
+        "incular-runtime",
+        "incular-widgets"
+      ]
+    }
+  ],
+  "api_overrides": [
+    {
+      "path": "incular_core::BuildContext",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::BuildableWidget",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::ConsumerId",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::ContextGuard",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::DependencySnapshot",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::Signal",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_core::Widget",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_layout::ChildLayout",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_layout::FlexChild",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_layout::LayoutResult",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::EditableSignalKind",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_runtime::EventTarget",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::MemoryApplicationShellAdapter",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::MemoryFileDialogAdapter",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::MemoryGlobalShortcutAdapter",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeAccessibilityUpdate",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeApplicationShellApplyResult",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeApplicationShellCompletion",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeApplicationShellEvent",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeApplicationShellOperation",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeApplicationShellRequest",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeFileDialogCompletion",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeFileDialogRequest",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeGlobalShortcutCompletion",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeGlobalShortcutOperation",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeGlobalShortcutRequest",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeOperationCompletionStatus",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeOperationRequest",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::NativeWindowCommand",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::Runtime",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::RuntimeWake",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_runtime::SignalRegistration",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_runtime::devtools_registry",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_widgets::ApplicationBootstrapHost",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::ApplicationBootstrapSpec",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::AuxiliaryViewHandle",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::AuxiliaryViewHost",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::AuxiliaryViewOutcome",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::AuxiliaryViewRequest",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::NoopAuxiliaryViewHost",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::NoopPlatformMenuDelegate",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::NoopWindowChromeSink",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::PlatformMenuEvent",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::PlatformMenuSnapshot",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::PlatformMenuSnapshotNode",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::PlatformMenuUpdate",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::TextFieldInputSnapshot",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::TransientSurfaceId",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::TransientSurfaceSnapshot",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::WindowChromeSink",
+      "api_class": "backend"
+    },
+    {
+      "path": "incular_widgets::devtools",
+      "api_class": "bridge"
+    },
+    {
+      "path": "incular_widgets::extensions",
+      "api_class": "application"
+    },
+    {
+      "path": "incular_widgets::internal",
+      "api_class": "bridge"
+    }
+  ],
+  "external_boundaries": {
+    "wgpu": [
+      "incular-wgpu"
+    ],
+    "winit": [
+      "incular-platform",
+      "incular-desktop",
+      "incular-linux",
+      "incular-macos",
+      "incular-windows"
+    ],
+    "accesskit": [
+      "incular-accessibility"
+    ],
+    "accesskit_winit": [
+      "incular-desktop"
+    ]
+  }
+}

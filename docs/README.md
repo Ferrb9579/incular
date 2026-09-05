@@ -1,8 +1,13 @@
 # Documentation
 
-Architecture notes, design decisions, and contributor-facing documentation
-will be collected here.
-# Architecture notes
+Start with the [architecture contract](ARCHITECTURE.md),
+[accepted decisions](ARCHITECTURE_DECISIONS.md),
+[API migration inventory](API_MIGRATIONS.md), and [quality policy](QUALITY.md).
+The [original audit](ARCHITECTURE_AUDIT.md) is a historical baseline; the
+[implementation plan](../plan-14.md) records completed and pending fixes.
+
+The phase notes below describe existing implementation, including migration
+seams; they do not override the architecture contract.
 
 ## Phase 6 input slice
 

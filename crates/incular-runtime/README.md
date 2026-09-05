@@ -1,5 +1,13 @@
 # incular-runtime
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; reactive and native service consolidation in C/D. |
+
 Application lifecycle and scheduling foundations for Incular, including frame
 scheduling, widget-tree updates, input dispatch, animation ticking, resource
 coordination, and rendering orchestration.

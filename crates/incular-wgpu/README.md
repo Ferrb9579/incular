@@ -1,5 +1,13 @@
 # incular-wgpu
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Owned native surfaces, GPU resources and execution of rendering commands. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available WGPU backend; shared reclamation and device recovery improve in H. |
+
 `SharedGpuContext` owns an application's one `wgpu` instance, adapter, device,
 queue, immutable target-format pipeline bundles, shared image/gradient
 textures, and glyph atlas storage. Each `WgpuRenderer` owns one `WindowGpuState`: its native

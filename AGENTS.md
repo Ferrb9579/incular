@@ -2,24 +2,41 @@
 
 ## Crate responsibilities
 
-- `incular-core`: Shared primitives such as geometry, colors, IDs, events, and errors.
-- `incular-layout`: Constraints, measurement, positioning, alignment, and layout algorithms.
-- `incular-assets`: Loading, caching, and lifecycle management for images, fonts, icons, and shaders.
-- `incular-painting`: Renderer-independent drawing commands, paths, clipping, transforms, and display lists.
-- `incular-text`: Font selection, shaping, glyphs, metrics, wrapping, and text layout.
-- `incular-animation`: Durations, curves, tweens, interpolation, and animation values.
-- `incular-widgets`: Widget tree, composition, state, lifecycle, events, layout, painting, and built-in widgets.
-- `incular-accessibility`: Semantic trees, roles, labels, focus, actions, and screen-reader integration.
-- `incular-runtime`: Application lifecycle, scheduling, rebuilding, input dispatch, animation ticking, and frame coordination.
-- `incular-platform`: Shared window, event-loop, input, clipboard, DPI, and native-handle abstractions.
-- `incular-android`: Android activity lifecycle, input, surfaces, system UI, back handling, and native resources.
-- `incular-ios`: iOS lifecycle, touch and gesture input, safe areas, system UI, accessibility, and native resources.
-- `incular-linux`: Linux windowing, input, display scaling, clipboard, accessibility, and native resources.
-- `incular-macos`: macOS lifecycle, windows, menus, input, display scaling, accessibility, and native resources.
-- `incular-windows`: Windows lifecycle, input, display scaling, menus, accessibility, and native resources.
-- `incular-wgpu`: GPU initialization and rendering of painting commands using `wgpu`.
-- `incular-macros`: Procedural macros for reducing framework boilerplate.
-- `incular`: Public facade that re-exports the framework API and manages features.
+Follow [the architecture contract](docs/ARCHITECTURE.md), its API classes and
+[accepted decisions](docs/ARCHITECTURE_DECISIONS.md). Historical parity plans do
+not override these boundaries. The tested dependency allow-list and complete
+support matrix are in `specs/architecture.json`.
+
+- `incular`: Feature-controlled public facade and application preludes.
+- `incular-accessibility`: AccessKit and mobile semantic projections and action translation.
+- `incular-android`: Android semantic adapter for a native host.
+- `incular-animation`: Curves, interpolation, tweens and animation physics.
+- `incular-assets`: Font identities and shared font bytes.
+- `incular-config`: Shared constraints, alignment, insets, localization and application policies.
+- `incular-controls`: Themed Incular controls and visual slots over neutral widgets.
+- `incular-core`: Geometry, identity, input, interpolation and lower-level context values.
+- `incular-desktop`: Shared Winit host, WGPU frame coordination and native service integration.
+- `incular-devtools`: Opt-in diagnostics transport and runtime command bridge.
+- `incular-devtools-protocol`: Versioned diagnostics messages shared with tooling.
+- `incular-gestures`: Pointer recognition, gesture arbitration, keyboard and focus mechanisms.
+- `incular-image`: Raster image identities, decoding and CPU image caches.
+- `incular-ios`: iOS semantic adapter for a native host.
+- `incular-layout`: Layout algorithms over measured sizes; config values are exact re-exports.
+- `incular-linux`: Linux desktop entry and native services over the shared desktop host.
+- `incular-macos`: macOS desktop entry and native services over the shared desktop host.
+- `incular-macros`: Procedural macros for framework composition and builders.
+- `incular-material`: Material presentation composed from controls and neutral widgets.
+- `incular-navigation`: Application route stacks, routing, restoration and route composition.
+- `incular-painting`: Pure compatibility re-export of incular-rendering.
+- `incular-platform`: Portable native IDs, events, capabilities, commands, metrics and errors.
+- `incular-rendering`: Renderer-neutral commands, paths, canvas and retained compositor layers.
+- `incular-runtime`: Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination.
+- `incular-scroll`: Scroll controllers, physics, metrics, extent indexing and geometry.
+- `incular-semantics`: Platform-neutral semantic nodes, roles, labels, state and actions.
+- `incular-text`: Font selection, shaping, metrics, text layout and editing values.
+- `incular-wgpu`: Owned native surfaces, GPU resources and execution of rendering commands.
+- `incular-widgets`: Neutral widget composition and retained build/layout/paint/input/semantics.
+- `incular-windows`: Windows desktop entry and native services over the shared desktop host.
 
 ## Structure rules
 

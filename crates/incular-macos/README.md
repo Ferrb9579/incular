@@ -1,5 +1,13 @@
 # incular-macos
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | macOS desktop entry and native services over the shared desktop host. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Desktop adapter; macOS runtime behavior requires macOS validation. |
+
 macOS adapter for Incular's shared desktop shell. `incular-desktop` owns the
 common Winit/WGPU/AccessKit runner; this crate is the ownership boundary for
 AppKit-specific lifecycle, menus, titlebar behavior, and native services.

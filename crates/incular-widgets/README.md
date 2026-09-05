@@ -1,5 +1,13 @@
 # incular-widgets
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Neutral widget composition and retained build/layout/paint/input/semantics. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Curated behavior; internal bridge is not an application API. |
+
 Visibility preservation options, offstage measurement, retained focus, and
 animation muting are specified in [Visibility behavior](../../docs/VISIBILITY.md).
 
@@ -35,7 +43,8 @@ surface or `incular::prelude::*`, never that bridge.
 
 ## Signals and Tokio replace Dart builders
 
-`Signal<T>` is the sole general reactive primitive. Reading a signal while an
+`incular::reactive::Signal<T>` is the application reactive primitive. The older
+core signal remains a bridge pending consolidation in Stage C. Reading a signal while an
 application build runs records that dependency, so a later `set`/`update`
 rebuilds the affected retained subtree. The Widgets crate deliberately does
 not export Flutter's `Listenable`, `ValueListenable`, `ListenableBuilder`,

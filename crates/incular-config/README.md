@@ -1,5 +1,13 @@
 # incular-config
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Shared constraints, alignment, insets, localization and application policies. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; writable invariant fields migrate in G. |
+
 Renderer-independent configuration values shared across Incular layers.
 
 This crate owns box constraints, physical edge insets, axis and direction

@@ -111,42 +111,33 @@ While Dart strings and selections use UTF-16 code units, Incular operates native
 
 ### 9. Error Handling Policy
 
-* **Programmer Errors**: Invalid configuration invariants (negative flex, singular matrix inversion during layout) produce immediate panic or normalization.
+* **Programmer Errors**: A panic must identify a documented invariant violation. If a value is normalized, document the normalization at its owning API and apply it consistently through every construction path. User-controlled invalid configuration should have a checked constructor with a typed error; existing writable-invariant exceptions are tracked for migration.
 * **Runtime Failures**: Missing assets, image decode errors, I/O, or platform communication failures return typed domain `Result<T, E>`.
 
 ### 10. The Neutral Widget Law & 3-Layer Component Hierarchy
 
-* **Core Widget Neutrality**: Base widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`, `GestureDetector`, `EditableText`) provide layout, event handling, and semantics only. Material controls (`ElevatedButton`, `TextField`, `TextFormField`, and friends) live in `incular-material`; Incular-only headless controls live in `incular-controls`. Core widgets never inject design-system colors, borders, or artificial minimum dimensions.
-* **Separation of Concerns**: Visual styling (colors, corner radii, elevation, density) belongs exclusively to high-level styled components and design system tokens (Layer 3), leaving base widgets (Layer 1 and Layer 2) completely reusable and unopinionated.
+* **Core Widget Neutrality**: Base widgets (`Row`, `Column`, `Flex`, `Stack`, `Padding`, `Align`, `Center`, `SizedBox`, `ConstrainedBox`, `Container`, `GestureDetector`, `EditableText`) provide layout, event handling, and semantics only. Material controls (`ElevatedButton`, `TextField`, `TextFormField`, and friends) live in `incular-material`; themed Incular controls with replaceable visual slots live in `incular-controls`. Core widgets never inject design-system colors, borders, or artificial minimum dimensions.
+* **Separation of Concerns**: Visual defaults (colors, corner radii, elevation, density) belong to controls and Material themes. Neutral widgets expose explicit painting/composition mechanisms without introducing those defaults.
 * **Typography Line-Height Multipliers**: Explicit `LineHeight` variants (`Normal`, `Multiplier`, `Absolute`) ensure line heights are unambiguous and prevent multiline text clipping or collapse.
 
-### 11. Permanent Flutter library boundary
+### 11. Incular ownership and deliberate compatibility
 
-The Flutter 3.47.1 library export graph defines the Widgets parity namespace.
-The following rules are permanent:
+The pinned Flutter graph is a reference inventory. It does not determine Cargo
+ownership or require Dart lifecycle wrappers. Signals, explicit context views,
+owned values and futures are deliberate Rust APIs. Preserve implemented behavior
+with tests; record unsupported, merged, deferred and omitted members explicitly.
+New neutral Widgets exports require either a graph entry or a reviewed Incular
+extension entry with evidence. Material remains an opt-in application layer.
 
-1. Flutter library ownership defines the parity namespace.
-2. `incular-widgets` never becomes a miscellaneous widget bucket.
-3. Incular-only headless controls live in `incular-controls`.
-4. Material concepts live in `incular-material`.
-5. Domain logic stays in domain crates even when exported through Widgets parity.
-6. Each behavior has one implementation; wrappers compose it rather than fork it.
-7. Flutter API names are references; Rust language conventions remain idiomatic.
+## Crate responsibilities and public contracts
 
----
+[Architecture contract](docs/ARCHITECTURE.md) is the authoritative ownership,
+dependency, API-class and mutation-outcome policy. All 30 crate READMEs carry
+support rows from `specs/architecture.json`. Re-exports inherit their original
+owner and API class; `doc(hidden)` does not enforce Rust privacy.
 
-## Crate Responsibilities
-
-| Crate | Core Responsibilities |
-| :--- | :--- |
-| `incular-core` | Primitive geometry (`Offset`, `Size`, `Rect`), color models, arena IDs, `Lerp`, `Invalidation`, events |
-| `incular-config` | Layout constraints, alignments, insets, locale, text direction, display brightness |
-| `incular-rendering` | GPU-independent display lists, vector paths, brushes, shaders, effects |
-| `incular-text` | Font management, Parley layout/shaping, `TextStyle`, `TextSpan`, `StrutStyle` |
-| `incular-animation` | Curves, easing functions, tweens, `Simulation`, `SpringDescription` |
-| `incular-gestures` | Gesture arena, pointer routers, recognizers, `FocusNode`, `FocusManager` |
-| `incular-scroll` | Viewport coordination, `ScrollMetrics`, `ScrollPhysics`, `ScrollController` |
-| `incular-widgets` | Retained element reconciliation, built-in widgets, forms, editing, scrolling widgets |
-| `incular-semantics` | Accessible node trees, roles, actions, labels, screen reader integration |
-| `incular-runtime` | Frame scheduling, multi-window coordination, signal dispatch, restoration |
-| `incular` | Top-level public facade re-exporting framework preludes |
+[Accepted decisions](docs/ARCHITECTURE_DECISIONS.md) define the staged target;
+[API migration inventory](docs/API_MIGRATIONS.md) names existing exceptions and
+removal conditions. New public APIs must document state ownership, observable
+outcome, invalidation, failures and cancellation according to their mutation
+family. Existing incomplete contracts remain tracked debt until implemented.

@@ -1,8 +1,15 @@
 # incular-core
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Geometry, identity, input, interpolation and lower-level context values. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; duplicate reactive APIs migrate in C. |
+
 Platform-independent foundation types for Incular. This crate is intentionally
 free of windowing and renderer dependencies.
-# incular-core
 
 Owns dependency-free geometry, colors, normalized input events, phase dirty
 flags, and the generational `Arena`. It does not own tree semantics or layout

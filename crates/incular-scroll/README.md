@@ -1,5 +1,13 @@
 # incular-scroll
 
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Scroll controllers, physics, metrics, extent indexing and geometry. |
+| API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available; lifecycle and interruption contracts consolidate in G. |
+
 Reusable, widget-independent scroll state for Incular.
 
 The crate owns cloneable logical offset controllers, clamping physics, and

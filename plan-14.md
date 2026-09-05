@@ -1,6 +1,7 @@
 # Plan 14 — Architecture consolidation and behavioral quality
 
-Status: Stage A is complete and validated. Stages B–J remain pending.
+Status: Stage A is complete and committed. Stage B is complete and validated.
+Stages C–J remain pending.
 
 ## Implementation progress
 
@@ -53,7 +54,25 @@ Status: Stage A is complete and validated. Stages B–J remain pending.
   Warning-denied all-feature workspace rustdoc passed. The two live native
   harnesses above also passed. An existing boolean assertion found during the
   first full test build was migrated before these successful final runs.
-- All later stages remain pending. The original audit is a baseline record,
+- B: reconciled all 30 crate responsibility/support rows, API_DESIGN, AGENTS,
+  QUALITY and README guidance around one architecture contract. Eight decision
+  records and the API migration inventory cover aliases, duplicate entry paths,
+  ignored parameters, public fields, mutation outcomes and lifetime ownership.
+- B: retained painting as a pure shim with an explicit Stage J removal condition.
+  Added Cargo-metadata boundary/cycle checks, documentation drift checks, and
+  negative cases for optional native/reverse edges. Public APIs inherit a class
+  with explicit backend/bridge overrides; re-exports retain their owner.
+- B: member parity permits reviewed Rust equivalents and deliberate gaps with
+  required rationale/evidence/prerequisites. Replaced the incomplete export
+  string scan with a Rust parser and recorded 163 existing Incular-specific
+  names in 19 responsibility families; no public export was removed.
+- B validation (2026-09-05): formatting, workspace check, constrained workspace
+  tests (1,063 passed) and strict all-target/all-feature Clippy passed. Changes
+  are policy, documentation and test gates; no runtime API implementation changed.
+  The only dependency addition is test-only `syn`, using its existing lockfile
+  version to parse Rust exports correctly. Native harnesses were not repeated
+  because no native behavior changed.
+- The original audit is a baseline record,
   not a statement that these newly corrected paths remain defective.
 
 Baseline: `0ba7058`, reviewed 2026-09-05. Evidence and campaign/crate coverage: [architecture audit](docs/ARCHITECTURE_AUDIT.md).
@@ -66,7 +85,10 @@ Preserve signals, immutable widget descriptions, retained elements/render object
 
 This is a sequence of independently reviewable changes, not one rewrite. Correctness fixes can precede larger migrations. Each step must leave a usable library with its examples migrated and checks passing.
 
-## Proposed architecture decisions
+## Accepted architecture decisions
+
+Accepted in Stage B; implementation and retirement conditions are recorded in
+[architecture decisions](docs/ARCHITECTURE_DECISIONS.md).
 
 1. **One dependency engine.** Core-level reactive primitives own values, dependency edges and scope cleanup; runtime owns scheduling; widgets register consumers for the phase being executed. Initially consolidate into the existing lower-level core context module with no runtime/widget dependencies. Consider a separate reactive crate only after dependency and public-surface measurements justify it. Keep domain controllers, but have them participate in the same observation contract.
 2. **One desktop host.** An application with one window and one with many windows use the same event-loop implementation. Convenience APIs construct the same application/host configuration.

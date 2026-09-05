@@ -9,8 +9,11 @@ use incular::widgets::internal::{
 };
 use serde_json::Value;
 
+#[path = "support/parity_status.rs"]
+mod parity_status;
+
 #[test]
-fn test_member_parity_manifest_is_100_percent_resolved() {
+fn test_member_parity_manifest_has_explicit_reviewed_outcomes() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let snapshot_path = repo_root.join("specs/flutter_stable_api_snapshot.json");
     let manifest_path = repo_root.join("specs/flutter_member_parity.jsonl");
@@ -39,8 +42,7 @@ fn test_member_parity_manifest_is_100_percent_resolved() {
             continue;
         }
         let record: Value = serde_json::from_str(trimmed).expect("Parse manifest line");
-        let status = record["status"].as_str().expect("status string");
-        assert_eq!(status, "implemented", "Member status must be implemented");
+        parity_status::validate_member(&record).expect("explicit member contract");
 
         let incular_type = record["incular_type"]
             .as_str()

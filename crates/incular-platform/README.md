@@ -1,8 +1,16 @@
 # incular-platform
 
-Owns normalized native events, raw window-handle extraction for backend use,
-and the logical/physical DPI boundary. Widgets and runtime receive logical
-coordinates only; Linux converts physical pointer positions through
+## Architecture and support
+
+| Contract | Status |
+| --- | --- |
+| Ownership | Portable native IDs, events, capabilities, commands, metrics and errors. |
+| API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
+| Support | Available contracts; existing Winit translation moves to desktop in E. |
+
+Owns portable native events and the logical/physical DPI boundary. Existing
+Winit translation and raw-handle extraction are a Stage E migration seam, not
+a portable API commitment. Desktop adapters convert physical pointers through
 `WindowMetrics` before hit testing.
 
 ## Window contract
