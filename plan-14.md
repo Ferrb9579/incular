@@ -1,7 +1,7 @@
 # Plan 14 — Architecture consolidation and behavioral quality
 
 Status: Stages A and B are complete and committed (`b0d866e`, `498db6a`).
-Stage C is complete and validated. Stages D–J remain pending.
+Stage C is complete and committed (`cad3463`). Stage D is complete and validated. Stages E–J remain pending.
 
 ## Implementation progress
 
@@ -94,6 +94,25 @@ Stage C is complete and validated. Stages D–J remain pending.
   corrected baselines, not a speedup comparison with the previously untracked
   benchmark. Retained-operation and coalescing contracts passed in both suites.
   Validation was headless; live native interaction was not re-exercised.
+- D implementation: one private request channel centralizes admission, IDs,
+  wake delivery and caller reply consumption for windows/dialogs/shortcuts;
+  one typed registry tracks host handoff and completion across those services
+  and the UI-owned application shell. Queued/dispatched/abandoned phases retain
+  domain-specific dialog FIFO and window command semantics.
+- D fixes: successful unread shortcut replies now own cleanup leases; shell
+  requests terminate on explicit shutdown; queued window commands are cleared
+  at shutdown; queued tray/notification creation can be cancelled without native
+  teardown; failed creation rejects updates and suppresses queued cleanup.
+  Wake callbacks and abandonment destructors run outside transport locks.
+- D evidence: 17 new tests cover the common service lifecycle, shared protocol,
+  reentrant shutdown, early/duplicate/late replies and resource teardown.
+  Existing window/dialog suites cover concurrent owners, parent closure,
+  generation reuse and modal serialization. See [native request contracts](docs/NATIVE_REQUESTS.md).
+- D final validation (Windows, 2026-09-06): formatting, workspace check and
+  strict all-target/all-feature Clippy passed. Default and all-feature workspace
+  suites each passed 1,097 tests, including the 17 new regressions. Validation
+  used deterministic/headless adapters; live native interaction was not repeated.
+  Public names/signatures and platform capability claims are unchanged.
 - The original audit is a baseline record,
   not a statement that these newly corrected paths remain defective.
 

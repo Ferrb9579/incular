@@ -264,7 +264,7 @@
       "name": "incular-runtime",
       "default_api_class": "application",
       "owner": "Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination.",
-      "support": "Available; shared reactive engine; native service consolidation remains in D.",
+      "support": "Available; shared reactive engine and native request lifecycle infrastructure.",
       "allowed_dependencies": [
         "incular-accessibility",
         "incular-config",

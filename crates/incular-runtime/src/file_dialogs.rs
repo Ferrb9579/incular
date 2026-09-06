@@ -1,4 +1,5 @@
 //! Window-owned asynchronous native file-dialog requests.
+use crate::request_channel::{RequestChannel, RequestReceiver};
 
 use crate::tasks::RuntimeWake;
 use incular_platform::{
@@ -14,8 +15,8 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
         mpsc,
     },
     task::{Context, Poll},
@@ -253,56 +254,19 @@ impl<T> Future for FileDialogRequest<T> {
 
 struct RawFileDialogRequest {
     id: FileDialogRequestId,
-    receiver: oneshot::Receiver<FileDialogResult>,
-    bridge: Arc<FileDialogBridge>,
-    completed: bool,
-    cancelled: Arc<AtomicBool>,
+    receiver: RequestReceiver<FileDialogResult>,
 }
-
 impl RawFileDialogRequest {
     fn try_result(&mut self) -> Option<FileDialogResult> {
-        if self.completed {
-            return None;
-        }
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                self.completed = true;
-                Some(result)
-            }
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                self.completed = true;
-                Some(Err(FileDialogError::ApplicationStopped))
-            }
-        }
+        self.receiver
+            .try_result(|| Err(FileDialogError::ApplicationStopped))
     }
 }
-
 impl Future for RawFileDialogRequest {
     type Output = FileDialogResult;
-
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.receiver).poll(context) {
-            Poll::Ready(Ok(result)) => {
-                self.completed = true;
-                Poll::Ready(result)
-            }
-            Poll::Ready(Err(_)) => {
-                self.completed = true;
-                Poll::Ready(Err(FileDialogError::ApplicationStopped))
-            }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl Drop for RawFileDialogRequest {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        self.cancelled.store(true, Ordering::Release);
-        self.bridge.cancel(self.id);
+        self.receiver
+            .poll_result(context, || Err(FileDialogError::ApplicationStopped))
     }
 }
 
@@ -315,82 +279,59 @@ pub(crate) struct QueuedFileDialogRequest {
 }
 
 pub(crate) struct FileDialogBridge {
-    sender: mpsc::Sender<QueuedFileDialogRequest>,
+    channel: RequestChannel<QueuedFileDialogRequest>,
     cancellation_sender: mpsc::Sender<FileDialogRequestId>,
-    wake: Mutex<Option<Arc<dyn RuntimeWake>>>,
-    next_request: AtomicU64,
-    active: Mutex<bool>,
 }
-
 impl FileDialogBridge {
     pub(crate) fn new(
         sender: mpsc::Sender<QueuedFileDialogRequest>,
         cancellation_sender: mpsc::Sender<FileDialogRequestId>,
     ) -> Self {
         Self {
-            sender,
+            channel: RequestChannel::new(sender),
             cancellation_sender,
-            wake: Mutex::new(None),
-            next_request: AtomicU64::new(1),
-            active: Mutex::new(true),
         }
     }
-
     fn request(
         self: &Arc<Self>,
         window_id: WindowId,
         request: PortableRequest,
     ) -> Result<RawFileDialogRequest, FileDialogError> {
-        let active = self.active.lock().expect("file-dialog active gate");
-        if !*active {
-            return Err(FileDialogError::ApplicationStopped);
-        }
-        let request_id = self
-            .next_request
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
+        self.channel
+            .request(|id| {
+                let request_id = FileDialogRequestId::new(id);
+                let (sender, receiver) = oneshot::channel();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let queued = QueuedFileDialogRequest {
+                    request_id,
+                    window_id,
+                    request,
+                    sender,
+                    cancelled: cancelled.clone(),
+                };
+                let bridge = self.clone();
+                let receiver = RequestReceiver::new(receiver, move || {
+                    cancelled.store(true, Ordering::Release);
+                    bridge.cancel(request_id);
+                });
+                (
+                    queued,
+                    RawFileDialogRequest {
+                        id: request_id,
+                        receiver,
+                    },
+                )
             })
-            .map(FileDialogRequestId::new)
-            .map_err(|_| FileDialogError::ApplicationStopped)?;
-        let (sender, receiver) = oneshot::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.sender
-            .send(QueuedFileDialogRequest {
-                request_id,
-                window_id,
-                request,
-                sender,
-                cancelled: cancelled.clone(),
-            })
-            .map_err(|_| FileDialogError::ApplicationStopped)?;
-        drop(active);
-        self.wake();
-        Ok(RawFileDialogRequest {
-            id: request_id,
-            receiver,
-            bridge: self.clone(),
-            completed: false,
-            cancelled,
-        })
+            .map_err(|_| FileDialogError::ApplicationStopped)
     }
-
-    fn cancel(&self, request_id: FileDialogRequestId) {
-        let _ = self.cancellation_sender.send(request_id);
-        self.wake();
+    fn cancel(&self, id: FileDialogRequestId) {
+        self.channel.cancel(&self.cancellation_sender, id);
     }
-
     pub(crate) fn set_wake(&self, wake: Arc<dyn RuntimeWake>) {
-        *self.wake.lock().expect("file-dialog wake mutex") = Some(wake);
+        self.channel.set_wake(wake);
     }
-
     pub(crate) fn stop(&self) {
-        *self.active.lock().expect("file-dialog active gate") = false;
-    }
-
-    fn wake(&self) {
-        if let Some(wake) = self.wake.lock().expect("file-dialog wake mutex").as_ref() {
-            wake.wake();
-        }
+        self.channel.stop();
     }
 }
 

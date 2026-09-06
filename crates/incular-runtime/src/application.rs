@@ -24,6 +24,7 @@ use crate::profiling::{
     PerformanceHub, PerformanceProfiler, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics,
     TextCacheSnapshot, WidgetWorkSnapshot, WindowPerformance,
 };
+use crate::request_registry::{CompletionRejection, RequestPhase, RequestRegistry};
 use crate::restoration::{self, RestorationConfig, RestorationDiagnostics};
 use crate::scheduler_counters;
 use crate::simulation::{self, Screenshot, Simulation, SimulationError};
@@ -59,11 +60,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicU64, Ordering},
-        mpsc,
-    },
+    sync::{Arc, RwLock, atomic::Ordering, mpsc},
     time::Instant,
 };
 use tokio::sync::oneshot;
@@ -89,18 +86,20 @@ pub struct Application {
     pub(crate) manager: WindowManager,
     pub(crate) command_receiver: mpsc::Receiver<QueuedWindowCommand>,
     pub(crate) request_cancellation_receiver: mpsc::Receiver<NativeRequestId>,
-    pending_native_requests: HashMap<NativeRequestId, PendingNativeRequest>,
+    pending_native_requests: RequestRegistry<NativeRequestId, PendingNativeRequest>,
     file_dialog_receiver: mpsc::Receiver<QueuedFileDialogRequest>,
     file_dialog_cancellation_receiver: mpsc::Receiver<FileDialogRequestId>,
     file_dialog_bridge: Arc<FileDialogBridge>,
-    pending_file_dialog_requests: HashMap<FileDialogRequestId, PendingFileDialogRequest>,
+    pending_file_dialog_requests: RequestRegistry<FileDialogRequestId, PendingFileDialogRequest>,
     active_file_dialog_requests: HashMap<WindowId, FileDialogRequestId>,
     queued_file_dialog_requests: HashMap<WindowId, VecDeque<FileDialogRequestId>>,
     native_file_dialog_requests: VecDeque<NativeFileDialogRequest>,
     global_shortcut_receiver: mpsc::Receiver<QueuedGlobalShortcutRequest>,
     global_shortcut_bridge: Arc<GlobalShortcutBridge>,
-    pending_global_shortcut_requests:
-        HashMap<crate::global_shortcuts::GlobalShortcutRequestId, PendingGlobalShortcutRequest>,
+    pending_global_shortcut_requests: RequestRegistry<
+        crate::global_shortcuts::GlobalShortcutRequestId,
+        PendingGlobalShortcutRequest,
+    >,
     native_global_shortcut_requests: VecDeque<NativeGlobalShortcutRequest>,
     platform_capabilities: Arc<RwLock<PlatformCapabilities>>,
     application_shell: ApplicationShellService,
@@ -222,13 +221,7 @@ impl Application {
         let application_lifecycle = Rc::new(std::cell::Cell::new(
             crate::application_types::ApplicationLifecycle::Starting,
         ));
-        let bridge = Arc::new(WindowCommandBridge {
-            sender,
-            cancellation_sender,
-            wake: Mutex::new(None),
-            next_request: AtomicU64::new(1),
-            active: Mutex::new(true),
-        });
+        let bridge = Arc::new(WindowCommandBridge::new(sender, cancellation_sender));
         let manager = WindowManager {
             registry: Rc::downgrade(&registry),
             scheduler: scheduler.clone(),
@@ -251,17 +244,17 @@ impl Application {
             manager,
             command_receiver,
             request_cancellation_receiver,
-            pending_native_requests: HashMap::new(),
+            pending_native_requests: RequestRegistry::new(),
             file_dialog_receiver,
             file_dialog_cancellation_receiver,
             file_dialog_bridge,
-            pending_file_dialog_requests: HashMap::new(),
+            pending_file_dialog_requests: RequestRegistry::new(),
             active_file_dialog_requests: HashMap::new(),
             queued_file_dialog_requests: HashMap::new(),
             native_file_dialog_requests: VecDeque::new(),
             global_shortcut_receiver,
             global_shortcut_bridge,
-            pending_global_shortcut_requests: HashMap::new(),
+            pending_global_shortcut_requests: RequestRegistry::new(),
             native_global_shortcut_requests: VecDeque::new(),
             platform_capabilities,
             application_shell,
@@ -1970,14 +1963,13 @@ impl Application {
                                 .request_id
                                 .expect("result-bearing command has request id");
                             if !request.cancelled.load(Ordering::Acquire) {
-                                let previous = self.pending_native_requests.insert(
+                                self.pending_native_requests.insert(
                                     request_id,
                                     PendingNativeRequest {
                                         window_id,
                                         sender: request.sender,
                                     },
                                 );
-                                debug_assert!(previous.is_none(), "native request ids are unique");
                             }
                         } else {
                             debug_assert!(command.request_id.is_none());
@@ -2048,6 +2040,7 @@ impl Application {
     }
 
     fn fail_all_native_requests(&mut self, error: PlatformOperationError) {
+        while self.request_cancellation_receiver.try_recv().is_ok() {}
         for (_, request) in self.pending_native_requests.drain() {
             let _ = request.sender.send(Err(error.clone()));
         }
@@ -2078,7 +2071,7 @@ impl Application {
             }
             let request_id = queued.request_id;
             let window_id = queued.window_id;
-            let previous = self.pending_file_dialog_requests.insert(
+            self.pending_file_dialog_requests.insert(
                 request_id,
                 PendingFileDialogRequest {
                     window_id,
@@ -2087,7 +2080,6 @@ impl Application {
                     cancelled: queued.cancelled,
                 },
             );
-            debug_assert!(previous.is_none(), "file-dialog request ids are unique");
             if self.active_file_dialog_requests.contains_key(&window_id) {
                 self.queued_file_dialog_requests
                     .entry(window_id)
@@ -2162,10 +2154,10 @@ impl Application {
             if is_active {
                 // If the desktop host has not taken this request yet, cancellation
                 // can prevent native presentation and the FIFO may advance.
-                let before = self.native_file_dialog_requests.len();
+                let not_started = self.pending_file_dialog_requests.phase(&request_id)
+                    == Some(RequestPhase::Queued);
                 self.native_file_dialog_requests
                     .retain(|request| request.request_id != request_id);
-                let not_started = self.native_file_dialog_requests.len() != before;
                 if not_started {
                     self.active_file_dialog_requests.remove(&window_id);
                     self.pending_file_dialog_requests.remove(&request_id);
@@ -2175,6 +2167,7 @@ impl Application {
                     // The native modal operation already owns the slot. Detach
                     // result delivery, but keep serialization until completion.
                     pending.sender = None;
+                    self.pending_file_dialog_requests.abandon(&request_id);
                 }
             } else {
                 if let Some(queue) = self.queued_file_dialog_requests.get_mut(&window_id) {
@@ -2216,6 +2209,7 @@ impl Application {
 
     fn fail_all_file_dialog_requests(&mut self, error: FileDialogError) {
         self.file_dialog_bridge.stop();
+        while self.file_dialog_cancellation_receiver.try_recv().is_ok() {}
         while let Ok(queued) = self.file_dialog_receiver.try_recv() {
             if !queued.cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = queued.sender.send(Err(error.clone()));
@@ -2239,7 +2233,12 @@ impl Application {
     pub fn take_native_file_dialog_requests(&mut self) -> Vec<NativeFileDialogRequest> {
         self.drain_file_dialog_requests();
         self.drain_file_dialog_cancellations();
-        self.native_file_dialog_requests.drain(..).collect()
+        let requests: Vec<_> = self.native_file_dialog_requests.drain(..).collect();
+        for request in &requests {
+            self.pending_file_dialog_requests
+                .dispatch(&request.request_id);
+        }
+        requests
     }
 
     /// Completes one active file dialog and promotes the next request for the
@@ -2264,10 +2263,12 @@ impl Application {
             return FileDialogCompletionStatus::UnknownRequest;
         }
 
-        let mut pending = self
+        let Ok(mut pending) = self
             .pending_file_dialog_requests
-            .remove(&completion.request_id)
-            .expect("file-dialog request was just observed");
+            .complete(&completion.request_id, |_| true)
+        else {
+            return FileDialogCompletionStatus::UnknownRequest;
+        };
         self.active_file_dialog_requests
             .remove(&completion.window_id);
 
@@ -2296,23 +2297,38 @@ impl Application {
             &mut self.pending_global_shortcut_requests,
             &mut self.native_global_shortcut_requests,
         );
+        let abandoned: Vec<_> = self
+            .pending_global_shortcut_requests
+            .iter()
+            .filter(|(_, pending)| pending.reply.is_abandoned())
+            .map(|(id, pending)| (*id, pending.operation))
+            .collect();
+        for (id, operation) in abandoned {
+            if self.pending_global_shortcut_requests.phase(&id) == Some(RequestPhase::Queued) {
+                if matches!(operation, NativeGlobalShortcutOperation::Register { .. }) {
+                    self.pending_global_shortcut_requests.remove(&id);
+                    self.native_global_shortcut_requests
+                        .retain(|request| request.request_id != id);
+                }
+            } else {
+                self.pending_global_shortcut_requests.abandon(&id);
+            }
+        }
     }
 
     fn fail_all_global_shortcut_requests(&mut self) {
         self.global_shortcut_bridge.stop();
         while let Ok(queued) = self.global_shortcut_receiver.try_recv() {
-            if let Some(sender) = queued.sender {
-                let _ = sender.send(Err(
-                    incular_platform::GlobalShortcutError::ApplicationStopped,
-                ));
-            }
+            queued.reply.finish(
+                queued.operation,
+                Err(incular_platform::GlobalShortcutError::ApplicationStopped),
+            );
         }
         for (_, pending) in self.pending_global_shortcut_requests.drain() {
-            if let Some(sender) = pending.sender {
-                let _ = sender.send(Err(
-                    incular_platform::GlobalShortcutError::ApplicationStopped,
-                ));
-            }
+            pending.reply.finish(
+                pending.operation,
+                Err(incular_platform::GlobalShortcutError::ApplicationStopped),
+            );
         }
         self.native_global_shortcut_requests.clear();
     }
@@ -2323,7 +2339,12 @@ impl Application {
     #[doc(hidden)]
     pub fn take_native_global_shortcut_requests(&mut self) -> Vec<NativeGlobalShortcutRequest> {
         self.drain_global_shortcut_requests();
-        self.native_global_shortcut_requests.drain(..).collect()
+        let requests: Vec<_> = self.native_global_shortcut_requests.drain(..).collect();
+        for request in &requests {
+            self.pending_global_shortcut_requests
+                .dispatch(&request.request_id);
+        }
+        requests
     }
 
     /// Completes one native global-shortcut request. If the requesting future
@@ -2334,26 +2355,13 @@ impl Application {
         &mut self,
         completion: NativeGlobalShortcutCompletion,
     ) -> GlobalShortcutCompletionStatus {
-        let Some(pending) = self
+        let Ok(pending) = self
             .pending_global_shortcut_requests
-            .remove(&completion.request_id)
+            .complete(&completion.request_id, |_| true)
         else {
             return GlobalShortcutCompletionStatus::UnknownRequest;
         };
-        let registered_id = match pending.operation {
-            NativeGlobalShortcutOperation::Register { id, .. } if completion.result.is_ok() => {
-                Some(id)
-            }
-            NativeGlobalShortcutOperation::Register { .. }
-            | NativeGlobalShortcutOperation::Unregister { .. } => None,
-        };
-        if let Some(sender) = pending.sender
-            && sender.send(completion.result).is_err()
-            && let Some(id) = registered_id
-        {
-            return GlobalShortcutCompletionStatus::AbandonedRegistration(id);
-        }
-        GlobalShortcutCompletionStatus::Completed
+        pending.reply.finish(pending.operation, completion.result)
     }
 
     /// Completes one result-bearing native operation. Backends call this only
@@ -2362,16 +2370,17 @@ impl Application {
         &mut self,
         completion: NativeOperationCompletion,
     ) -> NativeOperationCompletionStatus {
-        let Some(pending) = self.pending_native_requests.get(&completion.request_id) else {
-            return NativeOperationCompletionStatus::UnknownRequest;
-        };
-        if pending.window_id != completion.window_id {
-            return NativeOperationCompletionStatus::TargetMismatch;
-        }
-        let pending = self
+        let pending = match self
             .pending_native_requests
-            .remove(&completion.request_id)
-            .expect("pending request was just observed");
+            .complete(&completion.request_id, |pending| {
+                pending.window_id == completion.window_id
+            }) {
+            Ok(pending) => pending,
+            Err(CompletionRejection::TargetMismatch) => {
+                return NativeOperationCompletionStatus::TargetMismatch;
+            }
+            Err(_) => return NativeOperationCompletionStatus::UnknownRequest,
+        };
         if !self.contains_window(completion.window_id) {
             let _ = pending
                 .sender
@@ -2394,7 +2403,15 @@ impl Application {
     pub fn take_native_window_commands(&mut self) -> Vec<NativeWindowCommand> {
         self.drain_window_commands();
         self.drain_native_request_cancellations();
-        self.native_commands.borrow_mut().drain(..).collect()
+        let commands: Vec<_> = self.native_commands.borrow_mut().drain(..).collect();
+        for command in &commands {
+            if let NativeWindowCommand::Operate(command) = command
+                && let Some(id) = command.request_id
+            {
+                self.pending_native_requests.dispatch(&id);
+            }
+        }
+        commands
     }
 
     #[must_use]
@@ -2529,6 +2546,7 @@ impl Application {
 
     pub fn shutdown(&mut self) {
         self.flush_restoration_before_shutdown();
+        self.application_shell.stop();
         self.manager.bridge.stop();
         self.fail_all_file_dialog_requests(FileDialogError::ApplicationStopped);
         self.fail_all_global_shortcut_requests();
@@ -2544,6 +2562,7 @@ impl Application {
                 record.runtime.dispose_window();
             }
         }
+        self.native_commands.borrow_mut().clear();
         self.scheduler.borrow_mut().shutdown();
         self.stop_simulation();
         self.should_exit = true;

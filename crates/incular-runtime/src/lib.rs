@@ -12,6 +12,8 @@ mod global_shortcuts;
 mod profiling;
 mod reactive;
 mod request_admission;
+mod request_channel;
+mod request_registry;
 mod restoration;
 mod simulation;
 mod tasks;

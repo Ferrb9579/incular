@@ -1,6 +1,7 @@
 use crate::application_types::{WindowError, WindowRestorationId};
 use crate::context::BuildContext;
 use crate::file_dialogs::FileDialogService;
+use crate::request_channel::{ChannelError, RequestChannel, RequestReceiver};
 use crate::tasks::RuntimeWake;
 use crate::transient_presentation::TransientPresentationResolution;
 use crate::window_state::WindowManager;
@@ -17,8 +18,8 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
         mpsc,
     },
     task::{Context, Poll},
@@ -142,10 +143,7 @@ impl std::error::Error for WindowCommandEnqueueError {}
 #[must_use = "native operation requests must be awaited, inspected, or explicitly dropped"]
 pub struct NativeOperationRequest {
     id: NativeRequestId,
-    receiver: oneshot::Receiver<PlatformOperationResult>,
-    bridge: Arc<WindowCommandBridge>,
-    completed: bool,
-    cancelled: Arc<AtomicBool>,
+    receiver: RequestReceiver<PlatformOperationResult>,
 }
 
 impl NativeOperationRequest {
@@ -156,45 +154,16 @@ impl NativeOperationRequest {
 
     /// Non-blocking inspection for tests, embedders, and event-driven code.
     pub fn try_result(&mut self) -> Option<PlatformOperationResult> {
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                self.completed = true;
-                Some(result)
-            }
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                self.completed = true;
-                Some(Err(PlatformOperationError::unavailable()))
-            }
-        }
+        self.receiver
+            .try_result(|| Err(PlatformOperationError::unavailable()))
     }
 }
 
 impl Future for NativeOperationRequest {
     type Output = PlatformOperationResult;
-
     fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        match Pin::new(&mut self.receiver).poll(context) {
-            Poll::Ready(Ok(result)) => {
-                self.completed = true;
-                Poll::Ready(result)
-            }
-            Poll::Ready(Err(_)) => {
-                self.completed = true;
-                Poll::Ready(Err(PlatformOperationError::unavailable()))
-            }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-impl Drop for NativeOperationRequest {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        self.cancelled.store(true, Ordering::Release);
-        self.bridge.cancel_request(self.id);
+        self.receiver
+            .poll_result(context, || Err(PlatformOperationError::unavailable()))
     }
 }
 
@@ -527,91 +496,73 @@ pub(crate) struct QueuedWindowCommand {
 }
 
 pub(crate) struct WindowCommandBridge {
-    pub(crate) sender: mpsc::Sender<QueuedWindowCommand>,
-    pub(crate) cancellation_sender: mpsc::Sender<NativeRequestId>,
-    pub(crate) wake: Mutex<Option<Arc<dyn RuntimeWake>>>,
-    pub(crate) next_request: AtomicU64,
-    /// Serializes enqueue-vs-stop so shutdown can close the gate and then
-    /// drain the receivers knowing no later command can cross the boundary.
-    pub(crate) active: Mutex<bool>,
+    channel: RequestChannel<QueuedWindowCommand>,
+    cancellation_sender: mpsc::Sender<NativeRequestId>,
 }
 
 impl WindowCommandBridge {
-    pub(crate) fn send(&self, command: WindowCommand) -> Result<(), WindowCommandEnqueueError> {
-        let active = self.active.lock().expect("window command active gate");
-        if !*active {
-            return Err(WindowCommandEnqueueError::RuntimeStopped);
+    pub(crate) fn new(
+        sender: mpsc::Sender<QueuedWindowCommand>,
+        cancellation_sender: mpsc::Sender<NativeRequestId>,
+    ) -> Self {
+        Self {
+            channel: RequestChannel::new(sender),
+            cancellation_sender,
         }
-        self.sender
+    }
+    pub(crate) fn send(&self, command: WindowCommand) -> Result<(), WindowCommandEnqueueError> {
+        self.channel
             .send(QueuedWindowCommand {
                 command,
                 request: None,
             })
-            .map_err(|_| WindowCommandEnqueueError::RuntimeStopped)?;
-        drop(active);
-        self.wake();
-        Ok(())
+            .map_err(channel_error)
     }
-
     pub(crate) fn request(
         self: &Arc<Self>,
         window_id: WindowId,
         operation: WindowOperation,
     ) -> Result<NativeOperationRequest, WindowCommandEnqueueError> {
-        let active = self.active.lock().expect("window command active gate");
-        if !*active {
-            return Err(WindowCommandEnqueueError::RuntimeStopped);
-        }
-        let request_id = self
-            .next_request
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
+        self.channel
+            .request(|id| {
+                let request_id = NativeRequestId::new(id);
+                let (sender, receiver) = oneshot::channel();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let queued = QueuedWindowCommand {
+                    command: WindowCommand::with_request(window_id, request_id, operation),
+                    request: Some(QueuedNativeRequest {
+                        sender,
+                        cancelled: cancelled.clone(),
+                    }),
+                };
+                let bridge = self.clone();
+                let receiver = RequestReceiver::new(receiver, move || {
+                    cancelled.store(true, Ordering::Release);
+                    bridge.cancel_request(request_id);
+                });
+                (
+                    queued,
+                    NativeOperationRequest {
+                        id: request_id,
+                        receiver,
+                    },
+                )
             })
-            .map(NativeRequestId::new)
-            .map_err(|_| WindowCommandEnqueueError::RequestIdExhausted)?;
-        let (sender, receiver) = oneshot::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.sender
-            .send(QueuedWindowCommand {
-                command: WindowCommand::with_request(window_id, request_id, operation),
-                request: Some(QueuedNativeRequest {
-                    sender,
-                    cancelled: cancelled.clone(),
-                }),
-            })
-            .map_err(|_| WindowCommandEnqueueError::RuntimeStopped)?;
-        drop(active);
-        self.wake();
-        Ok(NativeOperationRequest {
-            id: request_id,
-            receiver,
-            bridge: self.clone(),
-            completed: false,
-            cancelled,
-        })
+            .map_err(channel_error)
     }
-
     pub(crate) fn cancel_request(&self, request_id: NativeRequestId) {
-        let _ = self.cancellation_sender.send(request_id);
-        self.wake();
+        self.channel.cancel(&self.cancellation_sender, request_id);
     }
-
     pub(crate) fn stop(&self) {
-        *self.active.lock().expect("window command active gate") = false;
+        self.channel.stop();
     }
-
-    fn wake(&self) {
-        if let Some(wake) = self
-            .wake
-            .lock()
-            .expect("window command wake mutex")
-            .as_ref()
-        {
-            wake.wake();
-        }
-    }
-
     pub(crate) fn set_wake(&self, wake: Arc<dyn RuntimeWake>) {
-        *self.wake.lock().expect("window command wake mutex") = Some(wake);
+        self.channel.set_wake(wake);
+    }
+}
+fn channel_error(error: ChannelError) -> WindowCommandEnqueueError {
+    match error {
+        ChannelError::Stopped => WindowCommandEnqueueError::RuntimeStopped,
+        ChannelError::IdExhausted => WindowCommandEnqueueError::RequestIdExhausted,
     }
 }

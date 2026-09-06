@@ -6,7 +6,7 @@
 | --- | --- |
 | Ownership | Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination. |
 | API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
-| Support | Available; shared reactive engine; native service consolidation remains in D. |
+| Support | Available; shared reactive engine and native request lifecycle infrastructure. |
 
 Application lifecycle and scheduling foundations for Incular, including frame
 scheduling, widget-tree updates, input dispatch, animation ticking, resource

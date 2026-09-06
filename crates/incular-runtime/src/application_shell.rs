@@ -1,6 +1,6 @@
 //! Runtime ownership for application-scoped desktop shell resources.
 
-use crate::tasks::RuntimeWake;
+use crate::{request_registry::RequestRegistry, tasks::RuntimeWake};
 use incular_platform::{
     ApplicationShellError, ApplicationShellFeature, CapabilitySupport, NotificationActionId,
     NotificationId, NotificationPresentation, PlatformCapabilities, TaskbarDockState, TrayItemId,
@@ -116,13 +116,28 @@ impl<T> Default for Slot<T> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResourcePhase {
+    Queued,
+    Dispatched,
+    Live,
+    Failed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellResource {
+    Tray(TrayItemId),
+    Notification(NotificationId),
+}
+
 struct TrayRecord {
+    phase: ResourcePhase,
     presentation: TrayItemPresentation,
     menu: PlatformMenuCommandModel,
     on_activated: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct NotificationRecord {
+    phase: ResourcePhase,
     presentation: NotificationPresentation,
     on_activated: Option<Arc<dyn Fn() + Send + Sync>>,
     on_action: Option<Arc<dyn Fn(NotificationActionId) + Send + Sync>>,
@@ -134,6 +149,7 @@ struct ShellState {
     trays: Vec<Slot<TrayRecord>>,
     notifications: Vec<Slot<NotificationRecord>>,
     requests: VecDeque<NativeApplicationShellRequest>,
+    pending: RequestRegistry<ApplicationShellRequestId, NativeApplicationShellOperation>,
     completions: VecDeque<NativeApplicationShellCompletion>,
     next_request: u64,
     stopped: bool,
@@ -161,7 +177,8 @@ impl ApplicationShellService {
     }
 
     fn wake(&self) {
-        if let Some(wake) = self.wake.borrow().as_ref() {
+        let wake = self.wake.borrow().clone();
+        if let Some(wake) = wake {
             wake.wake();
         }
     }
@@ -195,6 +212,7 @@ impl ApplicationShellService {
         let id = reserve_tray(
             &mut state.trays,
             TrayRecord {
+                phase: ResourcePhase::Queued,
                 presentation: presentation.clone(),
                 menu: menu.clone(),
                 on_activated: None,
@@ -236,6 +254,7 @@ impl ApplicationShellService {
         let id = reserve_notification(
             &mut state.notifications,
             NotificationRecord {
+                phase: ResourcePhase::Queued,
                 presentation: presentation.clone(),
                 on_activated: None,
                 on_action: None,
@@ -325,7 +344,15 @@ impl ApplicationShellService {
     }
 
     pub(crate) fn take_native_requests(&self) -> Vec<NativeApplicationShellRequest> {
-        self.state.borrow_mut().requests.drain(..).collect()
+        let mut state = self.state.borrow_mut();
+        let requests: Vec<_> = state.requests.drain(..).collect();
+        for request in &requests {
+            state.pending.dispatch(&request.request_id);
+            if let Some(resource) = created_resource(&request.operation) {
+                set_resource_phase(&mut state, resource, ResourcePhase::Dispatched);
+            }
+        }
+        requests
     }
 
     #[doc(hidden)]
@@ -334,7 +361,21 @@ impl ApplicationShellService {
     }
 
     pub(crate) fn complete(&self, completion: NativeApplicationShellCompletion) {
-        self.state.borrow_mut().completions.push_back(completion);
+        let mut state = self.state.borrow_mut();
+        if let Ok(operation) = state.pending.complete(&completion.request_id, |_| true) {
+            if let Some(resource) = created_resource(&operation) {
+                let phase = if completion.result.is_ok() {
+                    ResourcePhase::Live
+                } else {
+                    ResourcePhase::Failed
+                };
+                set_resource_phase(&mut state, resource, phase);
+                if phase == ResourcePhase::Failed {
+                    cancel_queued_resource(&mut state, resource);
+                }
+            }
+            state.completions.push_back(completion);
+        }
     }
 
     #[doc(hidden)]
@@ -398,11 +439,15 @@ impl ApplicationShellService {
                 let dismiss_native =
                     self.capabilities().notification_dismiss != CapabilitySupport::Unsupported;
                 let mut state = self.state.borrow_mut();
+                let phase =
+                    notification_record(&state.notifications, id).map(|record| record.phase);
                 let released = release_notification(&mut state.notifications, id);
-                if released && dismiss_native {
-                    enqueue(
+                if let Some(phase) = phase {
+                    retire_resource(
                         &mut state,
-                        NativeApplicationShellOperation::CloseNotification { id },
+                        ShellResource::Notification(id),
+                        phase,
+                        dismiss_native,
                     );
                 }
                 drop(state);
@@ -423,6 +468,15 @@ impl ApplicationShellService {
         let mut state = self.state.borrow_mut();
         state.stopped = true;
         state.requests.clear();
+        let pending: Vec<_> = state
+            .pending
+            .drain()
+            .map(|(request_id, _)| NativeApplicationShellCompletion {
+                request_id,
+                result: Err(ApplicationShellError::ApplicationStopped),
+            })
+            .collect();
+        state.completions.extend(pending);
         for slot in &mut state.trays {
             slot.value = None;
             slot.generation = slot.generation.wrapping_add(1);
@@ -452,6 +506,80 @@ where
     })
 }
 
+fn operation_resource(operation: &NativeApplicationShellOperation) -> Option<ShellResource> {
+    match operation {
+        NativeApplicationShellOperation::CreateTray { id, .. }
+        | NativeApplicationShellOperation::UpdateTray { id, .. }
+        | NativeApplicationShellOperation::RemoveTray { id } => Some(ShellResource::Tray(*id)),
+        NativeApplicationShellOperation::ShowNotification { id, .. }
+        | NativeApplicationShellOperation::UpdateNotification { id, .. }
+        | NativeApplicationShellOperation::CloseNotification { id } => {
+            Some(ShellResource::Notification(*id))
+        }
+        NativeApplicationShellOperation::SetTaskbarDockState(_) => None,
+    }
+}
+fn created_resource(operation: &NativeApplicationShellOperation) -> Option<ShellResource> {
+    match operation {
+        NativeApplicationShellOperation::CreateTray { .. }
+        | NativeApplicationShellOperation::ShowNotification { .. } => operation_resource(operation),
+        _ => None,
+    }
+}
+fn set_resource_phase(state: &mut ShellState, resource: ShellResource, phase: ResourcePhase) {
+    match resource {
+        ShellResource::Tray(id) => {
+            if let Some(record) = tray_record_mut(&mut state.trays, id) {
+                record.phase = phase;
+            }
+        }
+        ShellResource::Notification(id) => {
+            if let Some(record) = notification_record_mut(&mut state.notifications, id) {
+                record.phase = phase;
+            }
+        }
+    }
+}
+fn cancel_queued_resource(state: &mut ShellState, resource: ShellResource) {
+    let ids: Vec<_> = state
+        .requests
+        .iter()
+        .filter(|request| operation_resource(&request.operation) == Some(resource))
+        .map(|request| request.request_id)
+        .collect();
+    state
+        .requests
+        .retain(|request| operation_resource(&request.operation) != Some(resource));
+    for request_id in ids {
+        state.pending.remove(&request_id);
+        state
+            .completions
+            .push_back(NativeApplicationShellCompletion {
+                request_id,
+                result: Err(ApplicationShellError::StaleResource),
+            });
+    }
+}
+fn retire_resource(
+    state: &mut ShellState,
+    resource: ShellResource,
+    phase: ResourcePhase,
+    native_cleanup: bool,
+) {
+    cancel_queued_resource(state, resource);
+    if native_cleanup && matches!(phase, ResourcePhase::Dispatched | ResourcePhase::Live) {
+        enqueue(
+            state,
+            match resource {
+                ShellResource::Tray(id) => NativeApplicationShellOperation::RemoveTray { id },
+                ShellResource::Notification(id) => {
+                    NativeApplicationShellOperation::CloseNotification { id }
+                }
+            },
+        );
+    }
+}
+
 fn menu_build_error(error: PlatformMenuBuildError) -> ApplicationShellError {
     ApplicationShellError::NativeFailure(error.to_string())
 }
@@ -464,7 +592,11 @@ fn ensure_running(state: &ShellState) -> Result<(), ApplicationShellError> {
 
 fn enqueue(state: &mut ShellState, operation: NativeApplicationShellOperation) {
     let request_id = ApplicationShellRequestId(state.next_request);
-    state.next_request = state.next_request.wrapping_add(1);
+    state.next_request = state
+        .next_request
+        .checked_add(1)
+        .expect("shell request identity exhausted");
+    state.pending.insert(request_id, operation.clone());
     state.requests.push_back(NativeApplicationShellRequest {
         request_id,
         operation,
@@ -586,6 +718,9 @@ impl TrayItemHandle {
         ensure_running(&state)?;
         let record = tray_record_mut(&mut state.trays, self.id)
             .ok_or(ApplicationShellError::StaleResource)?;
+        if record.phase == ResourcePhase::Failed {
+            return Err(ApplicationShellError::StaleResource);
+        }
         record.presentation = presentation.clone();
         record.menu = menu.clone();
         enqueue(
@@ -637,14 +772,12 @@ impl ApplicationShellService {
             .get_mut(id.index() as usize)
             .filter(|slot| slot.generation == id.generation())
             .ok_or(ApplicationShellError::StaleResource)?;
-        slot.value
+        let record = slot
+            .value
             .take()
             .ok_or(ApplicationShellError::StaleResource)?;
         slot.generation = slot.generation.wrapping_add(1);
-        enqueue(
-            &mut state,
-            NativeApplicationShellOperation::RemoveTray { id },
-        );
+        retire_resource(&mut state, ShellResource::Tray(id), record.phase, true);
         drop(state);
         self.wake();
         Ok(())
@@ -702,6 +835,9 @@ impl NotificationHandle {
         ensure_running(&state)?;
         let record = notification_record_mut(&mut state.notifications, self.id)
             .ok_or(ApplicationShellError::StaleResource)?;
+        if record.phase == ResourcePhase::Failed {
+            return Err(ApplicationShellError::StaleResource);
+        }
         record.presentation = presentation.clone();
         enqueue(
             &mut state,
@@ -765,15 +901,16 @@ impl ApplicationShellService {
     ) -> Result<(), ApplicationShellError> {
         let mut state = self.state.borrow_mut();
         ensure_running(&state)?;
-        if !release_notification(&mut state.notifications, id) {
-            return Err(ApplicationShellError::StaleResource);
-        }
-        if dismiss_native {
-            enqueue(
-                &mut state,
-                NativeApplicationShellOperation::CloseNotification { id },
-            );
-        }
+        let phase = notification_record(&state.notifications, id)
+            .ok_or(ApplicationShellError::StaleResource)?
+            .phase;
+        release_notification(&mut state.notifications, id);
+        retire_resource(
+            &mut state,
+            ShellResource::Notification(id),
+            phase,
+            dismiss_native,
+        );
         drop(state);
         if dismiss_native {
             self.wake();

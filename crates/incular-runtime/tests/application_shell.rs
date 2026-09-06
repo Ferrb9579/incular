@@ -15,6 +15,70 @@ fn service() -> ApplicationShellService {
 }
 
 #[test]
+fn dropping_unpresented_resources_cancels_creation_without_native_cleanup() {
+    let shell = service();
+    let tray = shell
+        .create_tray_item(TrayItemPresentation::new(), &[])
+        .unwrap();
+    let notification = shell
+        .show_notification(NotificationPresentation::new("title", "body"))
+        .unwrap();
+    drop(tray);
+    drop(notification);
+    assert!(shell.take_native_requests_for_test().is_empty());
+    let completions = shell.take_completions();
+    assert_eq!(completions.len(), 2);
+    assert!(
+        completions
+            .iter()
+            .all(|completion| completion.result == Err(ApplicationShellError::StaleResource))
+    );
+}
+
+#[test]
+fn failed_creation_cancels_queued_resource_teardown() {
+    let shell = service();
+    let tray = shell
+        .create_tray_item(TrayItemPresentation::new(), &[])
+        .unwrap();
+    let create = shell.take_native_requests_for_test().pop().unwrap();
+    drop(tray);
+    shell.complete_for_test(incular_runtime::NativeApplicationShellCompletion {
+        request_id: create.request_id,
+        result: Err(ApplicationShellError::NativeFailure("injected".into())),
+    });
+    assert!(shell.take_native_requests_for_test().is_empty());
+}
+
+#[test]
+fn failed_resource_creation_rejects_updates_and_needs_no_cleanup() {
+    let shell = service();
+    let tray = shell
+        .create_tray_item(TrayItemPresentation::new(), &[])
+        .unwrap();
+    let notification = shell
+        .show_notification(NotificationPresentation::new("Build", "Done"))
+        .unwrap();
+    for request in shell.take_native_requests_for_test() {
+        shell.complete_for_test(incular_runtime::NativeApplicationShellCompletion {
+            request_id: request.request_id,
+            result: Err(ApplicationShellError::NativeFailure("injected".into())),
+        });
+    }
+    assert_eq!(
+        tray.update(TrayItemPresentation::new(), &[]),
+        Err(ApplicationShellError::StaleResource)
+    );
+    assert_eq!(
+        notification.update(NotificationPresentation::new("Build", "Again")),
+        Err(ApplicationShellError::StaleResource)
+    );
+    drop(tray);
+    drop(notification);
+    assert!(shell.take_native_requests_for_test().is_empty());
+}
+
+#[test]
 fn unsupported_shell_operations_fail_before_native_queueing() {
     let shell = ApplicationShellService::new_for_test(Arc::new(RwLock::new(
         PlatformCapabilities::unsupported(),
@@ -289,6 +353,9 @@ fn memory_adapter_records_shell_operations_in_order() {
                 .badge(ApplicationBadge::Count(3)),
         )
         .unwrap();
+    for request in shell.take_native_requests_for_test() {
+        shell.complete_for_test(adapter.apply(request));
+    }
     drop(tray);
     for request in shell.take_native_requests_for_test() {
         shell.complete_for_test(adapter.apply(request));
