@@ -6,7 +6,7 @@
 //! sends a portable completion back through Winit's event-loop proxy.
 
 #[cfg(target_os = "linux")]
-use incular_platform::raw_window_handles;
+use crate::winit_adapter::raw_window_handles;
 use incular_platform::{
     CapabilitySupport, FileDialogCapabilities, FileDialogError, FileDialogOutcome,
     NativeWindowSystem,
@@ -71,7 +71,7 @@ pub(crate) fn start_native_file_dialog(
     proxy: EventLoopProxy<RuntimeWakeEvent>,
 ) {
     let capabilities =
-        desktop_file_dialog_capabilities(Some(incular_platform::native_window_system(parent)));
+        desktop_file_dialog_capabilities(Some(crate::winit_adapter::native_window_system(parent)));
     if let Err(error) = capabilities.validate_request(&request.request) {
         send_completion(&proxy, request, Err(error));
         return;

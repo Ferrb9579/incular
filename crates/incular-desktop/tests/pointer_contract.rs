@@ -1,3 +1,4 @@
+use incular_desktop::winit_adapter;
 #[path = "../src/pointer.rs"]
 mod pointer;
 

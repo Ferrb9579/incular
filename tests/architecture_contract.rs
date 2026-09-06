@@ -160,6 +160,8 @@ fn boundary_guard_rejects_reverse_optional_native_and_cyclic_edges() {
         ("incular-core", "incular-widgets"),
         ("incular-wgpu", "incular-desktop"),
         ("incular-config", "winit"),
+        ("incular-platform", "winit"),
+        ("incular-platform", "raw-window-handle"),
     ] {
         let metadata = serde_json::json!({"packages": [package(owner, target)]});
         assert!(
@@ -195,4 +197,34 @@ fn painting_stays_a_pure_type_identical_reexport() {
         value
     }
     let _ = canonical(incular::rendering::DisplayList::default());
+}
+
+#[test]
+fn portable_runtime_and_widgets_do_not_pull_in_winit() {
+    for package in ["incular-runtime", "incular-widgets"] {
+        let output = Command::new(env!("CARGO"))
+            .args([
+                "tree",
+                "--offline",
+                "--package",
+                package,
+                "--edges",
+                "normal,build",
+                "--prefix",
+                "none",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let graph = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            !graph.lines().any(|line| line.starts_with("winit ")),
+            "{package} depends on Winit: {graph}"
+        );
+    }
 }

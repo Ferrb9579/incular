@@ -29,6 +29,7 @@ accesskit_winit = { workspace = true }
 incular-devtools = { workspace = true, optional = true }
 incular-devtools-protocol = { workspace = true, optional = true }
 winit = { workspace = true }
+raw-window-handle = { workspace = true }
 pollster = { workspace = true }
 arboard = { workspace = true }
 fs4 = { workspace = true }

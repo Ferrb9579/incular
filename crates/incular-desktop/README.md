@@ -6,7 +6,7 @@
 | --- | --- |
 | Ownership | Shared Winit host, WGPU frame coordination and native service integration. |
 | API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
-| Support | Desktop host; duplicate runner paths consolidate in E. |
+| Support | Desktop host; one application event loop for both entry APIs. |
 
 Native clipboard initialization failures are preserved as `ClipboardError` on
 rich clipboard reads and writes. The desktop adapter never substitutes local

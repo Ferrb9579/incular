@@ -260,7 +260,9 @@ fn set_taskbar_state(
         return Ok(());
     }
     let window = target_window.ok_or(ApplicationShellError::StaleResource)?;
-    let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(window).window else {
+    let RawWindowHandle::Win32(handle) =
+        incular_desktop::winit_adapter::raw_window_handles(window).window
+    else {
         return Err(ApplicationShellError::Unsupported(
             ApplicationShellFeature::TaskbarProgress,
         ));

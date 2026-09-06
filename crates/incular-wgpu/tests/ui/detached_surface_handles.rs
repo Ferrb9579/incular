@@ -1,6 +1,9 @@
 use incular_core::Color;
-use incular_platform::{PhysicalSize, RawWindowHandles, TransparencyMode};
+use incular_platform::{PhysicalSize, TransparencyMode};
 use incular_wgpu::WgpuRenderer;
+
+#[derive(Clone, Copy)]
+struct RawWindowHandles { window: raw_window_handle::RawWindowHandle }
 
 fn from_detached(handles: RawWindowHandles) {
     drop(WgpuRenderer::new(

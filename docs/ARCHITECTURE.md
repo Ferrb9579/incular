@@ -33,8 +33,8 @@ Dev dependencies are excluded so integration tests can compose layers.
 Removing an edge is allowed; adding one requires an explicit contract change.
 This is a reviewed boundary, not a generated acceptance of whatever Cargo says.
 
-Stage E will remove Winit from platform. Its existing edge is migration debt,
-not permission to introduce more portable Winit APIs. Stage G will consolidate
+Stage E moved Winit translation and raw access into desktop. The platform
+crate must remain free of Winit dependencies. Stage G will consolidate
 navigation state without adding `widgets -> navigation` while the reverse edge
 exists. Extract widget-independent route values into core only if needed; keep
 route composition above widgets. WGPU must never depend on desktop. No new crate
@@ -136,3 +136,6 @@ Rust visibility, grouped imports and aliases before comparing the inventory.
 
 The eight accepted decisions and their implementation/removal conditions are
 recorded in [Architecture decisions](ARCHITECTURE_DECISIONS.md).
+
+The desktop host implementation and native ownership boundaries are documented
+in [Desktop host ownership](DESKTOP_HOST.md).

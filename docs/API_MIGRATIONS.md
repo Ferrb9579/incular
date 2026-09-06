@@ -59,3 +59,22 @@ Stage B establishes these obligations; it does not claim every existing public
 mutation already satisfies them. Stages C–H implement the listed contracts and
 Stage I verifies the historical member manifests. A migration is complete only
 when its consumers, examples, rustdoc, error outcomes and tests agree.
+
+## Stage E desktop migration
+
+- Import Winit conversion helpers (`key_event`, `ime_event`, pointer/touch/wheel/
+  trackpad conversion and `apply_text_input_command`) from
+  `incular_desktop::winit_adapter`. `RawWindowHandles`, `raw_window_handles` and
+  `native_window_system` also move there. The platform crate retains portable
+  `NativeWindowSystem` values and has no Winit/raw-window-handle dependency.
+- Custom desktop backends implement `DesktopApplicationShellServices` for tray,
+  notification and taskbar operations, and return that backend from
+  `DesktopPlatformServices::application_shell()`. Other window service methods
+  remain on `DesktopPlatformServices`; the default shell service is unsupported.
+- `run_window` retains its signature and now adopts its runtime through
+  `Application::from_runtime(runtime, on_action)`. This backend entry preserves
+  the mounted tree, scheduler and queued work. It uses the same lifecycle,
+  capabilities, menus, input, accessibility and rendering host as `run_application`.
+  The callback observes committed activations (pointer release, keyboard and
+  accessibility), rather than pointer hover/down hit-test targets. This corrects
+  duplicate callbacks in the old standalone path.

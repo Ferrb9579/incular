@@ -16,15 +16,15 @@ Do not create a reactive crate without measured boundary benefit.
 
 Single-window and multi-window entry APIs delegate to one desktop event loop.
 Native OS crates supply services; they do not duplicate frame coordination.
-Stage E migrates the convenience runner and then removes the second loop.
+Stage E routes the convenience runner through runtime adoption and removes
+the second loop. See [Desktop host ownership](DESKTOP_HOST.md).
 Retain convenience names only as forwarding APIs with identical semantics.
 Verify resize, parent/popup lifetime, input, menus and shutdown before removal.
 
 ## B03 — Portable platform contracts
 
 Platform owns portable IDs, metrics, capabilities, commands and errors. Desktop
-owns Winit conversions; native crates own FFI. Stage E removes the existing
-platform Winit dependency. Rendering stays below desktop and independent of it.
+owns Winit conversions; native crates own FFI. Stage E removes the platform Winit dependency. Rendering stays below desktop and independent of it.
 Stage A already requires owned safe WGPU surface targets; no detached-handle
 constructor is retained. Accessibility projects semantics; mobile host wiring
 is explicitly incomplete. Verify native target builds and lifecycle tests.

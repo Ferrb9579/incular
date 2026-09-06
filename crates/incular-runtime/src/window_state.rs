@@ -478,22 +478,11 @@ impl WindowManager {
         let restoration_scope = self.restoration_scope(restoration.as_ref());
         let restoration_lease = self.acquire_restoration_scope(restoration.as_ref())?;
         let id = registry.borrow_mut().reserve();
-        let capabilities = Arc::new(RwLock::new(
-            *self
-                .application_capabilities
-                .read()
-                .expect("application capability snapshot lock"),
-        ));
-        let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
-        let transient_presentations = Arc::new(RwLock::new(Vec::new()));
         let spawner = tasks::TaskScheduler::spawner_for(&self.scheduler, id);
         let window_scope = spawner.scope();
         window_scope.bind_window(id);
         let root_scope = window_scope.child();
         let metrics = initial_metrics(&options);
-        let requested_state = options
-            .requested_state()
-            .expect("WindowOptions were validated before requested-state construction");
         let initial_environment = RuntimeEnvironment {
             viewport: metrics.logical_size(),
             physical_width: metrics.physical_size.width,
@@ -560,6 +549,50 @@ impl WindowManager {
         // Do not guess foreground/activity state while constructing a retained
         // root before the OS event loop has attached.
         runtime.lifecycle = self.application_lifecycle.get();
+        Ok(self.install_window(id, runtime, options, restoration, restoration_lease))
+    }
+
+    pub(crate) fn adopt_runtime(&self, mut runtime: Runtime) -> WindowId {
+        let registry = self
+            .registry
+            .upgrade()
+            .expect("application owns its registry");
+        let id = registry.borrow_mut().reserve();
+        runtime.window_id = Some(id);
+        runtime.window_manager = Some(self.clone());
+        runtime.window_scope.bind_window(id);
+        for scope in runtime.owner_scopes.values() {
+            scope.bind_window(id);
+        }
+        self.install_window(id, runtime, WindowOptions::default(), None, None)
+            .id()
+    }
+
+    fn install_window(
+        &self,
+        id: WindowId,
+        runtime: Runtime,
+        options: WindowOptions,
+        restoration: Option<RestorableWindowMetadata>,
+        restoration_lease: Option<restoration::ScopeLease>,
+    ) -> WindowHandle {
+        let registry = self
+            .registry
+            .upgrade()
+            .expect("application owns its registry");
+        let window_scope = runtime.window_scope.clone();
+        let metrics = initial_metrics(&options);
+        let capabilities = Arc::new(RwLock::new(
+            *self
+                .application_capabilities
+                .read()
+                .expect("application capability snapshot lock"),
+        ));
+        let observed_state = Arc::new(RwLock::new(WindowObservedState::default()));
+        let transient_presentations = Arc::new(RwLock::new(Vec::new()));
+        let requested_state = options
+            .requested_state()
+            .expect("WindowOptions were validated before requested-state construction");
         registry.borrow_mut().insert(
             id,
             WindowRecord {
@@ -600,7 +633,7 @@ impl WindowManager {
                 window_id: id,
                 options,
             });
-        Ok(WindowHandle {
+        WindowHandle {
             id,
             bridge: self.bridge.clone(),
             file_dialogs: FileDialogService::new(
@@ -612,7 +645,7 @@ impl WindowManager {
             observed_state,
             displays: self.displays.clone(),
             transient_presentations,
-        })
+        }
     }
 
     pub(crate) fn handle(&self, id: WindowId) -> Option<WindowHandle> {

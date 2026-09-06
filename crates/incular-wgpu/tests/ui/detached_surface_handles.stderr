@@ -1,13 +1,13 @@
 error[E0308]: mismatched types
- --> tests/ui/detached_surface_handles.rs:7:9
-  |
-6 |     drop(WgpuRenderer::new(
-  |          ----------------- arguments to this function are incorrect
-7 |         handles,
-  |         ^^^^^^^ expected `WindowSurfaceTarget`, found `RawWindowHandles`
-  |
+  --> tests/ui/detached_surface_handles.rs:10:9
+   |
+ 9 |     drop(WgpuRenderer::new(
+   |          ----------------- arguments to this function are incorrect
+10 |         handles,
+   |         ^^^^^^^ expected `WindowSurfaceTarget`, found `RawWindowHandles`
+   |
 note: associated function defined here
- --> src/renderer/state.rs
-  |
-  |     pub async fn new(
-  |                  ^^^
+  --> src/renderer/state.rs
+   |
+   |     pub async fn new(
+   |                  ^^^

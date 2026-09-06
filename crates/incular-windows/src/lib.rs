@@ -53,6 +53,9 @@ struct WindowsDesktopPlatformServices {
 
 #[cfg(target_os = "windows")]
 impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices {
+    fn application_shell(&self) -> &dyn incular_desktop::DesktopApplicationShellServices {
+        self
+    }
     fn refine_advanced_input_capabilities(
         &self,
         system: incular_platform::NativeWindowSystem,
@@ -64,40 +67,6 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
             } else {
                 incular_platform::CapabilitySupport::Unsupported
             };
-    }
-
-    fn refine_application_shell_capabilities(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        capabilities: &mut incular_platform::PlatformCapabilities,
-    ) {
-        self.application_shell
-            .refine_capabilities(system, capabilities);
-    }
-
-    fn start_application_shell_watch(
-        &self,
-        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
-        _complete: std::sync::Arc<
-            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
-        >,
-    ) {
-        self.application_shell.start_watch(deliver);
-    }
-
-    fn set_application_shell_notification_identity(&self, identity: Option<String>) {
-        self.application_shell.set_notification_identity(identity);
-    }
-
-    fn apply_application_shell_request(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        request: incular_runtime::NativeApplicationShellRequest,
-        target_window: Option<&winit::window::Window>,
-    ) -> incular_runtime::NativeApplicationShellApplyResult {
-        self.application_shell
-            .apply(system, request, target_window)
-            .into()
     }
 
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
@@ -169,7 +138,8 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
             Foundation::POINT, Graphics::Gdi::ScreenToClient, UI::WindowsAndMessaging::GetCursorPos,
         };
 
-        let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(window).window
+        let RawWindowHandle::Win32(handle) =
+            incular_desktop::winit_adapter::raw_window_handles(window).window
         else {
             return None;
         };
@@ -296,7 +266,8 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
         use raw_window_handle::RawWindowHandle;
         use winit::platform::windows::WindowAttributesExtWindows;
 
-        let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(parent).window
+        let RawWindowHandle::Win32(handle) =
+            incular_desktop::winit_adapter::raw_window_handles(parent).window
         else {
             return attributes;
         };
@@ -320,12 +291,12 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
         use windows_sys::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow};
 
         let RawWindowHandle::Win32(parent_handle) =
-            incular_platform::raw_window_handles(parent).window
+            incular_desktop::winit_adapter::raw_window_handles(parent).window
         else {
             return Err(incular_platform::PlatformOperationError::unavailable());
         };
         let RawWindowHandle::Win32(popup_handle) =
-            incular_platform::raw_window_handles(popup).window
+            incular_desktop::winit_adapter::raw_window_handles(popup).window
         else {
             return Err(incular_platform::PlatformOperationError::unavailable());
         };
@@ -357,7 +328,8 @@ impl incular_desktop::DesktopPlatformServices for WindowsDesktopPlatformServices
             WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
         };
 
-        let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(popup).window
+        let RawWindowHandle::Win32(handle) =
+            incular_desktop::winit_adapter::raw_window_handles(popup).window
         else {
             return Err(incular_platform::PlatformOperationError::unavailable());
         };
@@ -427,3 +399,37 @@ pub fn run_window(
 pub use incular_desktop::{
     DevToolsLaunchMode, devtools_launch_mode_from, devtools_runner, devtools_ui_candidates,
 };
+
+#[cfg(target_os = "windows")]
+impl incular_desktop::DesktopApplicationShellServices for WindowsDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        _complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver);
+    }
+    fn set_application_shell_notification_identity(&self, identity: Option<String>) {
+        self.application_shell.set_notification_identity(identity);
+    }
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell
+            .apply(system, request, target_window)
+            .into()
+    }
+}

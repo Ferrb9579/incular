@@ -30,6 +30,7 @@ lyon_tessellation = { workspace = true }
 kurbo = { workspace = true }
 
 [dev-dependencies]
+raw-window-handle = { workspace = true }
 trybuild = { workspace = true }
 incular-text = { workspace = true }
 criterion = { workspace = true }

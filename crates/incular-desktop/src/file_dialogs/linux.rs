@@ -4,10 +4,11 @@
 //! portal crates. Keeping it free of renderer/runtime dependencies makes the
 //! native translation independently cross-checkable even on non-Linux hosts.
 
+use crate::winit_adapter::RawWindowHandles;
 use ashpd::desktop::file_chooser::{FileFilter, SelectedFiles};
 use incular_platform::{
     DocumentActivation, FileContentTypeKind, FileDialogError, FileDialogKind, FileDialogOption,
-    FileDialogOutcome, FileDialogRequest, FileDialogSelection, RawWindowHandles,
+    FileDialogOutcome, FileDialogRequest, FileDialogSelection,
 };
 
 pub(crate) async fn run_portal_dialog(

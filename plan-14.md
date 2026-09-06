@@ -1,7 +1,7 @@
 # Plan 14 — Architecture consolidation and behavioral quality
 
 Status: Stages A and B are complete and committed (`b0d866e`, `498db6a`).
-Stage C is complete and committed (`cad3463`). Stage D is complete and validated. Stages E–J remain pending.
+Stage C is complete and committed (`cad3463`). Stage D is complete and committed (`164e163`). Stage E is complete and validated (uncommitted). Stages F–J remain pending.
 
 ## Implementation progress
 
@@ -113,6 +113,28 @@ Stage C is complete and committed (`cad3463`). Stage D is complete and validated
   suites each passed 1,097 tests, including the 17 new regressions. Validation
   used deterministic/headless adapters; live native interaction was not repeated.
   Public names/signatures and platform capability claims are unchanged.
+- E implementation: both runner APIs now use one `DesktopHost`; standalone
+  runtimes are adopted without remounting their trees or replacing their scheduler.
+  Native window resources have an explicit owner and teardown order. Input,
+  presentation, environment, transient hosting and native request coordination
+  use bounded interfaces; application-shell backend services have their own trait.
+- E portability: Winit conversion, IME execution and detached native handle access
+  moved from platform to `incular_desktop::winit_adapter`. Dependency guards reject
+  Winit in runtime/widgets' normal/build closure. Backend migration examples and
+  popup coordinate/cancellation policies are in [desktop host ownership](docs/DESKTOP_HOST.md)
+  and [API migrations](docs/API_MIGRATIONS.md#stage-e-desktop-migration).
+- E behavior: legacy action callbacks now receive committed pointer, keyboard and
+  semantic activations; hover/down/cancel no longer trigger them. Six adoption
+  regressions cover identity, reactive builders, queued work, task cleanup, actions
+  and editing parity; four input replay regressions cover shared normalization,
+  independent cancellation, IME and popup coordinates. One new architecture test
+  enforces portable dependency closure; existing conversion tests moved to desktop.
+- E final validation (Windows, 2026-09-06): formatting, workspace check, strict
+  all-target/all-feature Clippy and warning-denied all-feature rustdoc passed.
+  Default and all-feature workspace suites each passed 1,108 tests, including
+  11 new regressions. Opt-in live Windows `in_place_resize`, `window_control`
+  and `pointer_input_native` regressions passed. Linux/macOS native interaction
+  was not exercised; platform capability claims remain unchanged.
 - The original audit is a baseline record,
   not a statement that these newly corrected paths remain defective.
 

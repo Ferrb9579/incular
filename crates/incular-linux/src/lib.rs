@@ -41,34 +41,8 @@ impl Default for LinuxDesktopPlatformServices {
 
 #[cfg(target_os = "linux")]
 impl incular_desktop::DesktopPlatformServices for LinuxDesktopPlatformServices {
-    fn refine_application_shell_capabilities(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        capabilities: &mut incular_platform::PlatformCapabilities,
-    ) {
-        self.application_shell
-            .refine_capabilities(system, capabilities);
-    }
-
-    fn start_application_shell_watch(
-        &self,
-        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
-        _complete: std::sync::Arc<
-            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
-        >,
-    ) {
-        self.application_shell.start_watch(deliver);
-    }
-
-    fn apply_application_shell_request(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        request: incular_runtime::NativeApplicationShellRequest,
-        target_window: Option<&winit::window::Window>,
-    ) -> incular_runtime::NativeApplicationShellApplyResult {
-        self.application_shell
-            .apply(system, request, target_window)
-            .into()
+    fn application_shell(&self) -> &dyn incular_desktop::DesktopApplicationShellServices {
+        self
     }
 
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
@@ -108,7 +82,7 @@ impl incular_desktop::DesktopPlatformServices for LinuxDesktopPlatformServices {
         }
         use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
         let xlib = self.xlib.as_ref()?;
-        let handles = incular_platform::raw_window_handles(window);
+        let handles = incular_desktop::winit_adapter::raw_window_handles(window);
         let RawWindowHandle::Xlib(window_handle) = handles.window else {
             return None;
         };
@@ -179,3 +153,34 @@ pub fn run_window(
 pub use incular_desktop::{
     DevToolsLaunchMode, devtools_launch_mode_from, devtools_runner, devtools_ui_candidates,
 };
+
+#[cfg(target_os = "linux")]
+impl incular_desktop::DesktopApplicationShellServices for LinuxDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        _complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver);
+    }
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell
+            .apply(system, request, target_window)
+            .into()
+    }
+}

@@ -6,11 +6,11 @@
 | --- | --- |
 | Ownership | Portable native IDs, events, capabilities, commands, metrics and errors. |
 | API class | backend; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
-| Support | Available contracts; existing Winit translation moves to desktop in E. |
+| Support | Portable contracts; Winit conversion and raw access belong to desktop. |
 
-Owns portable native events and the logical/physical DPI boundary. Existing
-Winit translation and raw-handle extraction are a Stage E migration seam, not
-a portable API commitment. Desktop adapters convert physical pointers through
+Owns portable native events and the logical/physical DPI boundary. Winit
+translation and raw-handle extraction live in `incular_desktop::winit_adapter`.
+Desktop adapters convert physical pointers through
 `WindowMetrics` before hit testing.
 
 ## Window contract

@@ -195,7 +195,33 @@ impl Application {
         primary_restoration: Option<RestorableWindowMetadata>,
         build: impl FnMut(&mut BuildContext) -> Widget + 'static,
     ) -> Result<Self, WindowError> {
-        let scheduler = tasks::TaskScheduler::new();
+        Self::with_primary(tasks::TaskScheduler::new(), restoration_config, |manager| {
+            manager
+                .open_window_with_inner(options, build, primary_restoration)
+                .map(|handle| handle.id())
+        })
+    }
+
+    /// Adopts an existing standalone runtime without remounting its tree or
+    /// replacing its task scheduler. The action callback observes legacy action
+    /// IDs on the UI thread; native event handling uses the application host.
+    /// Existing reactive builders, focus and queued task completions are retained.
+    pub fn from_runtime(
+        mut runtime: Runtime,
+        on_action: impl FnMut(incular_widgets::internal::ActionId) + 'static,
+    ) -> Self {
+        runtime.legacy_action_handler = Some(Box::new(on_action));
+        Self::with_primary(runtime.scheduler.clone(), None, |manager| {
+            Ok(manager.adopt_runtime(runtime))
+        })
+        .expect("adopting a mounted runtime with default window options is infallible")
+    }
+
+    fn with_primary(
+        scheduler: Rc<RefCell<tasks::TaskScheduler>>,
+        restoration_config: Option<RestorationConfig>,
+        create: impl FnOnce(&WindowManager) -> Result<WindowId, WindowError>,
+    ) -> Result<Self, WindowError> {
         let restoration = restoration_config.map(restoration::RestorationManager::load);
         if let Some(restoration) = &restoration {
             restoration.attach_scheduler(&scheduler);
@@ -235,9 +261,7 @@ impl Application {
             displays: display_catalog.clone(),
             application_lifecycle,
         };
-        let primary_window = manager
-            .open_window_with_inner(options, build, primary_restoration)?
-            .id();
+        let primary_window = create(&manager)?;
         Ok(Self {
             scheduler,
             registry,

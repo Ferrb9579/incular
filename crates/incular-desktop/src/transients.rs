@@ -1,6 +1,48 @@
 //! Native transient presentation hosts for the shared desktop event loop.
 
-use super::*;
+use crate::DesktopPlatformServices;
+use crate::input::WindowInputState;
+use crate::pointer::{NativeCursorCoordinator, PointerDeviceRegistry};
+use crate::transient_input::offset_transient_platform_event;
+use crate::window_host::NativeWindowState;
+use incular_config::{TransientPresentation, TransientRole};
+use incular_core::{Color, Offset};
+use incular_platform::{
+    NativeWindowSystem, PhysicalSize, PlatformEvent, TransparencyMode,
+    WindowEvent as IncularWindowEvent, WindowId as IncularWindowId, WindowMetrics,
+};
+use incular_rendering::DisplayList;
+use incular_runtime::{
+    Application, ResolvedTransientPresentation, TransientFallbackReason,
+    TransientPresentationResolution,
+};
+use incular_wgpu::{RendererError, SharedGpuContext, WgpuRenderer};
+use incular_widgets::{TransientSurfaceId, TransientSurfaceSnapshot};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use winit::{
+    dpi::PhysicalPosition,
+    event::WindowEvent,
+    event_loop::ActiveEventLoop,
+    window::{Window, WindowAttributes, WindowId as NativeWindowId},
+};
+
+pub(crate) struct TransientContext<'a> {
+    pub(crate) application: &'a mut Application,
+    pub(crate) windows: &'a mut HashMap<NativeWindowId, NativeWindowState>,
+    pub(crate) native_ids: &'a HashMap<IncularWindowId, NativeWindowId>,
+    pub(crate) transient_windows: &'a mut HashMap<NativeWindowId, NativeTransientState>,
+    pub(crate) transient_native_ids: &'a mut HashMap<TransientHostKey, NativeWindowId>,
+    pub(crate) transient_native_rejections:
+        &'a mut HashMap<TransientHostKey, TransientNativeRejection>,
+    pub(crate) shared_gpu: &'a Option<SharedGpuContext>,
+    pub(crate) pointer_devices: &'a mut PointerDeviceRegistry,
+    pub(crate) platform_services: &'a dyn DesktopPlatformServices,
+    pub(crate) window_system: Option<NativeWindowSystem>,
+    pub(crate) pending_native_destructions: &'a mut HashSet<NativeWindowId>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct TransientHostKey {
@@ -19,10 +61,8 @@ pub(super) struct NativeTransientState {
     snapshot: TransientSurfaceSnapshot,
     renderer: WgpuRenderer,
     metrics: WindowMetrics,
-    cursor: PhysicalPosition<f64>,
-    mouse_buttons: MouseButtonState,
+    input: WindowInputState,
     native_cursor: NativeCursorCoordinator,
-    modifiers: winit::keyboard::ModifiersState,
     display_list: DisplayList,
     requires_opaque_surface_base: bool,
     native_rect: incular_core::Rect,
@@ -33,7 +73,19 @@ pub(super) struct NativeTransientState {
     window: Arc<Window>,
 }
 
-impl MultiApp {
+impl TransientContext<'_> {
+    fn track_native_window_drop(&mut self, native_id: NativeWindowId) {
+        if self.window_system.is_some_and(|system| {
+            self.platform_services
+                .wait_for_destroyed_event_after_window_drop(system)
+        }) {
+            self.pending_native_destructions.insert(native_id);
+        }
+    }
+    fn note_window_input(&mut self, native_id: NativeWindowId, kind: crate::input::InputKind) {
+        crate::host_environment::note_input(self.application, self.windows, native_id, kind);
+    }
+
     fn transient_owner_native_id(&self, native_id: NativeWindowId) -> Option<NativeWindowId> {
         let owner = self.transient_windows.get(&native_id)?.key.owner;
         self.native_ids.get(&owner).copied()
@@ -369,10 +421,8 @@ impl MultiApp {
                 window,
                 renderer,
                 metrics,
-                cursor: PhysicalPosition::new(0., 0.),
-                mouse_buttons: MouseButtonState::default(),
+                input: WindowInputState::default(),
                 native_cursor: NativeCursorCoordinator::default(),
-                modifiers: winit::keyboard::ModifiersState::default(),
                 display_list: DisplayList::new(),
                 requires_opaque_surface_base,
                 native_rect,
@@ -663,26 +713,38 @@ impl MultiApp {
     }
 
     pub(super) fn cancel_transient_mouse_pointer(&mut self, native_id: NativeWindowId) {
-        let (had_pressed_buttons, cursor, metrics) = {
-            let Some(state) = self.transient_windows.get_mut(&native_id) else {
-                return;
-            };
-            (state.mouse_buttons.cancel(), state.cursor, state.metrics)
+        let Some(state) = self.transient_windows.get_mut(&native_id) else {
+            return;
         };
-        if had_pressed_buttons {
-            let cancel = pointer_event_with_metadata(
-                mouse_pointer_metadata(0, 0, None, PointerPhase::Cancel),
-                cursor,
-                metrics,
-            );
-            self.route_transient_platform_event(native_id, cancel);
+        let events = state.input.cancel(state.metrics);
+        for event in events.into_iter().flatten() {
+            self.route_transient_platform_event(native_id, event);
         }
-        let exit = pointer_event_with_metadata(
-            mouse_pointer_metadata(0, 0, None, PointerPhase::Exit),
-            cursor,
-            metrics,
-        );
-        self.route_transient_platform_event(native_id, exit);
+        self.sync_transient_cursor(native_id);
+    }
+
+    fn handle_transient_input(&mut self, native_id: NativeWindowId, event: &WindowEvent) {
+        let native = if let WindowEvent::Touch(touch) = event {
+            self.platform_services.take_native_pointer_sample(touch.id)
+        } else {
+            None
+        };
+        let state = self
+            .transient_windows
+            .get_mut(&native_id)
+            .expect("known transient window");
+        let Some(input) = state
+            .input
+            .translate(event, state.metrics, self.pointer_devices, native)
+        else {
+            return;
+        };
+        if let Some(parent) = self.transient_owner_native_id(native_id) {
+            self.note_window_input(parent, input.kind);
+        }
+        for event in input.events.into_iter().flatten() {
+            self.route_transient_platform_event(native_id, event);
+        }
         self.sync_transient_cursor(native_id);
     }
 
@@ -726,213 +788,9 @@ impl MultiApp {
                 }
             }
             WindowEvent::Focused(false) => self.cancel_transient_mouse_pointer(native_id),
-            WindowEvent::CursorMoved {
-                device_id,
-                position,
-            } => {
-                let device = self.pointer_devices.id(*device_id);
-                let event = {
-                    let state = self
-                        .transient_windows
-                        .get_mut(&native_id)
-                        .expect("known transient window");
-                    state.cursor = *position;
-                    pointer_event_with_metadata(
-                        mouse_pointer_metadata(
-                            device,
-                            state.mouse_buttons.pressed(),
-                            None,
-                            PointerPhase::Move,
-                        ),
-                        *position,
-                        state.metrics,
-                    )
-                };
-                self.route_transient_platform_event(native_id, event);
-                self.sync_transient_cursor(native_id);
-            }
-            WindowEvent::CursorEntered { device_id } | WindowEvent::CursorLeft { device_id } => {
-                let phase = if matches!(event, WindowEvent::CursorEntered { .. }) {
-                    PointerPhase::Enter
-                } else {
-                    PointerPhase::Exit
-                };
-                let device = self.pointer_devices.id(*device_id);
-                let event = {
-                    let state = self
-                        .transient_windows
-                        .get(&native_id)
-                        .expect("known transient window");
-                    pointer_event_with_metadata(
-                        mouse_pointer_metadata(device, state.mouse_buttons.pressed(), None, phase),
-                        state.cursor,
-                        state.metrics,
-                    )
-                };
-                self.route_transient_platform_event(native_id, event);
-                self.sync_transient_cursor(native_id);
-            }
-            WindowEvent::MouseInput {
-                device_id,
-                state,
-                button,
-            } => {
-                let device = self.pointer_devices.id(*device_id);
-                let transition = self
-                    .transient_windows
-                    .get_mut(&native_id)
-                    .expect("known transient window")
-                    .mouse_buttons
-                    .transition(*state, *button);
-                if let Some(transition) = transition {
-                    let event = {
-                        let state = self
-                            .transient_windows
-                            .get(&native_id)
-                            .expect("known transient window");
-                        pointer_event_with_metadata(
-                            mouse_pointer_metadata(
-                                device,
-                                transition.buttons,
-                                Some(transition.button),
-                                transition.phase,
-                            ),
-                            state.cursor,
-                            state.metrics,
-                        )
-                    };
-                    self.route_transient_platform_event(native_id, event);
-                    self.sync_transient_cursor(native_id);
-                }
-            }
-            WindowEvent::Touch(touch) => {
-                let native = self.platform_services.take_native_pointer_sample(touch.id);
-                let stylus = native.is_some_and(|sample| {
-                    matches!(
-                        sample.kind,
-                        PointerDeviceKind::Stylus | PointerDeviceKind::InvertedStylus
-                    )
-                });
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    if stylus {
-                        self.note_window_stylus(parent_native);
-                    } else {
-                        self.note_window_touch(parent_native);
-                    }
-                }
-                let (device, native) = self
-                    .pointer_devices
-                    .resolve_native_sample(touch.device_id, native);
-                let metrics = self
-                    .transient_windows
-                    .get(&native_id)
-                    .expect("known transient window")
-                    .metrics;
-                self.route_transient_platform_event(
-                    native_id,
-                    touch_event_with_native_sample(*touch, device, native, metrics),
-                );
-            }
-            WindowEvent::PinchGesture {
-                device_id,
-                delta,
-                phase,
-            } => {
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    self.note_window_trackpad(parent_native);
-                }
-                let device = self.pointer_devices.id(*device_id);
-                if let Some(event) = trackpad_pinch_event(device, *delta, *phase) {
-                    self.route_transient_platform_event(native_id, event);
-                }
-            }
-            WindowEvent::RotationGesture {
-                device_id,
-                delta,
-                phase,
-            } => {
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    self.note_window_trackpad(parent_native);
-                }
-                let device = self.pointer_devices.id(*device_id);
-                if let Some(event) = trackpad_rotation_event(device, *delta, *phase) {
-                    self.route_transient_platform_event(native_id, event);
-                }
-            }
-            WindowEvent::PanGesture {
-                device_id,
-                delta,
-                phase,
-            } => {
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    self.note_window_trackpad(parent_native);
-                }
-                let device = self.pointer_devices.id(*device_id);
-                let metrics = self
-                    .transient_windows
-                    .get(&native_id)
-                    .expect("known transient window")
-                    .metrics;
-                if let Some(event) = trackpad_pan_event(device, *delta, *phase, metrics) {
-                    self.route_transient_platform_event(native_id, event);
-                }
-            }
-            WindowEvent::DoubleTapGesture { device_id } => {
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    self.note_window_trackpad(parent_native);
-                }
-                let device = self.pointer_devices.id(*device_id);
-                self.route_transient_platform_event(
-                    native_id,
-                    trackpad_smart_magnify_event(device),
-                );
-            }
-            WindowEvent::TouchpadPressure {
-                device_id,
-                pressure,
-                stage,
-            } => {
-                if let Some(parent_native) = self.transient_owner_native_id(native_id) {
-                    self.note_window_trackpad(parent_native);
-                }
-                let device = self.pointer_devices.id(*device_id);
-                if let Some(event) = trackpad_pressure_event(device, *pressure, *stage) {
-                    self.route_transient_platform_event(native_id, event);
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let metrics = self
-                    .transient_windows
-                    .get(&native_id)
-                    .expect("known transient window")
-                    .metrics;
-                self.route_transient_platform_event(native_id, wheel_event(*delta, metrics));
-            }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.transient_windows
-                    .get_mut(&native_id)
-                    .expect("known transient window")
-                    .modifiers = modifiers.state();
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                let modifiers = self
-                    .transient_windows
-                    .get(&native_id)
-                    .expect("known transient window")
-                    .modifiers;
-                self.route_transient_platform_event(native_id, key_event(event, modifiers));
-                if let Some(text) = text_event(event) {
-                    self.route_transient_platform_event(native_id, text);
-                }
-            }
-            WindowEvent::Ime(event) => {
-                if let Some(ime) = ime_event(event.clone()) {
-                    self.route_transient_platform_event(native_id, ime);
-                }
-            }
             WindowEvent::RedrawRequested => self.redraw_transient_host(native_id),
             WindowEvent::CloseRequested | WindowEvent::Focused(true) => {}
-            _ => {}
+            _ => self.handle_transient_input(native_id, event),
         }
         true
     }
@@ -967,44 +825,4 @@ fn transient_screen_position(
         return None;
     }
     Some(PhysicalPosition::new(x.round() as i32, y.round() as i32))
-}
-
-fn offset_transient_platform_event(event: PlatformEvent, offset: Offset) -> PlatformEvent {
-    match event {
-        PlatformEvent::Input(InputEvent::Pointer { phase, position }) => {
-            PlatformEvent::Input(InputEvent::Pointer {
-                phase,
-                position: position + offset,
-            })
-        }
-        PlatformEvent::Input(InputEvent::PointerWithId {
-            pointer,
-            phase,
-            position,
-        }) => PlatformEvent::Input(InputEvent::PointerWithId {
-            pointer,
-            phase,
-            position: position + offset,
-        }),
-        PlatformEvent::Input(InputEvent::PointerWithMetadata {
-            pointer,
-            device,
-            kind,
-            buttons,
-            button,
-            sample,
-            phase,
-            position,
-        }) => PlatformEvent::Input(InputEvent::PointerWithMetadata {
-            pointer,
-            device,
-            kind,
-            buttons,
-            button,
-            sample,
-            phase,
-            position: position + offset,
-        }),
-        other => other,
-    }
 }

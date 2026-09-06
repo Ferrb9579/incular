@@ -705,7 +705,9 @@ fn subclass_property_name() -> &'static [u16] {
 }
 
 fn win32_hwnd(window: &winit::window::Window) -> Result<HWND, PlatformOperationError> {
-    let RawWindowHandle::Win32(handle) = incular_platform::raw_window_handles(window).window else {
+    let RawWindowHandle::Win32(handle) =
+        incular_desktop::winit_adapter::raw_window_handles(window).window
+    else {
         return Err(PlatformOperationError::unavailable());
     };
     Ok(handle.hwnd.get())

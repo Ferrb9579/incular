@@ -1,5 +1,6 @@
+use crate::winit_adapter::mouse_button_mask;
 use incular_core::PointerPhase;
-use incular_platform::{NativePointerSample, mouse_button_mask};
+use incular_platform::NativePointerSample;
 use incular_widgets::MouseCursor;
 use std::collections::HashMap;
 use winit::{

@@ -36,32 +36,8 @@ struct MacosDesktopPlatformServices {
 
 #[cfg(target_os = "macos")]
 impl incular_desktop::DesktopPlatformServices for MacosDesktopPlatformServices {
-    fn refine_application_shell_capabilities(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        capabilities: &mut incular_platform::PlatformCapabilities,
-    ) {
-        self.application_shell
-            .refine_capabilities(system, capabilities);
-    }
-
-    fn start_application_shell_watch(
-        &self,
-        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
-        complete: std::sync::Arc<
-            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
-        >,
-    ) {
-        self.application_shell.start_watch(deliver, complete);
-    }
-
-    fn apply_application_shell_request(
-        &self,
-        system: incular_platform::NativeWindowSystem,
-        request: incular_runtime::NativeApplicationShellRequest,
-        target_window: Option<&winit::window::Window>,
-    ) -> incular_runtime::NativeApplicationShellApplyResult {
-        self.application_shell.apply(system, request, target_window)
+    fn application_shell(&self) -> &dyn incular_desktop::DesktopApplicationShellServices {
+        self
     }
 
     fn system_environment_preferences(&self) -> incular_platform::SystemEnvironmentPreferences {
@@ -276,7 +252,8 @@ fn appkit_window(
 ) -> Option<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
     use raw_window_handle::RawWindowHandle;
 
-    let RawWindowHandle::AppKit(handle) = incular_platform::raw_window_handles(window).window
+    let RawWindowHandle::AppKit(handle) =
+        incular_desktop::winit_adapter::raw_window_handles(window).window
     else {
         return None;
     };
@@ -319,3 +296,32 @@ pub fn run_window(
 pub use incular_desktop::{
     DevToolsLaunchMode, devtools_launch_mode_from, devtools_runner, devtools_ui_candidates,
 };
+
+#[cfg(target_os = "macos")]
+impl incular_desktop::DesktopApplicationShellServices for MacosDesktopPlatformServices {
+    fn refine_application_shell_capabilities(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        capabilities: &mut incular_platform::PlatformCapabilities,
+    ) {
+        self.application_shell
+            .refine_capabilities(system, capabilities);
+    }
+    fn start_application_shell_watch(
+        &self,
+        deliver: std::sync::Arc<dyn Fn(incular_runtime::NativeApplicationShellEvent) + Send + Sync>,
+        complete: std::sync::Arc<
+            dyn Fn(incular_runtime::NativeApplicationShellCompletion) + Send + Sync,
+        >,
+    ) {
+        self.application_shell.start_watch(deliver, complete);
+    }
+    fn apply_application_shell_request(
+        &self,
+        system: incular_platform::NativeWindowSystem,
+        request: incular_runtime::NativeApplicationShellRequest,
+        target_window: Option<&winit::window::Window>,
+    ) -> incular_runtime::NativeApplicationShellApplyResult {
+        self.application_shell.apply(system, request, target_window)
+    }
+}

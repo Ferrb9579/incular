@@ -3,10 +3,10 @@ use incular_core::{
     SECONDARY_POINTER_BUTTON, StylusMetadata, StylusOrientation, TrackpadGesture,
     TrackpadGesturePhase,
 };
-use incular_platform::{
-    NativePointerSample, PhysicalSize, PlatformEvent, WindowMetrics,
+use incular_desktop::winit_adapter::{
     touch_event_with_native_sample, trackpad_pinch_event, trackpad_rotation_event,
 };
+use incular_platform::{NativePointerSample, PhysicalSize, PlatformEvent, WindowMetrics};
 use winit::{
     dpi::PhysicalPosition,
     event::{DeviceId, Touch, TouchPhase},

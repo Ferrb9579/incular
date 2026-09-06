@@ -2063,6 +2063,7 @@ dependencies = [
  "interprocess",
  "native-dialog",
  "pollster",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tempfile",
@@ -2221,9 +2222,7 @@ dependencies = [
  "directories",
  "incular-config",
  "incular-core",
- "raw-window-handle",
  "url",
- "winit",
 ]
 
 [[package]]
@@ -2308,6 +2307,7 @@ dependencies = [
  "incular-text",
  "kurbo",
  "lyon_tessellation",
+ "raw-window-handle",
  "trybuild",
  "wgpu",
  "wgpu-profiler",

@@ -89,6 +89,7 @@ pub struct Runtime {
     pub(crate) reactive: Rc<RefCell<ReactiveQueue>>,
     pub(crate) builders: HashMap<ElementId, Box<dyn FnMut() -> Widget>>,
     pub(crate) handlers: HashMap<ActionId, Rc<dyn Fn()>>,
+    pub(crate) legacy_action_handler: Option<Box<dyn FnMut(ActionId)>>,
     pub(crate) hovered_button: Option<ElementId>,
     pub(crate) pressed_button: Option<ElementId>,
     /// The contact currently allowed to drive single-contact controls. Other
@@ -227,6 +228,7 @@ impl Runtime {
             reactive,
             builders: HashMap::new(),
             handlers,
+            legacy_action_handler: None,
             hovered_button: None,
             pressed_button: None,
             legacy_pointer: None,
@@ -593,6 +595,7 @@ impl Runtime {
         self.pending.clear();
         self.order.clear();
         self.handlers.clear();
+        self.legacy_action_handler = None;
         self.text_histories.clear();
         self.text_input_commands.clear();
         self.text_input_client = None;
@@ -710,11 +713,7 @@ impl Runtime {
                 .or_else(|| {
                     self.tree
                         .action_for_element(element)
-                        .and_then(|action| self.handlers.get(&action).cloned())
-                        .map(|callback| {
-                            callback();
-                            true
-                        })
+                        .map(|action| self.activate_action(action))
                 })
                 .unwrap_or(false),
             SemanticAction::SetText(text) => {
@@ -1273,11 +1272,8 @@ impl Runtime {
                         .set_button_interaction(element, None, Some(false), None);
                 }
                 if let Some((element, action)) = valid {
-                    if let Some(action) = action
-                        && let Some(callback) = self.handlers.get(&action).cloned()
-                    {
-                        callback();
-                        self.frame_requested = true;
+                    if let Some(action) = action {
+                        self.activate_action(action);
                     }
                     Some(EventTarget { element, action })
                 } else {
@@ -1547,10 +1543,8 @@ impl Runtime {
             && let Some(focused) = self.focused
             && let Some((owner, Some(action))) = self.tree.button_ancestor(focused)
             && (owner == focused || self.tree.is_menu_item_focus(focused))
-            && let Some(callback) = self.handlers.get(&action).cloned()
+            && self.activate_action(action)
         {
-            callback();
-            self.frame_requested = true;
             return;
         }
         if event.code == Code::Tab {
@@ -1948,6 +1942,20 @@ impl Runtime {
             id
         });
     }
+    fn activate_action(&mut self, action: ActionId) -> bool {
+        let mut handled = false;
+        if let Some(callback) = self.handlers.get(&action).cloned() {
+            callback();
+            handled = true;
+        }
+        if let Some(callback) = self.legacy_action_handler.as_mut() {
+            callback(action);
+            handled = true;
+        }
+        self.frame_requested |= handled;
+        handled
+    }
+
     fn prune_handlers(&mut self) {
         let active = self.tree.action_ids();
         self.handlers.retain(|id, _| active.contains(id));

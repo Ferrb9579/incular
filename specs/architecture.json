@@ -103,7 +103,7 @@
       "name": "incular-desktop",
       "default_api_class": "backend",
       "owner": "Shared Winit host, WGPU frame coordination and native service integration.",
-      "support": "Desktop host; duplicate runner paths consolidate in E.",
+      "support": "Desktop host; one application event loop for both entry APIs.",
       "allowed_dependencies": [
         "incular-accessibility",
         "incular-config",
@@ -243,7 +243,7 @@
       "name": "incular-platform",
       "default_api_class": "backend",
       "owner": "Portable native IDs, events, capabilities, commands, metrics and errors.",
-      "support": "Available contracts; existing Winit translation moves to desktop in E.",
+      "support": "Portable contracts; Winit conversion and raw access belong to desktop.",
       "allowed_dependencies": [
         "incular-config",
         "incular-core"
@@ -358,6 +358,10 @@
     }
   ],
   "api_overrides": [
+    {
+      "path": "incular_runtime::Application::from_runtime",
+      "api_class": "backend"
+    },
     {
       "path": "incular_core::BuildContext",
       "api_class": "bridge"
@@ -572,11 +576,17 @@
     }
   ],
   "external_boundaries": {
+    "raw-window-handle": [
+      "incular-desktop",
+      "incular-wgpu",
+      "incular-linux",
+      "incular-macos",
+      "incular-windows"
+    ],
     "wgpu": [
       "incular-wgpu"
     ],
     "winit": [
-      "incular-platform",
       "incular-desktop",
       "incular-linux",
       "incular-macos",
