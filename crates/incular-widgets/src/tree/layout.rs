@@ -695,15 +695,15 @@ impl WidgetTree {
 }
 
 fn advanced_viewport_size(constraints: Constraints) -> Size {
-    let width = if constraints.max_width.is_finite() {
-        constraints.max_width
+    let width = if constraints.max_width().is_finite() {
+        constraints.max_width()
     } else {
-        constraints.min_width
+        constraints.min_width()
     };
-    let height = if constraints.max_height.is_finite() {
-        constraints.max_height
+    let height = if constraints.max_height().is_finite() {
+        constraints.max_height()
     } else {
-        constraints.min_height
+        constraints.min_height()
     };
     constraints.constrain(Size::new(width, height))
 }

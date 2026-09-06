@@ -196,7 +196,7 @@ fn layout_builder_rebuilds_only_when_constraints_change() {
         .mount(
             incular_widgets::LayoutBuilder::new(move |_, constraints| {
                 observed.set(observed.get() + 1);
-                Widget::box_(Size::new(constraints.max_width, 10.), Color::WHITE)
+                Widget::box_(Size::new(constraints.max_width(), 10.), Color::WHITE)
             })
             .into(),
         )

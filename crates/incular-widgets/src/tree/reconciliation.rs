@@ -107,10 +107,10 @@ impl WidgetTree {
                 element.layout_builder_revision = 0;
             }
             if matches!(widget.kind(), WidgetKind::LayoutBuilder { .. })
-                || invalidation.contains(RenderInvalidation::LAYOUT)
+                || invalidation.contains(Invalidation::LAYOUT)
             {
                 self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
-            } else if invalidation.contains(RenderInvalidation::PAINT) {
+            } else if invalidation.contains(Invalidation::PAINT) {
                 self.mark_render_dirty(render, DirtyFlags::PAINT, false);
             }
             work.extend(children.into_iter().rev());
@@ -314,13 +314,13 @@ impl WidgetTree {
                         .render_live_mut(render, "inherited render must remain live")
                         .object
                         .update_kind(new_kind);
-                    if invalidation.contains(RenderInvalidation::LAYOUT) {
+                    if invalidation.contains(Invalidation::LAYOUT) {
                         self.mark_render_dirty(
                             render,
                             DirtyFlags::LAYOUT | DirtyFlags::PAINT,
                             true,
                         );
-                    } else if invalidation.contains(RenderInvalidation::PAINT) {
+                    } else if invalidation.contains(Invalidation::PAINT) {
                         self.mark_render_dirty(render, DirtyFlags::PAINT, false);
                     }
                 }
@@ -501,21 +501,21 @@ impl WidgetTree {
                 world_transform,
                 content_transform,
             );
-            if invalidation.contains(RenderInvalidation::COMPOSITE) {
+            if invalidation.contains(Invalidation::COMPOSITE) {
                 self.diagnostics.compositor_only_updates += 1;
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.2 = Some("retained compositor property changed".into());
                 }
-            } else if invalidation.contains(RenderInvalidation::PAINT)
-                && !invalidation.contains(RenderInvalidation::LAYOUT)
+            } else if invalidation.contains(Invalidation::PAINT)
+                && !invalidation.contains(Invalidation::LAYOUT)
             {
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.1 = Some("paint-only configuration changed".into());
                 }
                 self.mark_render_dirty(render, DirtyFlags::PAINT, false);
-            } else if invalidation.contains(RenderInvalidation::LAYOUT) {
+            } else if invalidation.contains(Invalidation::LAYOUT) {
                 #[cfg(feature = "devtools")]
                 {
                     work_reasons.0 = Some("layout-affecting configuration changed".into());

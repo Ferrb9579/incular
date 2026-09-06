@@ -21,7 +21,7 @@ fn public_facade_composes_scroll_gesture_and_navigation_features() {
 #[test]
 fn facade_exposes_the_extracted_subsystems() {
     let constraints = incular::config::Constraints::tight(Size::new(40., 20.));
-    assert_eq!(constraints.min_width, 40.);
+    assert_eq!(constraints.min_width(), 40.);
 
     let mut canvas = incular::rendering::Canvas::default();
     canvas.rect(

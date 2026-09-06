@@ -263,8 +263,8 @@ fn main() {
             let scroll = dashboard_scroll.clone();
 
             let dashboard: Widget = LayoutBuilder::new(move |_, constraints| {
-                let width = constraints.max_width.max(640.);
-                let height = constraints.max_height.max(640.);
+                let width = constraints.max_width().max(640.);
+                let height = constraints.max_height().max(640.);
                 let content_width = (width - 48.).max(592.);
                 let body_height = (height - 142.).max(640.);
 

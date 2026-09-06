@@ -46,10 +46,10 @@ impl VisualDensity {
     pub fn effective_constraints(self, constraints: Constraints) -> Constraints {
         let adjustment = self.base_size_adjustment();
         Constraints::new(
-            (constraints.min_width + adjustment.x).max(0.0),
-            (constraints.max_width + adjustment.x).max(0.0),
-            (constraints.min_height + adjustment.y).max(0.0),
-            (constraints.max_height + adjustment.y).max(0.0),
+            (constraints.min_width() + adjustment.x).max(0.0),
+            (constraints.max_width() + adjustment.x).max(0.0),
+            (constraints.min_height() + adjustment.y).max(0.0),
+            (constraints.max_height() + adjustment.y).max(0.0),
         )
     }
 

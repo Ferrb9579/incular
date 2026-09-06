@@ -53,9 +53,9 @@ impl WidgetTree {
                 if config.shrink_wrap {
                     let content_extent = sliver_layout.geometry.scroll_extent.max(0.);
                     let main = if config.axis.is_vertical() {
-                        content_extent.clamp(constraints.min_height, constraints.max_height)
+                        content_extent.clamp(constraints.min_height(), constraints.max_height())
                     } else {
-                        content_extent.clamp(constraints.min_width, constraints.max_width)
+                        content_extent.clamp(constraints.min_width(), constraints.max_width())
                     };
                     size = constraints.constrain(config.axis.size(main, cross_extent));
                     viewport_extent = scroll_viewport_extent(config.axis, size);

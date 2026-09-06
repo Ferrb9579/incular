@@ -316,10 +316,10 @@ impl WidgetTree {
         let properties = Vec::new();
 
         let constraints = render_node.constraints.map(|c| DebugValue::Constraints {
-            min_width: c.min_width,
-            max_width: c.max_width,
-            min_height: c.min_height,
-            max_height: c.max_height,
+            min_width: c.min_width(),
+            max_width: c.max_width(),
+            min_height: c.min_height(),
+            max_height: c.max_height(),
         });
         let invalidation = last_invalidation(element);
         let layout = self.devtools_layout_inspection(id);
@@ -557,8 +557,8 @@ impl WidgetTree {
                     _ => (None, None),
                 };
                 let allocated_main_extent = render.constraints.map(|constraints| match axis {
-                    Axis::Horizontal => constraints.max_width,
-                    Axis::Vertical => constraints.max_height,
+                    Axis::Horizontal => constraints.max_width(),
+                    Axis::Vertical => constraints.max_height(),
                 });
                 Some(FlexChildInspection {
                     node: dev_id(*child_id),
@@ -587,8 +587,8 @@ impl WidgetTree {
         let used_extent = non_flex_extent + flexible_extent;
         let available_main = constraints.and_then(|constraints| {
             let value = match axis {
-                Axis::Horizontal => constraints.max_width,
-                Axis::Vertical => constraints.max_height,
+                Axis::Horizontal => constraints.max_width(),
+                Axis::Vertical => constraints.max_height(),
             };
             value.is_finite().then_some(value)
         });
@@ -688,10 +688,10 @@ impl WidgetTree {
 
 fn debug_constraints(constraints: incular_config::Constraints) -> DebugValue {
     DebugValue::Constraints {
-        min_width: constraints.min_width,
-        max_width: constraints.max_width,
-        min_height: constraints.min_height,
-        max_height: constraints.max_height,
+        min_width: constraints.min_width(),
+        max_width: constraints.max_width(),
+        min_height: constraints.min_height(),
+        max_height: constraints.max_height(),
     }
 }
 

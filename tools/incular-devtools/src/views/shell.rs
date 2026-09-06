@@ -84,8 +84,8 @@ pub(crate) fn build_shell(data: ShellData) -> Widget {
         ),
     ]);
     LayoutBuilder::new(move |_, constraints| {
-        let width = constraints.max_width.max(960.);
-        let height = constraints.max_height.max(640.);
+        let width = constraints.max_width().max(960.);
+        let height = constraints.max_height().max(640.);
         let body_height = (height - 116.).max(1.);
         let tree_width = (width * 0.34).clamp(340., 470.);
         let tree_panel: Widget = DecoratedBox::new(Padding::all(

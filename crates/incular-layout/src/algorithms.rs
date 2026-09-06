@@ -325,7 +325,7 @@ where
         })
         .unwrap_or_else(|| {
             if constraints.is_width_bounded() {
-                constraints.max_width
+                constraints.max_width()
             } else {
                 child.size.width
             }
@@ -337,7 +337,7 @@ where
         })
         .unwrap_or_else(|| {
             if constraints.is_height_bounded() {
-                constraints.max_height
+                constraints.max_height()
             } else {
                 child.size.height
             }
@@ -417,16 +417,16 @@ where
     let loosened = match config.constrained_axis {
         None => Constraints::unbounded(),
         Some(Axis::Horizontal) => Constraints::new(
-            constraints.min_width,
-            constraints.max_width,
+            constraints.min_width(),
+            constraints.max_width(),
             0.0,
-            constraints.max_height,
+            constraints.max_height(),
         ),
         Some(Axis::Vertical) => Constraints::new(
             0.0,
-            constraints.max_width,
-            constraints.min_height,
-            constraints.max_height,
+            constraints.max_width(),
+            constraints.min_height(),
+            constraints.max_height(),
         ),
     };
     let child = loosened.constrain(child);
@@ -452,8 +452,8 @@ where
     } else {
         1.0
     };
-    let width = constraints.max_width;
-    let height = constraints.max_height;
+    let width = constraints.max_width();
+    let height = constraints.max_height();
     let (mut target_width, mut target_height) = if width.is_finite() && height.is_finite() {
         let by_width_height = width / ratio;
         if by_width_height.is_finite() && by_width_height <= height {
@@ -477,8 +477,8 @@ where
         target_width = child.width;
         target_height = child.height;
     }
-    target_width = target_width.max(constraints.min_width);
-    target_height = target_height.max(constraints.min_height);
+    target_width = target_width.max(constraints.min_width());
+    target_height = target_height.max(constraints.min_height());
     let size = constraints.constrain(Size::new(target_width, target_height));
     LayoutResult::new(size, vec![ChildLayout::new(Offset::ZERO, child)])
 }
@@ -497,13 +497,13 @@ where
     let width = config
         .width_factor
         .and_then(finite_factor)
-        .map(|factor| constraints.max_width * factor)
+        .map(|factor| constraints.max_width() * factor)
         .filter(|value| value.is_finite())
         .unwrap_or(child.width);
     let height = config
         .height_factor
         .and_then(finite_factor)
-        .map(|factor| constraints.max_height * factor)
+        .map(|factor| constraints.max_height() * factor)
         .filter(|value| value.is_finite())
         .unwrap_or(child.height);
     let size = constraints.constrain(Size::new(width.max(0.0), height.max(0.0)));
@@ -559,13 +559,13 @@ where
     }
     let desired = if matches!(config.fit, StackFit::Expand) {
         Size::new(
-            if constraints.max_width.is_finite() {
-                constraints.max_width
+            if constraints.max_width().is_finite() {
+                constraints.max_width()
             } else {
                 intrinsic_width
             },
-            if constraints.max_height.is_finite() {
-                constraints.max_height
+            if constraints.max_height().is_finite() {
+                constraints.max_height()
             } else {
                 intrinsic_height
             },
@@ -839,44 +839,44 @@ fn safe_mul(left: f32, right: f32) -> Option<f32> {
 
 fn main_min(constraints: Constraints, axis: Axis) -> f32 {
     match axis {
-        Axis::Horizontal => constraints.min_width,
-        Axis::Vertical => constraints.min_height,
+        Axis::Horizontal => constraints.min_width(),
+        Axis::Vertical => constraints.min_height(),
     }
 }
 
 fn main_max(constraints: Constraints, axis: Axis) -> f32 {
     match axis {
-        Axis::Horizontal => constraints.max_width,
-        Axis::Vertical => constraints.max_height,
+        Axis::Horizontal => constraints.max_width(),
+        Axis::Vertical => constraints.max_height(),
     }
 }
 
 fn cross_min(constraints: Constraints, axis: Axis) -> f32 {
     match axis {
-        Axis::Horizontal => constraints.min_height,
-        Axis::Vertical => constraints.min_width,
+        Axis::Horizontal => constraints.min_height(),
+        Axis::Vertical => constraints.min_width(),
     }
 }
 
 fn cross_max(constraints: Constraints, axis: Axis) -> f32 {
     match axis {
-        Axis::Horizontal => constraints.max_height,
-        Axis::Vertical => constraints.max_width,
+        Axis::Horizontal => constraints.max_height(),
+        Axis::Vertical => constraints.max_width(),
     }
 }
 
 fn cross_constrain(constraints: Constraints, axis: Axis, value: f32) -> f32 {
     match axis {
-        Axis::Horizontal => value.clamp(constraints.min_height, constraints.max_height),
-        Axis::Vertical => value.clamp(constraints.min_width, constraints.max_width),
+        Axis::Horizontal => value.clamp(constraints.min_height(), constraints.max_height()),
+        Axis::Vertical => value.clamp(constraints.min_width(), constraints.max_width()),
     }
 }
 
 fn enforce_constraints(a: Constraints, b: Constraints) -> Constraints {
-    let min_width = a.min_width.max(b.min_width);
-    let max_width = a.max_width.min(b.max_width);
-    let min_height = a.min_height.max(b.min_height);
-    let max_height = a.max_height.min(b.max_height);
+    let min_width = a.min_width().max(b.min_width());
+    let max_width = a.max_width().min(b.max_width());
+    let min_height = a.min_height().max(b.min_height());
+    let max_height = a.max_height().min(b.max_height());
     Constraints::new(
         min_width,
         max_width.max(min_width),

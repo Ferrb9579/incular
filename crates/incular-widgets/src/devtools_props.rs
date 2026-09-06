@@ -327,10 +327,10 @@ pub fn inspect_properties(kind: &WidgetKind) -> Vec<DebugProperty> {
             out.push(prop(
                 "constraints",
                 DebugValue::Constraints {
-                    min_width: constraints.min_width,
-                    max_width: constraints.max_width,
-                    min_height: constraints.min_height,
-                    max_height: constraints.max_height,
+                    min_width: constraints.min_width(),
+                    max_width: constraints.max_width(),
+                    min_height: constraints.min_height(),
+                    max_height: constraints.max_height(),
                 },
             ));
             summarize_child(&mut out, child);

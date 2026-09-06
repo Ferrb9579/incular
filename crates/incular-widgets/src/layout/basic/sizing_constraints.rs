@@ -142,8 +142,8 @@ impl From<SizedBox> for Widget {
             constraints = Constraints::new(
                 w_val.max(0.0),
                 w_val.max(0.0),
-                constraints.min_height,
-                constraints.max_height,
+                constraints.min_height(),
+                constraints.max_height(),
             );
         }
         if let Some(h_val) = h
@@ -151,8 +151,8 @@ impl From<SizedBox> for Widget {
         {
             has_constraints = true;
             constraints = Constraints::new(
-                constraints.min_width,
-                constraints.max_width,
+                constraints.min_width(),
+                constraints.max_width(),
                 h_val.max(0.0),
                 h_val.max(0.0),
             );

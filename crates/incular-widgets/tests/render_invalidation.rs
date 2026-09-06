@@ -139,3 +139,52 @@ fn fixed_box_color_update_repaints_without_relayout() {
     );
     assert_eq!(after.paints - before.paints, 1, "box must repaint");
 }
+
+#[test]
+fn compositor_translation_updates_hit_testing_and_semantics_without_layout_or_paint() {
+    use incular_widgets::internal::{ActionId, action};
+    let widget = |x| {
+        incular_widgets::Transform::new(
+            Transform::translation(Offset::new(x, 0.0)),
+            action(Size::new(20.0, 20.0), Color::WHITE, ActionId(7))
+                .accessibility_label("moving action"),
+        )
+        .into()
+    };
+    let mut tree = WidgetTree::default();
+    let root = tree.mount(widget(0.0)).expect("mount");
+    let constraints = Constraints::loose(Size::new(320.0, 120.0));
+    tree.layout(constraints).expect("layout");
+    let _ = tree.paint();
+    tree.update_semantics();
+    let before = tree.diagnostics();
+    let target = tree
+        .hit_test(Offset::new(5.0, 5.0))
+        .expect("initial target");
+    let (semantic_id, original_bounds) = tree
+        .semantics()
+        .iter()
+        .find(|(_, node)| node.label.as_deref() == Some("moving action"))
+        .map(|(id, node)| (id, node.bounds))
+        .expect("semantic action");
+
+    tree.update(root, widget(40.0)).expect("update");
+    // Geometry must be observable even before the next layout/paint pass.
+    assert!(tree.hit_test(Offset::new(5.0, 5.0)).is_none());
+    assert_eq!(tree.hit_test(Offset::new(45.0, 5.0)), Some(target));
+    tree.update_semantics();
+    let moved = tree
+        .semantics()
+        .node(semantic_id)
+        .expect("stable semantic identity");
+    assert_eq!(
+        moved.bounds.origin,
+        original_bounds.origin + Offset::new(40.0, 0.0)
+    );
+    assert_eq!(moved.bounds.size, original_bounds.size);
+    tree.layout(constraints).expect("layout");
+    let _ = tree.paint();
+    let after = tree.diagnostics();
+    assert_eq!(after.layouts, before.layouts);
+    assert_eq!(after.paints, before.paints);
+}

@@ -223,8 +223,8 @@ mod foundation_tests {
     fn visual_density_adjusts_both_axes() {
         let constraints = Constraints::tight(Size::new(48.0, 48.0));
         let compact = VisualDensity::COMPACT.effective_constraints(constraints);
-        assert_eq!(compact.min_width, 40.0);
-        assert_eq!(compact.min_height, 40.0);
+        assert_eq!(compact.min_width(), 40.0);
+        assert_eq!(compact.min_height(), 40.0);
     }
 
     #[test]

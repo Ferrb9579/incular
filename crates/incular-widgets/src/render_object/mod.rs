@@ -28,7 +28,6 @@ use crate::{
 mod layers;
 mod update;
 pub(crate) use layers::RenderLayers;
-pub(crate) use update::RenderInvalidation;
 
 /// Geometry that is meaningful for every retained render node.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -20,7 +20,7 @@ use incular_config::{
     WrapCrossAlignment,
 };
 use incular_core::{
-    Arena, ArenaId, BuildContext as DependencyContext, Color, ConsumerId, DirtyFlags,
+    Arena, ArenaId, BuildContext as DependencyContext, Color, ConsumerId, DirtyFlags, Invalidation,
     KeyboardEvent, KeyboardKey, NamedKey, Offset, Rect, Size, TrackpadGesture,
     TrackpadGesturePhase, Transform as CoreTransform,
 };
@@ -70,9 +70,7 @@ use crate::painting_effects::BoxShadow;
 use crate::raw_input::{GestureRecognizer, RawInputKind};
 use crate::recursion::{DiagnosticNode, DiagnosticNodeId, RecursionDiagnostics};
 pub use crate::recursion::{FramePhase, RecursionReport};
-use crate::render_object::{
-    RenderGeometry, RenderInvalidation, RenderLayers, RenderNode, RenderObjectPayload,
-};
+use crate::render_object::{RenderGeometry, RenderLayers, RenderNode, RenderObjectPayload};
 use crate::scrolling::{
     SliverChildId, SliverViewportConfig, SliverViewportDelegate, SliverViewportLayout,
 };

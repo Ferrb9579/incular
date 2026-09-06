@@ -1,42 +1,15 @@
 //! Declarative render configuration updates and their phase invalidation.
 
-use super::*;
+use super::{RenderKind, RenderObjectPayload};
 
-/// Minimal retained work required after replacing declarative render
-/// configuration.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RenderInvalidation(u8);
-
-impl RenderInvalidation {
-    pub(crate) const NONE: Self = Self(0);
-    pub(crate) const LAYOUT: Self = Self(1 << 0);
-    pub(crate) const PAINT: Self = Self(1 << 1);
-    pub(crate) const COMPOSITE: Self = Self(1 << 2);
-    pub(crate) const SEMANTICS: Self = Self(1 << 3);
-
-    pub(crate) const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-}
-
-impl std::ops::BitOr for RenderInvalidation {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        self.union(rhs)
-    }
-}
+use incular_core::Invalidation;
 
 impl RenderObjectPayload {
     /// Applies new declarative configuration and returns the minimum phase
     /// work required to make the retained object observable as that value.
-    pub(crate) fn update_kind(&mut self, kind: RenderKind) -> RenderInvalidation {
+    pub(crate) fn update_kind(&mut self, kind: RenderKind) -> Invalidation {
         if self.kind == kind {
-            return RenderInvalidation::NONE;
+            return Invalidation::NONE;
         }
         let invalidation = invalidation_for_change(&self.kind, &kind);
         self.replace_kind(kind);
@@ -44,18 +17,31 @@ impl RenderObjectPayload {
     }
 }
 
-fn invalidation_for_change(old: &RenderKind, new: &RenderKind) -> RenderInvalidation {
-    use RenderInvalidation as I;
+fn invalidation_for_change(old: &RenderKind, new: &RenderKind) -> Invalidation {
+    use Invalidation as I;
 
     if same_compositor_family(old, new) {
-        return I::COMPOSITE;
+        // Geometry consumers read the current retained transform directly; they
+        // do not require measurement or picture recording to observe movement.
+        return if matches!(
+            new,
+            RenderKind::Transform { .. }
+                | RenderKind::Scale { .. }
+                | RenderKind::Rotation { .. }
+                | RenderKind::Leader { .. }
+                | RenderKind::Follower { .. }
+        ) {
+            I::COMPOSITE | I::SEMANTICS | I::HIT_TEST
+        } else {
+            I::COMPOSITE
+        };
     }
     if paint_only_change(old, new) {
         return I::PAINT;
     }
 
     // Layout changes also invalidate local painting and semantic geometry.
-    I::LAYOUT | I::PAINT | I::SEMANTICS
+    I::LAYOUT | I::PAINT | I::SEMANTICS | I::HIT_TEST
 }
 
 fn paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {

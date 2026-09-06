@@ -9,32 +9,72 @@ pub enum ConstraintError {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Constraints {
-    pub min_width: f32,
-    pub max_width: f32,
-    pub min_height: f32,
-    pub max_height: f32,
+    min_width: f32,
+    max_width: f32,
+    min_height: f32,
+    max_height: f32,
 }
 impl Constraints {
+    /// Constructs validated bounds.
+    ///
+    /// # Panics
+    /// Panics for invalid bounds; use [`Self::try_new`] for fallible input.
     #[must_use]
     pub fn new(min_width: f32, max_width: f32, min_height: f32, max_height: f32) -> Self {
-        assert!(
-            min_width.is_finite()
-                && min_height.is_finite()
-                && min_width >= 0.
-                && min_height >= 0.
-                && max_width >= min_width
-                && max_height >= min_height
-                && !max_width.is_nan()
-                && !max_height.is_nan(),
-            "invalid constraints"
-        );
-        Self {
+        Self::try_new(min_width, max_width, min_height, max_height).expect("invalid constraints")
+    }
+
+    /// Validates externally supplied bounds. Minimums must be finite and
+    /// nonnegative; maximums may be infinite but must not be below minimums.
+    pub fn try_new(
+        min_width: f32,
+        max_width: f32,
+        min_height: f32,
+        max_height: f32,
+    ) -> Result<Self, ConstraintError> {
+        if !min_width.is_finite()
+            || !min_height.is_finite()
+            || min_width < 0.0
+            || min_height < 0.0
+            || max_width.is_nan()
+            || max_height.is_nan()
+            || max_width < min_width
+            || max_height < min_height
+        {
+            return Err(ConstraintError::Invalid);
+        }
+        Ok(Self {
             min_width,
             max_width,
             min_height,
             max_height,
-        }
+        })
     }
+
+    /// Returns the min width bound.
+    #[must_use]
+    pub const fn min_width(self) -> f32 {
+        self.min_width
+    }
+
+    /// Returns the max width bound.
+    #[must_use]
+    pub const fn max_width(self) -> f32 {
+        self.max_width
+    }
+
+    /// Returns the min height bound.
+    #[must_use]
+    pub const fn min_height(self) -> f32 {
+        self.min_height
+    }
+
+    /// Returns the max height bound.
+    #[must_use]
+    pub const fn max_height(self) -> f32 {
+        self.max_height
+    }
+
     #[must_use]
     pub fn tight(size: Size) -> Self {
         Self::new(size.width, size.width, size.height, size.height)

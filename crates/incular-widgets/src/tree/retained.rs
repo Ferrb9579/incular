@@ -216,8 +216,8 @@ impl WidgetTree {
         let viewport_size =
             if self.environment.viewport.width > 0.0 && self.environment.viewport.height > 0.0 {
                 self.environment.viewport
-            } else if constraints.max_width.is_finite() && constraints.max_height.is_finite() {
-                Size::new(constraints.max_width, constraints.max_height)
+            } else if constraints.max_width().is_finite() && constraints.max_height().is_finite() {
+                Size::new(constraints.max_width(), constraints.max_height())
             } else {
                 self.root_layout_size().unwrap_or(Size::ZERO)
             };

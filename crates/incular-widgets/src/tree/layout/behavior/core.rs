@@ -119,17 +119,17 @@ impl WidgetTree {
                 max_height,
             } => {
                 let child_constraints = Constraints::new(
-                    constraints.min_width,
-                    if constraints.max_width.is_infinite() {
+                    constraints.min_width(),
+                    if constraints.max_width().is_infinite() {
                         max_width
                     } else {
-                        constraints.max_width
+                        constraints.max_width()
                     },
-                    constraints.min_height,
-                    if constraints.max_height.is_infinite() {
+                    constraints.min_height(),
+                    if constraints.max_height().is_infinite() {
                         max_height
                     } else {
-                        constraints.max_height
+                        constraints.max_height()
                     },
                 );
                 if let Some(&child) = children.first() {
@@ -149,14 +149,14 @@ impl WidgetTree {
                 max_height,
             } => {
                 let child_constraints = Constraints::new(
-                    min_width.unwrap_or(constraints.min_width),
+                    min_width.unwrap_or(constraints.min_width()),
                     max_width
-                        .unwrap_or(constraints.max_width)
-                        .max(min_width.unwrap_or(constraints.min_width)),
-                    min_height.unwrap_or(constraints.min_height),
+                        .unwrap_or(constraints.max_width())
+                        .max(min_width.unwrap_or(constraints.min_width())),
+                    min_height.unwrap_or(constraints.min_height()),
                     max_height
-                        .unwrap_or(constraints.max_height)
-                        .max(min_height.unwrap_or(constraints.min_height)),
+                        .unwrap_or(constraints.max_height())
+                        .max(min_height.unwrap_or(constraints.min_height())),
                 );
                 if let Some(&child) = children.first() {
                     self.layout_render(child, child_constraints)?;
@@ -240,15 +240,15 @@ impl WidgetTree {
                             )
                         });
                     if expands {
-                        let width = if constraints.max_width.is_finite() {
-                            constraints.max_width
+                        let width = if constraints.max_width().is_finite() {
+                            constraints.max_width()
                         } else {
-                            constraints.min_width
+                            constraints.min_width()
                         };
-                        let height = if constraints.max_height.is_finite() {
-                            constraints.max_height
+                        let height = if constraints.max_height().is_finite() {
+                            constraints.max_height()
                         } else {
-                            constraints.min_height
+                            constraints.min_height()
                         };
                         (constraints.constrain(Size::new(width, height)), Vec::new())
                     } else {

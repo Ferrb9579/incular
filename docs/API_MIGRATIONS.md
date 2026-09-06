@@ -49,7 +49,7 @@ The following family decisions apply to all fields, not just the named examples.
 | Field family | Keep / migrate rule | Stage / consumers |
 | --- | --- | --- |
 | Plain geometry, event records, metrics snapshots, semantic state | Keep public value fields when arbitrary values are representable; validate at the consumer boundary where required. A snapshot mutation does not change its source controller. | Ongoing; all examples and serialization/projection tests. |
-| `Constraints` minima/maxima and other types claiming validated invariants | Migrate to private fields plus checked constructors/accessors or explicitly validate every consuming entry. Do not claim construction enforces invariants while struct literals bypass it. | G; `examples/layout_gallery`, layout/config and widget layout tests. |
+| `Constraints` minima/maxima | Completed in F: private bounds, read-only accessors and `try_new`; see the migration below. Other invariant-bearing builders remain under audit. | F; `examples/layout_gallery`, layout/config and widget layout tests. |
 | Layout algorithm descriptors (`Flex`, `Stack`, `Visibility`, etc.) | Keep plain algorithm configuration when its consumer validates it. Distinguish it from retained widget descriptors and their lifetime. | F/G; layout public API tests. |
 | Tween endpoints/segments, physics and style parameters | Keep freely meaningful values; validate or normalize bounded parameters at the authoritative owner. Document normalization instead of silently differing by builder path. | G; animation/physics and style tests. |
 | Widget/controller fields containing callbacks, Rc/Cell, listener IDs or ownership handles | Migrate writable lifecycle state behind owner operations; registrations need explicit cleanup. Retain immutable descriptor callbacks as values. | C/F/G; retained widget and controller tests. |
@@ -78,3 +78,13 @@ when its consumers, examples, rustdoc, error outcomes and tests agree.
   The callback observes committed activations (pointer release, keyboard and
   accessibility), rather than pointer hover/down hit-test targets. This corrects
   duplicate callbacks in the old standalone path.
+
+## Stage F constraints migration
+
+`Constraints` bounds are private. Replace reads such as `constraints.max_width`
+with `constraints.max_width()`, and replace struct literals or field mutation
+with `Constraints::new(min_width, max_width, min_height, max_height)`.
+Use `Constraints::try_new` for external input that can be invalid; it returns
+`ConstraintError::Invalid`. `new`, `tight` and `loose` keep their panic contract.
+Minimums must be finite and nonnegative; maximums may be positive infinity,
+but cannot be NaN or smaller than their corresponding minimum.

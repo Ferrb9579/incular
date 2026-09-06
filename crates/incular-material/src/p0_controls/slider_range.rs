@@ -704,8 +704,8 @@ impl From<RangeSlider> for Widget {
             Widget::stateful_layout_builder(revision.clone(), move |context, constraints| {
                 // Use the available width when the parent is bounded, while
                 // retaining a compact intrinsic size for unconstrained overlays.
-                let track_width = if constraints.max_width.is_finite() {
-                    constraints.max_width.clamp(1.0, 480.0)
+                let track_width = if constraints.max_width().is_finite() {
+                    constraints.max_width().clamp(1.0, 480.0)
                 } else {
                     180.0
                 };

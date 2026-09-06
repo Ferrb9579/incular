@@ -41,8 +41,8 @@ pub(in crate::tree) fn scroll_delta_for_axis(axis: Axis, delta: Offset) -> f32 {
 #[inline]
 pub(in crate::tree) fn scroll_constraints(axis: Axis, constraints: Constraints) -> Constraints {
     match axis {
-        Axis::Vertical => Constraints::new(0., constraints.max_width, 0., f32::INFINITY),
-        Axis::Horizontal => Constraints::new(0., f32::INFINITY, 0., constraints.max_height),
+        Axis::Vertical => Constraints::new(0., constraints.max_width(), 0., f32::INFINITY),
+        Axis::Horizontal => Constraints::new(0., f32::INFINITY, 0., constraints.max_height()),
     }
 }
 
@@ -111,17 +111,17 @@ pub(in crate::tree) fn enforced_constraints(
 ) -> Constraints {
     Constraints::new(
         additional
-            .min_width
-            .clamp(parent.min_width, parent.max_width),
+            .min_width()
+            .clamp(parent.min_width(), parent.max_width()),
         additional
-            .max_width
-            .clamp(parent.min_width, parent.max_width),
+            .max_width()
+            .clamp(parent.min_width(), parent.max_width()),
         additional
-            .min_height
-            .clamp(parent.min_height, parent.max_height),
+            .min_height()
+            .clamp(parent.min_height(), parent.max_height()),
         additional
-            .max_height
-            .clamp(parent.min_height, parent.max_height),
+            .max_height()
+            .clamp(parent.min_height(), parent.max_height()),
     )
 }
 
@@ -131,10 +131,10 @@ pub(in crate::tree) fn unconstrained_constraints(
 ) -> Constraints {
     match constrained_axis {
         Some(Axis::Horizontal) => {
-            Constraints::new(parent.min_width, parent.max_width, 0., f32::INFINITY)
+            Constraints::new(parent.min_width(), parent.max_width(), 0., f32::INFINITY)
         }
         Some(Axis::Vertical) => {
-            Constraints::new(0., f32::INFINITY, parent.min_height, parent.max_height)
+            Constraints::new(0., f32::INFINITY, parent.min_height(), parent.max_height())
         }
         None => Constraints::unbounded(),
     }
@@ -146,15 +146,15 @@ pub(in crate::tree) fn fractional_constraints(
     height_factor: Option<f32>,
 ) -> Constraints {
     let width = width_factor
-        .filter(|_| parent.max_width.is_finite())
-        .map(|factor| parent.max_width * factor);
+        .filter(|_| parent.max_width().is_finite())
+        .map(|factor| parent.max_width() * factor);
     let height = height_factor
-        .filter(|_| parent.max_height.is_finite())
-        .map(|factor| parent.max_height * factor);
+        .filter(|_| parent.max_height().is_finite())
+        .map(|factor| parent.max_height() * factor);
     Constraints::new(
         width.unwrap_or(0.),
-        width.unwrap_or(parent.max_width),
+        width.unwrap_or(parent.max_width()),
         height.unwrap_or(0.),
-        height.unwrap_or(parent.max_height),
+        height.unwrap_or(parent.max_height()),
     )
 }

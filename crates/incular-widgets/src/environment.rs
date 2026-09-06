@@ -334,7 +334,7 @@ impl From<OrientationBuilder> for Widget {
     fn from(value: OrientationBuilder) -> Self {
         let builder = value.builder;
         LayoutBuilder::new(move |context, constraints| {
-            let orientation = if constraints.max_width > constraints.max_height {
+            let orientation = if constraints.max_width() > constraints.max_height() {
                 Orientation::Landscape
             } else {
                 Orientation::Portrait

@@ -1281,14 +1281,14 @@ pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32
             child,
             axis,
             if axis.is_vertical() {
-                constraints.min_height
+                constraints.min_height()
             } else {
-                constraints.min_width
+                constraints.min_width()
             },
             if axis.is_vertical() {
-                constraints.max_height
+                constraints.max_height()
             } else {
-                constraints.max_width
+                constraints.max_width()
             },
         ),
         WidgetKind::Limited {

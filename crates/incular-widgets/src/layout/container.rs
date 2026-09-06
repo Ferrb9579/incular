@@ -225,14 +225,14 @@ impl From<Container> for Widget {
             explicit_constraints = Constraints::new(
                 w,
                 w,
-                explicit_constraints.min_height,
-                explicit_constraints.max_height,
+                explicit_constraints.min_height(),
+                explicit_constraints.max_height(),
             );
         }
         if let Some(h) = value.height {
             explicit_constraints = Constraints::new(
-                explicit_constraints.min_width,
-                explicit_constraints.max_width,
+                explicit_constraints.min_width(),
+                explicit_constraints.max_width(),
                 h,
                 h,
             );

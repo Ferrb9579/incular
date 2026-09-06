@@ -19,7 +19,7 @@ impl WidgetTree {
             } => {
                 let width = constraints
                     .is_width_bounded()
-                    .then_some(constraints.max_width);
+                    .then_some(constraints.max_width());
                 let _external_call = self
                     .recursion_diagnostics
                     .external_call(text_call_label("TextEngine::layout_with_options", &text));
@@ -40,7 +40,7 @@ impl WidgetTree {
             RenderKind::SelectableText { text, style, align } => {
                 let width = constraints
                     .is_width_bounded()
-                    .then_some(constraints.max_width);
+                    .then_some(constraints.max_width());
                 let _external_call = self
                     .recursion_diagnostics
                     .external_call(text_call_label("TextEngine::layout", &text));
@@ -84,7 +84,7 @@ impl WidgetTree {
                 let intrinsic_width = if desired.width > 0.0 {
                     desired.width
                 } else if constraints.is_width_bounded() {
-                    constraints.max_width
+                    constraints.max_width()
                 } else {
                     260.0
                 };
@@ -105,7 +105,7 @@ impl WidgetTree {
                 let intrinsic_height = if desired.height > 0.0 {
                     desired.height
                 } else if expands && constraints.is_height_bounded() {
-                    constraints.max_height
+                    constraints.max_height()
                 } else {
                     layout.metrics.size.height.max(line_height) + 16.0
                 };

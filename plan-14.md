@@ -1,7 +1,7 @@
 # Plan 14 — Architecture consolidation and behavioral quality
 
 Status: Stages A and B are complete and committed (`b0d866e`, `498db6a`).
-Stage C is complete and committed (`cad3463`). Stage D is complete and committed (`164e163`). Stage E is complete and validated (uncommitted). Stages F–J remain pending.
+Stage C is complete and committed (`cad3463`). Stage D is complete and committed (`164e163`). Stage E is complete and committed (`2b1c17b`). Stage F is in progress. Stages G–J remain pending.
 
 ## Implementation progress
 
@@ -135,6 +135,20 @@ Stage C is complete and committed (`cad3463`). Stage D is complete and committed
   11 new regressions. Opt-in live Windows `in_place_resize`, `window_control`
   and `pointer_input_native` regressions passed. Linux/macOS native interaction
   was not exercised; platform capability claims remain unchanged.
+- F first implementation slice: removed the separate render invalidation bits;
+  retained updates use core `Invalidation`. A compositor movement regression
+  checks hit testing and semantic bounds/identity before layout or painting.
+  `Constraints` bounds are private with read-only accessors and `try_new` for
+  fallible external input; all workspace consumers/examples are migrated.
+  Three constraint regressions cover invalid bounds and preserved layout behavior.
+  The [retained property ledger](docs/RETAINED_PROPERTIES.md) records evidence and
+  outstanding per-option, primitive-family and internal-export work. Stage F
+  remains in progress; this slice is validated and committed with the constraints/invalidation change.
+- F first-slice validation (Windows, 2026-09-06): formatting, workspace compiler
+  check, strict all-target/all-feature Clippy and warning-denied all-feature
+  rustdoc passed. Default and all-feature workspace suites each passed 1,112
+  tests, including the four new regressions. No live native behavior changed
+  in this slice; native interaction tests were not repeated.
 - The original audit is a baseline record,
   not a statement that these newly corrected paths remain defective.
 

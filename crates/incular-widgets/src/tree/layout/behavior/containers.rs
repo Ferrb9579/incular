@@ -38,12 +38,12 @@ impl WidgetTree {
             }
             RenderKind::Flex { flex } => {
                 let cross_max = match flex.direction {
-                    Axis::Horizontal => constraints.max_height,
-                    Axis::Vertical => constraints.max_width,
+                    Axis::Horizontal => constraints.max_height(),
+                    Axis::Vertical => constraints.max_width(),
                 };
                 let main_max = match flex.direction {
-                    Axis::Horizontal => constraints.max_width,
-                    Axis::Vertical => constraints.max_height,
+                    Axis::Horizontal => constraints.max_width(),
+                    Axis::Vertical => constraints.max_height(),
                 };
                 let loose = match flex.direction {
                     Axis::Horizontal => Constraints::new(0., f32::INFINITY, 0., cross_max),
@@ -386,14 +386,14 @@ impl WidgetTree {
             }
             RenderKind::AspectRatio { ratio } => {
                 let mut size = if constraints.is_width_bounded() {
-                    Size::new(constraints.max_width, constraints.max_width / ratio)
+                    Size::new(constraints.max_width(), constraints.max_width() / ratio)
                 } else if constraints.is_height_bounded() {
-                    Size::new(constraints.max_height * ratio, constraints.max_height)
+                    Size::new(constraints.max_height() * ratio, constraints.max_height())
                 } else {
                     Size::ZERO
                 };
-                if size.height > constraints.max_height {
-                    size = Size::new(constraints.max_height * ratio, constraints.max_height);
+                if size.height > constraints.max_height() {
+                    size = Size::new(constraints.max_height() * ratio, constraints.max_height());
                 }
                 size = constraints.constrain(size);
                 if let Some(&child) = children.first() {
