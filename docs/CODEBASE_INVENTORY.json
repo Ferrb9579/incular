@@ -1,0 +1,3218 @@
+{
+  "baseline": "42befb7",
+  "date": "2026-09-06",
+  "scope": "Complete file inventory; indexed does not mean every line or option has been behaviorally verified. Source review evidence is in WHOLE_CODEBASE_AUDIT.md.",
+  "crates_and_tools": [
+    {
+      "root": "crates/incular",
+      "manifest": "crates/incular/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular/src/lib.rs",
+          "kind": "src",
+          "lines": 317
+        },
+        {
+          "path": "crates/incular/tests/control_interaction.rs",
+          "kind": "tests",
+          "lines": 179
+        },
+        {
+          "path": "crates/incular/tests/external_data_transfer.rs",
+          "kind": "tests",
+          "lines": 29
+        },
+        {
+          "path": "crates/incular/tests/file_dialogs.rs",
+          "kind": "tests",
+          "lines": 31
+        },
+        {
+          "path": "crates/incular/tests/material_menu.rs",
+          "kind": "tests",
+          "lines": 178
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-accessibility",
+      "manifest": "crates/incular-accessibility/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-accessibility/src/lib.rs",
+          "kind": "src",
+          "lines": 934
+        },
+        {
+          "path": "crates/incular-accessibility/tests/accessibility.rs",
+          "kind": "tests",
+          "lines": 376
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-android",
+      "manifest": "crates/incular-android/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-android/src/lib.rs",
+          "kind": "src",
+          "lines": 47
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-animation",
+      "manifest": "crates/incular-animation/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-animation/src/controller.rs",
+          "kind": "src",
+          "lines": 497
+        },
+        {
+          "path": "crates/incular-animation/src/curves.rs",
+          "kind": "src",
+          "lines": 403
+        },
+        {
+          "path": "crates/incular-animation/src/lib.rs",
+          "kind": "src",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-animation/src/physics.rs",
+          "kind": "src",
+          "lines": 371
+        },
+        {
+          "path": "crates/incular-animation/src/tween.rs",
+          "kind": "src",
+          "lines": 213
+        },
+        {
+          "path": "crates/incular-animation/src/value.rs",
+          "kind": "src",
+          "lines": 263
+        },
+        {
+          "path": "crates/incular-animation/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 115
+        },
+        {
+          "path": "crates/incular-animation/tests/reactive_observation.rs",
+          "kind": "tests",
+          "lines": 40
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-assets",
+      "manifest": "crates/incular-assets/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-assets/src/lib.rs",
+          "kind": "src",
+          "lines": 60
+        },
+        {
+          "path": "crates/incular-assets/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 9
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-config",
+      "manifest": "crates/incular-config/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-config/src/alignment.rs",
+          "kind": "src",
+          "lines": 374
+        },
+        {
+          "path": "crates/incular-config/src/constraints.rs",
+          "kind": "src",
+          "lines": 137
+        },
+        {
+          "path": "crates/incular-config/src/defaults.rs",
+          "kind": "src",
+          "lines": 140
+        },
+        {
+          "path": "crates/incular-config/src/environment.rs",
+          "kind": "src",
+          "lines": 146
+        },
+        {
+          "path": "crates/incular-config/src/insets.rs",
+          "kind": "src",
+          "lines": 391
+        },
+        {
+          "path": "crates/incular-config/src/lib.rs",
+          "kind": "src",
+          "lines": 29
+        },
+        {
+          "path": "crates/incular-config/src/localization.rs",
+          "kind": "src",
+          "lines": 189
+        },
+        {
+          "path": "crates/incular-config/src/transient.rs",
+          "kind": "src",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-config/tests/constraints.rs",
+          "kind": "tests",
+          "lines": 53
+        },
+        {
+          "path": "crates/incular-config/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 182
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-controls",
+      "manifest": "crates/incular-controls/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-controls/src/alert_dialog.rs",
+          "kind": "src",
+          "lines": 94
+        },
+        {
+          "path": "crates/incular-controls/src/app.rs",
+          "kind": "src",
+          "lines": 42
+        },
+        {
+          "path": "crates/incular-controls/src/autocomplete.rs",
+          "kind": "src",
+          "lines": 88
+        },
+        {
+          "path": "crates/incular-controls/src/avatar.rs",
+          "kind": "src",
+          "lines": 134
+        },
+        {
+          "path": "crates/incular-controls/src/button.rs",
+          "kind": "src",
+          "lines": 689
+        },
+        {
+          "path": "crates/incular-controls/src/checkbox.rs",
+          "kind": "src",
+          "lines": 317
+        },
+        {
+          "path": "crates/incular-controls/src/checkbox_group.rs",
+          "kind": "src",
+          "lines": 4
+        },
+        {
+          "path": "crates/incular-controls/src/collapsible.rs",
+          "kind": "src",
+          "lines": 137
+        },
+        {
+          "path": "crates/incular-controls/src/combobox.rs",
+          "kind": "src",
+          "lines": 59
+        },
+        {
+          "path": "crates/incular-controls/src/composite.rs",
+          "kind": "src",
+          "lines": 219
+        },
+        {
+          "path": "crates/incular-controls/src/containers.rs",
+          "kind": "src",
+          "lines": 141
+        },
+        {
+          "path": "crates/incular-controls/src/context_menu.rs",
+          "kind": "src",
+          "lines": 53
+        },
+        {
+          "path": "crates/incular-controls/src/dialog.rs",
+          "kind": "src",
+          "lines": 12
+        },
+        {
+          "path": "crates/incular-controls/src/drawer.rs",
+          "kind": "src",
+          "lines": 147
+        },
+        {
+          "path": "crates/incular-controls/src/field.rs",
+          "kind": "src",
+          "lines": 230
+        },
+        {
+          "path": "crates/incular-controls/src/fieldset.rs",
+          "kind": "src",
+          "lines": 57
+        },
+        {
+          "path": "crates/incular-controls/src/form.rs",
+          "kind": "src",
+          "lines": 57
+        },
+        {
+          "path": "crates/incular-controls/src/icons.rs",
+          "kind": "src",
+          "lines": 44
+        },
+        {
+          "path": "crates/incular-controls/src/lib.rs",
+          "kind": "src",
+          "lines": 80
+        },
+        {
+          "path": "crates/incular-controls/src/menu.rs",
+          "kind": "src",
+          "lines": 116
+        },
+        {
+          "path": "crates/incular-controls/src/menubar.rs",
+          "kind": "src",
+          "lines": 7
+        },
+        {
+          "path": "crates/incular-controls/src/meter.rs",
+          "kind": "src",
+          "lines": 176
+        },
+        {
+          "path": "crates/incular-controls/src/navigation_menu.rs",
+          "kind": "src",
+          "lines": 6
+        },
+        {
+          "path": "crates/incular-controls/src/number_field.rs",
+          "kind": "src",
+          "lines": 139
+        },
+        {
+          "path": "crates/incular-controls/src/otp_field.rs",
+          "kind": "src",
+          "lines": 50
+        },
+        {
+          "path": "crates/incular-controls/src/overlay.rs",
+          "kind": "src",
+          "lines": 258
+        },
+        {
+          "path": "crates/incular-controls/src/popover.rs",
+          "kind": "src",
+          "lines": 4
+        },
+        {
+          "path": "crates/incular-controls/src/popup.rs",
+          "kind": "src",
+          "lines": 280
+        },
+        {
+          "path": "crates/incular-controls/src/prelude.rs",
+          "kind": "src",
+          "lines": 44
+        },
+        {
+          "path": "crates/incular-controls/src/preview_card.rs",
+          "kind": "src",
+          "lines": 4
+        },
+        {
+          "path": "crates/incular-controls/src/progress.rs",
+          "kind": "src",
+          "lines": 188
+        },
+        {
+          "path": "crates/incular-controls/src/radio.rs",
+          "kind": "src",
+          "lines": 238
+        },
+        {
+          "path": "crates/incular-controls/src/scroll_area.rs",
+          "kind": "src",
+          "lines": 124
+        },
+        {
+          "path": "crates/incular-controls/src/scrollbar.rs",
+          "kind": "src",
+          "lines": 122
+        },
+        {
+          "path": "crates/incular-controls/src/select.rs",
+          "kind": "src",
+          "lines": 122
+        },
+        {
+          "path": "crates/incular-controls/src/selection.rs",
+          "kind": "src",
+          "lines": 775
+        },
+        {
+          "path": "crates/incular-controls/src/separator.rs",
+          "kind": "src",
+          "lines": 81
+        },
+        {
+          "path": "crates/incular-controls/src/slider.rs",
+          "kind": "src",
+          "lines": 656
+        },
+        {
+          "path": "crates/incular-controls/src/styles.rs",
+          "kind": "src",
+          "lines": 1027
+        },
+        {
+          "path": "crates/incular-controls/src/switch.rs",
+          "kind": "src",
+          "lines": 224
+        },
+        {
+          "path": "crates/incular-controls/src/tabs.rs",
+          "kind": "src",
+          "lines": 183
+        },
+        {
+          "path": "crates/incular-controls/src/text_input.rs",
+          "kind": "src",
+          "lines": 206
+        },
+        {
+          "path": "crates/incular-controls/src/theme.rs",
+          "kind": "src",
+          "lines": 763
+        },
+        {
+          "path": "crates/incular-controls/src/toast.rs",
+          "kind": "src",
+          "lines": 268
+        },
+        {
+          "path": "crates/incular-controls/src/toggle.rs",
+          "kind": "src",
+          "lines": 220
+        },
+        {
+          "path": "crates/incular-controls/src/toggle_group.rs",
+          "kind": "src",
+          "lines": 4
+        },
+        {
+          "path": "crates/incular-controls/src/toolbar.rs",
+          "kind": "src",
+          "lines": 58
+        },
+        {
+          "path": "crates/incular-controls/src/tooltip.rs",
+          "kind": "src",
+          "lines": 29
+        },
+        {
+          "path": "crates/incular-controls/tests/checkbox_contract.rs",
+          "kind": "tests",
+          "lines": 61
+        },
+        {
+          "path": "crates/incular-controls/tests/context_menu_pointer.rs",
+          "kind": "tests",
+          "lines": 47
+        },
+        {
+          "path": "crates/incular-controls/tests/controls_test.rs",
+          "kind": "tests",
+          "lines": 267
+        },
+        {
+          "path": "crates/incular-controls/tests/migrated_tests.rs",
+          "kind": "tests",
+          "lines": 1301
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-core",
+      "manifest": "crates/incular-core/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-core/src/arena.rs",
+          "kind": "src",
+          "lines": 144
+        },
+        {
+          "path": "crates/incular-core/src/context.rs",
+          "kind": "src",
+          "lines": 595
+        },
+        {
+          "path": "crates/incular-core/src/geometry.rs",
+          "kind": "src",
+          "lines": 625
+        },
+        {
+          "path": "crates/incular-core/src/input.rs",
+          "kind": "src",
+          "lines": 314
+        },
+        {
+          "path": "crates/incular-core/src/key.rs",
+          "kind": "src",
+          "lines": 264
+        },
+        {
+          "path": "crates/incular-core/src/lib.rs",
+          "kind": "src",
+          "lines": 32
+        },
+        {
+          "path": "crates/incular-core/src/reactivity.rs",
+          "kind": "src",
+          "lines": 199
+        },
+        {
+          "path": "crates/incular-core/src/restoration.rs",
+          "kind": "src",
+          "lines": 227
+        },
+        {
+          "path": "crates/incular-core/src/widget.rs",
+          "kind": "src",
+          "lines": 27
+        },
+        {
+          "path": "crates/incular-core/tests/advanced_input.rs",
+          "kind": "tests",
+          "lines": 61
+        },
+        {
+          "path": "crates/incular-core/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 229
+        },
+        {
+          "path": "crates/incular-core/tests/reactivity.rs",
+          "kind": "tests",
+          "lines": 61
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-desktop",
+      "manifest": "crates/incular-desktop/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-desktop/src/clipboard.rs",
+          "kind": "src",
+          "lines": 258
+        },
+        {
+          "path": "crates/incular-desktop/src/devtools_runner.rs",
+          "kind": "src",
+          "lines": 762
+        },
+        {
+          "path": "crates/incular-desktop/src/display.rs",
+          "kind": "src",
+          "lines": 84
+        },
+        {
+          "path": "crates/incular-desktop/src/display_identity.rs",
+          "kind": "src",
+          "lines": 90
+        },
+        {
+          "path": "crates/incular-desktop/src/environment.rs",
+          "kind": "src",
+          "lines": 150
+        },
+        {
+          "path": "crates/incular-desktop/src/external_drag.rs",
+          "kind": "src",
+          "lines": 98
+        },
+        {
+          "path": "crates/incular-desktop/src/file_dialogs/linux.rs",
+          "kind": "src",
+          "lines": 158
+        },
+        {
+          "path": "crates/incular-desktop/src/file_dialogs.rs",
+          "kind": "src",
+          "lines": 263
+        },
+        {
+          "path": "crates/incular-desktop/src/global_shortcuts.rs",
+          "kind": "src",
+          "lines": 264
+        },
+        {
+          "path": "crates/incular-desktop/src/host_environment.rs",
+          "kind": "src",
+          "lines": 40
+        },
+        {
+          "path": "crates/incular-desktop/src/input.rs",
+          "kind": "src",
+          "lines": 176
+        },
+        {
+          "path": "crates/incular-desktop/src/lib.rs",
+          "kind": "src",
+          "lines": 2146
+        },
+        {
+          "path": "crates/incular-desktop/src/native_requests.rs",
+          "kind": "src",
+          "lines": 66
+        },
+        {
+          "path": "crates/incular-desktop/src/platform_menus.rs",
+          "kind": "src",
+          "lines": 232
+        },
+        {
+          "path": "crates/incular-desktop/src/platform_services.rs",
+          "kind": "src",
+          "lines": 326
+        },
+        {
+          "path": "crates/incular-desktop/src/pointer.rs",
+          "kind": "src",
+          "lines": 158
+        },
+        {
+          "path": "crates/incular-desktop/src/presentation.rs",
+          "kind": "src",
+          "lines": 112
+        },
+        {
+          "path": "crates/incular-desktop/src/single_instance.rs",
+          "kind": "src",
+          "lines": 729
+        },
+        {
+          "path": "crates/incular-desktop/src/transient_input.rs",
+          "kind": "src",
+          "lines": 45
+        },
+        {
+          "path": "crates/incular-desktop/src/transients.rs",
+          "kind": "src",
+          "lines": 828
+        },
+        {
+          "path": "crates/incular-desktop/src/window_host.rs",
+          "kind": "src",
+          "lines": 32
+        },
+        {
+          "path": "crates/incular-desktop/src/winit_adapter.rs",
+          "kind": "src",
+          "lines": 456
+        },
+        {
+          "path": "crates/incular-desktop/tests/advanced_input_capabilities.rs",
+          "kind": "tests",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-desktop/tests/advanced_input_conversion.rs",
+          "kind": "tests",
+          "lines": 102
+        },
+        {
+          "path": "crates/incular-desktop/tests/application_activation.rs",
+          "kind": "tests",
+          "lines": 83
+        },
+        {
+          "path": "crates/incular-desktop/tests/clipboard_failure.rs",
+          "kind": "tests",
+          "lines": 45
+        },
+        {
+          "path": "crates/incular-desktop/tests/clipboard_plan.rs",
+          "kind": "tests",
+          "lines": 80
+        },
+        {
+          "path": "crates/incular-desktop/tests/devtools_launch.rs",
+          "kind": "tests",
+          "lines": 39
+        },
+        {
+          "path": "crates/incular-desktop/tests/display_registry.rs",
+          "kind": "tests",
+          "lines": 35
+        },
+        {
+          "path": "crates/incular-desktop/tests/external_file_drag.rs",
+          "kind": "tests",
+          "lines": 78
+        },
+        {
+          "path": "crates/incular-desktop/tests/file_dialog_capabilities.rs",
+          "kind": "tests",
+          "lines": 77
+        },
+        {
+          "path": "crates/incular-desktop/tests/in_place_resize.rs",
+          "kind": "tests",
+          "lines": 187
+        },
+        {
+          "path": "crates/incular-desktop/tests/input_replay.rs",
+          "kind": "tests",
+          "lines": 168
+        },
+        {
+          "path": "crates/incular-desktop/tests/platform_menus.rs",
+          "kind": "tests",
+          "lines": 120
+        },
+        {
+          "path": "crates/incular-desktop/tests/pointer_contract.rs",
+          "kind": "tests",
+          "lines": 122
+        },
+        {
+          "path": "crates/incular-desktop/tests/pointer_input_native.rs",
+          "kind": "tests",
+          "lines": 120
+        },
+        {
+          "path": "crates/incular-desktop/tests/window_control.rs",
+          "kind": "tests",
+          "lines": 133
+        },
+        {
+          "path": "crates/incular-desktop/tests/winit_conversion.rs",
+          "kind": "tests",
+          "lines": 86
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-devtools",
+      "manifest": "crates/incular-devtools/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-devtools/src/commands.rs",
+          "kind": "src",
+          "lines": 41
+        },
+        {
+          "path": "crates/incular-devtools/src/discovery.rs",
+          "kind": "src",
+          "lines": 105
+        },
+        {
+          "path": "crates/incular-devtools/src/lib.rs",
+          "kind": "src",
+          "lines": 207
+        },
+        {
+          "path": "crates/incular-devtools/src/session.rs",
+          "kind": "src",
+          "lines": 264
+        },
+        {
+          "path": "crates/incular-devtools/tests/session.rs",
+          "kind": "tests",
+          "lines": 11
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-devtools-protocol",
+      "manifest": "crates/incular-devtools-protocol/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-devtools-protocol/src/lib.rs",
+          "kind": "src",
+          "lines": 800
+        },
+        {
+          "path": "crates/incular-devtools-protocol/tests/protocol.rs",
+          "kind": "tests",
+          "lines": 142
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-gestures",
+      "manifest": "crates/incular-gestures/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-gestures/src/arena.rs",
+          "kind": "src",
+          "lines": 170
+        },
+        {
+          "path": "crates/incular-gestures/src/details.rs",
+          "kind": "src",
+          "lines": 345
+        },
+        {
+          "path": "crates/incular-gestures/src/focus.rs",
+          "kind": "src",
+          "lines": 1050
+        },
+        {
+          "path": "crates/incular-gestures/src/keyboard.rs",
+          "kind": "src",
+          "lines": 1158
+        },
+        {
+          "path": "crates/incular-gestures/src/lib.rs",
+          "kind": "src",
+          "lines": 44
+        },
+        {
+          "path": "crates/incular-gestures/src/mouse.rs",
+          "kind": "src",
+          "lines": 44
+        },
+        {
+          "path": "crates/incular-gestures/src/pointer.rs",
+          "kind": "src",
+          "lines": 565
+        },
+        {
+          "path": "crates/incular-gestures/src/raw.rs",
+          "kind": "src",
+          "lines": 199
+        },
+        {
+          "path": "crates/incular-gestures/src/scale.rs",
+          "kind": "src",
+          "lines": 153
+        },
+        {
+          "path": "crates/incular-gestures/tests/gestures.rs",
+          "kind": "tests",
+          "lines": 484
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-image",
+      "manifest": "crates/incular-image/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-image/src/lib.rs",
+          "kind": "src",
+          "lines": 398
+        },
+        {
+          "path": "crates/incular-image/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 80
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-ios",
+      "manifest": "crates/incular-ios/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-ios/src/lib.rs",
+          "kind": "src",
+          "lines": 46
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-layout",
+      "manifest": "crates/incular-layout/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-layout/src/algorithms.rs",
+          "kind": "src",
+          "lines": 886
+        },
+        {
+          "path": "crates/incular-layout/src/alignment.rs",
+          "kind": "src",
+          "lines": 11
+        },
+        {
+          "path": "crates/incular-layout/src/constraints.rs",
+          "kind": "src",
+          "lines": 3
+        },
+        {
+          "path": "crates/incular-layout/src/descriptors.rs",
+          "kind": "src",
+          "lines": 557
+        },
+        {
+          "path": "crates/incular-layout/src/geometry.rs",
+          "kind": "src",
+          "lines": 81
+        },
+        {
+          "path": "crates/incular-layout/src/insets.rs",
+          "kind": "src",
+          "lines": 3
+        },
+        {
+          "path": "crates/incular-layout/src/lib.rs",
+          "kind": "src",
+          "lines": 38
+        },
+        {
+          "path": "crates/incular-layout/tests/public_api.rs",
+          "kind": "tests",
+          "lines": 84
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-linux",
+      "manifest": "crates/incular-linux/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-linux/src/application_shell.rs",
+          "kind": "src",
+          "lines": 536
+        },
+        {
+          "path": "crates/incular-linux/src/environment.rs",
+          "kind": "src",
+          "lines": 132
+        },
+        {
+          "path": "crates/incular-linux/src/lib.rs",
+          "kind": "src",
+          "lines": 186
+        },
+        {
+          "path": "crates/incular-linux/tests/application_shell.rs",
+          "kind": "tests",
+          "lines": 57
+        },
+        {
+          "path": "crates/incular-linux/tests/application_shell_capabilities.rs",
+          "kind": "tests",
+          "lines": 44
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-macos",
+      "manifest": "crates/incular-macos/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-macos/src/activation.rs",
+          "kind": "src",
+          "lines": 197
+        },
+        {
+          "path": "crates/incular-macos/src/application_shell.rs",
+          "kind": "src",
+          "lines": 748
+        },
+        {
+          "path": "crates/incular-macos/src/environment.rs",
+          "kind": "src",
+          "lines": 204
+        },
+        {
+          "path": "crates/incular-macos/src/lib.rs",
+          "kind": "src",
+          "lines": 327
+        },
+        {
+          "path": "crates/incular-macos/src/platform_menus.rs",
+          "kind": "src",
+          "lines": 526
+        },
+        {
+          "path": "crates/incular-macos/tests/application_shell.rs",
+          "kind": "tests",
+          "lines": 61
+        },
+        {
+          "path": "crates/incular-macos/tests/application_shell_capabilities.rs",
+          "kind": "tests",
+          "lines": 38
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-macros",
+      "manifest": "crates/incular-macros/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-macros/src/lib.rs",
+          "kind": "src",
+          "lines": 6
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-material",
+      "manifest": "crates/incular-material/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-material/src/app_shell/environment.rs",
+          "kind": "src",
+          "lines": 106
+        },
+        {
+          "path": "crates/incular-material/src/app_shell/material_app.rs",
+          "kind": "src",
+          "lines": 329
+        },
+        {
+          "path": "crates/incular-material/src/app_shell/navigation.rs",
+          "kind": "src",
+          "lines": 414
+        },
+        {
+          "path": "crates/incular-material/src/app_shell/shell.rs",
+          "kind": "src",
+          "lines": 632
+        },
+        {
+          "path": "crates/incular-material/src/app_shell.rs",
+          "kind": "src",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-material/src/buttons/common.rs",
+          "kind": "src",
+          "lines": 321
+        },
+        {
+          "path": "crates/incular-material/src/buttons/icon_floating.rs",
+          "kind": "src",
+          "lines": 374
+        },
+        {
+          "path": "crates/incular-material/src/buttons/style.rs",
+          "kind": "src",
+          "lines": 447
+        },
+        {
+          "path": "crates/incular-material/src/buttons/variants.rs",
+          "kind": "src",
+          "lines": 489
+        },
+        {
+          "path": "crates/incular-material/src/buttons.rs",
+          "kind": "src",
+          "lines": 17
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/app_shell.rs",
+          "kind": "src",
+          "lines": 565
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/chips.rs",
+          "kind": "src",
+          "lines": 792
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/common.rs",
+          "kind": "src",
+          "lines": 22
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/list_items.rs",
+          "kind": "src",
+          "lines": 967
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/navigation.rs",
+          "kind": "src",
+          "lines": 342
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/progress.rs",
+          "kind": "src",
+          "lines": 347
+        },
+        {
+          "path": "crates/incular-material/src/component_impl/surfaces.rs",
+          "kind": "src",
+          "lines": 417
+        },
+        {
+          "path": "crates/incular-material/src/component_impl.rs",
+          "kind": "src",
+          "lines": 24
+        },
+        {
+          "path": "crates/incular-material/src/extras.rs",
+          "kind": "src",
+          "lines": 466
+        },
+        {
+          "path": "crates/incular-material/src/feedback/dialog.rs",
+          "kind": "src",
+          "lines": 694
+        },
+        {
+          "path": "crates/incular-material/src/feedback/dialog_handles.rs",
+          "kind": "src",
+          "lines": 184
+        },
+        {
+          "path": "crates/incular-material/src/feedback/helpers.rs",
+          "kind": "src",
+          "lines": 33
+        },
+        {
+          "path": "crates/incular-material/src/feedback/progress.rs",
+          "kind": "src",
+          "lines": 217
+        },
+        {
+          "path": "crates/incular-material/src/feedback/transient.rs",
+          "kind": "src",
+          "lines": 690
+        },
+        {
+          "path": "crates/incular-material/src/feedback.rs",
+          "kind": "src",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-material/src/foundation/helpers.rs",
+          "kind": "src",
+          "lines": 16
+        },
+        {
+          "path": "crates/incular-material/src/foundation/ink.rs",
+          "kind": "src",
+          "lines": 131
+        },
+        {
+          "path": "crates/incular-material/src/foundation/input.rs",
+          "kind": "src",
+          "lines": 1124
+        },
+        {
+          "path": "crates/incular-material/src/foundation/state.rs",
+          "kind": "src",
+          "lines": 346
+        },
+        {
+          "path": "crates/incular-material/src/foundation/surfaces.rs",
+          "kind": "src",
+          "lines": 238
+        },
+        {
+          "path": "crates/incular-material/src/foundation/theme.rs",
+          "kind": "src",
+          "lines": 763
+        },
+        {
+          "path": "crates/incular-material/src/foundation/theme_data.rs",
+          "kind": "src",
+          "lines": 944
+        },
+        {
+          "path": "crates/incular-material/src/foundation.rs",
+          "kind": "src",
+          "lines": 21
+        },
+        {
+          "path": "crates/incular-material/src/lib.rs",
+          "kind": "src",
+          "lines": 1429
+        },
+        {
+          "path": "crates/incular-material/src/menus/anchor.rs",
+          "kind": "src",
+          "lines": 371
+        },
+        {
+          "path": "crates/incular-material/src/menus/controls.rs",
+          "kind": "src",
+          "lines": 629
+        },
+        {
+          "path": "crates/incular-material/src/menus/dropdown.rs",
+          "kind": "src",
+          "lines": 944
+        },
+        {
+          "path": "crates/incular-material/src/menus/popup.rs",
+          "kind": "src",
+          "lines": 859
+        },
+        {
+          "path": "crates/incular-material/src/menus/style.rs",
+          "kind": "src",
+          "lines": 418
+        },
+        {
+          "path": "crates/incular-material/src/menus.rs",
+          "kind": "src",
+          "lines": 39
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls/checkbox_radio.rs",
+          "kind": "src",
+          "lines": 414
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls/icons.rs",
+          "kind": "src",
+          "lines": 50
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls/slider_range.rs",
+          "kind": "src",
+          "lines": 1003
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls/switch.rs",
+          "kind": "src",
+          "lines": 159
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls/tabs.rs",
+          "kind": "src",
+          "lines": 452
+        },
+        {
+          "path": "crates/incular-material/src/p0_controls.rs",
+          "kind": "src",
+          "lines": 17
+        },
+        {
+          "path": "crates/incular-material/tests/migrated_tests.rs",
+          "kind": "tests",
+          "lines": 855
+        },
+        {
+          "path": "crates/incular-material/tests/reactive_state.rs",
+          "kind": "tests",
+          "lines": 17
+        },
+        {
+          "path": "crates/incular-material/tests/system_environment.rs",
+          "kind": "tests",
+          "lines": 75
+        },
+        {
+          "path": "crates/incular-material/tests/theme_data_safety.rs",
+          "kind": "tests",
+          "lines": 79
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-navigation",
+      "manifest": "crates/incular-navigation/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-navigation/src/lib.rs",
+          "kind": "src",
+          "lines": 27
+        },
+        {
+          "path": "crates/incular-navigation/src/navigator.rs",
+          "kind": "src",
+          "lines": 624
+        },
+        {
+          "path": "crates/incular-navigation/src/presentation.rs",
+          "kind": "src",
+          "lines": 498
+        },
+        {
+          "path": "crates/incular-navigation/src/registry.rs",
+          "kind": "src",
+          "lines": 208
+        },
+        {
+          "path": "crates/incular-navigation/src/route_data.rs",
+          "kind": "src",
+          "lines": 420
+        },
+        {
+          "path": "crates/incular-navigation/tests/navigation.rs",
+          "kind": "tests",
+          "lines": 470
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-painting",
+      "manifest": "crates/incular-painting/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-painting/src/lib.rs",
+          "kind": "src",
+          "lines": 7
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-platform",
+      "manifest": "crates/incular-platform/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-platform/src/application_activation.rs",
+          "kind": "src",
+          "lines": 315
+        },
+        {
+          "path": "crates/incular-platform/src/application_shell.rs",
+          "kind": "src",
+          "lines": 320
+        },
+        {
+          "path": "crates/incular-platform/src/capabilities.rs",
+          "kind": "src",
+          "lines": 238
+        },
+        {
+          "path": "crates/incular-platform/src/content_sensitivity.rs",
+          "kind": "src",
+          "lines": 171
+        },
+        {
+          "path": "crates/incular-platform/src/data_transfer.rs",
+          "kind": "src",
+          "lines": 830
+        },
+        {
+          "path": "crates/incular-platform/src/display.rs",
+          "kind": "src",
+          "lines": 271
+        },
+        {
+          "path": "crates/incular-platform/src/file_dialog.rs",
+          "kind": "src",
+          "lines": 677
+        },
+        {
+          "path": "crates/incular-platform/src/lib.rs",
+          "kind": "src",
+          "lines": 664
+        },
+        {
+          "path": "crates/incular-platform/src/operation.rs",
+          "kind": "src",
+          "lines": 133
+        },
+        {
+          "path": "crates/incular-platform/src/pointer.rs",
+          "kind": "src",
+          "lines": 88
+        },
+        {
+          "path": "crates/incular-platform/src/system_environment.rs",
+          "kind": "src",
+          "lines": 101
+        },
+        {
+          "path": "crates/incular-platform/src/window_control.rs",
+          "kind": "src",
+          "lines": 212
+        },
+        {
+          "path": "crates/incular-platform/tests/application_activation.rs",
+          "kind": "tests",
+          "lines": 50
+        },
+        {
+          "path": "crates/incular-platform/tests/application_shell.rs",
+          "kind": "tests",
+          "lines": 60
+        },
+        {
+          "path": "crates/incular-platform/tests/data_transfer.rs",
+          "kind": "tests",
+          "lines": 158
+        },
+        {
+          "path": "crates/incular-platform/tests/file_dialog.rs",
+          "kind": "tests",
+          "lines": 156
+        },
+        {
+          "path": "crates/incular-platform/tests/platform.rs",
+          "kind": "tests",
+          "lines": 404
+        },
+        {
+          "path": "crates/incular-platform/tests/system_environment.rs",
+          "kind": "tests",
+          "lines": 59
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-rendering",
+      "manifest": "crates/incular-rendering/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-rendering/src/compositor.rs",
+          "kind": "src",
+          "lines": 1711
+        },
+        {
+          "path": "crates/incular-rendering/src/display_list.rs",
+          "kind": "src",
+          "lines": 416
+        },
+        {
+          "path": "crates/incular-rendering/src/effects.rs",
+          "kind": "src",
+          "lines": 753
+        },
+        {
+          "path": "crates/incular-rendering/src/geometry.rs",
+          "kind": "src",
+          "lines": 153
+        },
+        {
+          "path": "crates/incular-rendering/src/glyphs.rs",
+          "kind": "src",
+          "lines": 21
+        },
+        {
+          "path": "crates/incular-rendering/src/gradients.rs",
+          "kind": "src",
+          "lines": 223
+        },
+        {
+          "path": "crates/incular-rendering/src/lib.rs",
+          "kind": "src",
+          "lines": 32
+        },
+        {
+          "path": "crates/incular-rendering/src/paint.rs",
+          "kind": "src",
+          "lines": 230
+        },
+        {
+          "path": "crates/incular-rendering/src/paths.rs",
+          "kind": "src",
+          "lines": 132
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "kind": "tests",
+          "lines": 840
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-runtime",
+      "manifest": "crates/incular-runtime/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-runtime/src/application.rs",
+          "kind": "src",
+          "lines": 2668
+        },
+        {
+          "path": "crates/incular-runtime/src/application_activations.rs",
+          "kind": "src",
+          "lines": 182
+        },
+        {
+          "path": "crates/incular-runtime/src/application_shell.rs",
+          "kind": "src",
+          "lines": 949
+        },
+        {
+          "path": "crates/incular-runtime/src/application_types.rs",
+          "kind": "src",
+          "lines": 150
+        },
+        {
+          "path": "crates/incular-runtime/src/context.rs",
+          "kind": "src",
+          "lines": 341
+        },
+        {
+          "path": "crates/incular-runtime/src/environment.rs",
+          "kind": "src",
+          "lines": 777
+        },
+        {
+          "path": "crates/incular-runtime/src/file_dialogs.rs",
+          "kind": "src",
+          "lines": 478
+        },
+        {
+          "path": "crates/incular-runtime/src/frame.rs",
+          "kind": "src",
+          "lines": 2008
+        },
+        {
+          "path": "crates/incular-runtime/src/global_shortcuts.rs",
+          "kind": "src",
+          "lines": 454
+        },
+        {
+          "path": "crates/incular-runtime/src/lib.rs",
+          "kind": "src",
+          "lines": 172
+        },
+        {
+          "path": "crates/incular-runtime/src/profiling.rs",
+          "kind": "src",
+          "lines": 587
+        },
+        {
+          "path": "crates/incular-runtime/src/reactive.rs",
+          "kind": "src",
+          "lines": 910
+        },
+        {
+          "path": "crates/incular-runtime/src/request_admission.rs",
+          "kind": "src",
+          "lines": 31
+        },
+        {
+          "path": "crates/incular-runtime/src/request_channel.rs",
+          "kind": "src",
+          "lines": 140
+        },
+        {
+          "path": "crates/incular-runtime/src/request_registry.rs",
+          "kind": "src",
+          "lines": 108
+        },
+        {
+          "path": "crates/incular-runtime/src/restoration.rs",
+          "kind": "src",
+          "lines": 964
+        },
+        {
+          "path": "crates/incular-runtime/src/simulation.rs",
+          "kind": "src",
+          "lines": 967
+        },
+        {
+          "path": "crates/incular-runtime/src/tasks.rs",
+          "kind": "src",
+          "lines": 979
+        },
+        {
+          "path": "crates/incular-runtime/src/transient_presentation.rs",
+          "kind": "src",
+          "lines": 38
+        },
+        {
+          "path": "crates/incular-runtime/src/undo.rs",
+          "kind": "src",
+          "lines": 249
+        },
+        {
+          "path": "crates/incular-runtime/src/window_commands.rs",
+          "kind": "src",
+          "lines": 568
+        },
+        {
+          "path": "crates/incular-runtime/src/window_state.rs",
+          "kind": "src",
+          "lines": 830
+        },
+        {
+          "path": "crates/incular-runtime/tests/advanced_input.rs",
+          "kind": "tests",
+          "lines": 92
+        },
+        {
+          "path": "crates/incular-runtime/tests/application_activation.rs",
+          "kind": "tests",
+          "lines": 324
+        },
+        {
+          "path": "crates/incular-runtime/tests/application_shell.rs",
+          "kind": "tests",
+          "lines": 377
+        },
+        {
+          "path": "crates/incular-runtime/tests/clipboard.rs",
+          "kind": "tests",
+          "lines": 41
+        },
+        {
+          "path": "crates/incular-runtime/tests/display_placement.rs",
+          "kind": "tests",
+          "lines": 240
+        },
+        {
+          "path": "crates/incular-runtime/tests/external_drop.rs",
+          "kind": "tests",
+          "lines": 60
+        },
+        {
+          "path": "crates/incular-runtime/tests/file_dialogs.rs",
+          "kind": "tests",
+          "lines": 338
+        },
+        {
+          "path": "crates/incular-runtime/tests/native_request_protocol.rs",
+          "kind": "tests",
+          "lines": 138
+        },
+        {
+          "path": "crates/incular-runtime/tests/native_service_lifecycle.rs",
+          "kind": "tests",
+          "lines": 284
+        },
+        {
+          "path": "crates/incular-runtime/tests/performance_contracts.rs",
+          "kind": "tests",
+          "lines": 380
+        },
+        {
+          "path": "crates/incular-runtime/tests/platform_operations.rs",
+          "kind": "tests",
+          "lines": 337
+        },
+        {
+          "path": "crates/incular-runtime/tests/pointer_input.rs",
+          "kind": "tests",
+          "lines": 276
+        },
+        {
+          "path": "crates/incular-runtime/tests/request_admission.rs",
+          "kind": "tests",
+          "lines": 52
+        },
+        {
+          "path": "crates/incular-runtime/tests/restoration.rs",
+          "kind": "tests",
+          "lines": 237
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime/devtools_performance.rs",
+          "kind": "tests",
+          "lines": 257
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime/layout_semantics.rs",
+          "kind": "tests",
+          "lines": 156
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime/reactive_scheduling.rs",
+          "kind": "tests",
+          "lines": 725
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime/restoration_tasks.rs",
+          "kind": "tests",
+          "lines": 452
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime/retained_interactions.rs",
+          "kind": "tests",
+          "lines": 430
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime.rs",
+          "kind": "tests",
+          "lines": 1742
+        },
+        {
+          "path": "crates/incular-runtime/tests/runtime_adoption.rs",
+          "kind": "tests",
+          "lines": 199
+        },
+        {
+          "path": "crates/incular-runtime/tests/simulation.rs",
+          "kind": "tests",
+          "lines": 232
+        },
+        {
+          "path": "crates/incular-runtime/tests/system_environment.rs",
+          "kind": "tests",
+          "lines": 188
+        },
+        {
+          "path": "crates/incular-runtime/tests/undo.rs",
+          "kind": "tests",
+          "lines": 62
+        },
+        {
+          "path": "crates/incular-runtime/tests/window_control.rs",
+          "kind": "tests",
+          "lines": 246
+        },
+        {
+          "path": "crates/incular-runtime/benches/restoration.rs",
+          "kind": "benches",
+          "lines": 59
+        },
+        {
+          "path": "crates/incular-runtime/benches/signals.rs",
+          "kind": "benches",
+          "lines": 57
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-scroll",
+      "manifest": "crates/incular-scroll/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-scroll/src/activity.rs",
+          "kind": "src",
+          "lines": 67
+        },
+        {
+          "path": "crates/incular-scroll/src/controller.rs",
+          "kind": "src",
+          "lines": 175
+        },
+        {
+          "path": "crates/incular-scroll/src/coordinator.rs",
+          "kind": "src",
+          "lines": 75
+        },
+        {
+          "path": "crates/incular-scroll/src/extent_index.rs",
+          "kind": "src",
+          "lines": 549
+        },
+        {
+          "path": "crates/incular-scroll/src/lib.rs",
+          "kind": "src",
+          "lines": 27
+        },
+        {
+          "path": "crates/incular-scroll/src/metrics.rs",
+          "kind": "src",
+          "lines": 78
+        },
+        {
+          "path": "crates/incular-scroll/src/notifications.rs",
+          "kind": "src",
+          "lines": 119
+        },
+        {
+          "path": "crates/incular-scroll/src/physics.rs",
+          "kind": "src",
+          "lines": 551
+        },
+        {
+          "path": "crates/incular-scroll/src/restoration.rs",
+          "kind": "src",
+          "lines": 23
+        },
+        {
+          "path": "crates/incular-scroll/src/scrollbar.rs",
+          "kind": "src",
+          "lines": 131
+        },
+        {
+          "path": "crates/incular-scroll/src/sliver.rs",
+          "kind": "src",
+          "lines": 167
+        },
+        {
+          "path": "crates/incular-scroll/tests/scroll.rs",
+          "kind": "tests",
+          "lines": 339
+        },
+        {
+          "path": "crates/incular-scroll/tests/sliver.rs",
+          "kind": "tests",
+          "lines": 47
+        },
+        {
+          "path": "crates/incular-scroll/benches/variable_list.rs",
+          "kind": "benches",
+          "lines": 58
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-semantics",
+      "manifest": "crates/incular-semantics/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-semantics/src/lib.rs",
+          "kind": "src",
+          "lines": 369
+        },
+        {
+          "path": "crates/incular-semantics/tests/semantics.rs",
+          "kind": "tests",
+          "lines": 41
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-text",
+      "manifest": "crates/incular-text/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-text/src/editing.rs",
+          "kind": "src",
+          "lines": 927
+        },
+        {
+          "path": "crates/incular-text/src/engine.rs",
+          "kind": "src",
+          "lines": 901
+        },
+        {
+          "path": "crates/incular-text/src/lib.rs",
+          "kind": "src",
+          "lines": 30
+        },
+        {
+          "path": "crates/incular-text/src/spans.rs",
+          "kind": "src",
+          "lines": 450
+        },
+        {
+          "path": "crates/incular-text/src/style/fonts.rs",
+          "kind": "src",
+          "lines": 176
+        },
+        {
+          "path": "crates/incular-text/src/style/icons.rs",
+          "kind": "src",
+          "lines": 112
+        },
+        {
+          "path": "crates/incular-text/src/style/text.rs",
+          "kind": "src",
+          "lines": 294
+        },
+        {
+          "path": "crates/incular-text/src/style/text_style.rs",
+          "kind": "src",
+          "lines": 760
+        },
+        {
+          "path": "crates/incular-text/src/style.rs",
+          "kind": "src",
+          "lines": 15
+        },
+        {
+          "path": "crates/incular-text/tests/editing.rs",
+          "kind": "tests",
+          "lines": 39
+        },
+        {
+          "path": "crates/incular-text/tests/engine.rs",
+          "kind": "tests",
+          "lines": 325
+        },
+        {
+          "path": "crates/incular-text/tests/spans.rs",
+          "kind": "tests",
+          "lines": 50
+        },
+        {
+          "path": "crates/incular-text/tests/style.rs",
+          "kind": "tests",
+          "lines": 56
+        },
+        {
+          "path": "crates/incular-text/benches/text_layout.rs",
+          "kind": "benches",
+          "lines": 231
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-wgpu",
+      "manifest": "crates/incular-wgpu/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-wgpu/src/batching.rs",
+          "kind": "src",
+          "lines": 97
+        },
+        {
+          "path": "crates/incular-wgpu/src/compositor.rs",
+          "kind": "src",
+          "lines": 323
+        },
+        {
+          "path": "crates/incular-wgpu/src/constants.rs",
+          "kind": "src",
+          "lines": 26
+        },
+        {
+          "path": "crates/incular-wgpu/src/diagnostics.rs",
+          "kind": "src",
+          "lines": 341
+        },
+        {
+          "path": "crates/incular-wgpu/src/geometry.rs",
+          "kind": "src",
+          "lines": 87
+        },
+        {
+          "path": "crates/incular-wgpu/src/glyphs.rs",
+          "kind": "src",
+          "lines": 429
+        },
+        {
+          "path": "crates/incular-wgpu/src/lib.rs",
+          "kind": "src",
+          "lines": 76
+        },
+        {
+          "path": "crates/incular-wgpu/src/pipelines.rs",
+          "kind": "src",
+          "lines": 1516
+        },
+        {
+          "path": "crates/incular-wgpu/src/render_passes.rs",
+          "kind": "src",
+          "lines": 141
+        },
+        {
+          "path": "crates/incular-wgpu/src/render_plan.rs",
+          "kind": "src",
+          "lines": 737
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/capture.rs",
+          "kind": "src",
+          "lines": 167
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/effects.rs",
+          "kind": "src",
+          "lines": 871
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/frame.rs",
+          "kind": "src",
+          "lines": 730
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/lowering.rs",
+          "kind": "src",
+          "lines": 1091
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/rendering.rs",
+          "kind": "src",
+          "lines": 569
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/resources.rs",
+          "kind": "src",
+          "lines": 406
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer/state.rs",
+          "kind": "src",
+          "lines": 689
+        },
+        {
+          "path": "crates/incular-wgpu/src/renderer.rs",
+          "kind": "src",
+          "lines": 12
+        },
+        {
+          "path": "crates/incular-wgpu/src/resources.rs",
+          "kind": "src",
+          "lines": 568
+        },
+        {
+          "path": "crates/incular-wgpu/src/surface.rs",
+          "kind": "src",
+          "lines": 170
+        },
+        {
+          "path": "crates/incular-wgpu/tests/pipeline_contracts.rs",
+          "kind": "tests",
+          "lines": 174
+        },
+        {
+          "path": "crates/incular-wgpu/tests/renderer.rs",
+          "kind": "tests",
+          "lines": 779
+        },
+        {
+          "path": "crates/incular-wgpu/tests/surface.rs",
+          "kind": "tests",
+          "lines": 134
+        },
+        {
+          "path": "crates/incular-wgpu/tests/surface_api.rs",
+          "kind": "tests",
+          "lines": 7
+        },
+        {
+          "path": "crates/incular-wgpu/tests/surface_ownership.rs",
+          "kind": "tests",
+          "lines": 61
+        },
+        {
+          "path": "crates/incular-wgpu/tests/ui/borrowed_surface_target.rs",
+          "kind": "tests",
+          "lines": 9
+        },
+        {
+          "path": "crates/incular-wgpu/tests/ui/detached_surface_handles.rs",
+          "kind": "tests",
+          "lines": 17
+        },
+        {
+          "path": "crates/incular-wgpu/tests/ui/owned_surface_target.rs",
+          "kind": "tests",
+          "lines": 11
+        },
+        {
+          "path": "crates/incular-wgpu/tests/ui/support/mod.rs",
+          "kind": "tests",
+          "lines": 14
+        },
+        {
+          "path": "crates/incular-wgpu/benches/path_tessellation.rs",
+          "kind": "benches",
+          "lines": 74
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-widgets",
+      "manifest": "crates/incular-widgets/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+          "kind": "src",
+          "lines": 914
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_scrolling/mod.rs",
+          "kind": "src",
+          "lines": 37
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_scrolling/raw_scrollbar.rs",
+          "kind": "src",
+          "lines": 390
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_scrolling/two_dimensional.rs",
+          "kind": "src",
+          "lines": 984
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+          "kind": "src",
+          "lines": 1020
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+          "kind": "src",
+          "lines": 1263
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_slivers/keep_alive.rs",
+          "kind": "src",
+          "lines": 341
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_slivers/mod.rs",
+          "kind": "src",
+          "lines": 45
+        },
+        {
+          "path": "crates/incular-widgets/src/advanced_slivers/tree_sliver.rs",
+          "kind": "src",
+          "lines": 933
+        },
+        {
+          "path": "crates/incular-widgets/src/animation_transitions.rs",
+          "kind": "src",
+          "lines": 294
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/app.rs",
+          "kind": "src",
+          "lines": 978
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/mod.rs",
+          "kind": "src",
+          "lines": 35
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/router.rs",
+          "kind": "src",
+          "lines": 1349
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/title.rs",
+          "kind": "src",
+          "lines": 332
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/view.rs",
+          "kind": "src",
+          "lines": 947
+        },
+        {
+          "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+          "kind": "src",
+          "lines": 71
+        },
+        {
+          "path": "crates/incular-widgets/src/compositing.rs",
+          "kind": "src",
+          "lines": 318
+        },
+        {
+          "path": "crates/incular-widgets/src/devtools.rs",
+          "kind": "src",
+          "lines": 947
+        },
+        {
+          "path": "crates/incular-widgets/src/devtools_props.rs",
+          "kind": "src",
+          "lines": 491
+        },
+        {
+          "path": "crates/incular-widgets/src/drag_drop.rs",
+          "kind": "src",
+          "lines": 397
+        },
+        {
+          "path": "crates/incular-widgets/src/environment.rs",
+          "kind": "src",
+          "lines": 637
+        },
+        {
+          "path": "crates/incular-widgets/src/extensions.rs",
+          "kind": "src",
+          "lines": 4
+        },
+        {
+          "path": "crates/incular-widgets/src/external_drop.rs",
+          "kind": "src",
+          "lines": 167
+        },
+        {
+          "path": "crates/incular-widgets/src/focus_keyboard.rs",
+          "kind": "src",
+          "lines": 766
+        },
+        {
+          "path": "crates/incular-widgets/src/forms.rs",
+          "kind": "src",
+          "lines": 770
+        },
+        {
+          "path": "crates/incular-widgets/src/gestures.rs",
+          "kind": "src",
+          "lines": 393
+        },
+        {
+          "path": "crates/incular-widgets/src/hero.rs",
+          "kind": "src",
+          "lines": 85
+        },
+        {
+          "path": "crates/incular-widgets/src/implicit_animations.rs",
+          "kind": "src",
+          "lines": 635
+        },
+        {
+          "path": "crates/incular-widgets/src/indexed_semantics.rs",
+          "kind": "src",
+          "lines": 40
+        },
+        {
+          "path": "crates/incular-widgets/src/internal.rs",
+          "kind": "src",
+          "lines": 296
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+          "kind": "src",
+          "lines": 157
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+          "kind": "src",
+          "lines": 157
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/padding_alignment.rs",
+          "kind": "src",
+          "lines": 170
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/painting.rs",
+          "kind": "src",
+          "lines": 171
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+          "kind": "src",
+          "lines": 561
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/split_view.rs",
+          "kind": "src",
+          "lines": 297
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+          "kind": "src",
+          "lines": 63
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/utility.rs",
+          "kind": "src",
+          "lines": 269
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+          "kind": "src",
+          "lines": 157
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/basic.rs",
+          "kind": "src",
+          "lines": 52
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/container.rs",
+          "kind": "src",
+          "lines": 271
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/flex.rs",
+          "kind": "src",
+          "lines": 583
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/mod.rs",
+          "kind": "src",
+          "lines": 15
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/stack.rs",
+          "kind": "src",
+          "lines": 284
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/table.rs",
+          "kind": "src",
+          "lines": 66
+        },
+        {
+          "path": "crates/incular-widgets/src/layout/wrap.rs",
+          "kind": "src",
+          "lines": 144
+        },
+        {
+          "path": "crates/incular-widgets/src/lib.rs",
+          "kind": "src",
+          "lines": 254
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/back_dispatch.rs",
+          "kind": "src",
+          "lines": 607
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/barrier.rs",
+          "kind": "src",
+          "lines": 227
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/mod.rs",
+          "kind": "src",
+          "lines": 27
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/page_storage.rs",
+          "kind": "src",
+          "lines": 313
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/pop_scopes.rs",
+          "kind": "src",
+          "lines": 463
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation/restoration.rs",
+          "kind": "src",
+          "lines": 191
+        },
+        {
+          "path": "crates/incular-widgets/src/navigation_scopes.rs",
+          "kind": "src",
+          "lines": 197
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects/custom_paint.rs",
+          "kind": "src",
+          "lines": 11
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects/decoration.rs",
+          "kind": "src",
+          "lines": 552
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects/geometry.rs",
+          "kind": "src",
+          "lines": 259
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects/images.rs",
+          "kind": "src",
+          "lines": 206
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects/layers.rs",
+          "kind": "src",
+          "lines": 255
+        },
+        {
+          "path": "crates/incular-widgets/src/painting_effects.rs",
+          "kind": "src",
+          "lines": 16
+        },
+        {
+          "path": "crates/incular-widgets/src/parity.rs",
+          "kind": "src",
+          "lines": 3
+        },
+        {
+          "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+          "kind": "src",
+          "lines": 1206
+        },
+        {
+          "path": "crates/incular-widgets/src/platform_widgets/mod.rs",
+          "kind": "src",
+          "lines": 22
+        },
+        {
+          "path": "crates/incular-widgets/src/radio_selection.rs",
+          "kind": "src",
+          "lines": 101
+        },
+        {
+          "path": "crates/incular-widgets/src/raw_input.rs",
+          "kind": "src",
+          "lines": 883
+        },
+        {
+          "path": "crates/incular-widgets/src/raw_tooltip.rs",
+          "kind": "src",
+          "lines": 1417
+        },
+        {
+          "path": "crates/incular-widgets/src/reactive_builders.rs",
+          "kind": "src",
+          "lines": 126
+        },
+        {
+          "path": "crates/incular-widgets/src/recursion.rs",
+          "kind": "src",
+          "lines": 374
+        },
+        {
+          "path": "crates/incular-widgets/src/render_object/layers.rs",
+          "kind": "src",
+          "lines": 624
+        },
+        {
+          "path": "crates/incular-widgets/src/render_object/mod.rs",
+          "kind": "src",
+          "lines": 467
+        },
+        {
+          "path": "crates/incular-widgets/src/render_object/update.rs",
+          "kind": "src",
+          "lines": 176
+        },
+        {
+          "path": "crates/incular-widgets/src/safe_area.rs",
+          "kind": "src",
+          "lines": 136
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/geometry.rs",
+          "kind": "src",
+          "lines": 173
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/layout.rs",
+          "kind": "src",
+          "lines": 1510
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/notifications.rs",
+          "kind": "src",
+          "lines": 59
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/reorderable.rs",
+          "kind": "src",
+          "lines": 548
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+          "kind": "src",
+          "lines": 1067
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+          "kind": "src",
+          "lines": 1917
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+          "kind": "src",
+          "lines": 996
+        },
+        {
+          "path": "crates/incular-widgets/src/scrolling.rs",
+          "kind": "src",
+          "lines": 56
+        },
+        {
+          "path": "crates/incular-widgets/src/selection.rs",
+          "kind": "src",
+          "lines": 555
+        },
+        {
+          "path": "crates/incular-widgets/src/selection_container.rs",
+          "kind": "src",
+          "lines": 68
+        },
+        {
+          "path": "crates/incular-widgets/src/selection_listener.rs",
+          "kind": "src",
+          "lines": 38
+        },
+        {
+          "path": "crates/incular-widgets/src/semantics.rs",
+          "kind": "src",
+          "lines": 509
+        },
+        {
+          "path": "crates/incular-widgets/src/semantics_debugger.rs",
+          "kind": "src",
+          "lines": 66
+        },
+        {
+          "path": "crates/incular-widgets/src/transient.rs",
+          "kind": "src",
+          "lines": 620
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/context.rs",
+          "kind": "src",
+          "lines": 278
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/descriptors.rs",
+          "kind": "src",
+          "lines": 1295
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/external_drop.rs",
+          "kind": "src",
+          "lines": 154
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/focus.rs",
+          "kind": "src",
+          "lines": 396
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/interaction.rs",
+          "kind": "src",
+          "lines": 1412
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/invariants.rs",
+          "kind": "src",
+          "lines": 830
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+          "kind": "src",
+          "lines": 409
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+          "kind": "src",
+          "lines": 274
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+          "kind": "src",
+          "lines": 87
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/mod.rs",
+          "kind": "src",
+          "lines": 119
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+          "kind": "src",
+          "lines": 169
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+          "kind": "src",
+          "lines": 193
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+          "kind": "src",
+          "lines": 131
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/layout.rs",
+          "kind": "src",
+          "lines": 709
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+          "kind": "src",
+          "lines": 237
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting/behavior/mod.rs",
+          "kind": "src",
+          "lines": 121
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting/behavior/scrolling.rs",
+          "kind": "src",
+          "lines": 21
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting/behavior/shader_mask.rs",
+          "kind": "src",
+          "lines": 30
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting/behavior/visual.rs",
+          "kind": "src",
+          "lines": 154
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/painting.rs",
+          "kind": "src",
+          "lines": 829
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/raw_input.rs",
+          "kind": "src",
+          "lines": 860
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+          "kind": "src",
+          "lines": 1375
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering/lowering/effects.rs",
+          "kind": "src",
+          "lines": 112
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+          "kind": "src",
+          "lines": 200
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering/lowering/mod.rs",
+          "kind": "src",
+          "lines": 22
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering/lowering/scrolling.rs",
+          "kind": "src",
+          "lines": 61
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering/lowering/visual.rs",
+          "kind": "src",
+          "lines": 140
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/rendering.rs",
+          "kind": "src",
+          "lines": 351
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/retained.rs",
+          "kind": "src",
+          "lines": 1081
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/semantics.rs",
+          "kind": "src",
+          "lines": 425
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/specs.rs",
+          "kind": "src",
+          "lines": 559
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/text.rs",
+          "kind": "src",
+          "lines": 1096
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/values.rs",
+          "kind": "src",
+          "lines": 695
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+          "kind": "src",
+          "lines": 1193
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/widget/geometry.rs",
+          "kind": "src",
+          "lines": 160
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/widget/mod.rs",
+          "kind": "src",
+          "lines": 117
+        },
+        {
+          "path": "crates/incular-widgets/src/tree/widget/structure.rs",
+          "kind": "src",
+          "lines": 2204
+        },
+        {
+          "path": "crates/incular-widgets/src/tree.rs",
+          "kind": "src",
+          "lines": 1024
+        },
+        {
+          "path": "crates/incular-widgets/src/utilities.rs",
+          "kind": "src",
+          "lines": 354
+        },
+        {
+          "path": "crates/incular-widgets/tests/action_focus.rs",
+          "kind": "tests",
+          "lines": 368
+        },
+        {
+          "path": "crates/incular-widgets/tests/advanced_input.rs",
+          "kind": "tests",
+          "lines": 148
+        },
+        {
+          "path": "crates/incular-widgets/tests/advanced_scrolling.rs",
+          "kind": "tests",
+          "lines": 240
+        },
+        {
+          "path": "crates/incular-widgets/tests/advanced_scrolling_retained_integration.rs",
+          "kind": "tests",
+          "lines": 365
+        },
+        {
+          "path": "crates/incular-widgets/tests/advanced_slivers.rs",
+          "kind": "tests",
+          "lines": 220
+        },
+        {
+          "path": "crates/incular-widgets/tests/app_shell.rs",
+          "kind": "tests",
+          "lines": 745
+        },
+        {
+          "path": "crates/incular-widgets/tests/common/mod.rs",
+          "kind": "tests",
+          "lines": 166
+        },
+        {
+          "path": "crates/incular-widgets/tests/completed_module_integration.rs",
+          "kind": "tests",
+          "lines": 185
+        },
+        {
+          "path": "crates/incular-widgets/tests/deep_tree_lifecycle.rs",
+          "kind": "tests",
+          "lines": 125
+        },
+        {
+          "path": "crates/incular-widgets/tests/devtools.rs",
+          "kind": "tests",
+          "lines": 286
+        },
+        {
+          "path": "crates/incular-widgets/tests/environment.rs",
+          "kind": "tests",
+          "lines": 101
+        },
+        {
+          "path": "crates/incular-widgets/tests/external_drop.rs",
+          "kind": "tests",
+          "lines": 366
+        },
+        {
+          "path": "crates/incular-widgets/tests/focus_keyboard.rs",
+          "kind": "tests",
+          "lines": 60
+        },
+        {
+          "path": "crates/incular-widgets/tests/forms.rs",
+          "kind": "tests",
+          "lines": 161
+        },
+        {
+          "path": "crates/incular-widgets/tests/inherited_context_contracts.rs",
+          "kind": "tests",
+          "lines": 184
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_basic.rs",
+          "kind": "tests",
+          "lines": 88
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_container.rs",
+          "kind": "tests",
+          "lines": 151
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_flex.rs",
+          "kind": "tests",
+          "lines": 105
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_stack.rs",
+          "kind": "tests",
+          "lines": 50
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_table.rs",
+          "kind": "tests",
+          "lines": 29
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_wrap.rs",
+          "kind": "tests",
+          "lines": 42
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_scopes.rs",
+          "kind": "tests",
+          "lines": 267
+        },
+        {
+          "path": "crates/incular-widgets/tests/neutral_defaults.rs",
+          "kind": "tests",
+          "lines": 177
+        },
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "kind": "tests",
+          "lines": 131
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_hover.rs",
+          "kind": "tests",
+          "lines": 116
+        },
+        {
+          "path": "crates/incular-widgets/tests/raw_tooltip.rs",
+          "kind": "tests",
+          "lines": 145
+        },
+        {
+          "path": "crates/incular-widgets/tests/recursion.rs",
+          "kind": "tests",
+          "lines": 81
+        },
+        {
+          "path": "crates/incular-widgets/tests/render_invalidation.rs",
+          "kind": "tests",
+          "lines": 190
+        },
+        {
+          "path": "crates/incular-widgets/tests/reorderable.rs",
+          "kind": "tests",
+          "lines": 304
+        },
+        {
+          "path": "crates/incular-widgets/tests/safe_area.rs",
+          "kind": "tests",
+          "lines": 16
+        },
+        {
+          "path": "crates/incular-widgets/tests/semantics.rs",
+          "kind": "tests",
+          "lines": 65
+        },
+        {
+          "path": "crates/incular-widgets/tests/transient_placement.rs",
+          "kind": "tests",
+          "lines": 195
+        },
+        {
+          "path": "crates/incular-widgets/tests/transient_surfaces.rs",
+          "kind": "tests",
+          "lines": 303
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_editing_semantics_gestures.rs",
+          "kind": "tests",
+          "lines": 971
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_error_policy.rs",
+          "kind": "tests",
+          "lines": 294
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_layout_painting.rs",
+          "kind": "tests",
+          "lines": 1236
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_performance_contracts.rs",
+          "kind": "tests",
+          "lines": 196
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_reconciliation.rs",
+          "kind": "tests",
+          "lines": 205
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_rendering.rs",
+          "kind": "tests",
+          "lines": 48
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "kind": "tests",
+          "lines": 910
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "kind": "tests",
+          "lines": 217
+        },
+        {
+          "path": "crates/incular-widgets/tests/widget_structure_contracts.rs",
+          "kind": "tests",
+          "lines": 53
+        },
+        {
+          "path": "crates/incular-widgets/tests/window_chrome.rs",
+          "kind": "tests",
+          "lines": 127
+        },
+        {
+          "path": "crates/incular-widgets/benches/layout.rs",
+          "kind": "benches",
+          "lines": 122
+        },
+        {
+          "path": "crates/incular-widgets/benches/reconciliation.rs",
+          "kind": "benches",
+          "lines": 278
+        },
+        {
+          "path": "crates/incular-widgets/benches/semantics.rs",
+          "kind": "benches",
+          "lines": 35
+        },
+        {
+          "path": "crates/incular-widgets/benches/widget_eq_probe.rs",
+          "kind": "benches",
+          "lines": 68
+        }
+      ]
+    },
+    {
+      "root": "crates/incular-windows",
+      "manifest": "crates/incular-windows/Cargo.toml",
+      "files": [
+        {
+          "path": "crates/incular-windows/src/application_shell.rs",
+          "kind": "src",
+          "lines": 514
+        },
+        {
+          "path": "crates/incular-windows/src/crash_reporter.rs",
+          "kind": "src",
+          "lines": 60
+        },
+        {
+          "path": "crates/incular-windows/src/environment.rs",
+          "kind": "src",
+          "lines": 265
+        },
+        {
+          "path": "crates/incular-windows/src/lib.rs",
+          "kind": "src",
+          "lines": 435
+        },
+        {
+          "path": "crates/incular-windows/src/platform_menus.rs",
+          "kind": "src",
+          "lines": 765
+        },
+        {
+          "path": "crates/incular-windows/src/pointer.rs",
+          "kind": "src",
+          "lines": 208
+        },
+        {
+          "path": "crates/incular-windows/tests/advanced_input_capabilities.rs",
+          "kind": "tests",
+          "lines": 15
+        },
+        {
+          "path": "crates/incular-windows/tests/application_shell.rs",
+          "kind": "tests",
+          "lines": 57
+        },
+        {
+          "path": "crates/incular-windows/tests/application_shell_capabilities.rs",
+          "kind": "tests",
+          "lines": 38
+        },
+        {
+          "path": "crates/incular-windows/tests/display_placement.rs",
+          "kind": "tests",
+          "lines": 113
+        },
+        {
+          "path": "crates/incular-windows/tests/platform_menu.rs",
+          "kind": "tests",
+          "lines": 301
+        },
+        {
+          "path": "crates/incular-windows/tests/system_environment.rs",
+          "kind": "tests",
+          "lines": 102
+        },
+        {
+          "path": "crates/incular-windows/tests/transient_surface.rs",
+          "kind": "tests",
+          "lines": 351
+        }
+      ]
+    },
+    {
+      "root": "tools/incular-devtools",
+      "manifest": "tools/incular-devtools/Cargo.toml",
+      "files": [
+        {
+          "path": "tools/incular-devtools/src/inspector.rs",
+          "kind": "src",
+          "lines": 810
+        },
+        {
+          "path": "tools/incular-devtools/src/lib.rs",
+          "kind": "src",
+          "lines": 26
+        },
+        {
+          "path": "tools/incular-devtools/src/main.rs",
+          "kind": "src",
+          "lines": 9
+        },
+        {
+          "path": "tools/incular-devtools/src/performance.rs",
+          "kind": "src",
+          "lines": 106
+        },
+        {
+          "path": "tools/incular-devtools/src/session.rs",
+          "kind": "src",
+          "lines": 73
+        },
+        {
+          "path": "tools/incular-devtools/src/transport.rs",
+          "kind": "src",
+          "lines": 371
+        },
+        {
+          "path": "tools/incular-devtools/src/views/application.rs",
+          "kind": "src",
+          "lines": 98
+        },
+        {
+          "path": "tools/incular-devtools/src/views/console.rs",
+          "kind": "src",
+          "lines": 82
+        },
+        {
+          "path": "tools/incular-devtools/src/views/memory.rs",
+          "kind": "src",
+          "lines": 94
+        },
+        {
+          "path": "tools/incular-devtools/src/views/network.rs",
+          "kind": "src",
+          "lines": 29
+        },
+        {
+          "path": "tools/incular-devtools/src/views/performance.rs",
+          "kind": "src",
+          "lines": 332
+        },
+        {
+          "path": "tools/incular-devtools/src/views/shared.rs",
+          "kind": "src",
+          "lines": 63
+        },
+        {
+          "path": "tools/incular-devtools/src/views/shell.rs",
+          "kind": "src",
+          "lines": 158
+        },
+        {
+          "path": "tools/incular-devtools/src/views/widget_inspector.rs",
+          "kind": "src",
+          "lines": 646
+        },
+        {
+          "path": "tools/incular-devtools/src/views.rs",
+          "kind": "src",
+          "lines": 371
+        },
+        {
+          "path": "tools/incular-devtools/tests/ui.rs",
+          "kind": "tests",
+          "lines": 359
+        }
+      ]
+    }
+  ],
+  "supporting_files": [
+    "examples/animation/main.rs",
+    "examples/animation/tests/example_tests.rs",
+    "examples/animation/tests/simulations.rs",
+    "examples/async_runtime/main.rs",
+    "examples/async_runtime/tests/example_tests.rs",
+    "examples/async_runtime/tests/simulations.rs",
+    "examples/base_ui_controls/main.rs",
+    "examples/base_ui_controls/tests/example_tests.rs",
+    "examples/base_ui_controls/tests/simulations.rs",
+    "examples/canvas_layers/main.rs",
+    "examples/canvas_layers/tests/example_tests.rs",
+    "examples/canvas_layers/tests/simulations.rs",
+    "examples/color_effects/main.rs",
+    "examples/color_effects/tests/example_tests.rs",
+    "examples/color_effects/tests/simulations.rs",
+    "examples/controls_gallery/main.rs",
+    "examples/controls_gallery/tests/example_tests.rs",
+    "examples/controls_gallery/tests/simulations.rs",
+    "examples/core_defaults/main.rs",
+    "examples/core_defaults/tests/example_tests.rs",
+    "examples/core_defaults/tests/simulations.rs",
+    "examples/counter/main.rs",
+    "examples/counter/tests/example_tests.rs",
+    "examples/counter/tests/simulations.rs",
+    "examples/custom/main.rs",
+    "examples/custom/tests/example_tests.rs",
+    "examples/custom/tests/simulations.rs",
+    "examples/effects/main.rs",
+    "examples/effects/tests/example_tests.rs",
+    "examples/effects/tests/simulations.rs",
+    "examples/environment/main.rs",
+    "examples/environment/tests/example_tests.rs",
+    "examples/environment/tests/simulations.rs",
+    "examples/flutter_widgets_gallery/main.rs",
+    "examples/flutter_widgets_gallery/tests/example_tests.rs",
+    "examples/flutter_widgets_gallery/tests/simulations.rs",
+    "examples/gesture_gallery/main.rs",
+    "examples/gesture_gallery/tests/example_tests.rs",
+    "examples/gesture_gallery/tests/simulations.rs",
+    "examples/images/main.rs",
+    "examples/images/tests/example_tests.rs",
+    "examples/images/tests/simulations.rs",
+    "examples/interaction_complete/main.rs",
+    "examples/interaction_complete/tests/example_tests.rs",
+    "examples/interaction_complete/tests/simulations.rs",
+    "examples/layout_complete/main.rs",
+    "examples/layout_complete/tests/example_tests.rs",
+    "examples/layout_complete/tests/simulations.rs",
+    "examples/layout_gallery/main.rs",
+    "examples/layout_gallery/tests/example_tests.rs",
+    "examples/layout_gallery/tests/simulations.rs",
+    "examples/localization/main.rs",
+    "examples/localization/tests/example_tests.rs",
+    "examples/localization/tests/simulations.rs",
+    "examples/material_gallery/main.rs",
+    "examples/material_gallery/tests/example_tests.rs",
+    "examples/material_gallery/tests/simulations.rs",
+    "examples/material_workbench/main.rs",
+    "examples/material_workbench/tests/example_tests.rs",
+    "examples/material_workbench/tests/simulations.rs",
+    "examples/multi_window/main.rs",
+    "examples/multi_window/tests/example_tests.rs",
+    "examples/multi_window/tests/simulations.rs",
+    "examples/navigation_showcase/main.rs",
+    "examples/navigation_showcase/tests/example_tests.rs",
+    "examples/navigation_showcase/tests/simulations.rs",
+    "examples/opacity/main.rs",
+    "examples/opacity/tests/example_tests.rs",
+    "examples/opacity/tests/simulations.rs",
+    "examples/painting/main.rs",
+    "examples/painting/tests/example_tests.rs",
+    "examples/painting/tests/simulations.rs",
+    "examples/performance_gallery/main.rs",
+    "examples/performance_gallery/tests/example_tests.rs",
+    "examples/performance_gallery/tests/simulations.rs",
+    "examples/reactive/main.rs",
+    "examples/reactive/tests/example_tests.rs",
+    "examples/reactive/tests/simulations.rs",
+    "examples/README.md",
+    "examples/responsive_layout/main.rs",
+    "examples/responsive_layout/tests/example_tests.rs",
+    "examples/responsive_layout/tests/simulations.rs",
+    "examples/restoration/main.rs",
+    "examples/restoration/tests/example_tests.rs",
+    "examples/restoration/tests/simulations.rs",
+    "examples/scroll/main.rs",
+    "examples/scroll/tests/example_tests.rs",
+    "examples/scroll/tests/simulations.rs",
+    "examples/scrolling_complete/main.rs",
+    "examples/scrolling_complete/tests/example_tests.rs",
+    "examples/scrolling_complete/tests/simulations.rs",
+    "examples/semantics_gallery/main.rs",
+    "examples/semantics_gallery/tests/example_tests.rs",
+    "examples/semantics_gallery/tests/simulations.rs",
+    "examples/simulation/main.rs",
+    "examples/simulation/tests/example_tests.rs",
+    "examples/simulation/tests/simulations.rs",
+    "examples/slivers/main.rs",
+    "examples/slivers/tests/example_tests.rs",
+    "examples/slivers/tests/simulations.rs",
+    "examples/studio/commands.rs",
+    "examples/studio/localization.rs",
+    "examples/studio/main.rs",
+    "examples/studio/restoration.rs",
+    "examples/studio/state.rs",
+    "examples/studio/tests/example_tests.rs",
+    "examples/studio/tests/simulations.rs",
+    "examples/studio/theme.rs",
+    "examples/studio/views/bottom_panel.rs",
+    "examples/studio/views/command_palette.rs",
+    "examples/studio/views/components.rs",
+    "examples/studio/views/editor.rs",
+    "examples/studio/views/inspector.rs",
+    "examples/studio/views/interactive_canvas.rs",
+    "examples/studio/views/menu_bar.rs",
+    "examples/studio/views/mod.rs",
+    "examples/studio/views/project_tree.rs",
+    "examples/studio/views/settings.rs",
+    "examples/studio/views/status_bar.rs",
+    "examples/tests/support/mod.rs",
+    "examples/text/main.rs",
+    "examples/text/tests/example_tests.rs",
+    "examples/text/tests/simulations.rs",
+    "examples/text_field/main.rs",
+    "examples/text_field/tests/example_tests.rs",
+    "examples/text_field/tests/simulations.rs",
+    "examples/text_quality/main.rs",
+    "examples/text_quality/tests/example_tests.rs",
+    "examples/text_quality/tests/simulations.rs",
+    "examples/text_selection/main.rs",
+    "examples/text_selection/tests/example_tests.rs",
+    "examples/text_selection/tests/simulations.rs",
+    "examples/undecorated_window/main.rs",
+    "examples/undecorated_window/tests/example_tests.rs",
+    "examples/undecorated_window/tests/simulations.rs",
+    "examples/widget_basics/main.rs",
+    "examples/widget_basics/tests/example_tests.rs",
+    "examples/widget_basics/tests/simulations.rs",
+    "examples/workbench/main.rs",
+    "examples/workbench/tests/example_tests.rs",
+    "examples/workbench/tests/simulations.rs",
+    "tests/api/animation.rs",
+    "tests/api/async_state.rs",
+    "tests/api/box_decoration.rs",
+    "tests/api/controllers.rs",
+    "tests/api/focus.rs",
+    "tests/api/forms.rs",
+    "tests/api/geometry.rs",
+    "tests/api/gestures.rs",
+    "tests/api/invalidation.rs",
+    "tests/api/mod.rs",
+    "tests/api/painting.rs",
+    "tests/api/physics.rs",
+    "tests/api/scrolling.rs",
+    "tests/api/semantics.rs",
+    "tests/api/text.rs",
+    "tests/api_contracts.rs",
+    "tests/architecture_contract.rs",
+    "tests/facade_surface.rs",
+    "tests/flutter_material_3471_manifest.rs",
+    "tests/forms_focus_surface.rs",
+    "tests/material_3471_surface.rs",
+    "tests/material_p0_manifest.rs",
+    "tests/material_p0_stress.rs",
+    "tests/member_parity.rs",
+    "tests/p0_deployable_api.rs",
+    "tests/parity_manifest.rs",
+    "tests/parity_policy.rs",
+    "tests/support/parity_status.rs",
+    "tests/test_placement.rs",
+    "tests/text_overflow_surface.rs",
+    "tests/widgets_3471_api.rs",
+    "tests/widgets_3471_boundary.rs",
+    "tests/widgets_3471_manifest.rs",
+    "tests/workspace_layout.rs",
+    "scripts/bench-guard.sh",
+    ".cargo/config.toml",
+    "specs/architecture.json",
+    "specs/ARCHITECTURE.md",
+    "specs/base_ui_component_parity.jsonl",
+    "specs/flutter_api_parity.jsonl",
+    "specs/flutter_material_3471_parity.jsonl",
+    "specs/flutter_member_parity.jsonl",
+    "specs/flutter_stable_api_snapshot.json",
+    "specs/flutter_widgets_3471_exports.json",
+    "specs/flutter_widgets_3471_parity.jsonl",
+    "specs/material25/README.md",
+    "specs/P0_DEPLOYABLE_WIDGETS.jsonl",
+    "specs/P0_DEPLOYABLE_WIDGETS_SUMMARY.json",
+    "specs/P0_MATERIAL_3471.jsonl",
+    "specs/P0_MATERIAL_3471_SUMMARY.json",
+    "specs/widget_parity.jsonl",
+    "specs/widgets_api_extensions.json"
+  ]
+}

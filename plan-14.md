@@ -3,6 +3,9 @@
 Status: Stages A and B are complete and committed (`b0d866e`, `498db6a`).
 Stage C is complete and committed (`cad3463`). Stage D is complete and committed (`164e163`). Stage E is complete and committed (`2b1c17b`). Stage F is in progress. Stages G–J remain pending.
 
+Remaining-work schedule expanded by [plan 15](plan-15.md) after the whole-codebase
+audit at `42befb7`. The completed stages below remain the historical record.
+
 ## Implementation progress
 
 - A1: added `WindowSurfaceTarget`, moved GPU initialization/recreation to WGPU's

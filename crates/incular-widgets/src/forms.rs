@@ -166,12 +166,12 @@ impl Form {
 
     /// Validates every live field.  Fields that were unmounted are pruned as
     /// part of the operation, so forms cannot retain stale registrations.
+    /// Every field in the initial live snapshot is visited even after a failure.
+    /// The form notifies observers after the pass. User callbacks may cause
+    /// additional notifications through their own mutations.
     #[must_use]
     pub fn validate(&self) -> bool {
-        let valid = self
-            .live_fields()
-            .into_iter()
-            .all(|(_, field)| validate_field(&field));
+        let valid = validate_fields(&self.live_fields());
         notify_form_listeners(&self.state);
         valid
     }
@@ -190,12 +190,13 @@ impl Form {
     #[must_use]
     pub fn save(&self) -> bool {
         let fields = self.live_fields();
-        if !fields.iter().all(|(_, field)| validate_field(field)) {
+        if !validate_fields(&fields) {
             notify_form_listeners(&self.state);
             return false;
         }
         for (_, field) in fields {
-            if let Some(callback) = field.on_submit.borrow().as_ref() {
+            let callback = field.on_submit.borrow().clone();
+            if let Some(callback) = callback {
                 callback(field.controller.text());
             }
         }
@@ -277,7 +278,8 @@ impl FormField {
     }
 
     /// Installs the field's validation function.  `Some(message)` represents
-    /// a validation failure.
+    /// a validation failure. The callback runs without a configuration borrow;
+    /// replacing it during invocation takes effect on its next invocation.
     #[must_use]
     pub fn validator(self, validator: impl Fn(&str) -> Option<String> + 'static) -> Self {
         self.field.validator.replace(Some(Rc::new(validator)));
@@ -381,12 +383,18 @@ impl Drop for FormField {
     }
 }
 
+fn validate_fields(fields: &[(FormFieldId, Rc<FieldState>)]) -> bool {
+    let mut valid = true;
+    for (_, field) in fields {
+        // Evaluate every field so one failure cannot leave other errors stale.
+        valid &= validate_field(field);
+    }
+    valid
+}
+
 fn validate_field(field: &FieldState) -> bool {
-    let error = field
-        .validator
-        .borrow()
-        .as_ref()
-        .and_then(|validator| validator(&field.controller.text()));
+    let validator = field.validator.borrow().clone();
+    let error = validator.and_then(|validator| validator(&field.controller.text()));
     let valid = error.is_none();
     field.error.replace(error);
     valid

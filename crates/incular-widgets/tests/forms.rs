@@ -159,3 +159,118 @@ fn restored_form_recomputes_validation_instead_of_reusing_stale_presentation() {
 
     assert_eq!(field.error().as_deref(), Some("email is required"));
 }
+
+fn assert_complete_form_pass(save: bool) {
+    for order in [[0, 1, 2], [2, 0, 1], [1, 2, 0]] {
+        let form = Form::new();
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let saved = Rc::new(RefCell::new(Vec::new()));
+        let controllers: Vec<_> = (0..3).map(|_| TextEditingController::new()).collect();
+        let fields: Vec<_> = order
+            .into_iter()
+            .map(|index| {
+                let calls = calls.clone();
+                let saved = saved.clone();
+                form.register(controllers[index].clone())
+                    .validator(move |text| {
+                        calls.borrow_mut().push(index);
+                        text.is_empty().then(|| format!("required {index}"))
+                    })
+                    .on_saved(move |text| saved.borrow_mut().push((index, text)))
+            })
+            .collect();
+        let notifications = Rc::new(Cell::new(0));
+        let observer = form.observe({
+            let notifications = notifications.clone();
+            move || notifications.set(notifications.get() + 1)
+        });
+        for valid_count in 0..=3 {
+            if valid_count > 0 {
+                controllers[valid_count - 1].set_text("valid");
+            }
+            calls.borrow_mut().clear();
+            let before = notifications.get();
+            let valid = if save { form.save() } else { form.validate() };
+            assert_eq!(valid, valid_count == 3);
+            let mut actual_calls = calls.borrow().clone();
+            actual_calls.sort_unstable();
+            assert_eq!(
+                actual_calls,
+                vec![0, 1, 2],
+                "every field validates exactly once"
+            );
+            assert_eq!(
+                form.errors().len(),
+                3 - valid_count,
+                "clear stale errors as well as adding errors"
+            );
+            for (field, index) in fields.iter().zip(order) {
+                assert_eq!(field.error().is_none(), index < valid_count);
+            }
+            assert_eq!(
+                notifications.get(),
+                before + 1,
+                "one notification per form pass"
+            );
+            assert_eq!(saved.borrow().len(), if save && valid { 3 } else { 0 });
+        }
+        drop(observer);
+    }
+}
+
+#[test]
+fn form_pass_validate_visits_all_fields_and_clears_stale_errors() {
+    assert_complete_form_pass(false);
+}
+
+#[test]
+fn form_pass_save_validates_every_field_before_any_save_callback() {
+    assert_complete_form_pass(true);
+}
+
+#[test]
+fn form_validator_can_replace_itself_for_the_next_pass() {
+    let form = Form::new();
+    let registration = Rc::new(RefCell::new(None::<incular_widgets::FormField>));
+    let weak = Rc::downgrade(&registration);
+    let field = form
+        .register(TextEditingController::new())
+        .validator(move |_| {
+            let slot = weak.upgrade().expect("registration is live");
+            let field = slot.borrow_mut().take().expect("field installed");
+            let field = field.validator(|_| None);
+            slot.borrow_mut().replace(field);
+            Some("original validator".into())
+        });
+    registration.borrow_mut().replace(field);
+    assert!(!form.validate(), "current invocation keeps its result");
+    assert!(
+        form.validate(),
+        "replacement is used on the next invocation"
+    );
+    assert!(form.errors().is_empty());
+}
+
+#[test]
+fn form_save_callback_can_replace_itself_for_the_next_pass() {
+    let form = Form::new();
+    let registration = Rc::new(RefCell::new(None::<incular_widgets::FormField>));
+    let weak = Rc::downgrade(&registration);
+    let calls = Rc::new(Cell::new(0));
+    let first_calls = calls.clone();
+    let field = form
+        .register(TextEditingController::new())
+        .on_saved(move |_| {
+            first_calls.set(first_calls.get() + 1);
+            let slot = weak.upgrade().expect("registration is live");
+            let field = slot.borrow_mut().take().expect("field installed");
+            let next_calls = first_calls.clone();
+            let field = field.on_saved(move |_| next_calls.set(next_calls.get() + 10));
+            slot.borrow_mut().replace(field);
+        });
+    registration.borrow_mut().replace(field);
+    assert!(form.save());
+    assert_eq!(calls.get(), 1);
+    assert!(form.save());
+    assert_eq!(calls.get(), 11);
+}
