@@ -6,7 +6,7 @@
 | --- | --- |
 | Ownership | Geometry, identity, input, interpolation and lower-level context values. |
 | API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
-| Support | Available; duplicate reactive APIs migrate in C. |
+| Support | Available; shared dependency sources and scoped subscriptions. |
 
 Platform-independent foundation types for Incular. This crate is intentionally
 free of windowing and renderer dependencies.

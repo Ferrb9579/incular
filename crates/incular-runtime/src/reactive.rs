@@ -14,20 +14,20 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     future::Future,
-    mem,
     pin::Pin,
     rc::{Rc, Weak},
 };
 
 use super::{
-    BuildScope, Dependency, ElementId, ReactiveNode, ReactiveNodeDependents, ReactiveNodeId,
-    ReactiveQueue, ReactiveRootId, Signal, TaskFailure, TaskHandle,
+    BuildScope, Dependency, ElementId, ReactiveNode, ReactiveNodeId, ReactiveQueue, ReactiveRootId,
+    Signal, TaskFailure, TaskHandle, TrackedDependency,
 };
 
 #[derive(Clone)]
 struct ReactiveBinding {
+    owner_element: Option<ElementId>,
     root: ReactiveRootId,
     queue: Weak<RefCell<ReactiveQueue>>,
     spawner: Option<super::tasks::RuntimeSpawner>,
@@ -45,6 +45,7 @@ thread_local! {
 
 fn binding_from_build_scope(scope: &BuildScope) -> ReactiveBinding {
     ReactiveBinding {
+        owner_element: scope.element,
         root: scope.root,
         queue: scope.queue.clone(),
         spawner: Some(scope.spawner.clone()),
@@ -83,22 +84,21 @@ pub(super) fn track_dependency(dependency: Rc<dyn Dependency>) {
     });
     if let Some((root, queue, node)) = tracking {
         let id = node.id();
-        dependency.subscribe_node(root, id, Rc::downgrade(&node), queue);
-        node.record_dependency(Rc::downgrade(&dependency));
+        let tracked = subscribe_node(dependency, root, id, Rc::downgrade(&node), queue);
+        node.record_dependency(tracked);
         return;
     }
 
     super::BUILD_SCOPE.with(|scope| {
         let current = scope.borrow();
         let Some(scope) = current.as_ref() else {
+            dependency.source().track();
             return;
         };
         if let Some(element) = scope.element {
-            dependency.subscribe(scope.root, element, scope.queue.clone());
+            let tracked = subscribe_element(dependency, scope.root, element, scope.queue.clone());
             if let Some(queue) = scope.queue.upgrade() {
-                queue
-                    .borrow_mut()
-                    .record(element, Rc::downgrade(&dependency));
+                queue.borrow_mut().record(element, tracked);
             }
         } else if let Some(initial_dependencies) = &scope.initial_dependencies {
             initial_dependencies.borrow_mut().record_signal(dependency);
@@ -125,87 +125,113 @@ fn with_tracking<R>(
         stack.borrow_mut().push(TrackingScope { binding, node });
     });
     let guard = TrackingGuard;
+    let _sources = incular_core::reactivity::TrackingGuard::enter(track_source);
     let result = compute();
     drop(guard);
     result
 }
 
-fn detach_sources(
-    id: ReactiveNodeId,
-    sources: &RefCell<Vec<(ReactiveRootId, Weak<dyn Dependency>)>>,
-) {
-    let previous = mem::take(&mut *sources.borrow_mut());
-    for (root, dependency) in previous {
-        if let Some(dependency) = dependency.upgrade() {
-            dependency.remove_node(root, id);
-        }
-    }
+fn detach_sources(sources: &RefCell<Vec<(ReactiveRootId, TrackedDependency)>>) {
+    sources.borrow_mut().clear();
 }
-
 fn detach_sources_for(
-    id: ReactiveNodeId,
     root: ReactiveRootId,
-    sources: &RefCell<HashMap<ReactiveRootId, Vec<Weak<dyn Dependency>>>>,
+    sources: &RefCell<HashMap<ReactiveRootId, Vec<TrackedDependency>>>,
 ) {
-    let previous = sources.borrow_mut().remove(&root).unwrap_or_default();
-    for dependency in previous {
-        if let Some(dependency) = dependency.upgrade() {
-            dependency.remove_node(root, id);
+    sources.borrow_mut().remove(&root);
+}
+
+struct SourceDependency(incular_core::reactivity::DependencySource);
+impl Dependency for SourceDependency {
+    fn source(&self) -> &incular_core::reactivity::DependencySource {
+        &self.0
+    }
+}
+pub(super) fn track_source(source: incular_core::reactivity::DependencySource) {
+    track_dependency(Rc::new(SourceDependency(source)));
+}
+
+pub(super) fn subscribe_element(
+    dependency: Rc<dyn Dependency>,
+    root: ReactiveRootId,
+    element: ElementId,
+    queue: Weak<RefCell<ReactiveQueue>>,
+) -> TrackedDependency {
+    if let Some(queue) = queue.upgrade() {
+        dependency.prepare_subscription(&queue);
+    }
+    #[cfg(feature = "devtools")]
+    let weak = Rc::downgrade(&dependency);
+    let source = dependency.source().clone();
+    #[cfg(feature = "devtools")]
+    let callback_source = weak.clone();
+    let is_signal = dependency.is_signal();
+    let skips_current = dependency.skips_current_consumer();
+    let subscription = source.subscribe((root, element), move || {
+        if skips_current
+            && current_element() == Some(element)
+            && current_binding().is_some_and(|binding| binding.root == root)
+        {
+            return;
         }
+        if let Some(queue) = queue.upgrade() {
+            let mut queue = queue.borrow_mut();
+            let newly_queued = queue.enqueue(element);
+            if is_signal && newly_queued {
+                super::scheduler_counters::DEPENDENTS_ENQUEUED
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            #[cfg(feature = "devtools")]
+            {
+                if super::environment::DEV_TASK_COMPLETION.with(Cell::get) {
+                    queue.note_cause(
+                        element,
+                        incular_widgets::internal::InvalidationCause::TaskCompletion,
+                    );
+                }
+                if let Some(cause) = callback_source
+                    .upgrade()
+                    .and_then(|dependency| dependency.cause())
+                {
+                    queue.note_cause(element, cause);
+                }
+            }
+        }
+    });
+    TrackedDependency {
+        source_id: dependency.source().id(),
+        source: dependency.source().clone(),
+        dependency: Rc::downgrade(&dependency),
+        _subscription: subscription,
     }
 }
 
-fn notify_dependents(
-    element_dependents: &RefCell<HashMap<ReactiveRootId, HashSet<ElementId>>>,
-    element_queues: &RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
-    node_dependents: &RefCell<ReactiveNodeDependents>,
-    node_queues: &RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
-) {
-    let skip_element = current_element();
-    let skip_node = current_node();
-    let elements: Vec<_> = element_dependents
-        .borrow()
-        .iter()
-        .map(|(root, elements)| (*root, elements.iter().copied().collect::<Vec<_>>()))
-        .collect();
-    let queues = element_queues.borrow();
-    for (root, elements) in elements {
-        if let Some(queue) = queues.get(&root).and_then(Weak::upgrade) {
-            let mut queue = queue.borrow_mut();
-            for element in elements {
-                if Some(element) != skip_element {
-                    queue.enqueue(element);
-                }
-            }
-        }
+fn subscribe_node(
+    dependency: Rc<dyn Dependency>,
+    root: ReactiveRootId,
+    id: ReactiveNodeId,
+    node: Weak<dyn ReactiveNode>,
+    queue: Weak<RefCell<ReactiveQueue>>,
+) -> TrackedDependency {
+    if let Some(queue) = queue.upgrade() {
+        dependency.prepare_subscription(&queue);
+        queue.borrow_mut().register_node(id, node.clone());
     }
-
-    let nodes: Vec<_> = node_dependents
-        .borrow()
-        .iter()
-        .map(|(root, nodes)| {
-            (
-                *root,
-                nodes
-                    .iter()
-                    .map(|(id, node)| (*id, node.clone()))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect();
-    let queues = node_queues.borrow();
-    for (root, nodes) in nodes {
-        if let Some(queue) = queues.get(&root).and_then(Weak::upgrade) {
-            let mut queue = queue.borrow_mut();
-            for (id, node) in nodes {
-                if Some(id) != skip_node {
-                    let newly_queued = queue.enqueue_node(id, node.clone());
-                    if newly_queued && let Some(node) = node.upgrade() {
-                        node.mark_dirty();
-                    }
-                }
-            }
+    let skips_current = dependency.skips_current_consumer();
+    let subscription = dependency.source().subscribe((root, id), move || {
+        if skips_current && current_node() == Some(id) {
+            return;
         }
+        if let (Some(queue), Some(live)) = (queue.upgrade(), node.upgrade()) {
+            live.mark_dirty();
+            queue.borrow_mut().enqueue_node(id, node.clone());
+        }
+    });
+    TrackedDependency {
+        source_id: dependency.source().id(),
+        source: dependency.source().clone(),
+        dependency: Rc::downgrade(&dependency),
+        _subscription: subscription,
     }
 }
 
@@ -224,12 +250,9 @@ struct MemoInner<T> {
     dirty: Cell<bool>,
     evaluating: Cell<bool>,
     runtime: RefCell<HashMap<ReactiveRootId, ReactiveBinding>>,
-    sources: RefCell<HashMap<ReactiveRootId, Vec<Weak<dyn Dependency>>>>,
+    sources: RefCell<HashMap<ReactiveRootId, Vec<TrackedDependency>>>,
     self_ref: RefCell<Weak<MemoInner<T>>>,
-    dependents: RefCell<HashMap<ReactiveRootId, HashSet<ElementId>>>,
-    queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
-    node_dependents: RefCell<ReactiveNodeDependents>,
-    node_queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
+    source: incular_core::reactivity::DependencySource,
 }
 
 impl<T> MemoInner<T>
@@ -246,10 +269,7 @@ where
             runtime: RefCell::new(HashMap::new()),
             sources: RefCell::new(HashMap::new()),
             self_ref: RefCell::new(Weak::new()),
-            dependents: RefCell::new(HashMap::new()),
-            queues: RefCell::new(HashMap::new()),
-            node_dependents: RefCell::new(HashMap::new()),
-            node_queues: RefCell::new(HashMap::new()),
+            source: incular_core::reactivity::DependencySource::default(),
         });
         *inner.self_ref.borrow_mut() = Rc::downgrade(&inner);
         inner
@@ -262,7 +282,8 @@ where
             .as_ref()
             .is_some_and(|binding| !bound.contains_key(&binding.root));
         drop(bound);
-        if (self.value.borrow().is_none() || self.dirty.get() || needs_tracking)
+        let unbound = self.runtime.borrow().is_empty() && current.is_none();
+        if (unbound || self.value.borrow().is_none() || self.dirty.get() || needs_tracking)
             && self.recompute(current)
         {
             self.notify_dependents();
@@ -270,13 +291,15 @@ where
     }
 
     fn recompute(self: &Rc<Self>, current: Option<ReactiveBinding>) -> bool {
-        if self.evaluating.replace(true) {
-            return false;
-        }
+        assert!(
+            !self.evaluating.replace(true),
+            "reactive memo dependency cycle"
+        );
         let _evaluating = BoolGuard(&self.evaluating);
+        let _read_only = incular_core::reactivity::ReadOnlyGuard::enter();
         let binding = current.or_else(|| self.runtime.borrow().values().next().cloned());
         if let Some(binding) = &binding {
-            detach_sources_for(self.id, binding.root, &self.sources);
+            detach_sources_for(binding.root, &self.sources);
         }
         let value = if let Some(binding) = binding.clone() {
             let node: Rc<dyn ReactiveNode> = self.clone();
@@ -295,18 +318,55 @@ where
         };
         self.dirty.set(false);
         if let Some(binding) = binding {
-            self.runtime.borrow_mut().insert(binding.root, binding);
+            self.runtime
+                .borrow_mut()
+                .insert(binding.root, binding.clone());
+            // A shared memo has one value, so every root must observe the same
+            // newly selected branch. Refresh other roots without recomputing.
+            let dependencies = self
+                .sources
+                .borrow()
+                .get(&binding.root)
+                .map(|sources| {
+                    sources
+                        .iter()
+                        .map(|tracked| {
+                            tracked.dependency.upgrade().unwrap_or_else(|| {
+                                Rc::new(SourceDependency(tracked.source.clone()))
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let others = self
+                .runtime
+                .borrow()
+                .values()
+                .filter(|other| other.root != binding.root)
+                .cloned()
+                .collect::<Vec<_>>();
+            for other in others {
+                let node: Rc<dyn ReactiveNode> = self.clone();
+                let subscriptions = dependencies
+                    .iter()
+                    .map(|dependency| {
+                        subscribe_node(
+                            dependency.clone(),
+                            other.root,
+                            self.id,
+                            Rc::downgrade(&node),
+                            other.queue.clone(),
+                        )
+                    })
+                    .collect();
+                self.sources.borrow_mut().insert(other.root, subscriptions);
+            }
         }
         changed
     }
 
     fn notify_dependents(&self) {
-        notify_dependents(
-            &self.dependents,
-            &self.queues,
-            &self.node_dependents,
-            &self.node_queues,
-        );
+        self.source.notify();
     }
 
     fn register_node(&self, queue: &Rc<RefCell<ReactiveQueue>>) {
@@ -320,23 +380,24 @@ where
     }
 
     fn dispose_root(&self, root: ReactiveRootId) {
-        detach_sources_for(self.id, root, &self.sources);
+        detach_sources_for(root, &self.sources);
         self.runtime.borrow_mut().remove(&root);
-        self.queues.borrow_mut().remove(&root);
-        self.node_queues.borrow_mut().remove(&root);
         if self.runtime.borrow().is_empty() {
             self.dirty.set(true);
         }
     }
 
-    fn record_source(&self, dependency: Weak<dyn Dependency>) {
+    fn record_source(&self, dependency: TrackedDependency) {
         let root = current_binding().map(|binding| binding.root);
         let Some(root) = root.or_else(|| self.runtime.borrow().keys().next().copied()) else {
             return;
         };
         let mut sources = self.sources.borrow_mut();
         let entries = sources.entry(root).or_default();
-        if !entries.iter().any(|source| source.ptr_eq(&dependency)) {
+        if !entries
+            .iter()
+            .any(|source| source.source_id == dependency.source_id)
+        {
             entries.push(dependency);
         }
     }
@@ -367,7 +428,7 @@ where
         }
     }
 
-    fn record_dependency(&self, dependency: Weak<dyn Dependency>) {
+    fn record_dependency(&self, dependency: TrackedDependency) {
         self.record_source(dependency);
     }
 
@@ -376,68 +437,15 @@ where
     }
 }
 
-impl<T> Dependency for MemoInner<T>
-where
-    T: PartialEq + 'static,
-{
-    fn subscribe(
-        &self,
-        root: ReactiveRootId,
-        element: ElementId,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    ) {
-        if let Some(queue) = queue.upgrade() {
-            self.register_node(&queue);
-        }
-        self.queues.borrow_mut().insert(root, queue);
-        self.dependents
-            .borrow_mut()
-            .entry(root)
-            .or_default()
-            .insert(element);
+impl<T: PartialEq + 'static> Dependency for MemoInner<T> {
+    fn skips_current_consumer(&self) -> bool {
+        true
     }
-
-    fn remove(&self, root: ReactiveRootId, element: ElementId) {
-        let mut dependents = self.dependents.borrow_mut();
-        if let Some(elements) = dependents.get_mut(&root) {
-            elements.remove(&element);
-            if elements.is_empty() {
-                dependents.remove(&root);
-                self.queues.borrow_mut().remove(&root);
-            }
-        }
+    fn source(&self) -> &incular_core::reactivity::DependencySource {
+        &self.source
     }
-
-    fn subscribe_node(
-        &self,
-        root: ReactiveRootId,
-        node: ReactiveNodeId,
-        subscriber: Weak<dyn ReactiveNode>,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    ) {
-        if let Some(queue_ref) = queue.upgrade() {
-            self.register_node(&queue_ref);
-            queue_ref
-                .borrow_mut()
-                .register_node(node, subscriber.clone());
-        }
-        self.node_queues.borrow_mut().insert(root, queue);
-        self.node_dependents
-            .borrow_mut()
-            .entry(root)
-            .or_default()
-            .insert(node, subscriber);
-    }
-
-    fn remove_node(&self, root: ReactiveRootId, node: ReactiveNodeId) {
-        let mut dependents = self.node_dependents.borrow_mut();
-        if let Some(nodes) = dependents.get_mut(&root) {
-            nodes.remove(&node);
-            if nodes.is_empty() {
-                dependents.remove(&root);
-                self.node_queues.borrow_mut().remove(&root);
-            }
-        }
+    fn prepare_subscription(&self, queue: &Rc<RefCell<ReactiveQueue>>) {
+        self.register_node(queue);
     }
 }
 
@@ -453,6 +461,8 @@ where
     T: PartialEq + 'static,
 {
     /// Creates a memo. The function is not evaluated until the memo is read.
+    /// Reads outside a runtime evaluate directly until a runtime owns its
+    /// subscriptions; this avoids caching a value with no invalidation owner.
     #[must_use]
     pub fn new(compute: impl Fn() -> T + 'static) -> Self {
         Self {
@@ -515,12 +525,7 @@ where
 
     #[must_use]
     pub fn dependent_count(&self) -> usize {
-        self.inner
-            .dependents
-            .borrow()
-            .values()
-            .map(HashSet::len)
-            .sum()
+        self.inner.source.subscriber_count()
     }
 }
 
@@ -531,7 +536,7 @@ struct EffectInner {
     running: Cell<bool>,
     mounted: Cell<bool>,
     runtime: RefCell<Option<ReactiveBinding>>,
-    sources: RefCell<Vec<(ReactiveRootId, Weak<dyn Dependency>)>>,
+    sources: RefCell<Vec<(ReactiveRootId, TrackedDependency)>>,
     self_ref: RefCell<Weak<EffectInner>>,
 }
 
@@ -561,7 +566,7 @@ impl EffectInner {
             return true;
         }
         if self.mounted.get() {
-            detach_sources(self.id, &self.sources);
+            detach_sources(&self.sources);
         }
         self.mounted.set(true);
         self.dirty.set(true);
@@ -592,7 +597,7 @@ impl EffectInner {
         let Some(binding) = self.runtime.borrow().clone() else {
             return;
         };
-        detach_sources(self.id, &self.sources);
+        detach_sources(&self.sources);
         let node: Rc<dyn ReactiveNode> = self
             .self_ref
             .borrow()
@@ -601,21 +606,26 @@ impl EffectInner {
         with_tracking(binding, node, || (self.callback.borrow_mut())());
     }
 
-    fn record_source(&self, dependency: Weak<dyn Dependency>) {
+    fn record_source(&self, dependency: TrackedDependency) {
         let Some(root) = self.runtime.borrow().as_ref().map(|binding| binding.root) else {
             return;
         };
         let mut sources = self.sources.borrow_mut();
-        if !sources
-            .iter()
-            .any(|(source_root, source)| *source_root == root && source.ptr_eq(&dependency))
-        {
+        if !sources.iter().any(|(source_root, source)| {
+            *source_root == root && source.source_id == dependency.source_id
+        }) {
             sources.push((root, dependency));
         }
     }
 }
 
 impl ReactiveNode for EffectInner {
+    fn owns_element(&self, root: ReactiveRootId, element: ElementId) -> bool {
+        self.runtime
+            .borrow()
+            .as_ref()
+            .is_some_and(|binding| binding.root == root && binding.owner_element == Some(element))
+    }
     fn id(&self) -> ReactiveNodeId {
         self.id
     }
@@ -628,7 +638,7 @@ impl ReactiveNode for EffectInner {
         Self::run(self);
     }
 
-    fn record_dependency(&self, dependency: Weak<dyn Dependency>) {
+    fn record_dependency(&self, dependency: TrackedDependency) {
         self.record_source(dependency);
     }
 
@@ -639,7 +649,7 @@ impl ReactiveNode for EffectInner {
             .as_ref()
             .is_some_and(|binding| binding.root == root);
         if owns_root {
-            detach_sources(self.id, &self.sources);
+            detach_sources(&self.sources);
             self.mounted.set(false);
             self.dirty.set(false);
             *self.runtime.borrow_mut() = None;
@@ -678,13 +688,13 @@ impl Effect {
     }
 
     pub fn dispose(&self) {
-        if let Some(root) = self
+        let root = self
             .inner
             .runtime
             .borrow()
             .as_ref()
-            .map(|binding| binding.root)
-        {
+            .map(|binding| binding.root);
+        if let Some(root) = root {
             self.inner.dispose(root);
         }
     }

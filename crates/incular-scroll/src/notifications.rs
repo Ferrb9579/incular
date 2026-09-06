@@ -109,6 +109,7 @@ impl ScrollController {
             .iter()
             .map(|(_, listener)| listener.clone())
             .collect::<Vec<_>>();
+        self.changes.notify();
         for listener in listeners {
             if listener(notification) {
                 break;

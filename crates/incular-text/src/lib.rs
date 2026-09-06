@@ -10,7 +10,8 @@ mod style;
 
 pub use editing::{
     ComposingRange, EditableText, SelectionChangedCause, TextAffinity, TextEditingController,
-    TextEditingDelta, TextEditingValue, TextField, TextRange, TextSelection,
+    TextEditingDelta, TextEditingSubscription, TextEditingValue, TextField, TextRange,
+    TextSelection,
 };
 pub use spans::{
     InlineSpan, RichText, Text, TextSpan, TextSpanVisitor, WidgetSpan, WidgetSpanAlignment,

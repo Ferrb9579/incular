@@ -44,11 +44,12 @@ struct FieldState {
     on_submit: RefCell<Option<SubmitCallback>>,
     autovalidate: Cell<AutovalidateMode>,
     error: RefCell<Option<String>>,
-    controller_listener: Cell<usize>,
+    controller_listener: RefCell<Option<incular_text::TextEditingSubscription>>,
 }
 
 #[derive(Default)]
 struct FormRegistry {
+    changes: incular_core::reactivity::DependencySource,
     next_id: u64,
     fields: HashMap<FormFieldId, Weak<FieldState>>,
     listeners: HashMap<usize, Rc<dyn Fn()>>,
@@ -112,11 +113,11 @@ impl Form {
             on_submit: RefCell::new(None),
             autovalidate: Cell::new(AutovalidateMode::Disabled),
             error: RefCell::new(None),
-            controller_listener: Cell::new(0),
+            controller_listener: RefCell::new(None),
         });
         let field_weak = Rc::downgrade(&field);
         let form_weak = Rc::downgrade(&self.state);
-        let listener = controller.add_listener(move |_| {
+        let listener = controller.observe(move |_| {
             if let Some(field) = field_weak.upgrade()
                 && field.autovalidate.get() != AutovalidateMode::Disabled
             {
@@ -126,11 +127,12 @@ impl Form {
                 notify_form_listeners(&form);
             }
         });
-        field.controller_listener.set(listener);
+        *field.controller_listener.borrow_mut() = Some(listener);
         self.state
             .borrow_mut()
             .fields
             .insert(id, Rc::downgrade(&field));
+        notify_form_listeners(&self.state);
         FormField {
             id,
             field,
@@ -210,6 +212,7 @@ impl Form {
     /// Returns the current errors keyed by stable field identity.
     #[must_use]
     pub fn errors(&self) -> Vec<(FormFieldId, String)> {
+        self.state.borrow().changes.track();
         self.live_fields()
             .into_iter()
             .filter_map(|(id, field)| field.error.borrow().clone().map(|error| (id, error)))
@@ -218,7 +221,13 @@ impl Form {
 
     #[must_use]
     pub fn field_count(&self) -> usize {
+        self.state.borrow().changes.track();
         self.live_fields().len()
+    }
+
+    /// Observes changes until the returned token is dropped.
+    pub fn observe(&self, listener: impl Fn() + 'static) -> incular_core::reactivity::Subscription {
+        self.state.borrow().changes.subscribe((), listener)
     }
 
     /// Adds a lightweight UI invalidation listener. The callback runs after a
@@ -236,9 +245,10 @@ impl Form {
         self.state.borrow_mut().listeners.remove(&token).is_some()
     }
 
-    /// Returns a monotonic revision suitable for an external `Signal` bridge.
+    /// Reads the tracked revision of the form.
     #[must_use]
     pub fn revision(&self) -> u64 {
+        self.state.borrow().changes.track();
         self.state.borrow().revision
     }
 
@@ -327,6 +337,9 @@ impl FormField {
 
     #[must_use]
     pub fn error(&self) -> Option<String> {
+        if let Some(form) = self.form.upgrade() {
+            form.borrow().changes.track();
+        }
         self.field.error.borrow().clone()
     }
 
@@ -360,12 +373,10 @@ impl FormField {
 
 impl Drop for FormField {
     fn drop(&mut self) {
-        let listener = self.field.controller_listener.get();
-        if listener != 0 {
-            let _ = self.field.controller.remove_listener(listener);
-        }
+        self.field.controller_listener.borrow_mut().take();
         if let Some(form) = self.form.upgrade() {
             form.borrow_mut().fields.remove(&self.id);
+            notify_form_listeners(&form);
         }
     }
 }
@@ -390,6 +401,8 @@ fn notify_form_listeners(form: &Rc<RefCell<FormRegistry>>) {
     for listener in listeners {
         listener();
     }
+    let changes = form.borrow().changes.clone();
+    changes.notify();
 }
 
 impl From<Form> for Widget {

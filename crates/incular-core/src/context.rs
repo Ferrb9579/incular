@@ -15,73 +15,98 @@ use std::{
 
 static NEXT_CONSUMER: AtomicU64 = AtomicU64::new(1);
 static NEXT_ENVIRONMENT: AtomicU64 = AtomicU64::new(1);
-static NEXT_SIGNAL: AtomicU64 = AtomicU64::new(1);
+use crate::reactivity::{DependencySource, Subscription, TrackingGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DependencyKey {
-    Signal(u64),
     Environment { environment: u64, type_id: TypeId },
 }
 
 #[derive(Default)]
 struct TrackerInner {
-    dependencies: RefCell<HashMap<ConsumerId, HashSet<DependencyKey>>>,
-    subscribers: RefCell<HashMap<DependencyKey, HashSet<ConsumerId>>>,
+    dependencies: RefCell<HashMap<ConsumerId, HashMap<u64, Subscription>>>,
+    sources: RefCell<HashMap<DependencyKey, DependencySource>>,
     dirty: RefCell<HashSet<ConsumerId>>,
+    owners: RefCell<HashMap<ConsumerId, Weak<ConsumerOwner>>>,
 }
-
 impl TrackerInner {
-    fn record(&self, consumer: ConsumerId, dependency: DependencyKey) {
-        let mut dependencies = self.dependencies.borrow_mut();
-        if dependencies.entry(consumer).or_default().insert(dependency) {
-            self.subscribers
-                .borrow_mut()
-                .entry(dependency)
-                .or_default()
-                .insert(consumer);
+    fn owner(self: &Rc<Self>, consumer: ConsumerId) -> Rc<ConsumerOwner> {
+        let mut owners = self.owners.borrow_mut();
+        if let Some(owner) = owners.get(&consumer).and_then(Weak::upgrade) {
+            return owner;
         }
+        let owner = Rc::new(ConsumerOwner {
+            tracker: Rc::downgrade(self),
+            consumer,
+        });
+        owners.insert(consumer, Rc::downgrade(&owner));
+        owner
     }
 
+    fn record(self: &Rc<Self>, consumer: ConsumerId, dependency: DependencyKey) {
+        let source = self
+            .sources
+            .borrow_mut()
+            .entry(dependency)
+            .or_default()
+            .clone();
+        self.record_source(consumer, source);
+    }
+    fn record_source(self: &Rc<Self>, consumer: ConsumerId, source: DependencySource) {
+        let mut dependencies = self.dependencies.borrow_mut();
+        dependencies
+            .entry(consumer)
+            .or_default()
+            .entry(source.id())
+            .or_insert_with(|| {
+                let weak = Rc::downgrade(self);
+                source.subscribe(consumer, move || {
+                    if let Some(tracker) = weak.upgrade() {
+                        tracker.dirty.borrow_mut().insert(consumer);
+                    }
+                })
+            });
+    }
     fn clear(&self, consumer: ConsumerId) {
-        let Some(dependencies) = self.dependencies.borrow_mut().remove(&consumer) else {
-            return;
-        };
-        let mut subscribers = self.subscribers.borrow_mut();
-        for dependency in dependencies {
-            let Some(consumers) = subscribers.get_mut(&dependency) else {
-                continue;
-            };
-            consumers.remove(&consumer);
-            if consumers.is_empty() {
-                subscribers.remove(&dependency);
-            }
-        }
+        self.dependencies.borrow_mut().remove(&consumer);
+        self.sources
+            .borrow_mut()
+            .retain(|_, source| source.subscriber_count() > 0);
         self.dirty.borrow_mut().remove(&consumer);
     }
-
     fn invalidate(&self, dependency: DependencyKey) {
-        if let Some(consumers) = self.subscribers.borrow().get(&dependency) {
-            self.dirty.borrow_mut().extend(consumers.iter().copied());
+        let source = self.sources.borrow().get(&dependency).cloned();
+        if let Some(source) = source {
+            source.notify();
         }
     }
-
     fn dependency_count(&self, consumer: ConsumerId) -> usize {
         self.dependencies
             .borrow()
             .get(&consumer)
-            .map_or(0, HashSet::len)
+            .map_or(0, HashMap::len)
     }
-
     fn is_dirty(&self, consumer: ConsumerId) -> bool {
         self.dirty.borrow().contains(&consumer)
     }
-
     fn take_dirty(&self, consumer: ConsumerId) -> bool {
         self.dirty.borrow_mut().remove(&consumer)
     }
-
     fn take_all_dirty(&self) -> Vec<ConsumerId> {
         self.dirty.borrow_mut().drain().collect()
+    }
+}
+
+struct ConsumerOwner {
+    tracker: Weak<TrackerInner>,
+    consumer: ConsumerId,
+}
+impl Drop for ConsumerOwner {
+    fn drop(&mut self) {
+        if let Some(tracker) = self.tracker.upgrade() {
+            tracker.clear(self.consumer);
+            tracker.owners.borrow_mut().remove(&self.consumer);
+        }
     }
 }
 
@@ -182,6 +207,7 @@ thread_local! {
 /// [`BuildContext::for_consumer`] creates a distinct dependency owner.
 #[derive(Clone)]
 pub struct BuildContext {
+    _owner: Rc<ConsumerOwner>,
     environment: Rc<Environment>,
     tracker: Rc<TrackerInner>,
     consumer: ConsumerId,
@@ -213,9 +239,11 @@ impl BuildContext {
     /// Creates an empty root context for a caller-owned consumer identity.
     #[must_use]
     pub fn for_consumer(consumer: ConsumerId) -> Self {
+        let tracker = Rc::new(TrackerInner::default());
         Self {
+            _owner: tracker.owner(consumer),
             environment: Environment::root(),
-            tracker: Rc::new(TrackerInner::default()),
+            tracker,
             consumer,
         }
     }
@@ -225,6 +253,7 @@ impl BuildContext {
     #[must_use]
     pub fn for_related_consumer(&self, consumer: ConsumerId) -> Self {
         Self {
+            _owner: self.tracker.owner(consumer),
             environment: self.environment.clone(),
             tracker: self.tracker.clone(),
             consumer,
@@ -237,6 +266,7 @@ impl BuildContext {
     #[must_use]
     pub fn boundary_for_consumer(&self, consumer: ConsumerId) -> Self {
         Self {
+            _owner: self.tracker.owner(consumer),
             environment: Environment::root(),
             tracker: self.tracker.clone(),
             consumer,
@@ -254,6 +284,7 @@ impl BuildContext {
     #[must_use]
     pub fn child(&self) -> Self {
         Self {
+            _owner: self._owner.clone(),
             environment: Environment::child(&self.environment),
             tracker: self.tracker.clone(),
             consumer: self.consumer,
@@ -448,14 +479,6 @@ impl BuildContext {
         self.depend()
     }
 
-    /// Explicitly records a signal dependency for this context and returns its
-    /// current value.
-    #[must_use]
-    pub fn watch_signal<T: Any + Clone>(&self, signal: &Signal<T>) -> T {
-        signal.register(self);
-        signal.get()
-    }
-
     /// Enters this context as the active build scope. Signal reads made while
     /// the guard is alive are associated with this context's consumer.
     #[must_use]
@@ -466,7 +489,14 @@ impl BuildContext {
                 consumer: self.consumer,
             });
         });
-        ContextGuard { active: true }
+        let tracker = self.tracker.clone();
+        let consumer = self.consumer;
+        ContextGuard {
+            active: true,
+            _owner: self._owner.clone(),
+            _read_only: crate::reactivity::ReadOnlyGuard::enter(),
+            _tracking: TrackingGuard::enter(move |source| tracker.record_source(consumer, source)),
+        }
     }
 
     /// Alias for [`BuildContext::enter`].
@@ -544,6 +574,9 @@ impl BuildContext {
 /// Restores the previous active build scope when dropped.
 pub struct ContextGuard {
     active: bool,
+    _owner: Rc<ConsumerOwner>,
+    _tracking: TrackingGuard,
+    _read_only: crate::reactivity::ReadOnlyGuard,
 }
 
 impl Drop for ContextGuard {
@@ -559,142 +592,4 @@ impl Drop for ContextGuard {
 
 fn with_active_scope<R>(callback: impl FnOnce(&ActiveScope) -> R) -> Option<R> {
     ACTIVE_SCOPES.with(|scopes| scopes.borrow().last().map(callback))
-}
-
-struct SignalInner<T> {
-    id: u64,
-    value: RefCell<T>,
-    subscribers: RefCell<Vec<Weak<TrackerInner>>>,
-    revision: Cell<u64>,
-}
-
-/// A cloneable, single-threaded reactive value. Reads inside a context scope
-/// subscribe that context; writes mark subscribed consumers dirty.
-#[derive(Clone)]
-pub struct Signal<T: Any> {
-    inner: Rc<SignalInner<T>>,
-}
-
-impl<T: Any> fmt::Debug for Signal<T>
-where
-    T: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Signal")
-            .field("id", &self.id())
-            .field("value", &self.inner.value.borrow())
-            .field("revision", &self.revision())
-            .finish()
-    }
-}
-
-impl<T: Any> Signal<T> {
-    #[must_use]
-    pub fn new(value: T) -> Self {
-        Self {
-            inner: Rc::new(SignalInner {
-                id: NEXT_SIGNAL.fetch_add(1, Ordering::Relaxed),
-                value: RefCell::new(value),
-                subscribers: RefCell::new(Vec::new()),
-                revision: Cell::new(0),
-            }),
-        }
-    }
-
-    #[must_use]
-    pub fn id(&self) -> u64 {
-        self.inner.id
-    }
-
-    #[must_use]
-    pub fn get(&self) -> T
-    where
-        T: Clone,
-    {
-        with_active_scope(|scope| self.register_in(scope)).unwrap_or(());
-        self.inner.value.borrow().clone()
-    }
-
-    /// Alias for [`Signal::get`].
-    #[must_use]
-    pub fn read(&self) -> T
-    where
-        T: Clone,
-    {
-        self.get()
-    }
-
-    /// Reads the current value without consulting the active dependency scope.
-    #[must_use]
-    pub fn peek(&self) -> T
-    where
-        T: Clone,
-    {
-        self.inner.value.borrow().clone()
-    }
-
-    fn register_in(&self, scope: &ActiveScope) {
-        scope
-            .tracker
-            .record(scope.consumer, DependencyKey::Signal(self.id()));
-        let weak = Rc::downgrade(&scope.tracker);
-        let mut subscribers = self.inner.subscribers.borrow_mut();
-        if !subscribers.iter().any(|current| current.ptr_eq(&weak)) {
-            subscribers.push(weak);
-        }
-    }
-
-    fn register(&self, context: &BuildContext) {
-        self.register_in(&ActiveScope {
-            tracker: context.tracker.clone(),
-            consumer: context.consumer,
-        });
-    }
-
-    pub fn set(&self, value: T) -> bool
-    where
-        T: PartialEq,
-    {
-        if *self.inner.value.borrow() == value {
-            return false;
-        }
-        *self.inner.value.borrow_mut() = value;
-        self.notify();
-        true
-    }
-
-    /// Mutates the value and invalidates subscribed consumers once complete.
-    pub fn update(&self, update: impl FnOnce(&mut T)) {
-        update(&mut self.inner.value.borrow_mut());
-        self.notify();
-    }
-
-    fn notify(&self) {
-        self.inner
-            .revision
-            .set(self.inner.revision.get().wrapping_add(1));
-        let dependency = DependencyKey::Signal(self.id());
-        self.inner.subscribers.borrow_mut().retain(|subscriber| {
-            let Some(tracker) = subscriber.upgrade() else {
-                return false;
-            };
-            tracker.invalidate(dependency);
-            true
-        });
-    }
-
-    #[must_use]
-    pub fn revision(&self) -> u64 {
-        self.inner.revision.get()
-    }
-
-    #[must_use]
-    pub fn dependent_count(&self) -> usize {
-        self.inner
-            .subscribers
-            .borrow()
-            .iter()
-            .filter(|subscriber| subscriber.strong_count() > 0)
-            .count()
-    }
 }

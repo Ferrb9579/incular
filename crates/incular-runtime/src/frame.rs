@@ -547,6 +547,7 @@ impl Runtime {
             lifecycle,
             ApplicationLifecycle::Stopping | ApplicationLifecycle::Terminated
         ) {
+            self.reactive.borrow_mut().clear();
             self.scheduler.borrow_mut().shutdown();
         }
         true
@@ -908,8 +909,9 @@ impl Runtime {
         let root = queue.borrow().root;
         let queue_weak = Rc::downgrade(&queue);
         for dependency in initial_dependencies.signals {
-            dependency.subscribe(root, id, queue_weak.clone());
-            queue.borrow_mut().record(id, Rc::downgrade(&dependency));
+            let tracked =
+                crate::reactive::subscribe_element(dependency, root, id, queue_weak.clone());
+            queue.borrow_mut().record(id, tracked);
         }
         for scope in initial_dependencies.focus_scopes {
             install_focus_scope_watch(&queue, id, &scope);

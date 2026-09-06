@@ -85,7 +85,7 @@ fn named_signal_write_reaches_dependent_rebuild_cause() {
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
-    let signal = Signal::with_runtime(1_u32, &runtime).devtools("counter");
+    let signal = Signal::new(1_u32).devtools("counter");
     let state = signal.clone();
     runtime
         .register_builder(dependent, move || {
@@ -129,7 +129,7 @@ fn tracked_task_completion_is_coalesced_with_its_signal_cause() {
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[0];
-    let signal = Signal::with_runtime(1_u32, &runtime).devtools("async-counter");
+    let signal = Signal::new(1_u32).devtools("async-counter");
     let observed = signal.clone();
     runtime
         .register_builder(dependent, move || {

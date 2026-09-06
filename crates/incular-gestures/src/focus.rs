@@ -37,7 +37,7 @@ struct FocusState {
     descendants_are_traversable: Cell<bool>,
     rect: Cell<Rect>,
     traversal_order: Cell<Option<f64>>,
-    observers: RefCell<Vec<Weak<FocusNodeObserverEntry>>>,
+    changes: incular_core::reactivity::DependencySource,
     revision: Cell<u64>,
 }
 
@@ -47,36 +47,13 @@ struct FocusState {
 /// widget can be replaced or unmounted without leaving a callback attached to
 /// an application-owned node.
 pub struct FocusNodeSubscription {
-    entry: Rc<FocusNodeObserverEntry>,
-}
-
-struct FocusNodeObserverEntry {
-    active: Cell<bool>,
-    callback: Rc<dyn Fn()>,
-}
-
-impl Drop for FocusNodeSubscription {
-    fn drop(&mut self) {
-        self.entry.active.set(false);
-    }
+    _subscription: incular_core::reactivity::Subscription,
 }
 
 impl FocusState {
     fn notify(&self) {
         self.revision.set(self.revision.get().wrapping_add(1));
-        let observers = {
-            let mut observers = self.observers.borrow_mut();
-            observers.retain(|observer| observer.strong_count() != 0);
-            observers
-                .iter()
-                .filter_map(Weak::upgrade)
-                .collect::<Vec<_>>()
-        };
-        for observer in observers {
-            if observer.active.get() {
-                (observer.callback)();
-            }
-        }
+        self.changes.notify();
     }
 
     fn set_focused(&self, focused: bool) {
@@ -98,7 +75,7 @@ impl Default for FocusNode {
                 descendants_are_traversable: Cell::new(true),
                 rect: Cell::new(Rect::default()),
                 traversal_order: Cell::new(None),
-                observers: RefCell::new(Vec::new()),
+                changes: incular_core::reactivity::DependencySource::default(),
                 revision: Cell::new(0),
             }),
         }
@@ -113,15 +90,9 @@ impl FocusNode {
     /// Subscribes to focus and focus-property changes.
     #[must_use]
     pub fn observe(&self, callback: impl Fn() + 'static) -> FocusNodeSubscription {
-        let entry = Rc::new(FocusNodeObserverEntry {
-            active: Cell::new(true),
-            callback: Rc::new(callback),
-        });
-        self.state
-            .observers
-            .borrow_mut()
-            .push(Rc::downgrade(&entry));
-        FocusNodeSubscription { entry }
+        FocusNodeSubscription {
+            _subscription: self.state.changes.subscribe((), callback),
+        }
     }
 
     /// Monotonic state revision for retained consumers that poll focus state.
@@ -140,10 +111,12 @@ impl FocusNode {
     }
     #[must_use]
     pub fn has_focus(&self) -> bool {
+        self.state.changes.track();
         self.state.focused.get()
     }
     #[must_use]
     pub fn has_primary_focus(&self) -> bool {
+        self.state.changes.track();
         self.state.focused.get()
     }
     /// Excludes or includes this node in manager-driven traversal.
@@ -159,6 +132,7 @@ impl FocusNode {
     }
     #[must_use]
     pub fn can_request_focus(&self) -> bool {
+        self.state.changes.track();
         self.state.enabled.get() && self.state.can_request_focus.get()
     }
 

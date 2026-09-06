@@ -12,7 +12,7 @@ current code is still callable but must change in the named stage.
 | --- | --- | --- |
 | `incular_painting::*`, facade `painting` | Keep pure import shim until J; rendering is canonical (B08). No implementation may be added. | Existing external imports; no current example imports painting. Compatibility type-identity test protects the shim. |
 | config/layout constraints, alignment, insets and geometry re-exports | Keep exact type aliases/re-exports; config owns policy, core owns geometry. | Layout/config public API tests; `examples/layout_gallery`. |
-| core `Signal` / runtime `Signal` | Migrate in C to one engine; runtime/facade signal is application API, old core context machinery is bridge. | `examples/counter`, `controls_gallery`, `multi_window`, `simulation`; core and runtime reactive tests. |
+| core `Signal` / runtime `Signal` | Implemented in C: runtime/facade Signal is the application API; core reactivity owns dependency sources and subscription tokens. See REACTIVITY.md. | `examples/counter`, `controls_gallery`, `multi_window`, `simulation`; core and runtime reactive tests. |
 | core/runtime/borrowed widgets `BuildContext` | Keep distinct capabilities only over one dependency engine in C. Do not collapse their lifetime differences into one untyped context. | Retained/inherited context tests and application builder examples. |
 | core `Widget` / `BuildableWidget` versus widgets `Widget` | Core traits are legacy bridge; migrate consumers in F, then remove unused transport. Widgets descriptor is the application composition type. | Core public API tests and facade compile families; no application example should adopt the bridge. |
 | widgets/navigation `Navigator`, route models and back dispatchers | Migrate in G to one stack owner with presentation adapters; keep current graph direction until state is extracted safely. | `examples/restoration`, navigation integration tests and Widgets composition tests. |
@@ -33,7 +33,7 @@ when they return an explicit unsupported result.
 
 | API | Current meaning and decision | Stage / consumers |
 | --- | --- | --- |
-| `Signal::with_runtime(value, _runtime)` | Runtime is ignored. Remove binding argument and migrate to `Signal::new`; actual shared observation must come from the engine. | C; runtime tests, no current example calls this constructor. |
+| `Signal::with_runtime(value, _runtime)` | Removed in C. Use `Signal::new`; cloned handles explicitly share state across same-thread roots. | C; runtime tests, no current example calls this constructor. |
 | Application/Runtime `process_runtime_work_at(_now)` | Supplied timestamp is unused. Remove the misleading clock-taking entry or connect it to a real clock abstraction; keep ordinary task pumping. | C/E; simulation and runtime service tests. |
 | `TreeSliverController::expand_all_at` / `collapse_all_at` | Timestamp unused for immediate all-node operations. Rename to immediate operations or implement timed transitions. | G; advanced sliver tests. |
 | Tooltip `show_at` / `hide_at` | Timestamp unused for immediate visibility mutation; preserve explicit outcomes and distinguish scheduling from immediate changes. | F/G; tooltip tests and popup examples. |

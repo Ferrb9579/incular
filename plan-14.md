@@ -1,7 +1,7 @@
 # Plan 14 — Architecture consolidation and behavioral quality
 
-Status: Stage A is complete and committed. Stage B is complete and validated.
-Stages C–J remain pending.
+Status: Stages A and B are complete and committed (`b0d866e`, `498db6a`).
+Stage C is complete and validated. Stages D–J remain pending.
 
 ## Implementation progress
 
@@ -72,6 +72,28 @@ Stages C–J remain pending.
   The only dependency addition is test-only `syn`, using its existing lockfile
   version to parse Rust exports correctly. Native harnesses were not repeated
   because no native behavior changed.
+- C: consolidated core contexts, runtime signals/memos/effects, and controller
+  reads on scheduler-independent dependency sources with owned subscriptions.
+  Removed the separate core Signal and ignored with_runtime constructor.
+- C: added owner/drop cleanup, shared memo branch cleanup across roots, and
+  owner-scoped DevTools rows. Text, focus, scroll, form, animation values and
+  Material state now expose tracked observation; forms own their editor tokens.
+- C: documented behavior/migration in [Reactivity](docs/REACTIVITY.md) and updated
+  editable-form and async-search examples. Corrected the signal benchmark, which
+  previously read signals outside a builder and therefore had no subscribers;
+  it now verifies 1/10/100 real readers alongside 1,000 cold siblings.
+- C final validation (Windows, 2026-09-06): formatting, workspace check,
+  strict all-target/all-feature Clippy, and warning-denied all-feature rustdoc
+  passed. Default and all-feature workspace suites each passed 1,080 tests.
+  The 17 added tests cover common subscription ownership, branch cleanup,
+  runtime disposal, controller tracking, memo diamonds/cycles, cross-root
+  dependency replacement, diagnostics lifetime, and animation reentrancy.
+- C benchmark: `cargo bench -p incular-runtime --bench signals -- --sample-size 10
+  --measurement-time 1 --warm-up-time 1` measured approximately 6.30 / 6.63 /
+  9.97 ms for 1 / 10 / 100 subscribers alongside 1,000 cold siblings. These are
+  corrected baselines, not a speedup comparison with the previously untracked
+  benchmark. Retained-operation and coalescing contracts passed in both suites.
+  Validation was headless; live native interaction was not re-exercised.
 - The original audit is a baseline record,
   not a statement that these newly corrected paths remain defective.
 

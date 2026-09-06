@@ -132,8 +132,8 @@ pub use window_state::{ApplicationDiagnostics, WindowDiagnostics};
 // Compatibility imports for the existing implementation submodules. These
 // remain private to the facade while preserving their original super:: paths.
 pub(crate) use environment::{
-    BUILD_SCOPE, BuildScope, Dependency, NEXT_REACTIVE_NODE, ReactiveNode, ReactiveNodeDependents,
-    ReactiveNodeId, ReactiveQueue, ReactiveRootId,
+    BUILD_SCOPE, BuildScope, Dependency, NEXT_REACTIVE_NODE, ReactiveNode, ReactiveNodeId,
+    ReactiveQueue, ReactiveRootId, TrackedDependency,
 };
 pub(crate) use frame::diagnostic_input_trigger;
 

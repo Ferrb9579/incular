@@ -2,19 +2,19 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use incular_core::{
     BuildContext, Color, HslColor, Key, KeyHandle, Offset, Rect, RestorationBackend,
-    RestorationKey, RestorationKeyError, RestorationScope, Signal, Size, StringKey, Transform,
-    UniqueKey, ValueKey, Widget,
+    RestorationKey, RestorationKeyError, RestorationScope, Size, StringKey, Transform, UniqueKey,
+    ValueKey, Widget,
 };
 use serde_json::{Value, json};
 
 #[test]
-fn signal_reads_register_and_writes_invalidate() {
+fn source_reads_register_and_notifications_invalidate() {
     let context = BuildContext::new();
-    let signal = Signal::new(1_u32);
-    context.build(|_| assert_eq!(signal.get(), 1));
+    let source = incular_core::reactivity::DependencySource::default();
+    context.build(|_| assert!(source.track()));
     assert_eq!(context.dependency_count(), 1);
     assert!(!context.is_dirty());
-    assert!(signal.set(2));
+    source.notify();
     assert!(context.is_dirty());
     assert!(context.take_dirty());
     assert!(!context.is_dirty());
@@ -36,10 +36,10 @@ fn inherited_values_track_the_environment_that_provided_them() {
 fn nested_scopes_restore_the_outer_context() {
     let outer = BuildContext::new();
     let inner = BuildContext::new();
-    let signal = Signal::new(3_u32);
+    let source = incular_core::reactivity::DependencySource::default();
     outer.run(|| {
         let _guard = inner.enter();
-        assert_eq!(signal.get(), 3);
+        assert!(source.track());
     });
     assert_eq!(outer.dependency_count(), 0);
     assert_eq!(inner.dependency_count(), 1);

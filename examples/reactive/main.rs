@@ -22,6 +22,16 @@ fn main() {
             |value| async move { Ok(format!("async result for {value}")) },
         );
 
+    let query = incular::text::TextEditingController::with_text("rust");
+    // A deterministic async service keeps this example runnable offline.
+    let search = Action::<String, Vec<String>, ()>::new(|query| async move {
+        let query = query.to_lowercase();
+        Ok(["Rust signals", "Rust widgets", "Layout", "Painting"]
+            .into_iter()
+            .filter(|title| title.to_lowercase().contains(&query))
+            .map(str::to_owned)
+            .collect())
+    });
     let app = Application::new(move |_| {
         logger.mount();
         let count_value = count.get();
@@ -30,6 +40,19 @@ fn main() {
             Text::new(format!("count: {count_value}")).into(),
             Text::new(format!("memo: {}", doubled.get())).into(),
             Text::new(format!("request: {request_state:?}")).into(),
+            incular::material::TextField::new(query.clone())
+                .placeholder("Search topics")
+                .into(),
+            Button::new("Search")
+                .on_click({
+                    let query = query.clone();
+                    let search = search.clone();
+                    move || {
+                        let _ = search.dispatch(query.text());
+                    }
+                })
+                .into(),
+            Text::new(format!("Search results: {:?}", search.state())).into(),
             Button::new("Increment")
                 .on_click({
                     let count = count.clone();

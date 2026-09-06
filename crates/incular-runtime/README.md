@@ -6,7 +6,7 @@
 | --- | --- |
 | Ownership | Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination. |
 | API class | application; re-exports and path overrides follow the [architecture contract](../../docs/ARCHITECTURE.md). |
-| Support | Available; reactive and native service consolidation in C/D. |
+| Support | Available; shared reactive engine; native service consolidation remains in D. |
 
 Application lifecycle and scheduling foundations for Incular, including frame
 scheduling, widget-tree updates, input dispatch, animation ticking, resource
@@ -165,6 +165,9 @@ window fields. Locale, direction, and text scale may still originate from an
 application default but resolve through the owning `BuildContext`.
 
 ## Derived values and asynchronous reactive work
+
+See [reactive state and ownership](../../docs/REACTIVITY.md) for the shared
+engine, controller observation, disposal, and migration contracts.
 
 `Memo<T>` is the opt-in graph path for an expensive or shared derived value. It
 is created like a `Signal`, without a `BuildContext`, and attaches lazily when

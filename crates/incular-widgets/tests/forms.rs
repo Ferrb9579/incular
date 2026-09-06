@@ -3,6 +3,28 @@
 use incular_core::{RestorationKey, RestorationScope};
 use incular_text::TextEditingController;
 use incular_widgets::{AutovalidateMode, Form, FormState};
+
+#[test]
+fn form_errors_track_and_field_drop_removes_its_controller_observer() {
+    let context = incular_core::BuildContext::new();
+    let form = Form::new();
+    let controller = TextEditingController::with_text("Ada");
+    let field = form
+        .register(controller.clone())
+        .validator(|text| text.is_empty().then(|| "required".to_owned()))
+        .autovalidate(AutovalidateMode::Always);
+    context.build(|_| {
+        assert!(form.errors().is_empty());
+    });
+    controller.set_text("");
+    assert!(context.take_dirty());
+    assert_eq!(form.errors().len(), 1);
+    drop(field);
+    assert!(context.take_dirty());
+    assert_eq!(form.field_count(), 0);
+    controller.set_text("Grace");
+    assert!(!context.is_dirty());
+}
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},

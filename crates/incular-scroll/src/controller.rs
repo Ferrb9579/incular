@@ -11,6 +11,7 @@ use crate::{
 /// Cloneable state for a logical vertical scroll position.
 #[derive(Clone)]
 pub struct ScrollController {
+    pub(crate) changes: incular_core::reactivity::DependencySource,
     pub(crate) state: Rc<RefCell<ScrollState>>,
 }
 impl std::fmt::Debug for ScrollController {
@@ -39,6 +40,7 @@ impl Default for ScrollController {
         };
         Self {
             state: Rc::new(RefCell::new(state)),
+            changes: incular_core::reactivity::DependencySource::default(),
         }
     }
 }
@@ -100,18 +102,22 @@ impl ScrollController {
     }
     #[must_use]
     pub fn offset(&self) -> f32 {
+        self.changes.track();
         self.state.borrow().offset
     }
     #[must_use]
     pub fn max_offset(&self) -> f32 {
+        self.changes.track();
         self.state.borrow().max_offset
     }
     #[must_use]
     pub fn content_extent(&self) -> f32 {
+        self.changes.track();
         self.state.borrow().content_extent
     }
     #[must_use]
     pub fn viewport_extent(&self) -> f32 {
+        self.changes.track();
         self.state.borrow().viewport_extent
     }
 }

@@ -1,4 +1,3 @@
-use crate::frame::Runtime;
 use crate::reactive;
 use crate::scheduler_counters;
 use crate::tasks;
@@ -98,8 +97,12 @@ pub(crate) fn environment_change_mask(
 
 pub(crate) type ReactiveRootId = u64;
 pub(crate) type ReactiveNodeId = u64;
-pub(crate) type ReactiveNodeDependents =
-    HashMap<ReactiveRootId, HashMap<ReactiveNodeId, Weak<dyn ReactiveNode>>>;
+pub(crate) struct TrackedDependency {
+    pub(crate) source_id: u64,
+    pub(crate) source: incular_core::reactivity::DependencySource,
+    pub(crate) dependency: Weak<dyn Dependency>,
+    pub(crate) _subscription: incular_core::reactivity::Subscription,
+}
 
 pub(crate) static NEXT_REACTIVE_ROOT: AtomicU64 = AtomicU64::new(1);
 pub(crate) static NEXT_REACTIVE_NODE: AtomicU64 = AtomicU64::new(1);
@@ -108,26 +111,26 @@ pub(crate) trait ReactiveNode {
     fn id(&self) -> ReactiveNodeId;
     fn mark_dirty(&self);
     fn run(&self, root: ReactiveRootId);
-    fn record_dependency(&self, dependency: Weak<dyn Dependency>);
+    fn record_dependency(&self, dependency: TrackedDependency);
     fn dispose(&self, root: ReactiveRootId);
+    fn owns_element(&self, _root: ReactiveRootId, _element: ElementId) -> bool {
+        false
+    }
 }
 
 pub(crate) trait Dependency {
-    fn subscribe(
-        &self,
-        root: ReactiveRootId,
-        element: ElementId,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    );
-    fn remove(&self, root: ReactiveRootId, element: ElementId);
-    fn subscribe_node(
-        &self,
-        root: ReactiveRootId,
-        node: ReactiveNodeId,
-        subscriber: Weak<dyn ReactiveNode>,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    );
-    fn remove_node(&self, root: ReactiveRootId, node: ReactiveNodeId);
+    fn skips_current_consumer(&self) -> bool {
+        false
+    }
+    fn source(&self) -> &incular_core::reactivity::DependencySource;
+    fn prepare_subscription(&self, _queue: &Rc<RefCell<ReactiveQueue>>) {}
+    fn is_signal(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "devtools")]
+    fn cause(&self) -> Option<InvalidationCause> {
+        None
+    }
 }
 pub(crate) struct ReactiveQueue {
     pub(crate) root: ReactiveRootId,
@@ -136,7 +139,7 @@ pub(crate) struct ReactiveQueue {
     pub(crate) queued_nodes: HashSet<ReactiveNodeId>,
     pub(crate) node_order: VecDeque<ReactiveNodeId>,
     pub(crate) nodes: HashMap<ReactiveNodeId, Weak<dyn ReactiveNode>>,
-    pub(crate) dependencies: HashMap<ElementId, Vec<Weak<dyn Dependency>>>,
+    pub(crate) dependencies: HashMap<ElementId, Vec<TrackedDependency>>,
     /// Focus-scope subscriptions registered by builders. Keeping the token in
     /// the same lifetime bucket as signal dependencies makes unmount and
     /// rebuild cleanup deterministic rather than leaking callbacks into a
@@ -145,6 +148,12 @@ pub(crate) struct ReactiveQueue {
     #[cfg(feature = "devtools")]
     pub(crate) causes: HashMap<ElementId, Vec<InvalidationCause>>,
 }
+impl Drop for ReactiveQueue {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 impl ReactiveQueue {
     pub(crate) fn new() -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
@@ -212,18 +221,15 @@ impl ReactiveQueue {
         !self.queued.is_empty() || !self.queued_nodes.is_empty()
     }
     pub(crate) fn refresh(&mut self, id: ElementId) {
-        if let Some(deps) = self.dependencies.remove(&id) {
-            for dep in deps {
-                if let Some(dep) = dep.upgrade() {
-                    dep.remove(self.root, id);
-                }
-            }
-        }
+        self.dependencies.remove(&id);
         self.focus_scopes.remove(&id);
     }
-    pub(crate) fn record(&mut self, id: ElementId, dep: Weak<dyn Dependency>) {
+    pub(crate) fn record(&mut self, id: ElementId, dep: TrackedDependency) {
         let entries = self.dependencies.entry(id).or_default();
-        if !entries.iter().any(|current| current.ptr_eq(&dep)) {
+        if !entries
+            .iter()
+            .any(|current| current.source_id == dep.source_id)
+        {
             entries.push(dep);
         }
     }
@@ -237,6 +243,21 @@ impl ReactiveQueue {
     }
     pub(crate) fn forget(&mut self, id: ElementId) {
         self.refresh(id);
+        let owned = self
+            .nodes
+            .iter()
+            .filter_map(|(node_id, node)| {
+                node.upgrade()
+                    .filter(|node| node.owns_element(self.root, id))
+                    .map(|node| (*node_id, node))
+            })
+            .collect::<Vec<_>>();
+        for (node_id, node) in owned {
+            node.dispose(self.root);
+            self.nodes.remove(&node_id);
+            self.queued_nodes.remove(&node_id);
+            self.node_order.retain(|queued| *queued != node_id);
+        }
         self.queued.remove(&id);
         #[cfg(feature = "devtools")]
         self.causes.remove(&id);
@@ -290,7 +311,7 @@ impl InitialBuildDependencies {
         if !self
             .signals
             .iter()
-            .any(|current| Rc::ptr_eq(current, &dependency))
+            .any(|current| current.source().id() == dependency.source().id())
         {
             self.signals.push(dependency);
         }
@@ -309,12 +330,16 @@ thread_local! { pub(crate) static BUILD_SCOPE: RefCell<Option<BuildScope>> = con
 /// Restores the previous builder scope even when user code panics.
 pub(crate) struct BuildScopeGuard {
     previous: Option<BuildScope>,
+    _tracking: incular_core::reactivity::TrackingGuard,
 }
 
 impl BuildScopeGuard {
     pub(crate) fn enter(next: BuildScope) -> Self {
         let previous = BUILD_SCOPE.with(|scope| scope.replace(Some(next)));
-        Self { previous }
+        Self {
+            previous,
+            _tracking: incular_core::reactivity::TrackingGuard::enter(reactive::track_source),
+        }
     }
 }
 
@@ -327,6 +352,7 @@ impl Drop for BuildScopeGuard {
 }
 
 fn assert_reactive_mutation_allowed() {
+    incular_core::reactivity::assert_mutation_allowed();
     BUILD_SCOPE.with(|scope| {
         let current = scope.borrow();
         let Some(scope) = current.as_ref() else {
@@ -345,11 +371,7 @@ fn assert_reactive_mutation_allowed() {
 #[cfg(feature = "devtools")]
 thread_local! { pub(crate) static DEV_TASK_COMPLETION: Cell<bool> = const { Cell::new(false) }; }
 struct SignalInner<T> {
-    value: RefCell<T>,
-    dependents: RefCell<HashMap<ReactiveRootId, HashSet<ElementId>>>,
-    queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
-    node_dependents: RefCell<ReactiveNodeDependents>,
-    node_queues: RefCell<HashMap<ReactiveRootId, Weak<RefCell<ReactiveQueue>>>>,
+    value: incular_core::reactivity::ReactiveCell<T>,
     /// DevTools write counter; always present, only read under the feature.
     dev_write_count: std::cell::Cell<u64>,
     #[cfg(feature = "devtools")]
@@ -363,59 +385,32 @@ struct SignalInner<T> {
     #[cfg(feature = "devtools")]
     dev_summarize: RefCell<Option<DevSummarizer<T>>>,
 }
+impl<T> Drop for SignalInner<T> {
+    fn drop(&mut self) {
+        #[cfg(feature = "devtools")]
+        if let Some(id) = self.dev_signal_id.get() {
+            devtools_registry::unregister(id);
+        }
+    }
+}
 impl<T> Dependency for SignalInner<T> {
-    fn subscribe(
-        &self,
-        root: ReactiveRootId,
-        element: ElementId,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    ) {
-        self.queues.borrow_mut().insert(root, queue);
-        self.dependents
-            .borrow_mut()
-            .entry(root)
-            .or_default()
-            .insert(element);
+    fn source(&self) -> &incular_core::reactivity::DependencySource {
+        self.value.source()
     }
-
-    fn remove(&self, root: ReactiveRootId, element: ElementId) {
-        let mut dependents = self.dependents.borrow_mut();
-        if let Some(elements) = dependents.get_mut(&root) {
-            elements.remove(&element);
-            if elements.is_empty() {
-                dependents.remove(&root);
-                self.queues.borrow_mut().remove(&root);
+    fn is_signal(&self) -> bool {
+        true
+    }
+    #[cfg(feature = "devtools")]
+    fn cause(&self) -> Option<InvalidationCause> {
+        self.dev_signal_id.get().map(|id| {
+            let (old, new) = self.dev_last_write.borrow().clone();
+            InvalidationCause::Signal {
+                id,
+                name: self.dev_name.borrow().clone(),
+                old,
+                new,
             }
-        }
-    }
-
-    fn subscribe_node(
-        &self,
-        root: ReactiveRootId,
-        node: ReactiveNodeId,
-        subscriber: Weak<dyn ReactiveNode>,
-        queue: Weak<RefCell<ReactiveQueue>>,
-    ) {
-        if let Some(queue) = queue.upgrade() {
-            queue.borrow_mut().register_node(node, subscriber.clone());
-        }
-        self.node_queues.borrow_mut().insert(root, queue);
-        self.node_dependents
-            .borrow_mut()
-            .entry(root)
-            .or_default()
-            .insert(node, subscriber);
-    }
-
-    fn remove_node(&self, root: ReactiveRootId, node: ReactiveNodeId) {
-        let mut dependents = self.node_dependents.borrow_mut();
-        if let Some(nodes) = dependents.get_mut(&root) {
-            nodes.remove(&node);
-            if nodes.is_empty() {
-                dependents.remove(&root);
-                self.node_queues.borrow_mut().remove(&root);
-            }
-        }
+        })
     }
 }
 /// Shared state. A read in a registered builder subscribes that Element.
@@ -460,17 +455,13 @@ fn editable_signal_value<T: 'static>(
 
 impl<T: 'static> Signal<T> {
     /// Creates single-threaded application state. It attaches to the runtime
-    /// that first reads it during a build; a signal is therefore not shared
-    /// between independent applications.
+    /// that reads it during a build. Clones may be explicitly shared between
+    /// windows or independent applications on the same UI thread.
     #[must_use]
     pub fn new(value: T) -> Self {
         Self {
             inner: Rc::new(SignalInner {
-                value: RefCell::new(value),
-                dependents: RefCell::new(HashMap::new()),
-                queues: RefCell::new(HashMap::new()),
-                node_dependents: RefCell::new(HashMap::new()),
-                node_queues: RefCell::new(HashMap::new()),
+                value: incular_core::reactivity::ReactiveCell::new(value),
                 dev_write_count: std::cell::Cell::new(0),
                 #[cfg(feature = "devtools")]
                 dev_signal_id: std::cell::Cell::new(None),
@@ -486,10 +477,6 @@ impl<T: 'static> Signal<T> {
         }
     }
 
-    #[must_use]
-    pub fn with_runtime(value: T, _runtime: &Runtime) -> Self {
-        Self::new(value)
-    }
     /// Attaches a DevTools-visible debug name and registers the signal in
     /// the DevTools registry. Requires `T: Debug` for value summaries.
     #[cfg(feature = "devtools")]
@@ -499,7 +486,11 @@ impl<T: 'static> Signal<T> {
     {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let id = self
+            .inner
+            .dev_signal_id
+            .get()
+            .unwrap_or_else(|| NEXT_ID.fetch_add(1, Ordering::Relaxed));
         self.inner.dev_signal_id.set(Some(id));
         *self.inner.dev_name.borrow_mut() = Some(name.to_owned());
         *self.inner.dev_summarize.borrow_mut() = Some(Box::new(|value: &T| truncate_debug(value)));
@@ -512,40 +503,36 @@ impl<T: 'static> Signal<T> {
             name: Some(name.to_owned()),
             type_name: std::any::type_name::<T>(),
             editable_kind: None,
-            write_count: Box::new(move || {
+            write_count: Rc::new(move || {
                 weak_value_count
                     .upgrade()
                     .map(|inner| inner.dev_write_count.get())
                     .unwrap_or_default()
             }),
-            subscriber_count: Box::new(move || {
+            subscriber_count: Rc::new(move || {
                 weak_value_subscribers
-                    .upgrade()
-                    .map(|inner| inner.dependents.borrow().values().map(HashSet::len).sum())
-                    .unwrap_or_default()
-            }),
-            subscribers: Box::new(move || {
-                weak_value_subscriber_entries
                     .upgrade()
                     .map(|inner| {
                         inner
-                            .dependents
-                            .borrow()
-                            .iter()
-                            .flat_map(|(root, elements)| {
-                                elements.iter().copied().map(|element| (*root, element))
-                            })
-                            .collect()
+                            .source()
+                            .subscribers::<(ReactiveRootId, ElementId)>()
+                            .len()
                     })
                     .unwrap_or_default()
             }),
-            last_write: Box::new(move || {
+            subscribers: Rc::new(move || {
+                weak_value_subscriber_entries
+                    .upgrade()
+                    .map(|inner| inner.source().subscribers::<(ReactiveRootId, ElementId)>())
+                    .unwrap_or_default()
+            }),
+            last_write: Rc::new(move || {
                 weak_value.upgrade().map_or((None, None), |inner| {
                     let guard = inner.dev_last_write.borrow();
                     (guard.0.clone(), guard.1.clone())
                 })
             }),
-            apply_edit: Box::new(move |_| false),
+            apply_edit: Rc::new(move |_| false),
         };
         crate::devtools_registry::register(id, registration);
         self
@@ -579,7 +566,7 @@ impl<T: 'static> Signal<T> {
         crate::devtools_registry::set_editable(
             self.inner.dev_signal_id.get().unwrap_or_default(),
             kind,
-            Box::new(move |value| {
+            Rc::new(move |value| {
                 let Some(value) = editable_signal_value::<T>(value) else {
                     return false;
                 };
@@ -636,12 +623,14 @@ impl<T: 'static> Signal<T> {
         true
     }
     pub fn dependent_count(&self) -> usize {
-        self.inner
-            .dependents
-            .borrow()
-            .values()
-            .map(HashSet::len)
-            .sum()
+        self.inner.source().subscriber_count()
+    }
+    /// Reads the value without registering a dependency.
+    pub fn get_untracked(&self) -> T
+    where
+        T: Clone,
+    {
+        self.inner.value.borrow().clone()
     }
     /// Mutates the value once and schedules only the Elements that read it.
     ///
@@ -712,109 +701,55 @@ impl<T: 'static> Signal<T> {
             .dev_write_count
             .set(self.inner.dev_write_count.get() + 1);
         scheduler_counters::SIGNAL_WRITES.fetch_add(1, Ordering::Relaxed);
-        let mut enqueued = 0_usize;
-        let dependencies: Vec<_> = self
-            .inner
-            .dependents
-            .borrow()
-            .iter()
-            .map(|(root, elements)| (*root, elements.iter().copied().collect::<Vec<_>>()))
-            .collect();
-        let nodes: Vec<_> = self
-            .inner
-            .node_dependents
-            .borrow()
-            .iter()
-            .map(|(root, nodes)| {
-                (
-                    *root,
-                    nodes
-                        .iter()
-                        .map(|(id, node)| (*id, node.clone()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-        let queues = self.inner.queues.borrow();
-        #[cfg(feature = "devtools")]
-        let cause = self.inner.dev_signal_id.get().map(|id| {
-            let (old, new) = self.inner.dev_last_write.borrow().clone();
-            InvalidationCause::Signal {
-                id,
-                name: self.inner.dev_name.borrow().clone(),
-                old,
-                new,
-            }
-        });
-        for (root, elements) in dependencies {
-            if let Some(queue) = queues.get(&root).and_then(Weak::upgrade) {
-                let mut queue = queue.borrow_mut();
-                for element in elements {
-                    let newly_queued = queue.enqueue(element);
-                    #[cfg(feature = "devtools")]
-                    {
-                        if DEV_TASK_COMPLETION.with(Cell::get) {
-                            queue.note_cause(element, InvalidationCause::TaskCompletion);
-                        }
-                        if let Some(cause) = &cause {
-                            queue.note_cause(element, cause.clone());
-                        }
-                    }
-                    if newly_queued {
-                        enqueued += 1;
-                    }
-                }
-            }
-        }
-        let node_queues = self.inner.node_queues.borrow();
-        for (root, nodes) in nodes {
-            if let Some(queue) = node_queues.get(&root).and_then(Weak::upgrade) {
-                let mut queue = queue.borrow_mut();
-                for (node_id, weak_node) in nodes {
-                    let newly_queued = queue.enqueue_node(node_id, weak_node.clone());
-                    if newly_queued && let Some(node) = weak_node.upgrade() {
-                        node.mark_dirty();
-                    }
-                }
-            }
-        }
-        if enqueued > 0 {
-            scheduler_counters::DEPENDENTS_ENQUEUED.fetch_add(enqueued as u64, Ordering::Relaxed);
-        }
+        self.inner.source().notify();
     }
 }
 
 #[cfg(feature = "devtools")]
 pub mod devtools_registry {
     pub use super::SignalRegistration;
-
-    use std::cell::RefCell;
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
     std::thread_local! {
-        static SIGNALS: RefCell<Vec<(u64, SignalRegistration)>> = const { RefCell::new(Vec::new()) };
+        static SIGNALS: RefCell<BTreeMap<u64, SignalRegistration>> = const { RefCell::new(BTreeMap::new()) };
     }
-
-    pub fn register(id: u64, registration: SignalRegistration) {
-        SIGNALS.with(|signals| signals.borrow_mut().push((id, registration)));
+    pub fn register(id: u64, mut registration: SignalRegistration) {
+        SIGNALS.with(|signals| {
+            let mut signals = signals.borrow_mut();
+            if let Some(previous) = signals.get(&id) {
+                registration.editable_kind = previous.editable_kind;
+                registration.apply_edit = previous.apply_edit.clone();
+            }
+            signals.insert(id, registration);
+        });
     }
-
+    pub(super) fn unregister(id: u64) {
+        let _ = SIGNALS.try_with(|signals| {
+            signals.borrow_mut().remove(&id);
+        });
+    }
     pub fn set_editable(
         id: u64,
         kind: Option<super::EditableSignalKind>,
-        apply_edit: Box<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
+        apply_edit: Rc<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
     ) {
         SIGNALS.with(|signals| {
-            for (registered_id, registration) in signals.borrow_mut().iter_mut() {
-                if *registered_id == id {
-                    registration.editable_kind = kind;
-                    registration.apply_edit = apply_edit;
-                    return;
-                }
+            if let Some(registration) = signals.borrow_mut().get_mut(&id) {
+                registration.editable_kind = kind;
+                registration.apply_edit = apply_edit;
             }
         });
     }
-
+    /// Visits a snapshot outside the registry borrow, permitting signal drop,
+    /// rename and edits from the visitor without reentrant RefCell failures.
     pub fn with_all<R>(visit: impl FnOnce(&[(u64, SignalRegistration)]) -> R) -> R {
-        SIGNALS.with(|signals| visit(&signals.borrow()))
+        let snapshot = SIGNALS.with(|signals| {
+            signals
+                .borrow()
+                .iter()
+                .map(|(id, row)| (*id, row.clone()))
+                .collect::<Vec<_>>()
+        });
+        visit(&snapshot)
     }
 }
 
@@ -828,14 +763,15 @@ pub enum EditableSignalKind {
 }
 
 #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+#[derive(Clone)]
 pub struct SignalRegistration {
     pub name: Option<String>,
     pub type_name: &'static str,
     pub editable_kind: Option<EditableSignalKind>,
-    pub write_count: Box<dyn Fn() -> u64>,
-    pub subscriber_count: Box<dyn Fn() -> usize>,
-    pub subscribers: Box<dyn Fn() -> Vec<(ReactiveRootId, ElementId)>>,
-    pub last_write: Box<dyn Fn() -> (Option<String>, Option<String>)>,
+    pub write_count: Rc<dyn Fn() -> u64>,
+    pub subscriber_count: Rc<dyn Fn() -> usize>,
+    pub subscribers: Rc<dyn Fn() -> Vec<(ReactiveRootId, ElementId)>>,
+    pub last_write: Rc<dyn Fn() -> (Option<String>, Option<String>)>,
     #[cfg(feature = "devtools")]
-    pub apply_edit: Box<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
+    pub apply_edit: Rc<dyn Fn(&incular_devtools_protocol::EditableValue) -> bool>,
 }

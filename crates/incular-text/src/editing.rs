@@ -272,7 +272,14 @@ struct TextRestoration {
 /// widget layers can subscribe to value changes and decide when to repaint.
 #[derive(Clone, Default)]
 pub struct TextEditingController {
+    changes: incular_core::reactivity::DependencySource,
     inner: Rc<RefCell<ControllerState>>,
+}
+
+/// Owns a text-controller listener until dropped.
+#[must_use = "keep the subscription alive to observe changes"]
+pub struct TextEditingSubscription {
+    _subscription: incular_core::reactivity::Subscription,
 }
 
 impl PartialEq for TextEditingController {
@@ -313,6 +320,9 @@ impl TextEditingController {
     /// Binds committed text and selection to a stable restoration value.
     pub fn bind_restoration(&self, scope: RestorationScope, key: RestorationKey) {
         let restored = scope.get_json(&key).and_then(value_from_json);
+        let changed = restored
+            .as_ref()
+            .is_some_and(|value| *value != self.inner.borrow().value);
         let mut state = self.inner.borrow_mut();
         state.restoration = Some(TextRestoration { scope, key });
         if let Some(value) = restored {
@@ -325,6 +335,10 @@ impl TextEditingController {
             state.preferred_caret_x = None;
             state.caret_affinity = TextAffinity::Downstream;
         }
+        drop(state);
+        if changed {
+            self.notify_listeners();
+        }
     }
 
     /// Stops persisting subsequent editor mutations without deleting the saved value.
@@ -335,6 +349,7 @@ impl TextEditingController {
     #[must_use]
     pub fn from_value(value: TextEditingValue) -> Self {
         Self {
+            changes: incular_core::reactivity::DependencySource::default(),
             inner: Rc::new(RefCell::new(ControllerState {
                 value,
                 ..ControllerState::default()
@@ -344,21 +359,25 @@ impl TextEditingController {
 
     #[must_use]
     pub fn value(&self) -> TextEditingValue {
+        self.changes.track();
         self.inner.borrow().value.clone()
     }
 
     #[must_use]
     pub fn text(&self) -> String {
+        self.changes.track();
         self.inner.borrow().value.text.clone()
     }
 
     #[must_use]
     pub fn selection(&self) -> TextSelection {
+        self.changes.track();
         self.inner.borrow().value.selection
     }
 
     #[must_use]
     pub fn composing(&self) -> Option<ComposingRange> {
+        self.changes.track();
         self.inner.borrow().value.composing
     }
 
@@ -398,7 +417,24 @@ impl TextEditingController {
         self.update(value, false);
     }
 
-    /// Adds a listener and returns an opaque token accepted by
+    /// Observes committed editing changes with automatic cleanup on drop.
+    pub fn observe(
+        &self,
+        listener: impl Fn(&TextEditingValue) + 'static,
+    ) -> TextEditingSubscription {
+        let state = Rc::downgrade(&self.inner);
+        TextEditingSubscription {
+            _subscription: self.changes.subscribe((), move || {
+                if let Some(state) = state.upgrade() {
+                    let value = state.borrow().value.clone();
+                    listener(&value);
+                }
+            }),
+        }
+    }
+
+    /// Low-level manual registration for backend integrations. Prefer `observe`.
+    /// Returns an opaque token accepted by
     /// [`Self::remove_listener`].
     pub fn add_listener(&self, listener: impl Fn(&TextEditingValue) + 'static) -> usize {
         let mut state = self.inner.borrow_mut();
@@ -714,11 +750,12 @@ impl TextEditingController {
                 .map(|(_, listener)| listener.clone())
                 .collect::<Vec<_>>()
         };
-        let value = self.value();
+        let value = self.inner.borrow().value.clone();
         for listener in listeners {
             listener(&value);
         }
         self.persist_restoration();
+        self.changes.notify();
     }
 
     fn notify_listeners(&self) {
@@ -736,6 +773,7 @@ impl TextEditingController {
         for listener in listeners {
             listener(&value);
         }
+        self.changes.notify();
     }
 
     fn persist_restoration(&self) {

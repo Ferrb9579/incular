@@ -1,6 +1,128 @@
 use super::*;
 
 #[test]
+fn canonical_signal_tracks_core_context_and_untracked_reads_do_not() {
+    let context = incular_core::BuildContext::new();
+    let tracked = Signal::new(1_u32);
+    let untracked = Signal::new(2_u32);
+    context.build(|_| {
+        assert_eq!(tracked.get(), 1);
+        assert_eq!(untracked.get_untracked(), 2);
+    });
+    assert_eq!(tracked.dependent_count(), 1);
+    assert_eq!(untracked.dependent_count(), 0);
+    untracked.set(3);
+    assert!(!context.is_dirty());
+    tracked.set(4);
+    assert!(context.is_dirty());
+    drop(context);
+    assert_eq!(tracked.dependent_count(), 0);
+}
+
+#[test]
+fn controller_reads_flow_through_memos_and_owned_listeners() {
+    let controller = TextEditingController::from_value(incular_text::TextEditingValue::new("a"));
+    let calls = Rc::new(Cell::new(0));
+    let listener = controller.observe({
+        let calls = calls.clone();
+        move |_| calls.set(calls.get() + 1)
+    });
+    let memo = Memo::new({
+        let controller = controller.clone();
+        move || controller.text().len()
+    });
+    let seen = Rc::new(Cell::new(0));
+    let mut runtime = Application::new({
+        let seen = seen.clone();
+        move |_| {
+            seen.set(memo.get());
+            Widget::box_(Size::new(1., 1.), Color::WHITE)
+        }
+    })
+    .unwrap()
+    .into_runtime();
+    let constraints = Constraints::tight(Size::new(20., 20.));
+    runtime.run_frame(constraints).unwrap();
+    controller.set_text("abcd");
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(seen.get(), 4);
+    assert_eq!(calls.get(), 1);
+    drop(listener);
+    controller.set_text("ab");
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(seen.get(), 2);
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn diamond_memos_deliver_consistent_values_and_dispose_effect_edges() {
+    let source = Signal::new(1_u32);
+    let left = Memo::new({
+        let source = source.clone();
+        move || source.get() * 2
+    });
+    let right = Memo::new({
+        let source = source.clone();
+        move || source.get() * 3
+    });
+    let sum = Memo::new(move || left.get() + right.get());
+    let values = Rc::new(RefCell::new(Vec::new()));
+    let effect = Effect::new({
+        let values = values.clone();
+        move || values.borrow_mut().push(sum.get())
+    });
+    let mut runtime = Application::new({
+        let effect = effect.clone();
+        move |_| {
+            assert!(effect.mount());
+            Widget::box_(Size::new(1., 1.), Color::WHITE)
+        }
+    })
+    .unwrap()
+    .into_runtime();
+    let constraints = Constraints::tight(Size::new(20., 20.));
+    runtime.run_frame(constraints).unwrap();
+    source.set(2);
+    source.set(3);
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(*values.borrow(), vec![5, 15]);
+    effect.dispose();
+    source.set(4);
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(*values.borrow(), vec![5, 15]);
+    drop(runtime);
+    assert_eq!(source.dependent_count(), 0);
+}
+
+#[cfg(feature = "devtools")]
+#[test]
+fn diagnostics_rename_in_place_and_allow_owner_drop_during_snapshot() {
+    let signal = Signal::new(1_i64)
+        .devtools("stage-c-before")
+        .devtools_editable();
+    let id = devtools_registry::with_all(|entries| {
+        entries
+            .iter()
+            .find(|(_, item)| item.name.as_deref() == Some("stage-c-before"))
+            .unwrap()
+            .0
+    });
+    let signal = signal.devtools("stage-c-after");
+    devtools_registry::with_all(move |entries| {
+        let entry = entries
+            .iter()
+            .find(|(entry_id, _)| *entry_id == id)
+            .unwrap();
+        assert_eq!(entry.1.name.as_deref(), Some("stage-c-after"));
+        assert!(entry.1.editable_kind.is_some());
+        drop(signal);
+    });
+    devtools_registry::with_all(|entries| {
+        assert!(!entries.iter().any(|(entry_id, _)| *entry_id == id))
+    });
+}
+
+#[test]
 fn signals_schedule_only_subscribed_element_once() {
     let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![
         Widget::box_(Size::new(1., 1.), Color::WHITE),
@@ -9,7 +131,7 @@ fn signals_schedule_only_subscribed_element_once() {
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let children = runtime.tree().children(root).unwrap().to_vec();
-    let signal = Signal::with_runtime(2_u32, &runtime);
+    let signal = Signal::new(2_u32);
     let state = signal.clone();
     runtime
         .register_builder(children[1], move || {
@@ -423,7 +545,7 @@ fn unmount_removes_signal_subscription() {
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let child = runtime.tree().children(root).unwrap()[0];
-    let signal = Signal::with_runtime(1_u32, &runtime);
+    let signal = Signal::new(1_u32);
     let state = signal.clone();
     runtime
         .register_builder(child, move || {
@@ -440,4 +562,164 @@ fn unmount_removes_signal_subscription() {
         .run_frame(Constraints::tight(Size::new(20., 20.)))
         .unwrap();
     assert_eq!(signal.dependent_count(), 0);
+}
+
+#[test]
+fn unbound_memo_never_keeps_a_value_without_an_invalidation_owner() {
+    let source = Signal::new(1_u32);
+    let memo = Memo::new({
+        let source = source.clone();
+        move || source.get() * 2
+    });
+    assert_eq!(memo.get_untracked(), 2);
+    source.set(3);
+    assert_eq!(memo.get_untracked(), 6);
+}
+
+#[test]
+fn unmount_disposes_effect_even_when_the_application_keeps_its_handle() {
+    let source = Signal::new(1_u32);
+    let effect = Effect::new({
+        let source = source.clone();
+        move || {
+            source.get();
+        }
+    });
+    let mut runtime = Runtime::new(Widget::from(incular_widgets::Row::new(vec![Widget::box_(
+        Size::new(1., 1.),
+        Color::WHITE,
+    )])))
+    .unwrap();
+    let root = runtime.tree().root().unwrap();
+    let child = runtime.tree().children(root).unwrap()[0];
+    runtime
+        .register_builder(child, {
+            let effect = effect.clone();
+            move || {
+                assert!(effect.mount());
+                Widget::box_(Size::new(1., 1.), Color::WHITE)
+            }
+        })
+        .unwrap();
+    let constraints = Constraints::tight(Size::new(20., 20.));
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(source.dependent_count(), 1);
+    runtime
+        .schedule_update(
+            root,
+            Widget::from(incular_widgets::Row::new(Vec::<Widget>::new())),
+        )
+        .unwrap();
+    runtime.run_frame(constraints).unwrap();
+    assert!(!effect.is_mounted());
+    assert_eq!(source.dependent_count(), 0);
+}
+
+#[test]
+fn shared_memo_branch_switch_unsubscribes_the_old_source_in_every_root() {
+    let branch = Signal::new(true);
+    let first = Signal::new(1_u32);
+    let second = Signal::new(2_u32);
+    let memo = Memo::new({
+        let branch = branch.clone();
+        let first = first.clone();
+        let second = second.clone();
+        move || {
+            if branch.get() {
+                first.get()
+            } else {
+                second.get()
+            }
+        }
+    });
+    let mut first_runtime = Application::new({
+        let memo = memo.clone();
+        move |_| Widget::from(Text::new(memo.get().to_string()))
+    })
+    .unwrap()
+    .into_runtime();
+    let mut second_runtime = Application::new({
+        let memo = memo.clone();
+        move |_| Widget::from(Text::new(memo.get().to_string()))
+    })
+    .unwrap()
+    .into_runtime();
+    let constraints = Constraints::tight(Size::new(20., 20.));
+    first_runtime.run_frame(constraints).unwrap();
+    second_runtime.run_frame(constraints).unwrap();
+    assert_eq!(first.dependent_count(), 2);
+    branch.set(false);
+    first_runtime.run_frame(constraints).unwrap();
+    assert_eq!(first.dependent_count(), 0);
+    assert_eq!(second.dependent_count(), 2);
+    second_runtime.run_frame(constraints).unwrap();
+    drop(first_runtime);
+    assert_eq!(second.dependent_count(), 1);
+    drop(second_runtime);
+    assert_eq!(second.dependent_count(), 0);
+}
+
+#[test]
+fn recursive_memo_fails_explicitly_and_restores_pure_scope() {
+    let slot = Rc::new(RefCell::new(None::<Memo<u32>>));
+    let memo = Memo::new({
+        let slot = slot.clone();
+        move || slot.borrow().as_ref().unwrap().get()
+    });
+    *slot.borrow_mut() = Some(memo.clone());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| memo.get()));
+    slot.borrow_mut().take();
+    assert!(result.is_err());
+    assert!(Signal::new(0_u32).set(1));
+}
+
+#[test]
+fn focus_and_scroll_reads_invalidate_runtime_builders() {
+    let focus = incular_widgets::FocusNode::new();
+    let scroll = incular_widgets::ScrollController::new();
+    scroll.update_extents(100., 10.);
+    let observed = Rc::new(Cell::new((false, 0.0_f32)));
+    let mut runtime = Application::new({
+        let focus = focus.clone();
+        let scroll = scroll.clone();
+        let observed = observed.clone();
+        move |_| {
+            observed.set((focus.has_focus(), scroll.offset()));
+            Widget::box_(Size::new(1., 1.), Color::WHITE)
+        }
+    })
+    .unwrap()
+    .into_runtime();
+    let constraints = Constraints::tight(Size::new(20., 20.));
+    runtime.run_frame(constraints).unwrap();
+    focus.request_focus();
+    scroll.jump_to(12.0);
+    runtime.run_frame(constraints).unwrap();
+    assert_eq!(observed.get(), (true, 12.0));
+}
+
+#[test]
+fn an_effect_can_converge_by_writing_its_controller_dependency() {
+    let controller = TextEditingController::with_text("a");
+    let runs = Rc::new(Cell::new(0));
+    let effect = Effect::new({
+        let controller = controller.clone();
+        let runs = runs.clone();
+        move || {
+            runs.set(runs.get() + 1);
+            if controller.text().len() < 2 {
+                controller.set_text("ab");
+            }
+        }
+    });
+    let mut runtime = Application::new(move |_| {
+        effect.mount();
+        Widget::box_(Size::new(1., 1.), Color::WHITE)
+    })
+    .unwrap()
+    .into_runtime();
+    runtime
+        .run_frame(Constraints::tight(Size::new(20., 20.)))
+        .unwrap();
+    assert_eq!(runs.get(), 2);
 }

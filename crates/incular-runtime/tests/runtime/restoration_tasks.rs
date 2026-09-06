@@ -31,7 +31,7 @@ fn async_signal_completion_invalidates_only_its_dependent_build() {
     .unwrap();
     let root = runtime.tree().root().unwrap();
     let dependent = runtime.tree().children(root).unwrap()[1];
-    let signal = Signal::with_runtime(1_u32, &runtime);
+    let signal = Signal::new(1_u32);
     let observed = signal.clone();
     runtime
         .register_builder(dependent, move || {

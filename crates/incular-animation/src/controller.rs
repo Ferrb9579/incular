@@ -73,6 +73,7 @@ struct ControllerState {
 /// callback. Values are always kept inside the configured bounds.
 #[derive(Clone, Default)]
 pub struct AnimationController {
+    changes: incular_core::reactivity::DependencySource,
     inner: Rc<RefCell<ControllerState>>,
 }
 
@@ -109,6 +110,7 @@ impl AnimationController {
             ..State::default()
         };
         Self {
+            changes: incular_core::reactivity::DependencySource::default(),
             inner: Rc::new(RefCell::new(ControllerState {
                 state,
                 ..ControllerState::default()
@@ -144,6 +146,9 @@ impl AnimationController {
             collect_listeners(&controller, controller.state.value, old)
         };
         notify(listeners, changed);
+        if changed.is_some() {
+            self.changes.notify();
+        }
     }
 
     pub fn forward(&self, now: Instant) {
@@ -247,6 +252,7 @@ impl AnimationController {
             (state.value, clone_listeners(&controller))
         };
         notify(listeners, Some(value));
+        self.changes.notify();
     }
 
     pub fn set_value(&self, value: f32) {
@@ -278,6 +284,9 @@ impl AnimationController {
             )
         };
         notify(listeners, changed);
+        if changed.is_some() {
+            self.changes.notify();
+        }
     }
 
     /// Advances the controller and returns whether value or status changed.
@@ -350,11 +359,13 @@ impl AnimationController {
         };
         if changed {
             notify(listeners, Some(value));
+            self.changes.notify();
         }
         changed
     }
     #[must_use]
     pub fn value(&self) -> f32 {
+        self.changes.track();
         self.inner.borrow().state.value
     }
 
@@ -390,6 +401,21 @@ impl AnimationController {
         self.inner.borrow().state.curve
     }
 
+    /// Observes value changes until the returned token is dropped.
+    pub fn observe(
+        &self,
+        listener: impl Fn(f32) + 'static,
+    ) -> incular_core::reactivity::Subscription {
+        let inner = Rc::downgrade(&self.inner);
+        self.changes.subscribe((), move || {
+            if let Some(inner) = inner.upgrade() {
+                let value = inner.borrow().state.value;
+                listener(value);
+            }
+        })
+    }
+
+    /// Low-level manual registration. Prefer `observe` for owned listeners.
     pub fn add_listener(&self, listener: impl Fn(f32) + 'static) -> usize {
         let mut controller = self.inner.borrow_mut();
         let id = controller.next_listener;
@@ -430,7 +456,9 @@ impl AnimationController {
 
     fn notify_current(&self) {
         let listeners = clone_listeners(&self.inner.borrow());
-        notify(listeners, Some(self.value()));
+        let value = self.inner.borrow().state.value;
+        notify(listeners, Some(value));
+        self.changes.notify();
     }
 }
 

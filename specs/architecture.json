@@ -96,7 +96,7 @@
       "name": "incular-core",
       "default_api_class": "application",
       "owner": "Geometry, identity, input, interpolation and lower-level context values.",
-      "support": "Available; duplicate reactive APIs migrate in C.",
+      "support": "Available; shared dependency sources and scoped subscriptions.",
       "allowed_dependencies": []
     },
     {
@@ -264,7 +264,7 @@
       "name": "incular-runtime",
       "default_api_class": "application",
       "owner": "Application lifecycle, scheduling, reactive dispatch, tasks and frame coordination.",
-      "support": "Available; reactive and native service consolidation in C/D.",
+      "support": "Available; shared reactive engine; native service consolidation remains in D.",
       "allowed_dependencies": [
         "incular-accessibility",
         "incular-config",
@@ -379,7 +379,7 @@
       "api_class": "bridge"
     },
     {
-      "path": "incular_core::Signal",
+      "path": "incular_core::reactivity",
       "api_class": "bridge"
     },
     {

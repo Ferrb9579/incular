@@ -303,9 +303,10 @@ pub type MaterialStatePropertyAll<T> = StateProperty<T>;
 pub type MaterialStatesController = WidgetStatesController;
 
 /// Typed controller for mutable state sets shared by controls.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct WidgetStatesController {
     states: std::rc::Rc<std::cell::Cell<WidgetStates>>,
+    changes: incular_core::reactivity::DependencySource,
 }
 
 impl WidgetStatesController {
@@ -316,19 +317,30 @@ impl WidgetStatesController {
 
     #[must_use]
     pub fn states(&self) -> WidgetStates {
+        self.changes.track();
         self.states.get()
     }
 
     pub fn set(&self, state: WidgetState, value: bool) {
         let states = if value {
-            self.states().with(state)
+            self.states.get().with(state)
         } else {
-            self.states().without(state)
+            self.states.get().without(state)
         };
-        self.states.set(states);
+        self.update(states);
     }
 
     pub fn update(&self, states: WidgetStates) {
-        self.states.set(states);
+        if self.states.replace(states) != states {
+            self.changes.notify();
+        }
+    }
+}
+
+impl std::fmt::Debug for WidgetStatesController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WidgetStatesController")
+            .field("states", &self.states.get())
+            .finish()
     }
 }

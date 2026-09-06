@@ -9,11 +9,12 @@ mod geometry;
 /// retained widget-key trait.
 pub mod input;
 mod key;
+pub mod reactivity;
 mod restoration;
 mod widget;
 
 pub use arena::{Arena, ArenaId};
-pub use context::{BuildContext, ConsumerId, ContextGuard, DependencySnapshot, Signal};
+pub use context::{BuildContext, ConsumerId, ContextGuard, DependencySnapshot};
 pub use geometry::{
     ChangeImpact, Color, DirtyFlags, HslColor, HsvColor, Invalidation, Lerp, Offset, Rect, Size,
     Transform,
