@@ -1,6 +1,6 @@
 # Plan 15 — Whole-codebase quality and architecture completion
 
-Status: W1 form-validation slice complete and validated (uncommitted).
+Status: W1 forms committed (`6e6af8d`); length formatting complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -13,6 +13,21 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 [initial property ledger](docs/RETAINED_PROPERTIES.md).
 
 ## Implementation progress
+
+- Commit policy: the user authorized a commit after each completed, validated
+  implementation slice on 2026-09-06. The form fix and audit are in `6e6af8d`.
+- W1 length formatting / R03: the shared formatter counts extended grapheme
+  clusters with the existing ICU segmenter, honors None/Enforced/deferred modes,
+  preserves the incoming selection direction and clamps UTF-8 ranges after
+  truncation. Empty/invalid composition no longer defers enforcement.
+  Material max_length delegates to that formatter instead of scalar truncation.
+- All four new formatter tests failed before the change and pass afterward;
+  two Material controller tests cover grapheme truncation and composition commit.
+  Validation: formatting, workspace check, strict all-target/all-feature Clippy
+  and all 1,122 workspace tests passed. The six new tests also passed with all
+  features enabled. Native IME interaction is not claimed by these deterministic
+  controller tests. This slice is committed with the length-formatting change.
+  Ignored Material options remain open.
 
 - W1 forms / R02: both validate and save now visit every live field even after
   an invalid result, update all errors and notify after the full pass. Save
@@ -30,8 +45,8 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   check, strict all-target/all-feature Clippy and all 1,116 workspace tests
   passed. All ten focused form tests also passed with all features enabled.
   No public signatures changed; native interaction was not rerun. Changes are
-  uncommitted. W1's Unicode/enforcement formatter and ignored Material options
-  remain pending.
+  committed in `6e6af8d`. Length formatting is completed above; ignored Material
+  options remain pending.
 
 ## Desired architecture
 
@@ -278,8 +293,7 @@ API boundaries and differential/property tests over assertions mirroring interna
 For each slice record: baseline, confirmed failing behavior or measured debt,
 changed owner/API, migration, tests/results, performance/resource evidence where
 relevant, host coverage, residual limitations and commit. Do not mark an entire
-workstream complete after only its first slice. Commit only when requested or
-when the user authorizes a commit sequence.
+workstream complete after only its first slice. The user has authorized committing every completed, validated slice.
 
 Planning-pass validation (2026-09-06): inventory paths and Markdown links,
 `git diff --check`, `cargo fmt --all -- --check`, all five architecture-contract

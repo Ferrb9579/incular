@@ -862,10 +862,9 @@ impl From<TextField> for Widget {
                 for formatter in &formatters {
                     next = formatter.format_edit_update(&old, &next);
                 }
-                if let Some(limit) = limit
-                    && next.text.chars().count() > limit
-                {
-                    next.text = next.text.chars().take(limit).collect();
+                if let Some(limit) = limit {
+                    next = incular_widgets::LengthLimitingTextInputFormatter::new(limit)
+                        .format_edit_update(&old, &next);
                 }
                 if next != *current {
                     normalizing.set(true);

@@ -727,13 +727,19 @@ impl TextInputFormatter for FilteringTextInputFormatter {
 /// Enforcement policy for maximum text length.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MaxLengthEnforcement {
+    /// Preserve text regardless of length; normalize editing ranges only.
     None,
+    /// Enforce the limit on every update, including active composition.
     #[default]
     Enforced,
+    /// Allow a nonempty composition to exceed the limit until it ends.
     TruncateAfterCompositionEnds,
 }
 
-/// A text input formatter that limits input length.
+/// Limits text to extended grapheme clusters (user-perceived characters).
+/// Offsets remain UTF-8 byte offsets. The incoming selection is clamped to the
+/// output; invalid or empty composition ranges are removed. Deferred enforcement
+/// preserves active composition and truncates on its first non-composing update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LengthLimitingTextInputFormatter {
     pub max_length: usize,
@@ -761,18 +767,32 @@ impl LengthLimitingTextInputFormatter {
 impl TextInputFormatter for LengthLimitingTextInputFormatter {
     fn format_edit_update(
         &self,
-        old_value: &TextEditingValue,
+        _old_value: &TextEditingValue,
         new_value: &TextEditingValue,
     ) -> TextEditingValue {
-        if new_value.text.chars().count() <= self.max_length {
-            new_value.clone()
-        } else {
-            let truncated: String = new_value.text.chars().take(self.max_length).collect();
-            TextEditingValue {
-                text: truncated,
-                selection: old_value.selection,
-                composing: new_value.composing,
-            }
+        let mut value = new_value.clone();
+        value.composing = value
+            .composing
+            .filter(|range| range.is_valid())
+            .map(|range| range.clamp_to(&value.text))
+            .filter(|range| !range.is_empty());
+        let enforce = match self.max_length_enforcement {
+            MaxLengthEnforcement::None => false,
+            MaxLengthEnforcement::Enforced => true,
+            MaxLengthEnforcement::TruncateAfterCompositionEnds => value.composing.is_none(),
+        };
+        if enforce {
+            let end = icu_segmenter::GraphemeClusterSegmenter::new()
+                .segment_str(&value.text)
+                .nth(self.max_length)
+                .unwrap_or(value.text.len());
+            value.text.truncate(end);
         }
+        value.selection = value.selection.clamp_to(&value.text);
+        value.composing = value
+            .composing
+            .map(|range| range.clamp_to(&value.text))
+            .filter(|range| !range.is_empty());
+        value
     }
 }
