@@ -413,7 +413,7 @@ impl RenderSliver for ReorderableRenderSliver {
                         Some(extent),
                     ),
                     extent,
-                    pinned: false,
+                    placement: crate::scrolling::SliverChildPlacement::Flow,
                 }
             })
             .collect();
@@ -888,7 +888,7 @@ impl RenderSliver for AnimatedExtentRenderSliver {
                         Some(extent),
                     ),
                     extent,
-                    pinned: false,
+                    placement: crate::scrolling::SliverChildPlacement::Flow,
                 }
             })
             .collect();

@@ -592,7 +592,7 @@ impl WidgetTree {
                 }
             } else if !element.sliver_child_ids.is_empty()
                 || !element.sliver_child_semantic_indices.is_empty()
-                || !element.sliver_pinned_ids.is_empty()
+                || !element.sliver_overlay_ids.is_empty()
             {
                 return Err(Self::invariant_error(
                     InvariantCategory::DynamicChildren,

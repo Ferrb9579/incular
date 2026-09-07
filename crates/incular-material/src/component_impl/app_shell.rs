@@ -248,9 +248,11 @@ impl From<AppBar> for Widget {
 }
 
 /// Material app bar for a [`incular_widgets::CustomScrollView`]. Pass this
-/// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning.
+/// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning or
+/// floating. A pinned fixed-height toolbar remains visible even when floating
+/// is also enabled.
 /// Conversion to an ordinary [`Widget`] supplies only the box presentation.
-/// Floating, snapping, stretching and expanded-to-collapsed motion are pending.
+/// Snapping, stretching and expanded-to-collapsed motion are pending.
 #[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
     #[builder(default = AppBar::new(Text::new("")))]
@@ -389,6 +391,8 @@ impl SliverAppBar {
         let child = Widget::from(self.clone());
         if self.pinned {
             Box::new(incular_widgets::PinnedHeaderSliver::new(child))
+        } else if self.floating {
+            Box::new(incular_widgets::SliverFloatingHeader::new(child))
         } else {
             Box::new(incular_widgets::SliverToBoxAdapter::new(child))
         }

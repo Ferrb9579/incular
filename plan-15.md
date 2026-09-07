@@ -5,7 +5,8 @@ Material checkbox error presentation committed (`9dbcfee`); ListTile autofocus
 and initial-layout focus resolution committed (`f8edecb`). Card policies are
 committed (`ad72860`). Scaffold keyboard avoidance is committed (`ad7adf9`).
 Body-extension policies are committed (`9544d54`). SliverAppBar retained
-integration and pinning are complete and validated.
+integration and pinning are committed (`835bdcd`), as is title preservation
+(`8a51032`). Floating integration is complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -19,6 +20,23 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 floating SliverAppBar / part of R01: Material delegates floating headers
+  to the neutral SliverFloatingHeader; fixed-height pinning keeps precedence
+  when both options are enabled. Neutral headers measure deferred content and
+  bound hidden distance to the header extent so reversal reveals immediately.
+  The retained protocol declares scroll-layout dependency through wrappers and
+  distinguishes Flow/Pinned/Floating placement instead of conflating overlay
+  ordering with pinning. Paint and hit order agree for returning headers.
+  Tests cover long-scroll reversal, repeated layout, both axis/direction inputs,
+  deferred measurement, padded cache-window reuse in layout/compositor phases,
+  paint/hit ordering and Material bottom content plus pinning. Snapping,
+  stretching and expanded-to-collapsed motion remain pending.
+- Floating validation (Windows): formatting, workspace compiler checks, all
+  1,153 workspace tests and strict all-feature/all-target Clippy passed. All 69
+  Material tests passed with all features; Widgets and Material rustdoc passed
+  with warnings denied. Four new neutral regressions and one Material regression
+  cover the changes. The reversal, deferred-measurement and overlay-hit tests
+  failed before their corresponding fixes. Live native tests were not run.
 - W1 SliverAppBar title updates: replace only the title slot on the configured
   AppBar instead of reconstructing it. Leading/actions/bottom slots and visual
   policy survive a title change. A paint regression verifies the preserved

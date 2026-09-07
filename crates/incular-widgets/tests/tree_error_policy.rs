@@ -50,7 +50,7 @@ impl RenderSliver for DuplicateKeyRenderSliver {
             cross_offset: 0.,
             constraints: child_constraints,
             extent: 20.,
-            pinned: false,
+            placement: incular_widgets::internal::SliverChildPlacement::Flow,
         };
         SliverLayout {
             geometry: SliverGeometry::from_scroll_extent(constraints, 40.),

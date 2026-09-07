@@ -864,15 +864,16 @@ impl WidgetTree {
                         self.render_live_mut(_render, "sliver viewport render must remain live")
                             .dirty
                             .insert(DirtyFlags::PAINT);
-                        let has_pinned_children = self
+                        let has_overlay_children = self
                             .element_for_render(_render)
                             .and_then(|element| self.elements.get(element.0))
-                            .is_some_and(|element| !element.sliver_pinned_ids.is_empty());
-                        if has_pinned_children {
-                            // Pinned placement is part of sliver layout rather
-                            // than the generic box transform. Queue one
-                            // retained layout refresh so its push-away
-                            // geometry follows the new scroll offset.
+                            .is_some_and(|element| !element.sliver_overlay_ids.is_empty());
+                        if has_overlay_children
+                            || config.delegate.scroll_layout_dependency()
+                                == crate::scrolling::SliverScrollDependency::ScrollOffset
+                        {
+                            // Scroll-dependent geometry needs retained layout
+                            // even when the materialized cache window is valid.
                             self.mark_render_dirty(_render, DirtyFlags::LAYOUT, true);
                             if let Some(constraints) = self
                                 .renders
@@ -882,7 +883,7 @@ impl WidgetTree {
                                 // Standalone WidgetTree users do not have a
                                 // runtime layout phase between a controller
                                 // jump and this compositor call. Run the
-                                // already-known viewport layout now so pinned
+                                // already-known viewport layout now so header
                                 // placement is observable immediately; the
                                 // runtime reuses the cached result on its next
                                 // layout.

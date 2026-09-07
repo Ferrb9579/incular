@@ -283,7 +283,7 @@ pub struct Element {
     sliver_child_semantic_indices: Vec<Option<usize>>,
     /// Pinned children are painted above normal flow children while logical
     /// accessibility order remains unchanged.
-    sliver_pinned_ids: HashSet<SliverChildId>,
+    sliver_overlay_ids: HashSet<SliverChildId>,
     /// Stable identities for lazily materialized advanced-scrolling children.
     advanced_child_keys: Vec<AdvancedChildKey>,
     /// RAII subscriptions for a NotificationListener. They are rebuilt after

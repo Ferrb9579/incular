@@ -863,7 +863,7 @@ impl<T: 'static> RenderSliver for TreeRenderSliver<T> {
                     extent,
                 ),
                 extent,
-                pinned: false,
+                placement: crate::scrolling::SliverChildPlacement::Flow,
             });
         }
         let total_shift = animations

@@ -1215,6 +1215,14 @@ impl CrossAxisGroupRenderSliver {
 }
 
 impl RenderSliver for CrossAxisGroupRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.children
+            .iter()
+            .map(|(child, _)| child.borrow().scroll_layout_dependency())
+            .max()
+            .unwrap_or(SliverScrollDependency::CacheWindow)
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let total_flex = self
             .children

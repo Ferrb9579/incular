@@ -628,7 +628,7 @@ impl AnimatedCollectionRenderSliver {
                         extent,
                     ),
                     extent,
-                    pinned: false,
+                    placement: crate::scrolling::SliverChildPlacement::Flow,
                 })
             })
             .collect::<Vec<_>>();
@@ -729,7 +729,7 @@ impl AnimatedCollectionRenderSliver {
                         row_extent,
                     ),
                     extent: row_extent,
-                    pinned: false,
+                    placement: crate::scrolling::SliverChildPlacement::Flow,
                 })
             })
             .collect();

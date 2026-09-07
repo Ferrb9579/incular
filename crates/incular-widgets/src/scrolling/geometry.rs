@@ -56,8 +56,19 @@ pub struct SliverChildLayout {
     pub constraints: Constraints,
     /// Measured/estimated main-axis extent used for anchor and pinning math.
     pub extent: f32,
-    /// Pinned children are painted above normal flowing children.
-    pub pinned: bool,
+    /// Placement and stacking policy within the viewport.
+    pub placement: SliverChildPlacement,
+}
+
+/// Retained placement of a sliver child relative to ordinary content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SliverChildPlacement {
+    /// Translate with the content and use normal paint order.
+    Flow,
+    /// Pin to the viewport edge and paint above flowing content.
+    Pinned,
+    /// Use sliver-computed placement and paint above flowing content.
+    Floating,
 }
 
 /// Result of laying out one render sliver.
@@ -84,6 +95,13 @@ impl SliverLayout {
 /// interval. This is the analogue of Flutter's `RenderSliver` contract.
 pub trait RenderSliver {
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout;
+
+    /// Identifies when scrolling invalidates retained child geometry.
+    /// Override for headers or custom slivers whose placement changes inside
+    /// an already materialized cache window.
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        SliverScrollDependency::CacheWindow
+    }
 
     /// Returns the logical child count when this sliver is backed by an
     /// indexed child delegate. Non-indexed slivers leave it unknown.
@@ -115,10 +133,18 @@ pub trait RenderSliver {
     }
 }
 
-/// Private bridge consumed by the retained widget tree. The public sliver
-/// protocol remains renderer-neutral; this bridge adds widget materialization
-/// and stable viewport-scoped child IDs.
+/// Scroll input that invalidates a sliver's retained layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SliverScrollDependency {
+    /// Existing children can be translated until the cache window is exhausted.
+    CacheWindow,
+    /// Every scroll offset change can alter child size or placement.
+    ScrollOffset,
+}
+
+/// Private bridge for widget materialization and viewport-scoped child IDs.
 pub(crate) trait SliverViewportDelegate {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency;
     fn perform_layout(&self, constraints: SliverConstraints) -> SliverViewportLayout;
     fn set_child_extent(&self, child: SliverChildId, extent: f32) -> bool;
     fn revision(&self) -> u64;

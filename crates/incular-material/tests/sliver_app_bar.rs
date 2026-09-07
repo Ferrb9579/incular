@@ -52,6 +52,53 @@ fn replacing_title_preserves_configured_app_bar_slots_and_background() {
 }
 
 #[test]
+fn floating_material_header_reappears_with_measured_bottom_content() {
+    use incular_widgets::SizedBox;
+
+    for pinned in [false, true] {
+        let controller = ScrollController::new();
+        let header = SliverAppBar::from_app_bar(
+            AppBar::new(Text::new("Header"))
+                .toolbar_height(40.)
+                .bottom(SizedBox::new().height(15.)),
+        )
+        .floating(true)
+        .pinned(pinned);
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(header),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::WHITE,
+            ))),
+        ];
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                CustomScrollView::new(slivers)
+                    .controller(controller.clone())
+                    .into(),
+            )
+            .expect("mount");
+        tree.layout(Constraints::tight(Size::new(200., 200.)))
+            .expect("layout");
+        let child = tree.children(root).expect("header")[0];
+        let render = tree.render_id(child).expect("render");
+        assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+        let before = tree.diagnostics();
+        for (offset, origin) in [(400., -55.), (390., -45.), (345., 0.)] {
+            assert!(controller.jump_to(offset));
+            tree.update_compositor(Instant::now()).expect("scroll");
+            assert_eq!(
+                tree.render_origin(render),
+                Offset::new(0., if pinned { 0. } else { origin })
+            );
+            assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+        }
+        assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
+    }
+}
+
+#[test]
 fn material_header_pinning_reaches_the_retained_viewport() {
     for (pinned, reverse) in [(true, false), (false, false), (true, true), (false, true)] {
         let controller = ScrollController::new();

@@ -254,7 +254,7 @@ impl WidgetTree {
             dirty: DirtyFlags::NONE,
             sliver_child_ids: Vec::new(),
             sliver_child_semantic_indices: Vec::new(),
-            sliver_pinned_ids: HashSet::new(),
+            sliver_overlay_ids: HashSet::new(),
             advanced_child_keys: Vec::new(),
             notification_subscriptions: Vec::new(),
             sliver_delegate_revision: 0,
@@ -765,11 +765,11 @@ impl WidgetTree {
                 GeneratedChildIdentity::Sliver(format!("{key:?}"))
             })?;
         let mut next_semantic_indices = Vec::with_capacity(layout.children.len());
-        let mut pinned = HashSet::new();
+        let mut overlays = HashSet::new();
         for child in &layout.children {
             let child_id = child.id;
-            if child.pinned {
-                pinned.insert(child_id);
+            if child.placement != crate::scrolling::SliverChildPlacement::Flow {
+                overlays.insert(child_id);
             }
             next_semantic_indices.push(
                 child
@@ -782,7 +782,7 @@ impl WidgetTree {
         element.children = reconciled.children;
         element.sliver_child_ids = reconciled.keys;
         element.sliver_child_semantic_indices = next_semantic_indices;
-        element.sliver_pinned_ids = pinned;
+        element.sliver_overlay_ids = overlays;
         element.advanced_child_keys.clear();
         element.sliver_delegate_revision = config.delegate.revision();
         element.sliver_scroll_revision = config.controller.revision();
@@ -819,7 +819,7 @@ impl WidgetTree {
         element.advanced_child_keys = reconciled.keys;
         element.sliver_child_ids.clear();
         element.sliver_child_semantic_indices.clear();
-        element.sliver_pinned_ids.clear();
+        element.sliver_overlay_ids.clear();
         self.sync_render_children(element_id);
         Ok(())
     }
@@ -1071,11 +1071,13 @@ impl WidgetTree {
                 let scroll_changed = element.sliver_scroll_revision != config.controller.revision();
                 (delegate_changed
                     || (scroll_changed
-                        && !self.sliver_cache_window_is_covered(
-                            RenderObjectId(raw),
-                            element,
-                            config,
-                        )))
+                        && (config.delegate.scroll_layout_dependency()
+                            == crate::scrolling::SliverScrollDependency::ScrollOffset
+                            || !self.sliver_cache_window_is_covered(
+                                RenderObjectId(raw),
+                                element,
+                                config,
+                            ))))
                 .then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
@@ -1344,10 +1346,10 @@ impl WidgetTree {
         if let RenderKind::IndexedStack { index, .. } = kind {
             child_layers = child_layers.get(index).copied().into_iter().collect();
         } else if matches!(kind, RenderKind::SliverViewport { .. }) {
-            let pinned = self
+            let overlays = self
                 .element_for_render(render)
                 .and_then(|element| self.elements.get(element.0))
-                .map(|element| element.sliver_pinned_ids.clone())
+                .map(|element| element.sliver_overlay_ids.clone())
                 .unwrap_or_default();
             let mut order = (0..render_children.len()).collect::<Vec<_>>();
             order.sort_by_key(|index| {
@@ -1356,7 +1358,7 @@ impl WidgetTree {
                     .and_then(|element| self.elements.get(element.0))
                     .and_then(|element| element.sliver_child_ids.get(*index))
                     .copied();
-                usize::from(child_id.is_some_and(|id| pinned.contains(&id)))
+                usize::from(child_id.is_some_and(|id| overlays.contains(&id)))
             });
             child_layers = order
                 .into_iter()

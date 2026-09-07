@@ -193,6 +193,17 @@ same viewport is used by `ListView`, `GridView`, `PageView`, and
 
 ## Lazy sliver viewports
 
+`SliverFloatingHeader` measures its child and starts returning as soon as
+scrolling reverses, including after scrolling far beyond the header. Returning
+headers paint and receive hits above ordinary content.
+
+For custom implementations using the internal `RenderSliver` bridge,
+`scroll_layout_dependency()` distinguishes cache-window reuse from geometry
+that must refresh on every scroll offset. Wrappers forward that dependency.
+`SliverChildLayout::placement` replaces the former `pinned` boolean with
+`SliverChildPlacement::{Flow, Pinned, Floating}`: pinned and floating children
+share overlay ordering, while only pinned children use viewport-edge placement.
+
 `SingleChildScrollView`/`ScrollView` remains the eager choice for ordinary,
 arbitrary child trees. `ListView.builder`, `SliverList.builder`,
 `SliverFixedExtentList`, `SliverGrid`, and `SliverFillViewport` are the native

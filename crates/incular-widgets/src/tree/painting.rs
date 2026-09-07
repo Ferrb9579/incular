@@ -188,9 +188,9 @@ impl WidgetTree {
             _ => current,
         };
         let hit_children = if matches!(node.object.kind, RenderKind::SliverViewport { .. }) {
-            let pinned = element
+            let overlays = element
                 .and_then(|element| self.elements.get(element.0))
-                .map(|element| element.sliver_pinned_ids.clone())
+                .map(|element| element.sliver_overlay_ids.clone())
                 .unwrap_or_default();
             let mut ordered = node.children.clone();
             ordered.sort_by_key(|child| {
@@ -206,7 +206,7 @@ impl WidgetTree {
                             .position(|candidate| Some(*candidate) == child_element)
                             .and_then(|slot| parent.sliver_child_ids.get(slot))
                     })
-                    .map_or(0, |child_id| usize::from(pinned.contains(child_id)))
+                    .map_or(0, |child_id| usize::from(overlays.contains(child_id)))
             });
             ordered
         } else {
@@ -624,10 +624,10 @@ impl WidgetTree {
         };
         let hit_children: Vec<_> = if matches!(node.object.kind, RenderKind::SliverViewport { .. })
         {
-            let pinned = self
+            let overlays = self
                 .element_for_render(id)
                 .and_then(|element| self.elements.get(element.0))
-                .map(|element| element.sliver_pinned_ids.clone())
+                .map(|element| element.sliver_overlay_ids.clone())
                 .unwrap_or_default();
             let mut ordered = node.children.clone();
             ordered.sort_by_key(|child| {
@@ -643,7 +643,7 @@ impl WidgetTree {
                             .position(|candidate| Some(*candidate) == child_element)
                             .and_then(|slot| parent.sliver_child_ids.get(slot))
                     })
-                    .map_or(0, |child_id| usize::from(pinned.contains(child_id)))
+                    .map_or(0, |child_id| usize::from(overlays.contains(child_id)))
             });
             ordered
         } else {

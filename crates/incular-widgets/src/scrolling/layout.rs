@@ -83,7 +83,11 @@ impl RenderSliver for BoxRenderSliver {
                     None,
                 ),
                 extent,
-                pinned: self.pinned,
+                placement: if self.pinned {
+                    SliverChildPlacement::Pinned
+                } else {
+                    SliverChildPlacement::Flow
+                },
             }],
             absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
         }
@@ -162,7 +166,7 @@ impl RenderSliver for FixedExtentRenderSliver {
                         Some(self.item_extent),
                     ),
                     extent: self.item_extent,
-                    pinned: false,
+                    placement: SliverChildPlacement::Flow,
                 }
             })
             .collect();
@@ -287,7 +291,7 @@ impl RenderSliver for GridRenderSliver {
                         Some(main_extent),
                     ),
                     extent: main_extent,
-                    pinned: false,
+                    placement: SliverChildPlacement::Flow,
                 }
             })
             .collect();
@@ -353,7 +357,7 @@ impl RenderSliver for VariableExtentRenderSliver {
                     ),
                     extent: self.index.offset_for_index(index + 1)
                         - self.index.offset_for_index(index),
-                    pinned: false,
+                    placement: SliverChildPlacement::Flow,
                 }
             })
             .collect();
@@ -404,15 +408,22 @@ pub(super) struct FloatingHeaderRenderSliver {
 }
 
 impl RenderSliver for FloatingHeaderRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        SliverScrollDependency::ScrollOffset
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let extent = self.extent.get().max(0.);
         let scroll_offset = constraints.scroll_offset.max(0.);
         if let Some(previous) = self.last_scroll_offset {
+            // Hidden distance stops at the header extent. Accumulating the
+            // rest of the document would delay revealing it on reversal.
             self.effective_scroll_offset = (self.effective_scroll_offset
                 + (scroll_offset - previous))
-                .clamp(0., scroll_offset.max(extent));
+                .clamp(0., extent)
+                .min(scroll_offset);
         } else {
-            self.effective_scroll_offset = scroll_offset;
+            self.effective_scroll_offset = scroll_offset.min(extent);
         }
         self.last_scroll_offset = Some(scroll_offset);
 
@@ -454,10 +465,10 @@ impl RenderSliver for FloatingHeaderRenderSliver {
                 constraints: sliver_child_constraints(
                     constraints.axis,
                     constraints.cross_axis_extent,
-                    Some(extent),
+                    None,
                 ),
                 extent,
-                pinned: false,
+                placement: SliverChildPlacement::Floating,
             }],
             absorbed_overlap: (paint_extent - layout_extent).max(0.),
         }
@@ -497,7 +508,11 @@ impl RenderSliver for HeaderRenderSliver {
                     Some(self.extent),
                 ),
                 extent: self.extent,
-                pinned: self.pinned,
+                placement: if self.pinned {
+                    SliverChildPlacement::Pinned
+                } else {
+                    SliverChildPlacement::Flow
+                },
             }],
             absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
         }
@@ -549,7 +564,7 @@ impl RenderSliver for FillRemainingRenderSliver {
                     Some(extent),
                 ),
                 extent,
-                pinned: false,
+                placement: SliverChildPlacement::Flow,
             }],
             absorbed_overlap: 0.,
         }
@@ -635,7 +650,7 @@ impl RenderSliver for ViewportExtentRenderSliver {
                         Some(extent),
                     ),
                     extent,
-                    pinned: false,
+                    placement: SliverChildPlacement::Flow,
                 }
             })
             .collect();
@@ -666,7 +681,7 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                     Some(current),
                 ),
                 extent: current,
-                pinned: true,
+                placement: SliverChildPlacement::Pinned,
             }],
             absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
         }
@@ -679,6 +694,10 @@ pub(super) struct PaddingRenderSliver {
 }
 
 impl RenderSliver for PaddingRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.inner.borrow().scroll_layout_dependency()
+    }
+
     fn child_count(&self) -> Option<usize> {
         self.inner.borrow().child_count()
     }
@@ -823,7 +842,7 @@ impl RenderSliver for LayoutBuilderRenderSliver {
                     None,
                 ),
                 extent,
-                pinned: false,
+                placement: SliverChildPlacement::Flow,
             }],
             absorbed_overlap: 0.,
         }
@@ -871,6 +890,10 @@ pub(super) struct OverlapAbsorberRenderSliver {
 }
 
 impl RenderSliver for OverlapAbsorberRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.inner.borrow().scroll_layout_dependency()
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let layout = self.inner.borrow_mut().perform_layout(constraints);
         self.handle.set_extent(layout.absorbed_overlap);
@@ -906,6 +929,10 @@ impl RenderSliver for OverlapInjectorRenderSliver {
 }
 
 impl RenderSliver for WidgetWrapRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.inner.borrow().scroll_layout_dependency()
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let mut layout = self.inner.borrow_mut().perform_layout(constraints);
         for child in &mut layout.children {
@@ -1050,6 +1077,14 @@ impl SequenceRenderSliver {
 }
 
 impl RenderSliver for SequenceRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.children
+            .iter()
+            .map(|child| child.borrow().scroll_layout_dependency())
+            .max()
+            .unwrap_or(SliverScrollDependency::CacheWindow)
+    }
+
     fn child_count(&self) -> Option<usize> {
         self.children.iter().try_fold(0usize, |count, child| {
             child
@@ -1103,6 +1138,10 @@ impl SequenceViewportDelegate {
 }
 
 impl SliverViewportDelegate for SequenceViewportDelegate {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        self.sequence.borrow().scroll_layout_dependency()
+    }
+
     fn perform_layout(&self, constraints: SliverConstraints) -> SliverViewportLayout {
         let layout = self.sequence.borrow_mut().perform_layout(constraints);
         SliverViewportLayout {
@@ -1474,7 +1513,9 @@ fn apply_pinned_offsets_with_direction(
     let pinned = children
         .iter()
         .enumerate()
-        .filter_map(|(index, child)| child.pinned.then_some(index))
+        .filter_map(|(index, child)| {
+            (child.placement == SliverChildPlacement::Pinned).then_some(index)
+        })
         .collect::<Vec<_>>();
     if reverse {
         // In a reversed viewport the leading edge is the physical trailing
