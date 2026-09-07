@@ -1,6 +1,7 @@
 # Plan 15 — Whole-codebase quality and architecture completion
 
-Status: W1 forms committed (`6e6af8d`); length formatting complete and validated.
+Status: W1 forms (`6e6af8d`) and length formatting (`638f77e`) committed;
+Material checkbox error presentation complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -14,6 +15,18 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 checkbox / part of R01: enabled error indicators use the scoped theme's
+  error outline and checked/mixed fill; explicit fill/side overrides win and
+  disabled indicators retain their existing defaults. Custom resolvers receive
+  the configured disabled state as well as checked/error state. Removed the
+  second state assignment that incorrectly cleared checked Material values.
+  Painting and semantics regressions cover these paths. Other R01 options remain
+  pending: ListTile autofocus, Card, Scaffold and SliverAppBar.
+- Checkbox validation (Windows, 2026-09-07): formatting, workspace compiler
+  checks, constrained workspace tests and strict all-target/all-feature Clippy
+  passed. All six focused checkbox tests also passed with all features enabled;
+  three initial paint regressions reproduced failures before the fix. Live
+  desktop regressions remain opt-in and were not run by this slice.
 - Commit policy: the user authorized a commit after each completed, validated
   implementation slice on 2026-09-06. The form fix and audit are in `6e6af8d`.
 - W1 length formatting / R03: the shared formatter counts extended grapheme

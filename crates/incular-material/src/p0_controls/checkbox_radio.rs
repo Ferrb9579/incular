@@ -95,13 +95,15 @@ impl Checkbox {
         self
     }
 
+    /// Uses the scoped theme's error color for the enabled indicator's outline
+    /// and checked or mixed fill. Explicit fill and side values take precedence.
     #[must_use]
     pub fn is_error(mut self, value: bool) -> Self {
         self.is_error = value;
         self
     }
 
-    /// Resolves the Material fill against the initial checked/error state and
+    /// Resolves the Material fill against the configured checked/error/disabled state and
     /// passes the resulting paint value to the shared controls root.
     #[must_use]
     pub fn fill_color(mut self, value: impl Into<StateProperty<Color>>) -> Self {
@@ -144,16 +146,24 @@ impl Checkbox {
         self.value
     }
 
-    fn build(self) -> Widget {
+    fn build(self, theme: &incular_controls::ControlTheme) -> Widget {
         let state = match self.value {
             Some(true) => CheckedState::Checked,
             Some(false) => CheckedState::Unchecked,
-            None => CheckedState::Indeterminate,
+            None if self.tristate => CheckedState::Indeterminate,
+            None => CheckedState::Unchecked,
         };
         let mut root = incular_controls::checkbox::Root::new()
             .state(state)
-            .enabled(self.enabled)
-            .indeterminate(self.tristate && self.value.is_none());
+            .enabled(self.enabled);
+        if self.is_error && self.enabled {
+            root = root
+                .active_color(theme.colors.error)
+                .border_color(theme.colors.error);
+            if state == CheckedState::Indeterminate {
+                root = root.inactive_color(theme.colors.error);
+            }
+        }
         let mut states = WidgetStates::default();
         if self.value == Some(true) {
             states = states.with(WidgetState::Selected);
@@ -161,8 +171,15 @@ impl Checkbox {
         if self.is_error {
             states = states.with(WidgetState::Error);
         }
+        if !self.enabled {
+            states = states.with(WidgetState::Disabled);
+        }
         if let Some(property) = self.fill_color {
-            root = root.active_color(property.resolve(states));
+            let color = property.resolve(states);
+            root = root.active_color(color);
+            if state == CheckedState::Indeterminate {
+                root = root.inactive_color(color);
+            }
         }
         if let Some(property) = self.check_color {
             root = root.check_color(property.resolve(states));
@@ -185,8 +202,7 @@ impl Checkbox {
         // The shared root owns checkbox interaction. Attach a retained focus
         // node only for the explicit Material autofocus request so ordinary
         // checkboxes do not gain an extra traversal target.
-        let widget: Widget = root.into();
-        let _ = self.is_error;
+        let widget = root.build(theme);
         if self.autofocus {
             incular_widgets::Focus::new(widget).autofocus(true).into()
         } else {
@@ -197,7 +213,12 @@ impl Checkbox {
 
 impl From<Checkbox> for Widget {
     fn from(value: Checkbox) -> Self {
-        value.build()
+        incular_widgets::LayoutBuilder::new(move |context, _| {
+            value
+                .clone()
+                .build(&incular_controls::current_control_theme(context))
+        })
+        .into()
     }
 }
 
