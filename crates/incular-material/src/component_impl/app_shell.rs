@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use super::common::finite_non_negative;
 use crate::foundation::{Material, Theme};
-use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisAlignment};
+use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisAlignment, MainAxisSize};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
 use incular_text::TextStyle;
@@ -229,6 +229,7 @@ impl AppBar {
             DefaultTextStyle::new(TextStyle::default().color(foreground), toolbar).into();
         if let Some(bottom) = self.bottom.clone() {
             Column::new([toolbar, bottom])
+                .main_axis_size(MainAxisSize::Min)
                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .into()
         } else {
@@ -467,12 +468,15 @@ impl Scaffold {
         self
     }
 
+    /// Extends the body beneath the bottom region (sheet and bottom bar).
+    /// That region stays bottom-aligned and paints above the body.
     #[must_use]
     pub fn extend_body(mut self, value: bool) -> Self {
         self.extend_body = value;
         self
     }
 
+    /// Extends the body beneath the app bar, including its bottom content.
     #[must_use]
     pub fn extend_body_behind_app_bar(mut self, value: bool) -> Self {
         self.extend_body_behind_app_bar = value;
@@ -492,8 +496,10 @@ impl Scaffold {
         theme: &ControlTheme,
     ) -> Widget {
         let mut children = Vec::new();
-        if let Some(app_bar) = &self.app_bar {
-            children.push(app_bar.build(theme));
+        if let Some(app_bar) = &self.app_bar
+            && !self.extend_body_behind_app_bar
+        {
+            children.push(app_bar.build(theme).with_key("scaffold-app-bar"));
         }
         let scaffold_background = Theme::of_shared(context)
             .map_or(theme.colors.background, |theme| {
@@ -502,54 +508,79 @@ impl Scaffold {
         let body = Expanded::new(
             Material::new(self.body.clone()).color(self.background.unwrap_or(scaffold_background)),
         );
-        children.push(body.into());
+        // A private slot key keeps the body mounted when reserved regions move
+        // into the overlay layer. Application keys remain on the child itself.
+        children.push(Widget::from(body).with_key("scaffold-body"));
+        let mut bottom_children = Vec::new();
         if let Some(sheet) = self.bottom_sheet.clone() {
-            children.push(sheet);
+            bottom_children.push(sheet);
         }
         if let Some(bottom) = self
             .bottom_navigation_bar
             .clone()
             .or_else(|| self.bottom_app_bar.clone())
         {
-            children.push(bottom);
+            bottom_children.push(bottom);
+        }
+        let bottom_region: Widget = Column::new(bottom_children)
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .into();
+        if !self.extend_body {
+            children.push(bottom_region.clone().with_key("scaffold-bottom-region"));
         }
         let content: Widget = Column::new(children)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .into();
         let mut stack_children = vec![content];
+        if self.extend_body_behind_app_bar
+            && let Some(app_bar) = &self.app_bar
+        {
+            stack_children.push(
+                Widget::from(
+                    Positioned::new(app_bar.build(theme))
+                        .left(0.0)
+                        .right(0.0)
+                        .top(0.0),
+                )
+                .with_key("scaffold-app-bar"),
+            );
+        }
+        if self.extend_body {
+            stack_children.push(
+                Widget::from(
+                    Positioned::new(bottom_region)
+                        .left(0.0)
+                        .right(0.0)
+                        .bottom(0.0),
+                )
+                .with_key("scaffold-bottom-region"),
+            );
+        }
         if let Some(fab) = self.floating_action_button.clone() {
             stack_children.push(
-                Positioned::new(fab)
-                    .right(16.0)
-                    .bottom(
-                        if self.bottom_navigation_bar.is_some() || self.bottom_app_bar.is_some() {
-                            96.0
-                        } else {
-                            16.0
-                        },
-                    )
-                    .into(),
+                Widget::from(Positioned::new(fab).right(16.0).bottom(
+                    if self.bottom_navigation_bar.is_some() || self.bottom_app_bar.is_some() {
+                        96.0
+                    } else {
+                        16.0
+                    },
+                ))
+                .with_key("scaffold-fab"),
             );
         }
         if let Some(drawer) = self.drawer.clone() {
             stack_children.push(
-                Positioned::new(drawer)
-                    .left(0.0)
-                    .top(0.0)
-                    .bottom(0.0)
-                    .into(),
+                Widget::from(Positioned::new(drawer).left(0.0).top(0.0).bottom(0.0))
+                    .with_key("scaffold-drawer"),
             );
         }
         if let Some(drawer) = self.end_drawer.clone() {
             stack_children.push(
-                Positioned::new(drawer)
-                    .right(0.0)
-                    .top(0.0)
-                    .bottom(0.0)
-                    .into(),
+                Widget::from(Positioned::new(drawer).right(0.0).top(0.0).bottom(0.0))
+                    .with_key("scaffold-end-drawer"),
             );
         }
-        let _ = (self.extend_body, self.extend_body_behind_app_bar);
         let bottom_inset = if self.resize_to_avoid_bottom_inset {
             context.view_insets().bottom
         } else {

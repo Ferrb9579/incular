@@ -3,8 +3,8 @@
 Status: W1 forms (`6e6af8d`) and length formatting (`638f77e`) committed;
 Material checkbox error presentation committed (`9dbcfee`); ListTile autofocus
 and initial-layout focus resolution committed (`f8edecb`). Card policies are
-committed (`ad72860`). Scaffold keyboard avoidance is complete and validated.
-Body-extension policies remain pending.
+committed (`ad72860`). Scaffold keyboard avoidance is committed (`ad7adf9`).
+Body-extension policies are complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -18,6 +18,18 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 Scaffold extensions / part of R01: the app-bar and bottom regions can
+  overlay the body instead of reserving space. Region sizes come from their
+  content, including app-bar bottom content and the sheet/bottom-bar combination.
+  Incular's extend_body covers the entire bottom region, including a sheet.
+  App-bar bottom columns use minimum main-axis sizing in either placement.
+  Private slot keys protect body/FAB identity and distinguish reserved regions.
+  Keyboard avoidance applies to the resulting layout; SliverAppBar remains pending.
+- Scaffold extension validation (Windows): formatting, workspace compiler checks,
+  all 1,145 workspace tests and strict all-target/all-feature Clippy passed.
+  Three extension regressions and the three existing inset tests passed with
+  all features. The two initial geometry regressions failed before the fix.
+  Live native desktop tests remained opt-in and were not run.
 - W1 Scaffold insets / part of R01: enabled avoidance excludes the bottom view
   inset from the scaffold's usable layout area through neutral Padding. Body,
   bottom bars and floating controls reflow together; the property opts out of
