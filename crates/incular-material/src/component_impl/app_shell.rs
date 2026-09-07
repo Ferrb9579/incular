@@ -428,8 +428,11 @@ impl SliverAppBar {
                 (false, true) => SliverHeaderScrollBehavior::Floating,
                 (true, true) => SliverHeaderScrollBehavior::FloatingPinned,
             };
+            // The same Flex structure measures naturally while unbounded and
+            // fills the toolbar while tight, so no height is guessed and slot
+            // identity survives measurement and stretch alike.
             return Box::new(
-                SliverNaturalHeader::new(self.natural_stretch_child())
+                SliverNaturalHeader::new(self.resizing_child())
                     .scroll_behavior(behavior)
                     .overscroll_behavior(incular_widgets::SliverHeaderOverscrollBehavior::Stretch),
             );
@@ -447,13 +450,22 @@ impl SliverAppBar {
     fn resizing_child(&self) -> Widget {
         let mut app_bar = self.app_bar.clone();
         let bottom = app_bar.bottom.take();
-        // Flex measures the bottom first. Resolve toolbar presentation against
-        // the remaining tight height, retaining the same slot structure.
+        let natural_toolbar = app_bar.toolbar_height;
+        // Flex measures the bottom first under real cross constraints, then
+        // gives the toolbar the remainder when bounded. While unbounded the
+        // flex children degrade to natural measurement, so resolve the
+        // configured toolbar height instead of collapsing to zero. Both cases
+        // keep the same slot structure.
         let toolbar = Widget::from(incular_widgets::LayoutBuilder::new(
             move |context, constraints| {
+                let height = if constraints.max_height().is_finite() {
+                    constraints.max_height()
+                } else {
+                    natural_toolbar
+                };
                 app_bar
                     .clone()
-                    .toolbar_height(constraints.max_height())
+                    .toolbar_height(height)
                     .build(&current_control_theme(context))
             },
         ));
@@ -466,41 +478,6 @@ impl SliverAppBar {
             toolbar
         };
         incular_widgets::ClipRect::new(child).into()
-    }
-
-    fn natural_stretch_child(&self) -> Widget {
-        let app_bar = self.app_bar.clone();
-        // The neutral header measures this child unbounded while settled so
-        // later content changes are learned, and tight while stretched. Both
-        // branches build the same AppBar structure and differ only in the
-        // resolved toolbar height, so slot identity survives the switch and
-        // stretched samples never become the cached natural measurement.
-        Widget::from(incular_widgets::LayoutBuilder::new(
-            move |context, constraints| {
-                let theme = current_control_theme(context);
-                if constraints.max_height().is_finite() {
-                    let current = constraints.max_height();
-                    // Bottom keeps its measured height; the toolbar fills the
-                    // remainder. The hint covers fixed bottoms (the common
-                    // PreferredSize case); without one fall back to natural
-                    // presentation instead of guessing a height.
-                    if let Some(bottom) = app_bar.bottom.clone()
-                        && let Some(bottom_height) =
-                            incular_widgets::internal::widget_main_extent_hint(
-                                &bottom,
-                                incular_config::Axis::Vertical,
-                            )
-                    {
-                        let toolbar = (current - bottom_height).max(0.);
-                        return app_bar.clone().toolbar_height(toolbar).build(&theme);
-                    }
-                    if app_bar.bottom.is_none() {
-                        return app_bar.clone().toolbar_height(current).build(&theme);
-                    }
-                }
-                app_bar.clone().build(&theme)
-            },
-        ))
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use std::any::Any;
 
 pub(super) struct BoxRenderSliver {
     pub(super) child: Widget,
@@ -103,6 +104,10 @@ impl RenderSliver for BoxRenderSliver {
         }
         self.extent.set(extent);
         true
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
     }
 }
 
@@ -406,7 +411,7 @@ pub(super) struct FloatingHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct HeaderScrollState {
     last_scroll_offset: Option<f32>,
     effective_scroll_offset: f32,
@@ -505,6 +510,10 @@ impl RenderSliver for FloatingHeaderRenderSliver {
         self.extent.set(extent);
         true
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
 }
 
 impl RenderSliver for HeaderRenderSliver {
@@ -548,22 +557,71 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
 }
 
+/// Lifecycle of a naturally measured header's logical extent.
+///
+/// An unverified estimate seeds the first frame so a new header has geometry
+/// before its child is measured. It never authorizes stretched presentation:
+/// estimates always measure unbounded first, so a header created during
+/// overscroll establishes its true natural size instead of mistaking
+/// stretched visuals (or a blind default) for its logical extent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum NaturalHeaderExtent {
+    /// Unverified first estimate from a child hint or the lazy default.
+    Estimate(f32),
+    /// Validated by retained child measurement, or inherited from a
+    /// compatible retained header across descriptor updates.
+    Measured(f32),
+}
+
+/// Whether the most recent layout presented stretched visuals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum HeaderPresentation {
+    /// Normal presentation; child measurements describe logical extent.
+    #[default]
+    Settled,
+    /// Leading overscroll presentation; child measurements are transient.
+    Stretched,
+}
+
 /// Retained naturally measured header with optional leading stretch.
 ///
-/// Measurement lifecycle: `natural` holds the last unstretched child
-/// measurement. Layouts with a positive stretch present `natural + stretch`
-/// under tight child constraints but record `stretched = true` so the
-/// following `set_child_extent` call is ignored. Only unstretched layouts use
-/// unbounded child constraints and may update `natural`. This keeps stretched
-/// presentation from accumulating into the logical scroll extent while still
-/// learning later content changes once overscroll ends.
+/// Only settled layouts with unbounded child constraints may establish or
+/// update the measured extent, plus the unbounded learning pass of an
+/// unverified estimate. Stretched samples are presentation-only and can never
+/// accumulate into the logical scroll range, while genuine content changes
+/// are still learned (and legitimately change the range once settled).
 pub(super) struct NaturalHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) scroll_behavior: SliverHeaderScrollBehavior,
     pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
-    pub(super) natural: Cell<f32>,
-    pub(super) stretched: Cell<bool>,
+    pub(super) extent: Cell<NaturalHeaderExtent>,
+    pub(super) presentation: Cell<HeaderPresentation>,
     pub(super) scroll_state: HeaderScrollState,
+}
+
+impl NaturalHeaderRenderSliver {
+    /// Adopts validated measurement (and compatible reversal tracking) from a
+    /// retained header replaced by this one, e.g. when application code
+    /// rebuilds a viewport descriptor during active overscroll. Stretched
+    /// presentation is never inherited: it is recomputed from live overlap.
+    /// Returns whether any state was adopted.
+    pub(super) fn adopt_compatible_state(&mut self, previous: &Self) -> bool {
+        let mut adopted = false;
+        if let NaturalHeaderExtent::Measured(natural) = previous.extent.get()
+            && !matches!(
+                self.extent.get(),
+                NaturalHeaderExtent::Measured(current) if (current - natural).abs() <= f32::EPSILON
+            )
+        {
+            self.extent.set(NaturalHeaderExtent::Measured(natural));
+            adopted = true;
+        }
+        if self.scroll_behavior == previous.scroll_behavior {
+            self.scroll_state = previous.scroll_state;
+            adopted = true;
+        }
+        adopted
+    }
 }
 
 pub(super) struct FillRemainingRenderSliver {
@@ -791,7 +849,10 @@ impl RenderSliver for NaturalHeaderRenderSliver {
     }
 
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
-        let natural = self.natural.get().max(0.);
+        let (natural, unverified) = match self.extent.get() {
+            NaturalHeaderExtent::Estimate(estimate) => (estimate.max(0.), true),
+            NaturalHeaderExtent::Measured(measured) => (measured.max(0.), false),
+        };
         let scroll_offset = constraints.scroll_offset;
         let effective_offset = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Floating => {
@@ -813,7 +874,12 @@ impl RenderSliver for NaturalHeaderRenderSliver {
             }
             _ => 0.,
         };
-        self.stretched.set(stretch > 0.);
+        let stretched_now = stretch > 0.;
+        self.presentation.set(if stretched_now {
+            HeaderPresentation::Stretched
+        } else {
+            HeaderPresentation::Settled
+        });
         let current = (natural + stretch).min(f32::MAX);
         let (mut geometry, offset, mut placement) = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
@@ -843,18 +909,22 @@ impl RenderSliver for NaturalHeaderRenderSliver {
             // Automatic pinning would move it back down and leave a gap.
             placement = SliverChildPlacement::Floating;
         }
-        // Stretched presentation uses tight constraints so a Material toolbar
-        // can fill the extra extent. Unstretched layouts stay unbounded on the
-        // main axis so later content changes are measured instead of being
-        // clamped to a previously cached extent.
-        let child_constraints = if stretch > 0. {
+        // Stretched presentation uses tight constraints so a toolbar can fill
+        // the extra extent. Settled layouts stay unbounded on the main axis
+        // so later content changes are measured instead of being clamped to
+        // a previously cached extent. Unverified estimates always measure
+        // unbounded first, even while stretched, so a header created during
+        // overscroll learns its true size; the estimate only seeds one
+        // transient presentation frame, which the viewport's bounded
+        // re-layout pass then corrects.
+        let child_constraints = if unverified || !stretched_now {
+            sliver_child_constraints(constraints.axis, constraints.cross_axis_extent, None)
+        } else {
             sliver_child_constraints(
                 constraints.axis,
                 constraints.cross_axis_extent,
                 Some(current),
             )
-        } else {
-            sliver_child_constraints(constraints.axis, constraints.cross_axis_extent, None)
         };
         SliverLayout {
             geometry,
@@ -877,21 +947,38 @@ impl RenderSliver for NaturalHeaderRenderSliver {
     }
 
     fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
-        // Stretched measurements describe transient presentation, not the
-        // logical header. Ignoring them keeps overscroll from drifting the
-        // natural extent across repeated stretch/recovery cycles.
-        if self.stretched.get() {
-            return false;
-        }
         if child.0 != 0 || !extent.is_finite() || extent < 0. {
             return false;
         }
         let extent = extent.max(0.);
-        if (self.natural.get() - extent).abs() <= f32::EPSILON {
-            return false;
+        match self.extent.get() {
+            // Learning passes always use unbounded constraints, so any sample
+            // here is the true natural size by construction. Adopting it can
+            // never mistake stretched visuals for logical extent.
+            NaturalHeaderExtent::Estimate(estimate) => {
+                self.extent.set(NaturalHeaderExtent::Measured(extent));
+                (estimate - extent).abs() > f32::EPSILON
+            }
+            // Stretched samples describe transient presentation, not logical
+            // extent. Ignoring them keeps overscroll from drifting the range
+            // across repeated stretch/recovery cycles.
+            NaturalHeaderExtent::Measured(_)
+                if self.presentation.get() == HeaderPresentation::Stretched =>
+            {
+                false
+            }
+            NaturalHeaderExtent::Measured(current) => {
+                if (current - extent).abs() <= f32::EPSILON {
+                    return false;
+                }
+                self.extent.set(NaturalHeaderExtent::Measured(extent));
+                true
+            }
         }
-        self.natural.set(extent);
-        true
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
     }
 }
 
@@ -1012,6 +1099,10 @@ impl RenderSliver for PaddingRenderSliver {
     fn is_animating(&self) -> bool {
         self.inner.borrow().is_animating()
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
 }
 
 pub(super) struct WidgetWrapRenderSliver {
@@ -1122,6 +1213,10 @@ impl RenderSliver for OverlapAbsorberRenderSliver {
     fn is_animating(&self) -> bool {
         self.inner.borrow().is_animating()
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
 }
 
 pub(super) struct OverlapInjectorRenderSliver {
@@ -1162,6 +1257,10 @@ impl RenderSliver for WidgetWrapRenderSliver {
 
     fn is_animating(&self) -> bool {
         self.inner.borrow().is_animating()
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
     }
 }
 
@@ -1330,6 +1429,146 @@ impl RenderSliver for SequenceRenderSliver {
             .iter()
             .any(|child| child.borrow().is_animating())
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
+}
+
+/// Transfers validated natural-header measurement from a retained sliver into
+/// its freshly built replacement, recursing by position through sequences
+/// and transparent single-inner wrappers. Only validated measurements move;
+/// stretched presentation, estimates, and incompatible shapes stay fresh, so
+/// replacing a viewport descriptor during overscroll keeps the true size
+/// without flashing an estimate or spuriously changing the scroll range.
+pub(crate) fn transfer_retained_sliver_state(
+    fresh: &mut dyn RenderSliver,
+    retained: &mut dyn RenderSliver,
+) {
+    if adopt_natural_header_state(fresh, retained)
+        || adopt_box_extent(fresh, retained)
+        || adopt_floating_header_state(fresh, retained)
+    {
+        return;
+    }
+    if let (Some(fresh), Some(retained)) = (
+        fresh
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<SequenceRenderSliver>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<SequenceRenderSliver>()),
+    ) {
+        for (fresh_child, retained_child) in fresh.children.iter().zip(retained.children.iter()) {
+            let mut fresh = fresh_child.borrow_mut();
+            let mut retained = retained_child.borrow_mut();
+            transfer_retained_sliver_state(&mut **fresh, &mut **retained);
+        }
+        return;
+    }
+    transfer_single_inner_sliver_state::<PaddingRenderSliver>(fresh, retained);
+    transfer_single_inner_sliver_state::<WidgetWrapRenderSliver>(fresh, retained);
+    transfer_single_inner_sliver_state::<OverlapAbsorberRenderSliver>(fresh, retained);
+}
+
+fn adopt_natural_header_state(
+    fresh: &mut dyn RenderSliver,
+    retained: &mut dyn RenderSliver,
+) -> bool {
+    let (Some(fresh), Some(retained)) = (
+        fresh
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<NaturalHeaderRenderSliver>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<NaturalHeaderRenderSliver>()),
+    ) else {
+        return false;
+    };
+    fresh.adopt_compatible_state(retained)
+}
+
+/// Adopts a measured box extent so replacing a viewport descriptor does not
+/// flash the lazy default and spuriously move the scroll range. Pinning is
+/// presentation-only; the measured extent transfers regardless of it.
+fn adopt_box_extent(fresh: &mut dyn RenderSliver, retained: &mut dyn RenderSliver) -> bool {
+    let (Some(fresh), Some(retained)) = (
+        fresh
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<BoxRenderSliver>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<BoxRenderSliver>()),
+    ) else {
+        return false;
+    };
+    let measured = retained.extent.get();
+    if (fresh.extent.get() - measured).abs() <= f32::EPSILON {
+        return false;
+    }
+    fresh.extent.set(measured);
+    true
+}
+
+/// Adopts a measured floating extent with its reversal tracking so a
+/// replacement keeps revealing without replaying hidden distance.
+fn adopt_floating_header_state(
+    fresh: &mut dyn RenderSliver,
+    retained: &mut dyn RenderSliver,
+) -> bool {
+    let (Some(fresh), Some(retained)) = (
+        fresh
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<FloatingHeaderRenderSliver>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<FloatingHeaderRenderSliver>()),
+    ) else {
+        return false;
+    };
+    if (fresh.extent.get() - retained.extent.get()).abs() > f32::EPSILON {
+        fresh.extent.set(retained.extent.get());
+    }
+    fresh.scroll_state = retained.scroll_state;
+    true
+}
+
+trait SingleInnerSliver {
+    fn inner_cell(&mut self) -> &RefCell<Box<dyn RenderSliver>>;
+}
+
+impl SingleInnerSliver for PaddingRenderSliver {
+    fn inner_cell(&mut self) -> &RefCell<Box<dyn RenderSliver>> {
+        &self.inner
+    }
+}
+
+impl SingleInnerSliver for WidgetWrapRenderSliver {
+    fn inner_cell(&mut self) -> &RefCell<Box<dyn RenderSliver>> {
+        &self.inner
+    }
+}
+
+impl SingleInnerSliver for OverlapAbsorberRenderSliver {
+    fn inner_cell(&mut self) -> &RefCell<Box<dyn RenderSliver>> {
+        &self.inner
+    }
+}
+
+fn transfer_single_inner_sliver_state<T: SingleInnerSliver + 'static>(
+    fresh: &mut dyn RenderSliver,
+    retained: &mut dyn RenderSliver,
+) {
+    if let (Some(fresh), Some(retained)) = (
+        fresh.as_any_mut().and_then(|any| any.downcast_mut::<T>()),
+        retained
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<T>()),
+    ) {
+        let mut fresh_inner = fresh.inner_cell().borrow_mut();
+        let mut retained_inner = retained.inner_cell().borrow_mut();
+        transfer_retained_sliver_state(&mut **fresh_inner, &mut **retained_inner);
+    }
 }
 
 pub(super) struct SequenceViewportDelegate {
@@ -1379,6 +1618,26 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
 
     fn is_animating(&self) -> bool {
         self.sequence.borrow().is_animating()
+    }
+
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+
+    fn adopt_compatible_state(&self, previous: &dyn SliverViewportDelegate) {
+        let Some(previous) = previous
+            .as_any()
+            .and_then(|any| any.downcast_ref::<SequenceViewportDelegate>())
+        else {
+            return;
+        };
+        let fresh = self.sequence.borrow_mut();
+        let retained = previous.sequence.borrow_mut();
+        for (fresh_child, retained_child) in fresh.children.iter().zip(retained.children.iter()) {
+            let mut fresh_sliver = fresh_child.borrow_mut();
+            let mut retained_sliver = retained_child.borrow_mut();
+            transfer_retained_sliver_state(&mut **fresh_sliver, &mut **retained_sliver);
+        }
     }
 }
 
@@ -1449,11 +1708,7 @@ pub(super) fn sliver_child_constraints(axis: Axis, cross: f32, extent: Option<f3
 /// independent of the eventual viewport; widgets whose size depends on
 /// ambient constraints return `None` and are measured by the retained child
 /// pass instead.
-///
-/// Sibling implementation crates use this through the hidden `internal`
-/// bridge to size Material stretch presentation from a measured bottom
-/// without caching scroll geometry in Material.
-pub fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
+pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
     fn finite(value: f32) -> Option<f32> {
         value.is_finite().then_some(value.max(0.))
     }

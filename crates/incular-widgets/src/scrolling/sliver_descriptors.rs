@@ -1967,12 +1967,12 @@ impl Sliver for SliverNaturalHeader {
             child: self.child.clone(),
             scroll_behavior: self.scroll_behavior,
             overscroll_behavior: self.overscroll_behavior,
-            natural: Cell::new(
+            extent: Cell::new(NaturalHeaderExtent::Estimate(
                 widget_main_extent_hint(&self.child, axis)
                     .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
                     .max(0.),
-            ),
-            stretched: Cell::new(false),
+            )),
+            presentation: Cell::new(HeaderPresentation::Settled),
             scroll_state: HeaderScrollState::default(),
         })
     }

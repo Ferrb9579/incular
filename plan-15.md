@@ -24,6 +24,29 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 Material stretch corrections: the natural header no longer sizes its
+  toolbar from bottom extent hints and never silently disables stretching.
+  Material uses one retained Flex structure for measurement and presentation:
+  the bottom is measured first under real cross constraints (covering custom
+  `LayoutBuilder` bottoms and wrapping text whose actual height differs from
+  any hint) and the toolbar fills the remainder when bounded or resolves its
+  natural height when unbounded. The internal hint export is removed again.
+  The neutral lifecycle is now explicit (`Estimate` vs `Measured` plus settled
+  vs stretched presentation): unverified estimates always measure unbounded
+  first, stretched samples can never pollute logical extent, and replacing a
+  viewport descriptor transfers validated measurements (plus box/floating
+  extents and compatible reversal tracking) by sliver position, so a header
+  replaced during overscroll keeps its true size and scroll activity survives.
+  Regressions cover hint-less bottoms, wrapped-text actual heights, cross-axis
+  re-wraps with the same delegate settled and during overscroll, toolbar
+  paint/bottom placement/clipping/hit/semantics while stretched and after
+  recovery, replacement during overscroll, and repeated cycles without drift.
+  All five new regressions failed against the previous implementation
+  (fallback gap, hint-mismatched toolbar, estimate clamp). Formatting,
+  workspace compilation, all 1,175 workspace tests, strict
+  all-feature/all-target Clippy, all 81 Material all-feature tests and
+  warning-denied Widgets/Material rustdoc passed. Live native tests were not
+  run. Snapping remains pending; W1 is not marked complete.
 - W1 Material stretch: `SliverAppBar.stretch(true)` maps to the neutral
   overscroll policy for both explicit-height and naturally measured headers.
   Explicit heights reuse `SliverResizingHeader` with Stretch; natural headers

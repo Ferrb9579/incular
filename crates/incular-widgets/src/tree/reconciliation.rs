@@ -470,6 +470,18 @@ impl WidgetTree {
             .clone();
         let new_kind = render_context.build(|context| render_kind(widget, context));
         carry_replaced_transition(&old_kind, &new_kind);
+        // A rebuilt viewport descriptor starts with fresh sliver estimates.
+        // Hand compatible retained measurement to the replacement before it
+        // lays out, so replacing a header during overscroll keeps its true
+        // size instead of flashing an estimate and spuriously moving the
+        // scroll range. Stretched presentation is never inherited.
+        if let (
+            RenderKind::SliverViewport { config: previous },
+            RenderKind::SliverViewport { config: next },
+        ) = (&old_kind, &new_kind)
+        {
+            next.delegate.adopt_compatible_state(&*previous.delegate);
+        }
         #[cfg(feature = "devtools")]
         let mut work_reasons: (Option<String>, Option<String>, Option<String>) = (None, None, None);
         let mut layer_structure_changed = false;

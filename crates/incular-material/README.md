@@ -19,13 +19,17 @@ height is used; without an expanded height both extents are equal. With neither
 height set, the header measures its natural content instead.
 
 Resizing supports all `pinned`/`floating` combinations through neutral Widgets
-geometry. `stretch(true)` maps to the neutral overscroll policy: explicit
-heights stretch the resizing header, while naturally measured headers stretch
-their measurement with the bottom keeping its height and the toolbar filling
-the remainder. Stretching needs bouncing physics and a leading position;
-clamping and non-leading headers keep existing behavior. Conversion to an
-ordinary `Widget` keeps the existing static box presentation; stretching
-applies only to the retained sliver. Snapping remains pending.
+geometry. `stretch(true)` maps to the neutral overscroll policy for both
+explicit and naturally measured headers through one retained Flex structure:
+the bottom is measured first under real cross constraints (including custom
+`LayoutBuilder` bottoms and wrapping text, whose actual height may differ
+from any static hint) and the toolbar fills the remainder when bounded or
+resolves its natural height when unbounded. No bottom size is guessed and
+stretching is never silently disabled. Stretching needs bouncing physics and
+a leading position; clamping and non-leading headers keep existing behavior.
+Conversion to an ordinary `Widget` keeps the existing static box
+presentation; stretching applies only to the retained sliver. Snapping
+remains pending.
 
 The `incular-widgets` crate contains renderer-neutral Flutter `widgets`-layer
 primitives. This crate contains Material-layer controls such as concrete

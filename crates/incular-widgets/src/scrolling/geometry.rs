@@ -1,4 +1,5 @@
 use super::*;
+use std::any::Any;
 
 /// Stable identity for a child materialized by a sliver.
 ///
@@ -131,6 +132,13 @@ pub trait RenderSliver {
     fn is_animating(&self) -> bool {
         false
     }
+
+    /// Downcast hook for compatible-state transfer across descriptor updates.
+    /// Only slivers with retained measurement override this; the default
+    /// keeps every other sliver replaceable without coupling them together.
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        None
+    }
 }
 
 /// Scroll input that invalidates a sliver's retained layout.
@@ -152,6 +160,15 @@ pub(crate) trait SliverViewportDelegate {
     fn child_count(&self) -> Option<usize>;
     fn tick(&self, now: Instant) -> bool;
     fn is_animating(&self) -> bool;
+    /// Downcast hook for compatible-state transfer. Only sequence delegates
+    /// override this; every other delegate keeps the replaceable default.
+    fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
+    /// Inherits compatible retained sliver state (validated measurements,
+    /// reversal tracking) from the delegate this one replaces. The default is
+    /// a no-op so custom delegates keep existing replacement semantics.
+    fn adopt_compatible_state(&self, _previous: &dyn SliverViewportDelegate) {}
 }
 
 pub struct SliverViewportConfig {

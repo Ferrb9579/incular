@@ -213,12 +213,20 @@ permits overscroll, such as bouncing physics; it does not manufacture
 overscroll under clamping physics.
 
 `SliverNaturalHeader` measures its child like a pinned/floating header and
-shares the same typed scroll/overscroll policies. Its logical extent is the
-last unstretched measurement; stretched layouts present `natural + overlap`
-under tight constraints but never store that sample, so repeated
-stretch/recovery cannot drift and later content changes are still learned.
-Reversed viewports represent leading overscroll as a negative physical offset
-in both directions, so stretching applies at the reversed leading edge as well.
+shares the same typed scroll/overscroll policies. Its logical extent has an
+explicit lifecycle: an unverified `Estimate` seeds the first frame, then an
+unbounded learning pass establishes the validated `Measured` extent — even
+for headers created during overscroll, so stretched visuals are never
+mistaken for logical extent. Settled layouts stay unbounded and keep learning
+later content changes (including cross-axis re-wraps with the same retained
+delegate); stretched layouts present `natural + overlap` under tight
+constraints whose samples are presentation-only. Replacing a viewport
+descriptor hands validated measurements (and compatible reversal tracking)
+to the new delegate by sliver position, so a header replaced during
+overscroll keeps its true size and the scroll activity survives; stretched
+presentation is always recomputed live. Reversed viewports represent leading
+overscroll as a negative physical offset in both directions, so stretching
+applies at the reversed leading edge as well.
 
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry
