@@ -92,7 +92,11 @@ validated value but never grants validity — positional correspondence and
 matching types authorize a seed, not proof — so equivalent replacements stay
 range-stable while changed content re-establishes itself; reversal tracking
 moves only across identical scroll behaviors, and stretched presentation is
-never inherited. Material maps `stretch` into this policy through one Flex
+never inherited. A revision-driven descendant rebuild demotes an existing
+header the same way, so signal-style in-place content changes revalidate
+unbounded even mid-overscroll; constraints-driven rebuilds from scrolling,
+presentation, or measurement never invalidate, which keeps the mechanism
+loop-free. Material maps `stretch` into this policy through one Flex
 structure shared by measurement and presentation: the bottom is measured
 under real cross constraints and the toolbar fills the remainder, with no
 size hints, caches, scroll controllers, or animation engines in Material.

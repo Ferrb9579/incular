@@ -1981,6 +1981,7 @@ impl Sliver for SliverNaturalHeader {
             )),
             presentation: Cell::new(HeaderPresentation::Settled),
             last_cross: Cell::new(0.),
+            sample_unbounded: Cell::new(true),
             scroll_state: HeaderScrollState::default(),
         })
     }

@@ -941,6 +941,53 @@ impl WidgetTree {
         with_recursive_tree_stack(|| self.materialize_layout_builder_inner(id, constraints))
     }
 
+    /// Invalidates the retained measurement enclosing a rebuilt builder
+    /// child after its content changed. Walks up past the rebuilt element
+    /// itself to the nearest enclosing sliver viewport and notifies exactly
+    /// the sliver that owns the rebuilt descendant by viewport-scoped child
+    /// identity — sibling slivers are untouched.
+    ///
+    /// Only genuine content rebuilds call this: stateful-builder revision
+    /// changes and descriptor replacements. Constraints-driven
+    /// rematerializations from scrolling, stretch presentation, or
+    /// measurement passes never call it (they carry no content signal), so
+    /// invalidation cannot recurse or loop: demotion is idempotent, learning
+    /// passes perform layout only, and every demotion converges within the
+    /// viewport's bounded re-layout passes.
+    pub(super) fn invalidate_enclosing_sliver_measurement(&mut self, id: ElementId) {
+        let mut child_below = id;
+        let mut current = self.elements.get(id.0).and_then(|element| element.parent);
+        while let Some(ancestor) = current {
+            let (is_viewport, children, sliver_ids, render, parent) =
+                match self.elements.get(ancestor.0) {
+                    Some(element) => (
+                        matches!(element.widget.kind(), WidgetKind::SliverViewport { .. }),
+                        element.children.clone(),
+                        element.sliver_child_ids.clone(),
+                        element.render,
+                        element.parent,
+                    ),
+                    None => return,
+                };
+            if is_viewport {
+                let Some(position) = children.iter().position(|child| *child == child_below) else {
+                    return;
+                };
+                let Some(scoped) = sliver_ids.get(position).copied() else {
+                    return;
+                };
+                if let Some(render) = self.renders.get(render.0)
+                    && let RenderKind::SliverViewport { config } = &render.object.kind
+                {
+                    config.delegate.invalidate_sliver_child(scoped);
+                }
+                return;
+            }
+            child_below = ancestor;
+            current = parent;
+        }
+    }
+
     pub(super) fn materialize_layout_builder_inner(
         &mut self,
         id: RenderObjectId,
@@ -985,6 +1032,15 @@ impl WidgetTree {
             && previous_children.len() == 1
         {
             return Ok(());
+        }
+        if revision_value != previous_revision {
+            // A revision-driven rebuild carries new content (not new
+            // constraints): invalidate the enclosing sliver measurement so it
+            // revalidates unbounded. Constraints-driven rebuilds from
+            // scrolling, stretch presentation, or measurement passes take the
+            // early return above or skip this branch, which is what keeps
+            // invalidation from ever looping.
+            self.invalidate_enclosing_sliver_measurement(element_id);
         }
         let child = build_context.build(|context| {
             let context = BuildContext::new(context);

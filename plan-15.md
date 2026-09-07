@@ -24,6 +24,25 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 same-delegate content invalidation: descendant rebuilds from explicit
+  local-state revisions now invalidate an enclosing natural header's cached
+  measurement (demoting to an estimate seed), so signal-style in-place
+  content changes revalidate unbounded even mid-overscroll instead of staying
+  stale until recovery. Only revision-driven rebuilds invalidate:
+  constraints-driven rematerializations from scrolling, stretch presentation,
+  or measurement passes carry no content signal, which keeps invalidation
+  idempotent, loop-free, and drift-free with descendant identity preserved.
+  Genuine range changes settle through Scroll's existing extent policy.
+  Regressions grow and shrink a stateful bottom beyond the old stretched
+  total during overscroll (neutral and Material, with toolbar/bottom
+  placement, paint, hit testing, semantics, convergence, and subsequent
+  stretch/recovery), plus same-size rebuild preservation locks. The growth
+  cases failed against the previous implementation; the preservation locks
+  guard the new path's precision. Formatting, workspace compilation, all
+  1,182 workspace tests, strict all-feature/all-target Clippy, all 84
+  Material all-feature tests and warning-denied Widgets/Material rustdoc
+  passed. Live native tests were not run. Snapping remains pending; W1 is
+  not marked complete.
 - W1 natural-header validity: measurement validity now depends on its actual
   inputs. Validated extents record their cross extent; a cross change demotes
   back to an estimate for unbounded revalidation, including mid-overscroll,

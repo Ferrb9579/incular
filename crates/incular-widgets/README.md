@@ -224,14 +224,20 @@ content changes (including cross-axis re-wraps with the same retained
 delegate); a cross change demotes back to an estimate for revalidation, and
 any genuine range change then settles through Scroll's extent policy.
 Stretched (tight) samples carry no validity signal and are always ignored.
-Replacing a viewport descriptor seeds the new header from the predecessor's
-validated value — never validity itself, since matching positions and types
-prove nothing about current content — so equivalent replacements stay
-range-stable while changed content re-establishes itself; reversal tracking
-moves only across identical scroll behaviors, and stretched presentation is
-always recomputed live. Reversed viewports represent leading overscroll as a
-negative physical offset in both directions, so stretching applies at the
-reversed leading edge as well.
+A revision-driven descendant rebuild (for example a stateful builder whose
+content mutated in place) demotes back to an estimate instead, so in-place
+content changes revalidate unbounded even mid-overscroll; genuine range
+changes then settle through Scroll's extent policy. Only revision-driven
+rebuilds invalidate — constraints-driven rematerializations from scrolling,
+stretch presentation, or measurement passes carry no content signal, so
+invalidation cannot recurse or loop. Replacing a viewport descriptor seeds
+the new header from the predecessor's validated value — never validity
+itself, since matching positions and types prove nothing about current
+content — so equivalent replacements stay range-stable while changed content
+re-establishes itself; reversal tracking moves only across identical scroll
+behaviors, and stretched presentation is always recomputed live. Reversed
+viewports represent leading overscroll as a negative physical offset in both
+directions, so stretching applies at the reversed leading edge as well.
 
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry

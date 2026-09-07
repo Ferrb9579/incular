@@ -139,6 +139,14 @@ pub trait RenderSliver {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         None
     }
+
+    /// Invalidates retained measurement for one materialized child after its
+    /// subtree rebuilt with new content. Routing mirrors
+    /// [`RenderSliver::set_child_extent`]: sequences descend by scope and
+    /// transparent wrappers forward; measured slivers demote back to an
+    /// unverified estimate for unbounded revalidation. The default is a
+    /// no-op so stateless slivers ignore content rebuilds.
+    fn invalidate_child_measurement(&mut self, _child: SliverChildId) {}
 }
 
 /// Scroll input that invalidates a sliver's retained layout.
@@ -169,6 +177,12 @@ pub(crate) trait SliverViewportDelegate {
     /// reversal tracking) from the delegate this one replaces. The default is
     /// a no-op so custom delegates keep existing replacement semantics.
     fn adopt_compatible_state(&self, _previous: &dyn SliverViewportDelegate) {}
+    /// Invalidates one viewport-scoped child's retained measurement after a
+    /// content rebuild below it. Returns whether a sliver was found to
+    /// notify; the default reports none.
+    fn invalidate_sliver_child(&self, _child: SliverChildId) -> bool {
+        false
+    }
 }
 
 pub struct SliverViewportConfig {

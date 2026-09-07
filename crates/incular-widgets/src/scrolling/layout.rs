@@ -603,10 +603,11 @@ pub(super) enum HeaderPresentation {
 /// Only unbounded child measurements may establish or update the measured
 /// extent. Stretched (tight) samples are presentation-only and can never
 /// accumulate into the logical scroll range: tight totals conflate natural
-/// size with transient overscroll, so they carry no validity signal.
-/// In-place content changes are learned on the next unbounded pass (at
-/// recovery at the latest); the tight Flex presentation still resolves the
-/// live-measured bottom with the toolbar taking the remainder every pass.
+/// size with transient overscroll, so they carry no validity signal. A
+/// revision-driven descendant rebuild demotes back to an estimate instead,
+/// so in-place content changes revalidate unbounded even mid-overscroll;
+/// the tight presentation still resolves the live-measured bottom with the
+/// toolbar taking the remainder every pass.
 pub(super) struct NaturalHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) scroll_behavior: SliverHeaderScrollBehavior,
@@ -614,6 +615,7 @@ pub(super) struct NaturalHeaderRenderSliver {
     pub(super) extent: Cell<NaturalHeaderExtent>,
     pub(super) presentation: Cell<HeaderPresentation>,
     pub(super) last_cross: Cell<f32>,
+    pub(super) sample_unbounded: Cell<bool>,
     pub(super) scroll_state: HeaderScrollState,
 }
 
@@ -957,7 +959,9 @@ impl RenderSliver for NaturalHeaderRenderSliver {
         // overscroll learns its true size; the estimate only seeds one
         // transient presentation frame, which the viewport's bounded
         // re-layout pass then corrects.
-        let child_constraints = if unverified || !stretched_now {
+        let unbounded_sample = unverified || !stretched_now;
+        self.sample_unbounded.set(unbounded_sample);
+        let child_constraints = if unbounded_sample {
             sliver_child_constraints(constraints.axis, constraints.cross_axis_extent, None)
         } else {
             sliver_child_constraints(
@@ -992,19 +996,23 @@ impl RenderSliver for NaturalHeaderRenderSliver {
         }
         let extent = extent.max(0.);
         match self.extent.get() {
-            // Learning passes always use unbounded constraints, so any sample
-            // here is the true natural size by construction. Adopting it can
-            // never mistake stretched visuals for logical extent. The
-            // transition always requests another layout — even when the value
-            // equals the estimate — because presentation constraints must
-            // still switch (unbounded learning to settled or tight stretch).
-            NaturalHeaderExtent::Estimate(_) => {
+            // Unbounded learning samples are the true natural size by
+            // construction. Adopting one can never mistake stretched visuals
+            // for logical extent. The transition always requests another
+            // layout — even when the value equals the estimate — because
+            // presentation constraints must still switch (unbounded learning
+            // to settled or tight stretch). A tight sample against an
+            // estimate only happens when content was invalidated mid-pass
+            // after tight constraints went out; it carries no validity, so
+            // the estimate stands while the follow-up pass revalidates.
+            NaturalHeaderExtent::Estimate(_) if self.sample_unbounded.get() => {
                 self.extent.set(NaturalHeaderExtent::Measured {
                     natural: extent,
                     cross: self.last_cross.get(),
                 });
                 true
             }
+            NaturalHeaderExtent::Estimate(_) => true,
             // Tight samples conflate natural size with transient overscroll
             // and carry no validity signal, so they are ignored: ignoring
             // them keeps overscroll from drifting the range across repeated
@@ -1029,6 +1037,18 @@ impl RenderSliver for NaturalHeaderRenderSliver {
 
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
+    }
+
+    fn invalidate_child_measurement(&mut self, _child: SliverChildId) {
+        // A rebuilt descendant means new content: drop validity back to an
+        // estimate seeded with the last validated value. The next layout
+        // revalidates unbounded (even mid-overscroll), so equivalent content
+        // reconverges without range movement while changed content cannot
+        // retain staleness.
+        if let NaturalHeaderExtent::Measured { natural, .. } = self.extent.get() {
+            self.extent
+                .set(NaturalHeaderExtent::Estimate(natural.max(0.)));
+        }
     }
 }
 
@@ -1153,6 +1173,10 @@ impl RenderSliver for PaddingRenderSliver {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+
+    fn invalidate_child_measurement(&mut self, child: SliverChildId) {
+        self.inner.borrow_mut().invalidate_child_measurement(child);
+    }
 }
 
 pub(super) struct WidgetWrapRenderSliver {
@@ -1267,6 +1291,10 @@ impl RenderSliver for OverlapAbsorberRenderSliver {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+
+    fn invalidate_child_measurement(&mut self, child: SliverChildId) {
+        self.inner.borrow_mut().invalidate_child_measurement(child);
+    }
 }
 
 pub(super) struct OverlapInjectorRenderSliver {
@@ -1291,6 +1319,10 @@ impl RenderSliver for WidgetWrapRenderSliver {
             child.widget = (self.wrap)(child.widget.clone());
         }
         layout
+    }
+
+    fn invalidate_child_measurement(&mut self, child: SliverChildId) {
+        self.inner.borrow_mut().invalidate_child_measurement(child);
     }
 
     fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
@@ -1483,6 +1515,17 @@ impl RenderSliver for SequenceRenderSliver {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+
+    fn invalidate_child_measurement(&mut self, child: SliverChildId) {
+        // Route exactly like set_child_extent so invalidation reaches the
+        // sliver that owns the rebuilt descendant and no other.
+        let index = child.scope();
+        if let Some(sliver) = self.children.get(index) {
+            sliver
+                .borrow_mut()
+                .invalidate_child_measurement(child.local());
+        }
+    }
 }
 
 /// Transfers validated natural-header measurement from a retained sliver into
@@ -1672,6 +1715,17 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
 
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
+    }
+
+    fn invalidate_sliver_child(&self, child: SliverChildId) -> bool {
+        let sequence = self.sequence.borrow();
+        let Some(sliver) = sequence.children.get(child.scope()) else {
+            return false;
+        };
+        sliver
+            .borrow_mut()
+            .invalidate_child_measurement(child.local());
+        true
     }
 
     fn adopt_compatible_state(&self, previous: &dyn SliverViewportDelegate) {
