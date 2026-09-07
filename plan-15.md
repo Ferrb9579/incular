@@ -4,7 +4,8 @@ Status: W1 forms (`6e6af8d`) and length formatting (`638f77e`) committed;
 Material checkbox error presentation committed (`9dbcfee`); ListTile autofocus
 and initial-layout focus resolution committed (`f8edecb`). Card policies are
 committed (`ad72860`). Scaffold keyboard avoidance is committed (`ad7adf9`).
-Body-extension policies are complete and validated.
+Body-extension policies are committed (`9544d54`). SliverAppBar retained
+integration and pinning are complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -18,6 +19,18 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 SliverAppBar / part of R01: the Material descriptor implements the neutral
+  Sliver protocol so it can be passed directly to CustomScrollView. Pinned
+  headers delegate to PinnedHeaderSliver; ordinary headers use SliverToBoxAdapter.
+  Both paths measure app-bar bottom content and resolve the mounted theme.
+  Regression coverage checks forward/reverse scrolling without widget rebuilds,
+  measured extent and theme paint. Conversion to Widget remains box presentation.
+  Floating, snapping, stretching and expanded-to-collapsed motion remain pending.
+- SliverAppBar integration validation (Windows): formatting, workspace compiler
+  checks, all 1,147 workspace tests and strict all-target/all-feature Clippy
+  passed. All 67 Material tests passed with all features, including two new
+  regressions. Material rustdoc passed with warnings denied. Live native desktop
+  tests remained opt-in and were not run.
 - W1 Scaffold extensions / part of R01: the app-bar and bottom regions can
   overlay the body instead of reserving space. Region sizes come from their
   content, including app-bar bottom content and the sheet/bottom-bar combination.

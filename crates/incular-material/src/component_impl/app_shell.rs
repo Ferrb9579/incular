@@ -247,10 +247,10 @@ impl From<AppBar> for Widget {
     }
 }
 
-/// Scroll-aware app bar descriptor. The retained sliver infrastructure owns
-/// scroll offsets; this Material wrapper keeps the Flutter flag vocabulary and
-/// resolves the currently visible toolbar without introducing a second scroll
-/// engine.
+/// Material app bar for a [`incular_widgets::CustomScrollView`]. Pass this
+/// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning.
+/// Conversion to an ordinary [`Widget`] supplies only the box presentation.
+/// Floating, snapping, stretching and expanded-to-collapsed motion are pending.
 #[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
     #[builder(default = AppBar::new(Text::new("")))]
@@ -350,6 +350,50 @@ impl SliverAppBar {
         let app_bar = self.app_bar.clone().toolbar_height(height);
         let _ = (self.pinned, self.floating, self.snap, self.stretch);
         app_bar.build(theme)
+    }
+}
+
+impl incular_widgets::Sliver for SliverAppBar {
+    fn build(&self, controller: &incular_scroll::ScrollController) -> Widget {
+        incular_widgets::Sliver::build_with_config(
+            self,
+            controller,
+            incular_config::Axis::Vertical,
+            false,
+        )
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &incular_scroll::ScrollController,
+        axis: incular_config::Axis,
+        reverse: bool,
+    ) -> Widget {
+        self.retained_header()
+            .build_with_config(controller, axis, reverse)
+    }
+
+    fn create_render_sliver(
+        &self,
+        controller: &incular_scroll::ScrollController,
+        axis: incular_config::Axis,
+        reverse: bool,
+    ) -> Box<dyn incular_widgets::internal::RenderSliver> {
+        self.retained_header()
+            .create_render_sliver(controller, axis, reverse)
+    }
+}
+
+impl SliverAppBar {
+    fn retained_header(&self) -> Box<dyn incular_widgets::Sliver> {
+        // Keep theme lookup in the mounted subtree. The neutral header owns
+        // scroll geometry; Material supplies only its deferred presentation.
+        let child = Widget::from(self.clone());
+        if self.pinned {
+            Box::new(incular_widgets::PinnedHeaderSliver::new(child))
+        } else {
+            Box::new(incular_widgets::SliverToBoxAdapter::new(child))
+        }
     }
 }
 
