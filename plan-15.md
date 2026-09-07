@@ -1,7 +1,8 @@
 # Plan 15 — Whole-codebase quality and architecture completion
 
 Status: W1 forms (`6e6af8d`) and length formatting (`638f77e`) committed;
-Material checkbox error presentation complete and validated.
+Material checkbox error presentation committed (`9dbcfee`); ListTile autofocus
+and initial-layout focus resolution complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -15,13 +16,26 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 ListTile / part of R01: autofocus selects the existing action through
+  neutral FocusScope metadata, with no extra traversal target. Disabled and
+  opted-out tiles do not request focus. Runtime now settles initial focus after
+  the first successful layout if eager mount has not resolved it; explicit
+  input cancels that pending decision. Later frames cannot reclaim focus.
+  Regression coverage exercises Enter activation, Tab traversal, deferred
+  layout, explicit clearing, eager focus and an empty initial frame.
+- ListTile validation (Windows, 2026-09-07): formatting, workspace compiler
+  checks, all 1,134 workspace tests and strict all-target/all-feature Clippy
+  passed. All six focused Material/runtime tests also passed with all features.
+  The activation regression failed both before wiring the option and with only
+  the Material change, establishing the need for the runtime lifecycle fix.
+  Live native desktop tests remained opt-in and were not run.
 - W1 checkbox / part of R01: enabled error indicators use the scoped theme's
   error outline and checked/mixed fill; explicit fill/side overrides win and
   disabled indicators retain their existing defaults. Custom resolvers receive
   the configured disabled state as well as checked/error state. Removed the
   second state assignment that incorrectly cleared checked Material values.
   Painting and semantics regressions cover these paths. Other R01 options remain
-  pending: ListTile autofocus, Card, Scaffold and SliverAppBar.
+  pending: Card, Scaffold and SliverAppBar.
 - Checkbox validation (Windows, 2026-09-07): formatting, workspace compiler
   checks, constrained workspace tests and strict all-target/all-feature Clippy
   passed. All six focused checkbox tests also passed with all features enabled;

@@ -79,7 +79,13 @@ pub struct EditingDiagnostics {
     pub text_commits: u64,
     pub ime_events: u64,
 }
-/// DevTools signal registry. Active only under the `devtools` feature.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InitialFocus {
+    AwaitingLayout,
+    Settled,
+}
+
+/// Retained application execution, input dispatch and frame coordination.
 pub struct Runtime {
     pub(crate) tree: WidgetTree,
     /// Input-dispatch time accumulated since the last frame consumed it.
@@ -99,6 +105,7 @@ pub struct Runtime {
     pub(crate) pointer_inside: bool,
     pub(crate) pointer_position_known: bool,
     pub(crate) focused: Option<ElementId>,
+    initial_focus: InitialFocus,
     pub(crate) captured_text_field: Option<ElementId>,
     pub(crate) captured_selectable_text: Option<ElementId>,
     pub(crate) text_histories: HashMap<ElementId, UndoHistoryController>,
@@ -236,6 +243,7 @@ impl Runtime {
             pointer_inside: false,
             pointer_position_known: false,
             focused: None,
+            initial_focus: InitialFocus::AwaitingLayout,
             captured_text_field: None,
             captured_selectable_text: None,
             text_histories: HashMap::new(),
@@ -1322,6 +1330,9 @@ impl Runtime {
         }
     }
     fn set_focus(&mut self, next: Option<ElementId>) {
+        // Explicit input (including clearing focus) wins over a pending initial
+        // autofocus request, even when it leaves the focused element unchanged.
+        self.initial_focus = InitialFocus::Settled;
         if self.focused == next {
             return;
         }
@@ -1855,6 +1866,12 @@ impl Runtime {
         }
         self.clear_focus_if_unmounted();
         self.prune_handlers();
+        // Layout builders create their retained controls during the first
+        // layout. Resolve initial autofocus once those controls exist, without
+        // reclaiming focus on later frames or after an explicit input decision.
+        if self.initial_focus == InitialFocus::AwaitingLayout {
+            self.set_focus(self.tree.autofocus_element());
+        }
         let _composite_guard = tracing::info_span!("incular.composite").entered();
         let composite_span = profiling::PhaseSpan::start();
         let (composited, animations_active) = self.tree.update_compositor(now)?;

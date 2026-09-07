@@ -10,7 +10,7 @@ use incular_core::Color;
 use incular_semantics::SemanticAction;
 use incular_widgets::internal::{ActionSurface, Expanded};
 use incular_widgets::{
-    BorderRadius, BoxDecoration, Column, ConstrainedBox, Container, GestureDetector,
+    BorderRadius, BoxDecoration, Column, ConstrainedBox, Container, FocusScope, GestureDetector,
     HitTestBehavior, Positioned, Row, Semantics, SizedBox, Stack, Text, Widget,
 };
 use typed_builder::TypedBuilder;
@@ -285,6 +285,7 @@ impl ListTile {
         self
     }
 
+    /// Requests initial keyboard focus for the enabled tile's existing action.
     #[must_use]
     pub fn autofocus(mut self, value: bool) -> Self {
         self.autofocus = value;
@@ -367,6 +368,11 @@ impl ListTile {
             surface = surface.on_click(move || callback());
         }
         let raw: Widget = surface.into();
+        let raw = if self.autofocus && self.enabled {
+            FocusScope::new(raw).autofocus(true).into()
+        } else {
+            raw
+        };
         let raw = if let Some(callback) = self.on_long_press.clone() {
             GestureDetector::new(raw)
                 .behavior(HitTestBehavior::Opaque)
@@ -379,11 +385,6 @@ impl ListTile {
         if has_action {
             semantics = semantics.action(SemanticAction::Activate);
         }
-        let _ = (
-            self.min_leading_width,
-            self.horizontal_title_gap,
-            self.autofocus,
-        );
         let semantic_label = self
             .semantic_label
             .clone()
