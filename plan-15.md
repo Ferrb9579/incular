@@ -20,6 +20,16 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 collapse prerequisites: SliverResizingHeader now normalizes constructor
+  and typed-builder bounds consistently, including non-finite values and a
+  maximum below the minimum. Its explicit ScrollOffset layout dependency keeps
+  shrinking/expanding geometry current inside an already materialized cache
+  window. Regressions cover invalid bounds and retained size changes without
+  widget rebuilds. Material expanded/collapsed composition remains pending.
+  Validation (Windows): formatting, workspace compilation, all 1,155 workspace
+  tests, strict all-feature/all-target Clippy and warning-denied Widgets rustdoc
+  passed. Two new regressions cover the corrected contracts. Live native tests
+  were not run.
 - W1 floating SliverAppBar / part of R01: Material delegates floating headers
   to the neutral SliverFloatingHeader; fixed-height pinning keeps precedence
   when both options are enabled. Neutral headers measure deferred content and

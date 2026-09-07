@@ -663,6 +663,10 @@ impl RenderSliver for ViewportExtentRenderSliver {
 }
 
 impl RenderSliver for ResizingHeaderRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        SliverScrollDependency::ScrollOffset
+    }
+
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
         let current =
             (self.max_extent - constraints.scroll_offset).clamp(self.min_extent, self.max_extent);

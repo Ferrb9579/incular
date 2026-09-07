@@ -1,0 +1,87 @@
+use incular_config::{Axis, Constraints};
+use incular_core::{Color, Size};
+use incular_scroll::{ScrollController, SliverConstraints};
+use incular_widgets::{
+    CustomScrollView, Sliver, SliverResizingHeader, SliverToBoxAdapter, Widget,
+    internal::WidgetTree,
+};
+
+#[test]
+fn constructor_and_builder_normalize_header_bounds_consistently() {
+    for (min, max, expected) in [
+        (40., 100., (40., 100.)),
+        (100., 40., (100., 100.)),
+        (-10., -20., (0., 0.)),
+        (f32::NAN, 100., (0., 100.)),
+        (40., f32::INFINITY, (40., 40.)),
+        (f32::NEG_INFINITY, f32::NAN, (0., 0.)),
+    ] {
+        for header in [
+            SliverResizingHeader::new(min, max, Widget::box_(Size::ZERO, Color::WHITE)),
+            SliverResizingHeader::builder()
+                .min_extent(min)
+                .max_extent(max)
+                .child(Widget::box_(Size::ZERO, Color::WHITE))
+                .build(),
+        ] {
+            assert_eq!((header.min_extent(), header.max_extent()), expected);
+            let mut render =
+                header.create_render_sliver(&ScrollController::new(), Axis::Vertical, false);
+            for offset in [0., 50., 200.] {
+                let layout = render.perform_layout(SliverConstraints::new(
+                    Axis::Vertical,
+                    false,
+                    offset,
+                    0.,
+                    0.,
+                    200.,
+                    200.,
+                    200.,
+                    400.,
+                    0.,
+                ));
+                assert_eq!(layout.geometry.scroll_extent, expected.1);
+                assert_eq!(
+                    layout.children[0].extent,
+                    (expected.1 - offset).clamp(expected.0, expected.1)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn resizing_header_updates_during_layout_inside_the_cache_window() {
+    let controller = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(SliverResizingHeader::new(
+            40.,
+            100.,
+            Widget::box_(Size::new(200., 100.), Color::WHITE),
+        )),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .cache_extent(1000.)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let child = tree.children(root).expect("header")[0];
+    let render = tree.render_id(child).expect("render");
+    let before = tree.diagnostics();
+    for (offset, height) in [(40., 60.), (80., 40.), (20., 80.), (0., 100.)] {
+        assert!(controller.jump_to(offset));
+        tree.layout(constraints).expect("scroll layout");
+        assert_eq!(tree.render_size(render), Some(Size::new(200., height)));
+    }
+    assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
+}

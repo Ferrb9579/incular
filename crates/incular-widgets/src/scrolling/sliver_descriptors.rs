@@ -1763,23 +1763,33 @@ impl Sliver for SliverFloatingHeader {
     }
 }
 
-/// Resizing header sliver.
+/// Pinned header that shrinks from its maximum to minimum extent while scrolling.
+/// Negative and non-finite bounds become zero; the effective maximum is at
+/// least the minimum. Constructor and typed-builder paths use the same policy.
 #[derive(TypedBuilder)]
 pub struct SliverResizingHeader {
-    #[builder(setter(transform = |extent: f32| extent.max(0.0)))]
+    #[builder(setter(transform = |extent: f32| SliverResizingHeader::normalize_extent(extent)))]
     min_extent: f32,
-    #[builder(setter(transform = |extent: f32| extent.max(0.0)))]
+    #[builder(setter(transform = |extent: f32| SliverResizingHeader::normalize_extent(extent)))]
     max_extent: f32,
     #[builder(setter(into))]
     child: Widget,
 }
 
 impl SliverResizingHeader {
+    fn normalize_extent(extent: f32) -> f32 {
+        if extent.is_finite() {
+            extent.max(0.)
+        } else {
+            0.
+        }
+    }
+
     #[must_use]
     pub fn new(min_extent: f32, max_extent: f32, child: impl Into<Widget>) -> Self {
         Self {
-            min_extent,
-            max_extent: max_extent.max(min_extent),
+            min_extent: Self::normalize_extent(min_extent),
+            max_extent: Self::normalize_extent(max_extent),
             child: child.into(),
         }
     }
@@ -1791,7 +1801,7 @@ impl SliverResizingHeader {
 
     #[must_use]
     pub fn max_extent(&self) -> f32 {
-        self.max_extent
+        self.max_extent.max(self.min_extent)
     }
 }
 
@@ -1806,7 +1816,7 @@ impl Sliver for SliverResizingHeader {
         axis: Axis,
         reverse: bool,
     ) -> Widget {
-        SliverPersistentHeader::new(self.max_extent, self.child.clone())
+        SliverPersistentHeader::new(self.max_extent(), self.child.clone())
             .build_with_config(controller, axis, reverse)
     }
 
@@ -1818,8 +1828,8 @@ impl Sliver for SliverResizingHeader {
     ) -> Box<dyn RenderSliver> {
         Box::new(ResizingHeaderRenderSliver {
             child: self.child.clone(),
-            min_extent: self.min_extent,
-            max_extent: self.max_extent,
+            min_extent: self.min_extent(),
+            max_extent: self.max_extent(),
         })
     }
 }
