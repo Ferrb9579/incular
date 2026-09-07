@@ -85,3 +85,86 @@ fn resizing_header_updates_during_layout_inside_the_cache_window() {
     }
     assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
 }
+
+#[test]
+fn resizing_scroll_modes_preserve_minimum_extent_and_reverse_correctly() {
+    use incular_core::Offset;
+    use incular_widgets::SliverHeaderScrollBehavior;
+    use std::time::Instant;
+
+    for behavior in [
+        SliverHeaderScrollBehavior::Scroll,
+        SliverHeaderScrollBehavior::Pinned,
+        SliverHeaderScrollBehavior::Floating,
+        SliverHeaderScrollBehavior::FloatingPinned,
+    ] {
+        let controller = ScrollController::new();
+        let header = SliverResizingHeader::builder()
+            .min_extent(40.)
+            .max_extent(100.)
+            .child(Widget::box_(Size::new(200., 100.), Color::WHITE))
+            .scroll_behavior(behavior)
+            .build();
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(header),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                CustomScrollView::new(slivers)
+                    .controller(controller.clone())
+                    .into(),
+            )
+            .expect("mount");
+        tree.layout(Constraints::tight(Size::new(200., 200.)))
+            .expect("layout");
+        let child = tree.children(root).expect("header")[0];
+        let render = tree.render_id(child).expect("render");
+        let before = tree.diagnostics();
+        for (step, offset) in [40., 400., 390., 360., 340., 0.].into_iter().enumerate() {
+            assert!(controller.jump_to(offset));
+            // Normal runtime layout and standalone compositor entry points
+            // must agree even when the same offset is laid out twice.
+            tree.layout(Constraints::tight(Size::new(200., 200.)))
+                .expect("scroll layout");
+            tree.update_compositor(Instant::now()).expect("compositor");
+            let (height, origin) = match behavior {
+                SliverHeaderScrollBehavior::Scroll => {
+                    ((100. - offset).clamp(40., 100.), -(offset - 60.).max(0.))
+                }
+                SliverHeaderScrollBehavior::Pinned => ((100. - offset).clamp(40., 100.), 0.),
+                SliverHeaderScrollBehavior::Floating => [
+                    (60., 0.),
+                    (40., -40.),
+                    (40., -30.),
+                    (40., 0.),
+                    (60., 0.),
+                    (100., 0.),
+                ][step],
+                SliverHeaderScrollBehavior::FloatingPinned => [
+                    (60., 0.),
+                    (40., 0.),
+                    (50., 0.),
+                    (80., 0.),
+                    (100., 0.),
+                    (100., 0.),
+                ][step],
+            };
+            assert_eq!(
+                tree.render_size(render),
+                Some(Size::new(200., height)),
+                "{behavior:?} at {offset}"
+            );
+            assert_eq!(
+                tree.render_origin(render),
+                Offset::new(0., origin),
+                "{behavior:?} at {offset}"
+            );
+        }
+        assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
+    }
+}

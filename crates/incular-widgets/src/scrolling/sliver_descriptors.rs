@@ -1757,13 +1757,27 @@ impl Sliver for SliverFloatingHeader {
                     .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
                     .max(1.),
             ),
-            last_scroll_offset: None,
-            effective_scroll_offset: 0.,
+            scroll_state: HeaderScrollState::default(),
         })
     }
 }
 
-/// Pinned header that shrinks from its maximum to minimum extent while scrolling.
+/// Scroll behavior of a resizing header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SliverHeaderScrollBehavior {
+    /// Collapse, then scroll the minimum extent out of view.
+    Scroll,
+    /// Keep the collapsed header at the viewport edge.
+    #[default]
+    Pinned,
+    /// Reveal the header immediately when scrolling reverses.
+    Floating,
+    /// Keep the minimum extent visible and expand on scroll reversal.
+    FloatingPinned,
+}
+
+/// Header that shrinks from its maximum to minimum extent while scrolling.
+/// The default scroll behavior pins the collapsed header.
 /// Negative and non-finite bounds become zero; the effective maximum is at
 /// least the minimum. Constructor and typed-builder paths use the same policy.
 #[derive(TypedBuilder)]
@@ -1774,6 +1788,8 @@ pub struct SliverResizingHeader {
     max_extent: f32,
     #[builder(setter(into))]
     child: Widget,
+    #[builder(default)]
+    scroll_behavior: SliverHeaderScrollBehavior,
 }
 
 impl SliverResizingHeader {
@@ -1791,7 +1807,14 @@ impl SliverResizingHeader {
             min_extent: Self::normalize_extent(min_extent),
             max_extent: Self::normalize_extent(max_extent),
             child: child.into(),
+            scroll_behavior: SliverHeaderScrollBehavior::Pinned,
         }
+    }
+
+    #[must_use]
+    pub fn scroll_behavior(mut self, behavior: SliverHeaderScrollBehavior) -> Self {
+        self.scroll_behavior = behavior;
+        self
     }
 
     #[must_use]
@@ -1817,6 +1840,10 @@ impl Sliver for SliverResizingHeader {
         reverse: bool,
     ) -> Widget {
         SliverPersistentHeader::new(self.max_extent(), self.child.clone())
+            .pinned(matches!(
+                self.scroll_behavior,
+                SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned
+            ))
             .build_with_config(controller, axis, reverse)
     }
 
@@ -1830,6 +1857,8 @@ impl Sliver for SliverResizingHeader {
             child: self.child.clone(),
             min_extent: self.min_extent(),
             max_extent: self.max_extent(),
+            scroll_behavior: self.scroll_behavior,
+            scroll_state: HeaderScrollState::default(),
         })
     }
 }

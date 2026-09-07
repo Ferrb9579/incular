@@ -197,6 +197,13 @@ same viewport is used by `ListView`, `GridView`, `PageView`, and
 scrolling reverses, including after scrolling far beyond the header. Returning
 headers paint and receive hits above ordinary content.
 
+`SliverResizingHeader` has explicit minimum/maximum extents. Its
+`scroll_behavior` accepts `SliverHeaderScrollBehavior::{Scroll, Pinned, Floating,
+FloatingPinned}`; the default remains `Pinned`. All modes collapse to the minimum
+extent. `Scroll` then moves it out of view, `Floating` reveals it on reversal,
+and `FloatingPinned` keeps the minimum visible while re-expanding on reversal.
+Pass descriptors to `CustomScrollView` to use retained resizing geometry.
+
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry
 that must refresh on every scroll offset. Wrappers forward that dependency.

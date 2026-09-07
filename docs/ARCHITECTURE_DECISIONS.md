@@ -70,6 +70,12 @@ honestly. Re-exports of one type are allowed; duplicated state engines are not.
 Stage B fixes policy/gates; Stage I verifies old parity claims; Stage J closes
 migrations. No permanent blanket “100% implemented” requirement remains.
 
+Resizing headers expose `SliverHeaderScrollBehavior` in Widgets as an Incular
+extension. Its four modes select one neutral geometry owner. Material maps its
+compatibility properties into this policy instead of maintaining scroll state.
+The pinned default preserves existing resizing-header behavior; the API inventory
+links the retained mode regression as evidence.
+
 Retain `incular-painting` as a pure import shim for this pre-1.0 campaign so
 existing imports continue compiling. All new work uses `incular-rendering`.
 Stage J removes the shim and facade alias after examples and downstream migration

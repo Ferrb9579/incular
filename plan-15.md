@@ -20,6 +20,14 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 resizing scroll modes: SliverResizingHeader exposes a typed Scroll/Pinned/
+  Floating/FloatingPinned policy with the existing pinned default. Fixed and
+  resizing floating headers share bounded scroll state and floating geometry.
+  A retained regression exercises collapse, scrolling out, reversal and repeated
+  layout across all modes without rebuilding children. Material integration is
+  the next slice. Formatting, workspace compilation, all 1,156 workspace tests,
+  strict all-feature/all-target Clippy and warning-denied Widgets rustdoc passed.
+  The public enum is registered under B08 with retained regression evidence.
 - W1 collapse prerequisites: SliverResizingHeader now normalizes constructor
   and typed-builder bounds consistently, including non-finite values and a
   maximum below the minimum. Its explicit ScrollOffset layout dependency keeps

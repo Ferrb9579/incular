@@ -403,18 +403,17 @@ impl HeaderRenderSliver {
 pub(super) struct FloatingHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) extent: Cell<f32>,
-    pub(super) last_scroll_offset: Option<f32>,
-    pub(super) effective_scroll_offset: f32,
+    pub(super) scroll_state: HeaderScrollState,
 }
 
-impl RenderSliver for FloatingHeaderRenderSliver {
-    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
-        SliverScrollDependency::ScrollOffset
-    }
+#[derive(Default)]
+pub(super) struct HeaderScrollState {
+    last_scroll_offset: Option<f32>,
+    effective_scroll_offset: f32,
+}
 
-    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
-        let extent = self.extent.get().max(0.);
-        let scroll_offset = constraints.scroll_offset.max(0.);
+impl HeaderScrollState {
+    fn update(&mut self, scroll_offset: f32, extent: f32) -> f32 {
         if let Some(previous) = self.last_scroll_offset {
             // Hidden distance stops at the header extent. Accumulating the
             // rest of the document would delay revealing it on reversal.
@@ -426,31 +425,52 @@ impl RenderSliver for FloatingHeaderRenderSliver {
             self.effective_scroll_offset = scroll_offset.min(extent);
         }
         self.last_scroll_offset = Some(scroll_offset);
+        self.effective_scroll_offset
+    }
+}
 
-        let effective_remaining_paint_extent =
-            (constraints.remaining_paint_extent - constraints.overlap).max(0.);
-        let paint_extent = (extent - self.effective_scroll_offset)
-            .max(0.)
-            .min(effective_remaining_paint_extent);
-        let layout_extent = (extent - scroll_offset)
-            .clamp(0., effective_remaining_paint_extent)
-            .min(paint_extent);
-        let geometry = SliverGeometry {
-            scroll_extent: extent,
-            paint_extent,
-            layout_extent,
-            max_paint_extent: extent,
-            hit_test_extent: paint_extent,
-            paint_origin: constraints.overlap.min(0.),
-            cache_extent: if layout_extent > 0. {
-                (-constraints.cache_origin + layout_extent).max(0.)
-            } else {
-                0.
-            },
-            visible: paint_extent > 0.,
-            has_visual_overflow: true,
-            scroll_offset_correction: None,
-        };
+fn floating_geometry(
+    constraints: SliverConstraints,
+    extent: f32,
+    effective_offset: f32,
+) -> SliverGeometry {
+    let scroll_offset = constraints.scroll_offset;
+    let effective_remaining_paint_extent =
+        (constraints.remaining_paint_extent - constraints.overlap).max(0.);
+    let paint_extent = (extent - effective_offset)
+        .max(0.)
+        .min(effective_remaining_paint_extent);
+    let layout_extent = (extent - scroll_offset)
+        .clamp(0., effective_remaining_paint_extent)
+        .min(paint_extent);
+    SliverGeometry {
+        scroll_extent: extent,
+        paint_extent,
+        layout_extent,
+        max_paint_extent: extent,
+        hit_test_extent: paint_extent,
+        paint_origin: constraints.overlap.min(0.),
+        cache_extent: if layout_extent > 0. {
+            (-constraints.cache_origin + layout_extent).max(0.)
+        } else {
+            0.
+        },
+        visible: paint_extent > 0.,
+        has_visual_overflow: true,
+        scroll_offset_correction: None,
+    }
+}
+
+impl RenderSliver for FloatingHeaderRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        SliverScrollDependency::ScrollOffset
+    }
+
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let extent = self.extent.get().max(0.);
+        let scroll_offset = constraints.scroll_offset;
+        let effective_offset = self.scroll_state.update(scroll_offset, extent);
+        let geometry = floating_geometry(constraints, extent, effective_offset);
         SliverLayout {
             geometry,
             // The sequence converts this back through the viewport transform.
@@ -460,7 +480,7 @@ impl RenderSliver for FloatingHeaderRenderSliver {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
                 semantic_index: None,
-                offset: scroll_offset - self.effective_scroll_offset,
+                offset: scroll_offset - effective_offset,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
                     constraints.axis,
@@ -470,7 +490,7 @@ impl RenderSliver for FloatingHeaderRenderSliver {
                 extent,
                 placement: SliverChildPlacement::Floating,
             }],
-            absorbed_overlap: (paint_extent - layout_extent).max(0.),
+            absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
         }
     }
 
@@ -523,6 +543,8 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) min_extent: f32,
     pub(super) max_extent: f32,
+    pub(super) scroll_behavior: SliverHeaderScrollBehavior,
+    pub(super) scroll_state: HeaderScrollState,
 }
 
 pub(super) struct FillRemainingRenderSliver {
@@ -668,16 +690,42 @@ impl RenderSliver for ResizingHeaderRenderSliver {
     }
 
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
-        let current =
-            (self.max_extent - constraints.scroll_offset).clamp(self.min_extent, self.max_extent);
-        let geometry = pinned_geometry(constraints, self.max_extent, current);
+        let range = self.max_extent - self.min_extent;
+        let scroll_offset = constraints.scroll_offset;
+        let effective_offset = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Floating => {
+                self.scroll_state.update(scroll_offset, self.max_extent)
+            }
+            SliverHeaderScrollBehavior::FloatingPinned => {
+                self.scroll_state.update(scroll_offset, range)
+            }
+            _ => scroll_offset,
+        };
+        let current = (self.max_extent - effective_offset).clamp(self.min_extent, self.max_extent);
+        let (geometry, offset, placement) = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
+                pinned_geometry(constraints, self.max_extent, current),
+                0.,
+                SliverChildPlacement::Pinned,
+            ),
+            SliverHeaderScrollBehavior::Scroll => (
+                SliverGeometry::from_scroll_extent(constraints, self.max_extent),
+                scroll_offset.min(range),
+                SliverChildPlacement::Flow,
+            ),
+            SliverHeaderScrollBehavior::Floating => (
+                floating_geometry(constraints, self.max_extent, effective_offset),
+                scroll_offset - effective_offset + effective_offset.min(range),
+                SliverChildPlacement::Floating,
+            ),
+        };
         SliverLayout {
             geometry,
             children: vec![SliverChildLayout {
                 id: SliverChildId(0),
                 widget: self.child.clone(),
                 semantic_index: None,
-                offset: 0.,
+                offset,
                 cross_offset: 0.,
                 constraints: sliver_child_constraints(
                     constraints.axis,
@@ -685,7 +733,7 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                     Some(current),
                 ),
                 extent: current,
-                placement: SliverChildPlacement::Pinned,
+                placement,
             }],
             absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
         }
