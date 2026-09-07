@@ -303,6 +303,11 @@ impl WidgetTree {
                         element.layout_builder_revision = 0;
                     }
                     self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+                    // The drain is the content-change source: a build
+                    // dependency changed value, so a rebuilt descendant may
+                    // measure differently. Invalidate the enclosing sliver
+                    // now; scrolling and measurement never enter this drain.
+                    self.invalidate_enclosing_sliver_measurement(id);
                 }
                 InheritedDependencyKind::Render => {
                     let (widget, context) = {
@@ -320,6 +325,11 @@ impl WidgetTree {
                             DirtyFlags::LAYOUT | DirtyFlags::PAINT,
                             true,
                         );
+                        // Layout-affecting render updates (a re-wrapped text
+                        // run, for example) change intrinsic size without
+                        // rebuilding any widget. Paint-only updates take no
+                        // invalidation branch here by construction.
+                        self.invalidate_enclosing_sliver_measurement(id);
                     } else if invalidation.contains(Invalidation::PAINT) {
                         self.mark_render_dirty(render, DirtyFlags::PAINT, false);
                     }

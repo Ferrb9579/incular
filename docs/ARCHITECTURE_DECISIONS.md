@@ -96,7 +96,10 @@ never inherited. A revision-driven descendant rebuild demotes an existing
 header the same way, so signal-style in-place content changes revalidate
 unbounded even mid-overscroll; constraints-driven rebuilds from scrolling,
 presentation, or measurement never invalidate, which keeps the mechanism
-loop-free. Material maps `stretch` into this policy through one Flex
+loop-free. The inherited-invalidation drain extends this to inherited build
+dependencies and layout-affecting render updates at their source, while
+paint-only updates structurally take no invalidation branch. Material maps
+`stretch` into this policy through one Flex
 structure shared by measurement and presentation: the bottom is measured
 under real cross constraints and the toolbar fills the remainder, with no
 size hints, caches, scroll controllers, or animation engines in Material.

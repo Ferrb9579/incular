@@ -6,6 +6,15 @@ use incular_widgets::{
     Widget, internal::WidgetTree,
 };
 
+/// Inherited custom value driving test bottom heights. Height is the
+/// measured dimension; tint exercises paint-only updates that must not
+/// disturb measurement.
+#[derive(Clone)]
+struct HeaderMode {
+    height: f32,
+    tint: Color,
+}
+
 #[test]
 fn constructor_and_builder_normalize_header_bounds_consistently() {
     for (min, max, expected) in [
@@ -830,4 +839,309 @@ fn natural_header_stretch_recovers_and_ignores_stretched_measurements() {
         assert_eq!(tree.render_size(header), Some(Size::new(200., 80.)));
         assert_eq!(controller.content_extent(), 880.);
     }
+}
+
+#[test]
+fn inherited_dependency_change_during_overscroll_revalidates() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        LayoutBuilder, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+    };
+    use std::time::Instant;
+
+    // An ordinary LayoutBuilder bottom reads an inherited value at
+    // materialization time. Updating the scope above the viewport
+    // re-materializes it in place with the same delegate retained; the
+    // invalidation drain demotes the header so it revalidates unbounded
+    // instead of stretching stale content.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let viewport = || {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverNaturalHeader::new(Widget::from(LayoutBuilder::new(|context, _| {
+                    let (height, tint) = context
+                        .depend_on::<HeaderMode>()
+                        .map_or((60., Color::WHITE), |mode| (mode.height, mode.tint));
+                    Widget::box_(Size::new(200., height), tint)
+                })))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let mode = |height: f32, tint: Color| HeaderMode { height, tint };
+    // Hold one viewport widget object: every scope update below reuses this
+    // identical value, so the viewport element bails out and the delegate
+    // (with all retained sliver state) is genuinely preserved.
+    let viewport: Widget = viewport();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::environment_scope(
+            mode(60., Color::WHITE),
+            viewport.clone(),
+        ))
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let viewport_id = tree.children(root).expect("scope child")[0];
+    let header = tree
+        .render_id(tree.children(viewport_id).expect("children")[0])
+        .expect("header");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    // Grow during overscroll at unchanged width. The genuine range change
+    // settles through Scroll's documented extent policy with the
+    // authoritative new measurement presented.
+    tree.update(
+        root,
+        Widget::environment_scope(mode(100., Color::WHITE), viewport.clone()),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("grown layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 900.);
+    // The retained header, delegate, and render identity survived.
+    assert_eq!(
+        tree.render_id(tree.children(viewport_id).expect("children")[0]),
+        Some(header)
+    );
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 100. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("settled layout");
+    // Shrink during overscroll follows the same path in reverse.
+    controller.apply_physics(physics, -40.);
+    assert!(-controller.offset() > 0.);
+    tree.update(
+        root,
+        Widget::environment_scope(mode(50., Color::WHITE), viewport.clone()),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("shrunk layout");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 50.)));
+    assert_eq!(controller.content_extent(), 850.);
+    // A paint-only inherited change (tint without height) disturbs nothing:
+    // overscroll is preserved and sizes stay put.
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.update(
+        root,
+        Widget::environment_scope(mode(50., Color::rgba(1, 2, 3, 255)), viewport.clone()),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("tint layout");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 50. + stretch))
+    );
+    assert_eq!(controller.content_extent(), 850.);
+    // Repeated layouts converge with no drift and no measurement loops.
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 50. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 50.)));
+}
+
+#[test]
+fn scope_update_with_fresh_descriptors_composes_drain_and_transfer() {
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        LayoutBuilder, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+    };
+    use std::time::Instant;
+
+    // Updating the scope with rebuilt (not identical) viewport descriptors
+    // exercises drain demotion and transfer seeding in one update: the drain
+    // demotes the old delegate first, then transfer seeds the replacement
+    // from that demoted value rather than a blind hint, so equivalent
+    // content stays range-stable with overscroll preserved.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let viewport = || {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverNaturalHeader::new(Widget::from(LayoutBuilder::new(|context, _| {
+                    let height = context
+                        .depend_on::<HeaderMode>()
+                        .map_or(60., |mode| mode.height);
+                    Widget::box_(Size::new(200., height), Color::WHITE)
+                })))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::environment_scope(
+            HeaderMode {
+                height: 60.,
+                tint: Color::WHITE,
+            },
+            viewport(),
+        ))
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    // Same height, fresh descriptors: tint-only change, full reconstruction.
+    tree.update(
+        root,
+        Widget::environment_scope(
+            HeaderMode {
+                height: 60.,
+                tint: Color::rgba(4, 5, 6, 255),
+            },
+            viewport(),
+        ),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("tint layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    let viewport_id = tree.children(root).expect("scope child")[0];
+    let header = tree
+        .render_id(tree.children(viewport_id).expect("children")[0])
+        .expect("header");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 60. + stretch))
+    );
+    assert_eq!(controller.content_extent(), 860.);
+}
+
+#[test]
+fn inherited_change_inside_padding_wrapper_routes_invalidation() {
+    use incular_config::EdgeInsets;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        LayoutBuilder, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior, SliverPadding,
+    };
+    use std::time::Instant;
+
+    // Invalidation routes through transparent wrappers by sliver position,
+    // so padded headers revalidate exactly like bare ones. Cross-axis-only
+    // padding keeps the wrapped header leading (zero preceding extent), so
+    // stretch flows through the wrapper while the cross extent narrows.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let viewport = || {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(SliverPadding::new(
+                EdgeInsets::symmetric(10., 0.),
+                SliverNaturalHeader::new(Widget::from(LayoutBuilder::new(|context, _| {
+                    let height = context
+                        .depend_on::<HeaderMode>()
+                        .map_or(60., |mode| mode.height);
+                    Widget::box_(Size::new(200., height), Color::WHITE)
+                })))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+            )),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let viewport: Widget = viewport();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::environment_scope(
+            HeaderMode {
+                height: 60.,
+                tint: Color::WHITE,
+            },
+            viewport.clone(),
+        ))
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let viewport_id = tree.children(root).expect("scope child")[0];
+    let header = tree
+        .render_id(tree.children(viewport_id).expect("children")[0])
+        .expect("header");
+    // 60 measured; cross-axis padding narrows the child to 180 wide.
+    assert_eq!(tree.render_size(header), Some(Size::new(180., 60.)));
+    assert_eq!(controller.content_extent(), 860.);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(180., 60. + stretch))
+    );
+    tree.update(
+        root,
+        Widget::environment_scope(
+            HeaderMode {
+                height: 90.,
+                tint: Color::WHITE,
+            },
+            viewport.clone(),
+        ),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("grown layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(180., 90.)));
+    assert_eq!(controller.content_extent(), 890.);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("repeat overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(180., 90. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(180., 90.)));
 }

@@ -227,10 +227,13 @@ Stretched (tight) samples carry no validity signal and are always ignored.
 A revision-driven descendant rebuild (for example a stateful builder whose
 content mutated in place) demotes back to an estimate instead, so in-place
 content changes revalidate unbounded even mid-overscroll; genuine range
-changes then settle through Scroll's extent policy. Only revision-driven
-rebuilds invalidate — constraints-driven rematerializations from scrolling,
-stretch presentation, or measurement passes carry no content signal, so
-invalidation cannot recurse or loop. Replacing a viewport descriptor seeds
+changes then settle through Scroll's extent policy. The same drain covers
+inherited build dependencies and layout-affecting inherited render updates
+at their source, while paint-only updates take no invalidation branch by
+construction. Only genuine content-change sources invalidate —
+constraints-driven rematerializations from scrolling, stretch presentation,
+or measurement passes carry no content signal, so invalidation cannot
+recurse or loop. Replacing a viewport descriptor seeds
 the new header from the predecessor's validated value — never validity
 itself, since matching positions and types prove nothing about current
 content — so equivalent replacements stay range-stable while changed content

@@ -24,6 +24,23 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 inherited and controller-driven invalidation: the invalidation drain now
+  covers inherited build dependencies and layout-affecting inherited render
+  updates at their source, so ordinary LayoutBuilders and reflowed text pick
+  up inherited value changes with the delegate retained; paint-only updates
+  structurally take no invalidation branch. Invalidation routes through
+  transparent wrappers by sliver position. Regressions use an ordinary
+  theme-reading LayoutBuilder bottom (growth, shrinkage, paint-only
+  preservation, convergence, recovery), a font-size reflow with a color-only
+  negative, wrapper routing, a drain-plus-transfer composition lock, and
+  controller-driven multiline editor growth documenting the actual supported
+  behavior (settled learning, single-line stability, overscroll coherence
+  with authoritative recovery). The inherited, wrapper, and render-arm cases
+  failed against the previous implementation. Formatting, workspace
+  compilation, all 1,188 workspace tests, strict all-feature/all-target
+  Clippy, all 87 Material all-feature tests and warning-denied
+  Widgets/Material rustdoc passed. Live native tests were not run. Snapping
+  remains pending; W1 is not marked complete.
 - W1 same-delegate content invalidation: descendant rebuilds from explicit
   local-state revisions now invalidate an enclosing natural header's cached
   measurement (demoting to an estimate seed), so signal-style in-place

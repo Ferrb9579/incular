@@ -1183,3 +1183,491 @@ fn stateful_rebuild_without_size_change_preserves_overscroll() {
     tree.layout(constraints).expect("settled layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
 }
+
+#[test]
+fn inherited_theme_change_during_overscroll_revalidates() {
+    use incular_controls::{ControlTheme, ControlThemeScope, current_control_theme};
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::{LayoutBuilder, Semantics};
+
+    let background = Color::rgba(21, 32, 43, 255);
+    let marker = |label: &str| -> Widget {
+        Semantics::new(Widget::box_(Size::new(12., 15.), Color::WHITE))
+            .role(incular_semantics::Role::Group)
+            .label(label)
+            .into()
+    };
+    // An ordinary LayoutBuilder bottom reads the inherited theme at
+    // materialization time. Updating the scope above the viewport rebuilds it
+    // in place with the same delegate retained; the invalidation drain demotes
+    // the header so it revalidates unbounded instead of stretching stale
+    // content. Same width throughout.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    // The custom bottom derives its height from a dedicated numeric theme
+    // token, so size-affecting token changes re-measure while unrelated
+    // token tweaks leave sizes alone.
+    let bottom: Widget = Semantics::new(Widget::from(LayoutBuilder::new(|context, _| {
+        let height = current_control_theme(context)
+            .tooltip
+            .padding
+            .clamp(10., 60.);
+        Widget::box_(Size::new(12., height), Color::WHITE)
+    })))
+    .role(incular_semantics::Role::Group)
+    .label("Bottom")
+    .into();
+    let viewport: Widget = {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverAppBar::from_app_bar(
+                    AppBar::new(marker("Title"))
+                        .toolbar_height(40.)
+                        .bottom(bottom)
+                        .background_color(background),
+                )
+                .pinned(true)
+                .stretch(true),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let themed = |padding: f32| {
+        let mut theme = ControlTheme::light();
+        theme.tooltip.padding = padding;
+        theme
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(ControlThemeScope::new(themed(20.), viewport.clone()).into())
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let scope_child = tree.children(root).expect("scope child")[0];
+    let header = tree
+        .render_id(tree.children(scope_child).expect("header")[0])
+        .expect("render");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+    tree.update_semantics();
+    let identities = |tree: &WidgetTree| {
+        tree.semantics()
+            .iter()
+            .filter_map(|(id, node)| {
+                node.label
+                    .as_ref()
+                    .filter(|label| ["Title", "Bottom"].contains(&label.as_str()))
+                    .map(|label| (label.clone(), id))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = identities(&tree);
+    assert_eq!(before.len(), 2);
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    // Raise the token during overscroll: the bottom grows 20 -> 45 with the
+    // delegate retained. The genuine range change settles through Scroll's
+    // documented extent policy with the authoritative measurement presented.
+    tree.update(
+        root,
+        ControlThemeScope::new(themed(45.), viewport.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("grown layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 85.)));
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 885.);
+    assert_eq!(
+        tree.render_id(tree.children(scope_child).expect("header")[0]),
+        Some(header)
+    );
+    tree.update_semantics();
+    assert_eq!(identities(&tree), before);
+    let grown = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("grown bottom");
+    assert_eq!(grown.size.height, 45.);
+    assert_eq!(grown.origin.y, 85. - 45.);
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    let height = 85. + stretch;
+    assert_eq!(tree.render_size(header), Some(Size::new(200., height)));
+    let display = tree.paint();
+    assert!(
+        display.commands().iter().any(|command| matches!(command,
+            PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+            if *color == background && rrect.rect.size.height == height - 45.
+        )),
+        "toolbar must fill remaining height above theme-grown bottom"
+    );
+    assert!(
+        tree.hit_test(Offset::new(100., height - 1.)).is_some(),
+        "stretched header must stay hit-testable"
+    );
+    tree.update_semantics();
+    assert_eq!(identities(&tree), before);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("settled layout");
+    // Lowering the token shrinks through the same path.
+    controller.apply_physics(physics, -30.);
+    assert!(-controller.offset() > 0.);
+    tree.update(
+        root,
+        ControlThemeScope::new(themed(20.), viewport.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("shrunk layout");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+    assert_eq!(controller.content_extent(), 860.);
+    tree.update_semantics();
+    assert_eq!(identities(&tree), before);
+    // A theme tweak to an unrelated token changes no sizes and disturbs
+    // nothing: overscroll is preserved and repeated layouts converge.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    let mut tweaked = themed(20.);
+    tweaked.colors.surface = Color::rgba(9, 9, 9, 255);
+    tree.update(
+        root,
+        ControlThemeScope::new(tweaked, viewport.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("tweaked layout");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 60. + stretch))
+    );
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 60. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+}
+
+#[test]
+fn text_style_change_reflows_bottom_through_render_updates() {
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_text::TextStyle;
+    use incular_widgets::{DefaultTextStyle, Semantics};
+
+    let background = Color::rgba(31, 42, 53, 255);
+    let long = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua";
+    let bottom = || -> Widget {
+        Semantics::new(Text::new(long))
+            .role(incular_semantics::Role::Group)
+            .label("Bottom")
+            .into()
+    };
+    // A font-size change reflows wrapping text: the render-kind inherited
+    // update reports layout (not paint), so the header demotes and
+    // revalidates instead of stretching stale content. Same width, same
+    // delegate throughout.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let styled = |size: f32, color: Color| TextStyle {
+        size,
+        color,
+        ..TextStyle::default()
+    };
+    let viewport: Widget = {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverAppBar::from_app_bar(
+                    AppBar::new(Text::new("Header"))
+                        .toolbar_height(40.)
+                        .bottom(bottom())
+                        .background_color(background),
+                )
+                .pinned(true)
+                .stretch(true),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let ink = Color::rgba(200, 200, 200, 255);
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(DefaultTextStyle::new(styled(16., ink), viewport.clone()).into())
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let scope_child = tree.children(root).expect("scope child")[0];
+    let header = tree
+        .render_id(tree.children(scope_child).expect("header")[0])
+        .expect("render");
+    tree.update_semantics();
+    let bottom_height = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
+        })
+        .expect("bottom");
+    assert!(bottom_height > 40., "bottom must wrap, got {bottom_height}");
+    let natural = 40. + bottom_height;
+    assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.update(
+        root,
+        DefaultTextStyle::new(styled(24., ink), viewport.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("grown layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    tree.update_semantics();
+    let grown_bottom = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("grown bottom");
+    assert!(
+        grown_bottom.size.height > bottom_height,
+        "larger font must lengthen wrapped bottom"
+    );
+    let grown_natural = 40. + grown_bottom.size.height;
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., grown_natural))
+    );
+    assert_eq!(controller.content_extent(), 800. + grown_natural);
+    assert_eq!(
+        grown_bottom.origin.y,
+        grown_natural - grown_bottom.size.height
+    );
+    // Fresh overscroll stretches the reflowed measurement with correct
+    // toolbar paint, hit testing, and semantic bounds.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    let height = grown_natural + stretch;
+    assert_eq!(tree.render_size(header), Some(Size::new(200., height)));
+    let display = tree.paint();
+    assert!(
+        display.commands().iter().any(|command| matches!(command,
+            PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+            if *color == background && rrect.rect.size.height == height - grown_bottom.size.height
+        )),
+        "toolbar must fill remaining height above reflowed bottom"
+    );
+    // The grown header is taller than the viewport, so probe a point that
+    // is inside both the stretched header and the visible window.
+    assert!(
+        tree.hit_test(Offset::new(100., 150.)).is_some(),
+        "stretched header must stay hit-testable"
+    );
+    tree.update_semantics();
+    let stretched = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("stretched bottom");
+    assert_eq!(stretched.size.height, grown_bottom.size.height);
+    assert_eq!(stretched.origin.y, height - grown_bottom.size.height);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("settled layout");
+    // A color-only style change reports paint without layout: overscroll is
+    // preserved and nothing revalidates.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.update(
+        root,
+        DefaultTextStyle::new(styled(24., Color::rgba(1, 2, 3, 255)), viewport.clone()).into(),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("recolored layout");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., grown_natural + stretch))
+    );
+    assert_eq!(controller.content_extent(), 800. + grown_natural);
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(controller.offset(), -stretch);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., grown_natural))
+    );
+}
+
+#[test]
+fn controller_driven_text_growth_uses_supported_behavior() {
+    use incular_widgets::{EditableText, Semantics, TextEditingController};
+
+    // An existing controller-driven widget (multiline editor) mutates
+    // intrinsic height with no descriptor rebuild and no new delegate: settled
+    // layouts learn through the ordinary measurement pass. Single-line edits
+    // that change no intrinsic height disturb nothing — not every text edit
+    // is a size change. Growth during overscroll keeps the live-measured
+    // bottom correct with the toolbar taking the remainder; the authoritative
+    // total lands at recovery with no drift.
+    let background = Color::rgba(41, 52, 63, 255);
+    let edit = TextEditingController::with_text("Hi");
+    let bottom = || -> Widget {
+        Semantics::new(Widget::from(
+            EditableText::new(edit.clone()).multiline(true),
+        ))
+        .role(incular_semantics::Role::Group)
+        .label("Bottom")
+        .into()
+    };
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverAppBar::from_app_bar(
+                AppBar::new(Text::new("Header"))
+                    .toolbar_height(40.)
+                    .bottom(bottom())
+                    .background_color(background),
+            )
+            .pinned(true)
+            .stretch(true),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("header")[0])
+        .expect("render");
+    tree.update_semantics();
+    let bottom_height = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
+        })
+        .expect("bottom");
+    let natural = 40. + bottom_height;
+    assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
+    // A single-line edit changes no intrinsic height: nothing invalidates.
+    edit.set_text("Hi!");
+    tree.layout(constraints).expect("edited layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
+    assert_eq!(controller.content_extent(), 800. + natural);
+    // Multiline growth while settled learns through the ordinary pass.
+    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
+    tree.layout(constraints).expect("grown layout");
+    tree.update_semantics();
+    let grown_bottom = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
+        })
+        .expect("grown bottom");
+    assert!(
+        grown_bottom > bottom_height,
+        "long text must lengthen the editor"
+    );
+    let grown_natural = 40. + grown_bottom;
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., grown_natural))
+    );
+    assert_eq!(controller.content_extent(), 800. + grown_natural);
+    // Growth during overscroll: the live-measured bottom stays correct with
+    // the toolbar taking the remainder; the authoritative total lands at
+    // recovery with no drift.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua extra words to wrap further down the viewport");
+    tree.layout(constraints).expect("overscroll growth layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    tree.update_semantics();
+    let live_bottom = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("live bottom");
+    assert!(
+        live_bottom.size.height > grown_bottom,
+        "editor must keep growing under tight presentation"
+    );
+    assert!(
+        tree.hit_test(Offset::new(100., 150.)).is_some(),
+        "growing header must stay hit-testable"
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    tree.update_semantics();
+    let recovered_bottom = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| {
+            (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
+        })
+        .expect("recovered bottom");
+    assert_eq!(recovered_bottom, live_bottom.size.height);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 40. + recovered_bottom))
+    );
+    assert_eq!(controller.content_extent(), 800. + 40. + recovered_bottom);
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    tree.layout(constraints).expect("final overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 40. + recovered_bottom + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("final settled layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 40. + recovered_bottom))
+    );
+}

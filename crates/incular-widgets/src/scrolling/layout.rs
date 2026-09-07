@@ -624,22 +624,30 @@ impl NaturalHeaderRenderSliver {
     /// updates (applied pairwise by sliver position). Returns whether any
     /// state was adopted.
     ///
-    /// - A predecessor's validated measurement is adopted only as an
-    ///   unverified estimate seed, never as validity — even for identical
-    ///   positions and types. The seed revalidates unbounded, so equivalent
-    ///   replacements stay range-stable while changed content cannot retain
-    ///   a stale measurement.
+    /// - A predecessor's latest number is adopted only as an unverified
+    ///   estimate seed, never as validity — even for identical positions and
+    ///   types. The seed revalidates unbounded, so equivalent replacements
+    ///   stay range-stable while changed content cannot retain a stale
+    ///   measurement. Seeding from the predecessor (rather than a blind
+    ///   hint) also survives a drain demotion that ran moments earlier on
+    ///   the old delegate during the same update.
     /// - Reversal tracking transfers only when `scroll_behavior` is identical,
     ///   since it defines the effective-offset range semantics.
     /// - Stretched presentation is never inherited; it recomputes from live
     ///   overlap on the next layout.
-    /// - A predecessor that never validated contributes nothing; the fresh
-    ///   hint-based seed stands.
     pub(super) fn adopt_compatible_state(&mut self, previous: &Self) -> bool {
         let mut adopted = false;
-        if let NaturalHeaderExtent::Measured { natural, .. } = previous.extent.get() {
-            self.extent
-                .set(NaturalHeaderExtent::Estimate(natural.max(0.)));
+        let seed = match previous.extent.get() {
+            NaturalHeaderExtent::Estimate(estimate) => estimate,
+            NaturalHeaderExtent::Measured { natural, .. } => natural,
+        }
+        .max(0.);
+        // A never-measured predecessor carries no information beyond the
+        // fresh hint seed unless invalidation demoted it — but a demoted
+        // seed is exactly as good, so adopt uniformly and revalidate.
+        if !matches!(self.extent.get(), NaturalHeaderExtent::Estimate(current) if (current - seed).abs() <= f32::EPSILON)
+        {
+            self.extent.set(NaturalHeaderExtent::Estimate(seed));
             adopted = true;
         }
         if self.scroll_behavior == previous.scroll_behavior {
