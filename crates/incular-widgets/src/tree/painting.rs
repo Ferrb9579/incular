@@ -674,7 +674,9 @@ impl WidgetTree {
             {
                 None
             }
-            Some(WidgetKind::Banner { .. }) => None,
+            // Positioned supplies parent layout data; it has no independent
+            // hit surface when its child (for example IgnorePointer) declines.
+            Some(WidgetKind::Banner { .. } | WidgetKind::Positioned { .. }) => None,
             _ => Some(id),
         }
     }

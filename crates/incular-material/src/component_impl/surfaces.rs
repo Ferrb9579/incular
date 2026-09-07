@@ -2,10 +2,13 @@ use std::rc::Rc;
 
 use super::common::finite_non_negative;
 use crate::foundation::Material;
-use incular_config::{Alignment, Clip, EdgeInsets};
+use incular_config::{Alignment, Clip, EdgeInsets, StackFit};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
-use incular_widgets::{Border, BorderRadius, Container, SizedBox, Widget};
+use incular_widgets::{
+    Border, BorderRadius, BoxDecoration, Container, IgnorePointer, Padding, Positioned, Semantics,
+    SizedBox, Stack, Widget,
+};
 use typed_builder::TypedBuilder;
 
 /// Alias used by callers that want a generic surface vocabulary rather than
@@ -217,12 +220,14 @@ impl Card {
         self
     }
 
+    /// Paints the border after the content when true, before it when false.
     #[must_use]
     pub fn border_on_foreground(mut self, value: bool) -> Self {
         self.border_on_foreground = value;
         self
     }
 
+    /// Exposes a semantic group around the card while preserving child actions.
     #[must_use]
     pub fn semantic_container(mut self, value: bool) -> Self {
         self.semantic_container = value;
@@ -231,32 +236,52 @@ impl Card {
 
     #[must_use]
     pub fn build(&self, theme: &ControlTheme) -> Widget {
-        let mut material =
-            Material::new(self.child.clone())
-                .color(self.color.unwrap_or(theme.colors.surface))
-                .elevation(self.elevation)
-                .shadow_color(self.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 100)))
-                .border_radius(self.shape.unwrap_or_else(|| {
-                    BorderRadius::circular(self.radius.unwrap_or(theme.radius.md))
-                }))
-                .clip_behavior(self.clip_behavior);
+        let radius = self
+            .shape
+            .unwrap_or_else(|| BorderRadius::circular(self.radius.unwrap_or(theme.radius.md)));
+        let mut content: Widget =
+            Padding::new(self.padding.unwrap_or_default(), self.child.clone()).into();
+        if let Some(border) = self.border {
+            let decoration: Widget = Container::new()
+                .decoration(BoxDecoration::new().border(border).border_radius(radius))
+                .into();
+            let outline: Widget =
+                Positioned::fill(IgnorePointer::new(decoration.exclude_semantics())).into();
+            // These keys belong to the card's private visual slots, not the
+            // application's child. Changing paint order must preserve its state.
+            let outline = outline.with_key(0_u64);
+            content = content.with_key(1_u64);
+            let layers = if self.border_on_foreground {
+                [content, outline]
+            } else {
+                [outline, content]
+            };
+            content = Stack::new(layers)
+                .fit(StackFit::Passthrough)
+                .clip_behavior(Clip::None)
+                .into();
+        }
+        let mut material = Material::new(content)
+            .color(self.color.unwrap_or(theme.colors.surface))
+            .elevation(self.elevation)
+            .shadow_color(self.shadow_color.unwrap_or(Color::rgba(0, 0, 0, 100)))
+            .border_radius(radius)
+            .clip_behavior(self.clip_behavior);
         if let Some(tint) = self.surface_tint_color {
             material = material.surface_tint_color(tint);
         }
-        if let Some(padding) = self.padding {
-            material = material.padding(padding);
-        }
+        let material: Widget = material.into();
+        let material = if self.semantic_container {
+            Semantics::new(material)
+                .role(incular_semantics::Role::Group)
+                .into()
+        } else {
+            material
+        };
         let mut surface = Container::with_child(material);
         if let Some(margin) = self.margin {
             surface = surface.margin(margin);
         }
-        if let Some(border) = self.border {
-            surface = surface.border(border);
-        }
-        // `border_on_foreground` and `semantic_container` are retained as
-        // explicit Flutter-shaped policy knobs. The retained Material surface
-        // already clips/paints the border in the same layer for both modes.
-        let _ = (self.border_on_foreground, self.semantic_container);
         surface.into()
     }
 }
