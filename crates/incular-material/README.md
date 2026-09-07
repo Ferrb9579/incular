@@ -10,6 +10,18 @@
 
 Material-style components for Incular.
 
+Pass `SliverAppBar` as a `Sliver` to `CustomScrollView` for retained scrolling.
+Explicit `expanded_height`/`collapsed_height` values describe the total header,
+including bottom content. The bottom is measured first and the toolbar fills
+the remaining height. Negative/non-finite heights become zero and the expanded
+extent is at least the collapsed extent. Without a collapsed height the toolbar
+height is used; without an expanded height both extents are equal. With neither
+height set, the header measures its natural content instead.
+
+Resizing supports all `pinned`/`floating` combinations through neutral Widgets
+geometry. Conversion to an ordinary `Widget` keeps the existing static box
+presentation. Snapping and stretching remain pending.
+
 The `incular-widgets` crate contains renderer-neutral Flutter `widgets`-layer
 primitives. This crate contains Material-layer controls such as concrete
 button variants, `TextField`, `TextFormField`, selection controls,

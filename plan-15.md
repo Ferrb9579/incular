@@ -6,7 +6,9 @@ and initial-layout focus resolution committed (`f8edecb`). Card policies are
 committed (`ad72860`). Scaffold keyboard avoidance is committed (`ad7adf9`).
 Body-extension policies are committed (`9544d54`). SliverAppBar retained
 integration and pinning are committed (`835bdcd`), as is title preservation
-(`8a51032`). Floating integration is complete and validated.
+(`8a51032`). Floating integration is committed (`7bc9cf8`); resizing bounds
+and scroll invalidation are committed (`a4095c9`), followed by typed resizing
+modes (`83c88b1`). Material expanded/collapsed composition is complete and validated.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -20,6 +22,19 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 Material collapse: explicit total-header heights select neutral resizing
+  with all pinned/floating combinations. Bottom content keeps its measured height;
+  the toolbar fills the remainder and retains its slots across scroll changes.
+  A local clip bounds presentation to the current header extent. Constructor
+  and typed-builder height inputs normalize non-finite/negative values alike.
+  Headers with no explicit heights retain natural measurement; ordinary Widget
+  conversion remains static. Three regressions cover geometry, defaults/bounds,
+  slot identity, bottom position and toolbar paint. Formatting, workspace
+  compilation, all 1,159 workspace tests, strict all-feature/all-target Clippy,
+  all 72 Material all-feature tests and warning-denied Material rustdoc passed.
+  The initial expanded-height regression failed before the integration.
+  Live native tests were not run.
+  Snapping and stretching remain pending.
 - W1 resizing scroll modes: SliverResizingHeader exposes a typed Scroll/Pinned/
   Floating/FloatingPinned policy with the existing pinned default. Fixed and
   resizing floating headers share bounded scroll state and floating geometry.

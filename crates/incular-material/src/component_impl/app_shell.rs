@@ -252,7 +252,11 @@ impl From<AppBar> for Widget {
 /// floating. A pinned fixed-height toolbar remains visible even when floating
 /// is also enabled.
 /// Conversion to an ordinary [`Widget`] supplies only the box presentation.
-/// Snapping, stretching and expanded-to-collapsed motion are pending.
+/// Explicit expanded/collapsed heights select retained resizing and describe
+/// the entire header, including its bottom slot. The collapsed default is the
+/// configured toolbar height; the expanded default is the collapsed height.
+/// Without explicit heights, the header measures its natural content.
+/// Snapping and stretching are pending.
 #[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
     #[builder(default = AppBar::new(Text::new("")))]
@@ -265,9 +269,9 @@ pub struct SliverAppBar {
     snap: bool,
     #[builder(default)]
     stretch: bool,
-    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     expanded_height: Option<f32>,
-    #[builder(default, setter(transform = |value: f32| Some(value.max(0.0))))]
+    #[builder(default, setter(transform = |value: f32| Some(finite_non_negative(value))))]
     collapsed_height: Option<f32>,
 }
 
@@ -331,13 +335,13 @@ impl SliverAppBar {
 
     #[must_use]
     pub fn expanded_height(mut self, value: f32) -> Self {
-        self.expanded_height = Some(value.max(0.0));
+        self.expanded_height = Some(finite_non_negative(value));
         self
     }
 
     #[must_use]
     pub fn collapsed_height(mut self, value: f32) -> Self {
-        self.collapsed_height = Some(value.max(0.0));
+        self.collapsed_height = Some(finite_non_negative(value));
         self
     }
 
@@ -388,6 +392,22 @@ impl SliverAppBar {
     fn retained_header(&self) -> Box<dyn incular_widgets::Sliver> {
         // Keep theme lookup in the mounted subtree. The neutral header owns
         // scroll geometry; Material supplies only its deferred presentation.
+        if self.expanded_height.is_some() || self.collapsed_height.is_some() {
+            use incular_widgets::{SliverHeaderScrollBehavior, SliverResizingHeader};
+
+            let min = self.collapsed_height.unwrap_or(self.app_bar.toolbar_height);
+            let max = self.expanded_height.unwrap_or(min).max(min);
+            let behavior = match (self.pinned, self.floating) {
+                (false, false) => SliverHeaderScrollBehavior::Scroll,
+                (true, false) => SliverHeaderScrollBehavior::Pinned,
+                (false, true) => SliverHeaderScrollBehavior::Floating,
+                (true, true) => SliverHeaderScrollBehavior::FloatingPinned,
+            };
+            return Box::new(
+                SliverResizingHeader::new(min, max, self.resizing_child())
+                    .scroll_behavior(behavior),
+            );
+        }
         let child = Widget::from(self.clone());
         if self.pinned {
             Box::new(incular_widgets::PinnedHeaderSliver::new(child))
@@ -396,6 +416,30 @@ impl SliverAppBar {
         } else {
             Box::new(incular_widgets::SliverToBoxAdapter::new(child))
         }
+    }
+
+    fn resizing_child(&self) -> Widget {
+        let mut app_bar = self.app_bar.clone();
+        let bottom = app_bar.bottom.take();
+        // Flex measures the bottom first. Resolve toolbar presentation against
+        // the remaining tight height, retaining the same slot structure.
+        let toolbar = Widget::from(incular_widgets::LayoutBuilder::new(
+            move |context, constraints| {
+                app_bar
+                    .clone()
+                    .toolbar_height(constraints.max_height())
+                    .build(&current_control_theme(context))
+            },
+        ));
+        let child = if let Some(bottom) = bottom {
+            Column::new([Expanded::new(toolbar).into(), bottom])
+                .main_axis_size(MainAxisSize::Max)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .into()
+        } else {
+            toolbar
+        };
+        incular_widgets::ClipRect::new(child).into()
     }
 }
 
