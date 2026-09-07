@@ -293,9 +293,7 @@ impl SliverAppBar {
 
     #[must_use]
     pub fn title(mut self, title: impl Into<Widget>) -> Self {
-        self.app_bar = AppBar::new(title)
-            .toolbar_height(self.app_bar.toolbar_height)
-            .elevation(self.app_bar.elevation);
+        self.app_bar.title = title.into();
         self
     }
 

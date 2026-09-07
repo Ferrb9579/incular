@@ -8,6 +8,50 @@ use incular_widgets::{
 use std::time::Instant;
 
 #[test]
+fn replacing_title_preserves_configured_app_bar_slots_and_background() {
+    use incular_rendering::{Brush, PaintCommand};
+
+    let colors = [
+        Color::rgba(1, 2, 3, 255),
+        Color::rgba(4, 5, 6, 255),
+        Color::rgba(7, 8, 9, 255),
+        Color::rgba(10, 11, 12, 255),
+        Color::rgba(13, 14, 15, 255),
+    ];
+    let old_title = Color::rgba(16, 17, 18, 255);
+    let marker = |color| Widget::box_(Size::new(12., 12.), color);
+    let header = SliverAppBar::from_app_bar(
+        AppBar::new(marker(old_title))
+            .leading(marker(colors[0]))
+            .actions([marker(colors[1])])
+            .bottom(marker(colors[2]))
+            .background_color(colors[3])
+            .toolbar_height(40.),
+    )
+    .title(marker(colors[4]));
+    let mut tree = WidgetTree::new();
+    tree.mount(header.into()).expect("mount");
+    tree.layout(Constraints::tight(Size::new(200., 52.)))
+        .expect("layout");
+    let commands = tree.paint();
+    let painted = |expected| {
+        commands.commands().iter().any(|command| {
+            matches!(command,
+                PaintCommand::Rect { color, .. }
+                | PaintCommand::RRect { brush: Brush::Solid(color), .. } if *color == expected
+            )
+        })
+    };
+    for color in colors {
+        assert!(
+            painted(color),
+            "configured slot or background was lost: {color:?}"
+        );
+    }
+    assert!(!painted(old_title));
+}
+
+#[test]
 fn material_header_pinning_reaches_the_retained_viewport() {
     for (pinned, reverse) in [(true, false), (false, false), (true, true), (false, true)] {
         let controller = ScrollController::new();

@@ -19,6 +19,12 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 SliverAppBar title updates: replace only the title slot on the configured
+  AppBar instead of reconstructing it. Leading/actions/bottom slots and visual
+  policy survive a title change. A paint regression verifies the preserved
+  slots/background and replacement of the old title. Formatting, workspace
+  compiler checks, all 1,148 workspace tests and strict all-feature/all-target
+  Clippy passed; all three SliverAppBar regressions passed with all features.
 - W1 SliverAppBar / part of R01: the Material descriptor implements the neutral
   Sliver protocol so it can be passed directly to CustomScrollView. Pinned
   headers delegate to PinnedHeaderSliver; ordinary headers use SliverToBoxAdapter.
