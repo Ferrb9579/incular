@@ -3,7 +3,8 @@
 Status: W1 forms (`6e6af8d`) and length formatting (`638f77e`) committed;
 Material checkbox error presentation committed (`9dbcfee`); ListTile autofocus
 and initial-layout focus resolution committed (`f8edecb`). Card policies are
-complete and validated.
+committed (`ad72860`). Scaffold keyboard avoidance is complete and validated.
+Body-extension policies remain pending.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -17,6 +18,19 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 Scaffold insets / part of R01: enabled avoidance excludes the bottom view
+  inset from the scaffold's usable layout area through neutral Padding. Body,
+  bottom bars and floating controls reflow together; the property opts out of
+  that behavior. Insets remain physical environment data, so a nested scaffold
+  can opt out when its parent owns avoidance. The stable wrapper preserves
+  retained identity as the keyboard opens/closes. Body-extension policies and
+  SliverAppBar remain pending.
+- Scaffold inset validation (Windows): formatting, workspace compiler checks,
+  all 1,142 workspace tests and strict all-target/all-feature Clippy passed.
+  Three focused all-feature tests cover slot geometry, keyboard open/close,
+  opt-out, retained identity, oversized insets and nested avoidance ownership.
+  The interrupted workspace test run was rerun to completion. Live native
+  desktop tests remained opt-in and were not run.
 - W1 Card / part of R01: the outline paints above the Material background and
   before or after content as requested, uses the surface radius, and stays
   outside layout sizing. Private keyed slots preserve the child when order

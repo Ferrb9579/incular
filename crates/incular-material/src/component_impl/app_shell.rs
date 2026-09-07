@@ -8,8 +8,8 @@ use incular_core::Color;
 use incular_text::TextStyle;
 use incular_widgets::internal::Expanded;
 use incular_widgets::{
-    BorderRadius, Column, Container, DefaultTextStyle, IconTheme, Positioned, Row, SizedBox, Stack,
-    Text, Widget,
+    BorderRadius, Column, Container, DefaultTextStyle, IconTheme, Padding, Positioned, Row,
+    SizedBox, Stack, Text, Widget,
 };
 use typed_builder::TypedBuilder;
 
@@ -458,6 +458,9 @@ impl Scaffold {
         self
     }
 
+    /// Excludes the bottom view inset from this scaffold's usable layout area.
+    /// All slots, including floating controls and bottom bars, reflow above it.
+    /// Disable this on a nested scaffold when its parent already avoids the inset.
     #[must_use]
     pub fn resize_to_avoid_bottom_inset(mut self, value: bool) -> Self {
         self.resize_to_avoid_bottom_inset = value;
@@ -546,12 +549,17 @@ impl Scaffold {
                     .into(),
             );
         }
-        let _ = (
-            self.resize_to_avoid_bottom_inset,
-            self.extend_body,
-            self.extend_body_behind_app_bar,
-        );
-        Stack::aligned(Alignment::TOP_LEFT, stack_children).into()
+        let _ = (self.extend_body, self.extend_body_behind_app_bar);
+        let bottom_inset = if self.resize_to_avoid_bottom_inset {
+            context.view_insets().bottom
+        } else {
+            0.0
+        };
+        Padding::new(
+            EdgeInsets::only(0.0, 0.0, 0.0, bottom_inset),
+            Stack::aligned(Alignment::TOP_LEFT, stack_children),
+        )
+        .into()
     }
 }
 
