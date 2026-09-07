@@ -548,6 +548,24 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
 }
 
+/// Retained naturally measured header with optional leading stretch.
+///
+/// Measurement lifecycle: `natural` holds the last unstretched child
+/// measurement. Layouts with a positive stretch present `natural + stretch`
+/// under tight child constraints but record `stretched = true` so the
+/// following `set_child_extent` call is ignored. Only unstretched layouts use
+/// unbounded child constraints and may update `natural`. This keeps stretched
+/// presentation from accumulating into the logical scroll extent while still
+/// learning later content changes once overscroll ends.
+pub(super) struct NaturalHeaderRenderSliver {
+    pub(super) child: Widget,
+    pub(super) scroll_behavior: SliverHeaderScrollBehavior,
+    pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
+    pub(super) natural: Cell<f32>,
+    pub(super) stretched: Cell<bool>,
+    pub(super) scroll_state: HeaderScrollState,
+}
+
 pub(super) struct FillRemainingRenderSliver {
     pub(super) child: Widget,
     pub(super) has_scroll_body: bool,
@@ -764,6 +782,116 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                 (geometry.paint_extent - geometry.layout_extent).max(0.)
             },
         }
+    }
+}
+
+impl RenderSliver for NaturalHeaderRenderSliver {
+    fn scroll_layout_dependency(&self) -> SliverScrollDependency {
+        SliverScrollDependency::ScrollOffset
+    }
+
+    fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let natural = self.natural.get().max(0.);
+        let scroll_offset = constraints.scroll_offset;
+        let effective_offset = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Floating => {
+                self.scroll_state.update(scroll_offset, natural)
+            }
+            SliverHeaderScrollBehavior::FloatingPinned => {
+                // A fixed natural header has no collapse range; keep the
+                // collapsed-equivalent extent pinned while still tracking the
+                // reversal state for a consistent lifecycle.
+                self.scroll_state.update(scroll_offset, 0.)
+            }
+            _ => scroll_offset,
+        };
+        let stretch = match self.overscroll_behavior {
+            SliverHeaderOverscrollBehavior::Stretch
+                if scroll_offset == 0. && constraints.preceding_scroll_extent == 0. =>
+            {
+                -constraints.overlap.min(0.)
+            }
+            _ => 0.,
+        };
+        self.stretched.set(stretch > 0.);
+        let current = (natural + stretch).min(f32::MAX);
+        let (mut geometry, offset, mut placement) = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
+                pinned_geometry(constraints, natural, current),
+                0.,
+                SliverChildPlacement::Pinned,
+            ),
+            SliverHeaderScrollBehavior::Scroll => (
+                SliverGeometry::from_scroll_extent(constraints, natural),
+                0.,
+                SliverChildPlacement::Flow,
+            ),
+            SliverHeaderScrollBehavior::Floating => (
+                floating_geometry(constraints, natural, effective_offset),
+                scroll_offset - effective_offset,
+                SliverChildPlacement::Floating,
+            ),
+        };
+        if stretch > 0. {
+            let available = (constraints.remaining_paint_extent + stretch).min(f32::MAX);
+            geometry.paint_extent = current.min(available);
+            geometry.hit_test_extent = geometry.paint_extent;
+            geometry.max_paint_extent = current;
+            geometry.paint_origin = -stretch;
+            geometry.visible = geometry.paint_extent > 0.;
+            // This placement cancels the viewport's overscroll translation.
+            // Automatic pinning would move it back down and leave a gap.
+            placement = SliverChildPlacement::Floating;
+        }
+        // Stretched presentation uses tight constraints so a Material toolbar
+        // can fill the extra extent. Unstretched layouts stay unbounded on the
+        // main axis so later content changes are measured instead of being
+        // clamped to a previously cached extent.
+        let child_constraints = if stretch > 0. {
+            sliver_child_constraints(
+                constraints.axis,
+                constraints.cross_axis_extent,
+                Some(current),
+            )
+        } else {
+            sliver_child_constraints(constraints.axis, constraints.cross_axis_extent, None)
+        };
+        SliverLayout {
+            geometry,
+            children: vec![SliverChildLayout {
+                id: SliverChildId(0),
+                widget: self.child.clone(),
+                semantic_index: None,
+                offset,
+                cross_offset: 0.,
+                constraints: child_constraints,
+                extent: current,
+                placement,
+            }],
+            absorbed_overlap: if stretch > 0. {
+                0.
+            } else {
+                (geometry.paint_extent - geometry.layout_extent).max(0.)
+            },
+        }
+    }
+
+    fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
+        // Stretched measurements describe transient presentation, not the
+        // logical header. Ignoring them keeps overscroll from drifting the
+        // natural extent across repeated stretch/recovery cycles.
+        if self.stretched.get() {
+            return false;
+        }
+        if child.0 != 0 || !extent.is_finite() || extent < 0. {
+            return false;
+        }
+        let extent = extent.max(0.);
+        if (self.natural.get() - extent).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.natural.set(extent);
+        true
     }
 }
 
@@ -1321,7 +1449,11 @@ pub(super) fn sliver_child_constraints(axis: Axis, cross: f32, extent: Option<f3
 /// independent of the eventual viewport; widgets whose size depends on
 /// ambient constraints return `None` and are measured by the retained child
 /// pass instead.
-pub(super) fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
+///
+/// Sibling implementation crates use this through the hidden `internal`
+/// bridge to size Material stretch presentation from a measured bottom
+/// without caching scroll geometry in Material.
+pub fn widget_main_extent_hint(widget: &Widget, axis: Axis) -> Option<f32> {
     fn finite(value: f32) -> Option<f32> {
         value.is_finite().then_some(value.max(0.))
     }

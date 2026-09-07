@@ -5,11 +5,13 @@ use super::super::*;
 /// Converts the controller's logical offset into the physical content offset
 /// used by a viewport transform.  A reversed viewport keeps the controller's
 /// public range in the same `0..max` coordinate system, while its leading edge
-/// is the content's physical trailing edge.
+/// is the content's physical trailing edge. Leading overscroll stays negative
+/// in both directions so viewports can represent it as leading overlap; the
+/// sliver sequence clamps the per-sliver scroll offset itself.
 #[inline]
 pub(in crate::tree) fn physical_scroll_offset(controller: &ScrollController, reverse: bool) -> f32 {
     if reverse {
-        (controller.max_offset() - controller.offset()).max(0.)
+        controller.max_offset() - controller.offset()
     } else {
         controller.offset()
     }

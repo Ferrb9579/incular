@@ -219,10 +219,11 @@ pub use scrolling::{
     SliverCrossAxisGroup, SliverFillRemaining, SliverFillViewport, SliverFixedExtentList,
     SliverFloatingHeader, SliverGrid, SliverGridDelegate, SliverHeaderOverscrollBehavior,
     SliverHeaderScrollBehavior, SliverIgnorePointer, SliverLayout, SliverLayoutBuilder, SliverList,
-    SliverMainAxisGroup, SliverOffstage, SliverOpacity, SliverOverlapAbsorber, SliverOverlapHandle,
-    SliverOverlapInjector, SliverPadding, SliverPersistentHeader, SliverPrototypeExtentList,
-    SliverReorderController, SliverReorderableList, SliverResizingHeader, SliverSafeArea,
-    SliverToBoxAdapter, SliverVariedExtentList, SliverVisibility, Viewport,
+    SliverMainAxisGroup, SliverNaturalHeader, SliverOffstage, SliverOpacity, SliverOverlapAbsorber,
+    SliverOverlapHandle, SliverOverlapInjector, SliverPadding, SliverPersistentHeader,
+    SliverPrototypeExtentList, SliverReorderController, SliverReorderableList,
+    SliverResizingHeader, SliverSafeArea, SliverToBoxAdapter, SliverVariedExtentList,
+    SliverVisibility, Viewport,
 };
 pub use selection::{
     SelectableChildPolicy, SelectedContent, SelectedContentRange, SelectionAreaController,

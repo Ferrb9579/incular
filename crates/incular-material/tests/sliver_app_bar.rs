@@ -1,7 +1,7 @@
 use incular_config::Constraints;
 use incular_core::{Color, Offset, Size};
 use incular_material::{AppBar, SliverAppBar};
-use incular_scroll::ScrollController;
+use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_widgets::{
     CustomScrollView, Sliver, SliverToBoxAdapter, Text, Widget, internal::WidgetTree,
 };
@@ -190,4 +190,332 @@ fn header_measures_bottom_content_and_resolves_the_mounted_theme() {
         direct.render_size(direct.render_id(child).expect("render")),
         Some(Size::new(200., 55.))
     );
+}
+
+#[test]
+fn natural_stretch_expands_toolbar_and_tracks_later_content_changes() {
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::Semantics;
+
+    let background = Color::rgba(11, 22, 33, 255);
+    let marker = |label: &str, height: f32| -> Widget {
+        Semantics::new(Widget::box_(Size::new(12., height), Color::WHITE))
+            .role(incular_semantics::Role::Group)
+            .label(label)
+            .into()
+    };
+    for (pinned, floating) in [(true, false), (false, false), (false, true), (true, true)] {
+        let controller = ScrollController::new();
+        let physics = ScrollPhysics::default().bouncing();
+        let view = |bottom_height: f32| {
+            let slivers: Vec<Box<dyn Sliver>> = vec![
+                Box::new(
+                    SliverAppBar::from_app_bar(
+                        AppBar::new(marker("Title", 15.))
+                            .toolbar_height(40.)
+                            .bottom(marker("Bottom", bottom_height))
+                            .background_color(background),
+                    )
+                    .pinned(pinned)
+                    .floating(floating)
+                    .stretch(true),
+                ),
+                Box::new(SliverToBoxAdapter::new(Widget::box_(
+                    Size::new(200., 800.),
+                    Color::BLACK,
+                ))),
+            ];
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into()
+        };
+        let mut tree = WidgetTree::new();
+        let root = tree.mount(view(15.)).expect("mount");
+        let constraints = Constraints::tight(Size::new(200., 200.));
+        tree.layout(constraints).expect("layout");
+        let header = tree
+            .render_id(tree.children(root).expect("header")[0])
+            .expect("render");
+        assert_eq!(tree.render_size(header), Some(Size::new(200., 55.)));
+        tree.update_semantics();
+        let identities = |tree: &WidgetTree| {
+            tree.semantics()
+                .iter()
+                .filter_map(|(id, node)| {
+                    node.label
+                        .as_ref()
+                        .filter(|label| ["Title", "Bottom"].contains(&label.as_str()))
+                        .map(|label| (label.clone(), id))
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = identities(&tree);
+        assert_eq!(before.len(), 2);
+        // Repeated overscroll/recovery without extent drift.
+        for _ in 0..3 {
+            controller.apply_physics(physics, -40.);
+            let stretch = -controller.offset();
+            assert!(stretch > 0., "{pinned}/{floating}");
+            tree.layout(constraints).expect("overscroll layout");
+            tree.update_compositor(Instant::now()).expect("compositor");
+            let height = 55. + stretch;
+            assert_eq!(
+                tree.render_size(header),
+                Some(Size::new(200., height)),
+                "{pinned}/{floating}"
+            );
+            assert_eq!(tree.render_origin(header), Offset::ZERO);
+            let body = tree
+                .render_id(tree.children(root).expect("body")[1])
+                .expect("body");
+            assert_eq!(tree.render_origin(body), Offset::new(0., height));
+            assert_eq!(controller.content_extent(), 855.);
+            let display = tree.paint();
+            assert!(
+                display.commands().iter().any(|command| matches!(command,
+                    PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+                    if *color == background && rrect.rect.size.height == height - 15.
+                )),
+                "toolbar must fill remaining height at {pinned}/{floating}"
+            );
+            assert!(
+                tree.hit_test(Offset::new(100., height - 1.)).is_some(),
+                "stretched natural header must stay hit-testable"
+            );
+            tree.update_semantics();
+            assert_eq!(identities(&tree), before);
+            let bottom = tree
+                .semantics()
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label.as_deref() == Some("Bottom")).then_some(node.bounds)
+                })
+                .expect("bottom");
+            assert_eq!(bottom.origin.y, height - 15.);
+            assert_eq!(bottom.size.height, 15.);
+            assert!(controller.jump_to(0.));
+            tree.layout(constraints).expect("settled layout");
+            assert_eq!(tree.render_size(header), Some(Size::new(200., 55.)));
+            assert_eq!(controller.content_extent(), 855.);
+        }
+        // Later natural content changes are learned instead of sticking to the
+        // first measurement; stretched samples never become the new natural.
+        tree.update(root, view(25.)).expect("update");
+        tree.layout(constraints).expect("changed layout");
+        assert_eq!(tree.render_size(header), Some(Size::new(200., 65.)));
+        tree.update_semantics();
+        let changed_bottom = tree
+            .semantics()
+            .iter()
+            .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+            .expect("changed bottom");
+        assert_eq!(changed_bottom.origin.y, 65. - 25.);
+        assert_eq!(changed_bottom.size.height, 25.);
+        controller.apply_physics(physics, -30.);
+        let stretch = -controller.offset();
+        assert!(stretch > 0.);
+        tree.layout(constraints).expect("stretched changed layout");
+        tree.update_compositor(Instant::now()).expect("compositor");
+        assert_eq!(
+            tree.render_size(header),
+            Some(Size::new(200., 65. + stretch))
+        );
+        assert!(controller.jump_to(0.));
+        tree.layout(constraints).expect("recovered changed layout");
+        assert_eq!(tree.render_size(header), Some(Size::new(200., 65.)));
+        assert_eq!(controller.content_extent(), 865.);
+        tree.update_semantics();
+        assert_eq!(identities(&tree).len(), 2);
+    }
+}
+
+#[test]
+fn natural_stretch_honors_disabled_clamping_and_theme() {
+    use incular_controls::{ControlTheme, ControlThemeScope};
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::SizedBox;
+
+    // stretch(false) keeps the measured header fixed under overscroll.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverAppBar::from_app_bar(
+                AppBar::new(Text::new("Header"))
+                    .toolbar_height(40.)
+                    .bottom(SizedBox::new().height(15.)),
+            )
+            .pinned(true),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree
+        .render_id(tree.children(root).expect("header")[0])
+        .expect("render");
+    controller.apply_physics(physics, -40.);
+    tree.layout(constraints).expect("overscroll layout");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+
+    // Clamping physics does not manufacture overscroll for stretch headers.
+    let clamped = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverAppBar::from_app_bar(
+                AppBar::new(Text::new("Header"))
+                    .toolbar_height(40.)
+                    .bottom(SizedBox::new().height(15.)),
+            )
+            .pinned(true)
+            .stretch(true),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut clamped_tree = WidgetTree::new();
+    let clamped_root = clamped_tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(clamped.clone())
+                .physics(ScrollPhysics::default())
+                .into(),
+        )
+        .expect("mount");
+    clamped_tree.layout(constraints).expect("layout");
+    clamped.apply_physics(ScrollPhysics::default(), -40.);
+    assert_eq!(clamped.offset(), 0.);
+    clamped_tree.layout(constraints).expect("clamped layout");
+    let clamped_render = clamped_tree
+        .render_id(clamped_tree.children(clamped_root).expect("header")[0])
+        .expect("render");
+    assert_eq!(
+        clamped_tree.render_size(clamped_render),
+        Some(Size::new(200., 55.))
+    );
+
+    // Stretching keeps mounted theme resolution: the toolbar still paints the
+    // scoped surface while stretched.
+    let surface = Color::rgba(23, 45, 67, 255);
+    let mut theme = ControlTheme::light();
+    theme.colors.surface = surface;
+    let themed_controller = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverAppBar::from_app_bar(
+                AppBar::new(Text::new("Header"))
+                    .toolbar_height(40.)
+                    .bottom(SizedBox::new().height(15.)),
+            )
+            .pinned(true)
+            .stretch(true),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut themed = WidgetTree::new();
+    themed
+        .mount(
+            ControlThemeScope::new(
+                theme,
+                CustomScrollView::new(slivers)
+                    .controller(themed_controller.clone())
+                    .physics(physics),
+            )
+            .into(),
+        )
+        .expect("mount");
+    themed.layout(constraints).expect("layout");
+    themed_controller.apply_physics(physics, -30.);
+    themed.layout(constraints).expect("stretched layout");
+    assert!(
+        themed
+            .paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command,
+                PaintCommand::RRect { brush: Brush::Solid(color), .. } if *color == surface
+            ))
+    );
+    assert!(themed_controller.jump_to(0.));
+    themed.layout(constraints).expect("settled layout");
+}
+
+#[test]
+fn natural_stretch_supports_reversed_viewports() {
+    use incular_widgets::SizedBox;
+
+    for (pinned, floating) in [(false, false), (true, false), (false, true), (true, true)] {
+        let controller = ScrollController::new();
+        let physics = ScrollPhysics::default().bouncing();
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverAppBar::from_app_bar(
+                    AppBar::new(Text::new("Header"))
+                        .toolbar_height(40.)
+                        .bottom(SizedBox::new().height(15.)),
+                )
+                .pinned(pinned)
+                .floating(floating)
+                .stretch(true),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                CustomScrollView::new(slivers)
+                    .controller(controller.clone())
+                    .physics(physics)
+                    .reverse(true)
+                    .into(),
+            )
+            .expect("mount");
+        let constraints = Constraints::tight(Size::new(200., 200.));
+        tree.layout(constraints).expect("layout");
+        let render = tree
+            .render_id(tree.children(root).expect("header")[0])
+            .expect("render");
+        assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+        let max = controller.max_offset();
+        // A reversed viewport may already sit at the leading edge after the
+        // initial anchor correction; reaching it is what matters, not whether
+        // the offset changed.
+        controller.jump_to(max);
+        tree.layout(constraints).expect("end layout");
+        controller.apply_physics(physics, 40.);
+        let stretch = controller.offset() - max;
+        assert!(stretch > 0., "{pinned}/{floating}");
+        tree.layout(constraints).expect("overscroll layout");
+        tree.update_compositor(Instant::now()).expect("compositor");
+        assert_eq!(
+            tree.render_size(render),
+            Some(Size::new(200., 55. + stretch)),
+            "{pinned}/{floating}"
+        );
+        assert_eq!(controller.content_extent(), 855.);
+        assert!(controller.jump_to(max));
+        tree.layout(constraints).expect("settled layout");
+        assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+    }
 }

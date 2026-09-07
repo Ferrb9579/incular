@@ -248,15 +248,18 @@ impl From<AppBar> for Widget {
 }
 
 /// Material app bar for a [`incular_widgets::CustomScrollView`]. Pass this
-/// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning or
-/// floating. A pinned fixed-height toolbar remains visible even when floating
-/// is also enabled.
-/// Conversion to an ordinary [`Widget`] supplies only the box presentation.
+/// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning,
+/// floating or stretching. A pinned fixed-height toolbar remains visible even
+/// when floating is also enabled.
+/// Conversion to an ordinary [`Widget`] supplies only the static box
+/// presentation; stretching applies only to the retained sliver because it
+/// consumes the viewport's leading overscroll.
 /// Explicit expanded/collapsed heights select retained resizing and describe
 /// the entire header, including its bottom slot. The collapsed default is the
 /// configured toolbar height; the expanded default is the collapsed height.
-/// Without explicit heights, the header measures its natural content.
-/// Snapping and stretching are pending.
+/// Without explicit heights, the header measures its natural content and
+/// stretches that measurement.
+/// Snapping remains pending.
 #[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
     #[builder(default = AppBar::new(Text::new("")))]
@@ -393,7 +396,9 @@ impl SliverAppBar {
         // Keep theme lookup in the mounted subtree. The neutral header owns
         // scroll geometry; Material supplies only its deferred presentation.
         if self.expanded_height.is_some() || self.collapsed_height.is_some() {
-            use incular_widgets::{SliverHeaderScrollBehavior, SliverResizingHeader};
+            use incular_widgets::{
+                SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior, SliverResizingHeader,
+            };
 
             let min = self.collapsed_height.unwrap_or(self.app_bar.toolbar_height);
             let max = self.expanded_height.unwrap_or(min).max(min);
@@ -403,9 +408,30 @@ impl SliverAppBar {
                 (false, true) => SliverHeaderScrollBehavior::Floating,
                 (true, true) => SliverHeaderScrollBehavior::FloatingPinned,
             };
+            let overscroll = if self.stretch {
+                SliverHeaderOverscrollBehavior::Stretch
+            } else {
+                SliverHeaderOverscrollBehavior::Translate
+            };
             return Box::new(
                 SliverResizingHeader::new(min, max, self.resizing_child())
-                    .scroll_behavior(behavior),
+                    .scroll_behavior(behavior)
+                    .overscroll_behavior(overscroll),
+            );
+        }
+        if self.stretch {
+            use incular_widgets::{SliverHeaderScrollBehavior, SliverNaturalHeader};
+
+            let behavior = match (self.pinned, self.floating) {
+                (false, false) => SliverHeaderScrollBehavior::Scroll,
+                (true, false) => SliverHeaderScrollBehavior::Pinned,
+                (false, true) => SliverHeaderScrollBehavior::Floating,
+                (true, true) => SliverHeaderScrollBehavior::FloatingPinned,
+            };
+            return Box::new(
+                SliverNaturalHeader::new(self.natural_stretch_child())
+                    .scroll_behavior(behavior)
+                    .overscroll_behavior(incular_widgets::SliverHeaderOverscrollBehavior::Stretch),
             );
         }
         let child = Widget::from(self.clone());
@@ -440,6 +466,41 @@ impl SliverAppBar {
             toolbar
         };
         incular_widgets::ClipRect::new(child).into()
+    }
+
+    fn natural_stretch_child(&self) -> Widget {
+        let app_bar = self.app_bar.clone();
+        // The neutral header measures this child unbounded while settled so
+        // later content changes are learned, and tight while stretched. Both
+        // branches build the same AppBar structure and differ only in the
+        // resolved toolbar height, so slot identity survives the switch and
+        // stretched samples never become the cached natural measurement.
+        Widget::from(incular_widgets::LayoutBuilder::new(
+            move |context, constraints| {
+                let theme = current_control_theme(context);
+                if constraints.max_height().is_finite() {
+                    let current = constraints.max_height();
+                    // Bottom keeps its measured height; the toolbar fills the
+                    // remainder. The hint covers fixed bottoms (the common
+                    // PreferredSize case); without one fall back to natural
+                    // presentation instead of guessing a height.
+                    if let Some(bottom) = app_bar.bottom.clone()
+                        && let Some(bottom_height) =
+                            incular_widgets::internal::widget_main_extent_hint(
+                                &bottom,
+                                incular_config::Axis::Vertical,
+                            )
+                    {
+                        let toolbar = (current - bottom_height).max(0.);
+                        return app_bar.clone().toolbar_height(toolbar).build(&theme);
+                    }
+                    if app_bar.bottom.is_none() {
+                        return app_bar.clone().toolbar_height(current).build(&theme);
+                    }
+                }
+                app_bar.clone().build(&theme)
+            },
+        ))
     }
 }
 

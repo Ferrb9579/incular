@@ -9,6 +9,8 @@ integration and pinning are committed (`835bdcd`), as is title preservation
 (`8a51032`). Floating integration is committed (`7bc9cf8`); resizing bounds
 and scroll invalidation are committed (`a4095c9`), followed by typed resizing
 modes (`83c88b1`). Material expanded/collapsed composition is complete and validated.
+Material stretch is complete and validated. Snapping remains pending, so W1 is
+not marked complete.
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -22,6 +24,29 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 Material stretch: `SliverAppBar.stretch(true)` maps to the neutral
+  overscroll policy for both explicit-height and naturally measured headers.
+  Explicit heights reuse `SliverResizingHeader` with Stretch; natural headers
+  use the new Widgets-owned `SliverNaturalHeader`, whose logical extent is the
+  last unstretched measurement and whose stretched samples never update that
+  measurement. Material resolves the toolbar against the stretched extent from
+  a measured bottom hint while the bottom keeps its height, using the same
+  AppBar structure in both branches so slot identity and mounted theme
+  resolution survive. The viewport now reports leading overscroll as a
+  negative physical offset in reversed viewports too, so either leading edge
+  can stretch; Scroll still owns offsets/physics, Widgets owns geometry and
+  measurement, Material owns presentation only. Regressions cover explicit and
+  natural headers across all pinned/floating combinations, bottom/toolbar
+  paint, hit testing, semantic bottom bounds, repeated stretch/recovery
+  without drift, later natural-size changes, disabled/clamping/non-leading
+  cases, theme resolution, ordinary Widget distinction, and forward/reversed
+  viewports. The reversed-viewport stretch regressions failed before the
+  viewport physical-offset fix, and the natural slot-identity regression
+  failed before the unified presentation. Formatting, workspace compilation,
+  all 1,170 workspace tests, strict all-feature/all-target Clippy, all 78
+  Material all-feature tests and warning-denied Widgets/Material rustdoc
+  passed. Eight new regressions cover these contracts. Live native tests were
+  not run. Snapping remains pending.
 - W1 stretch prerequisites: neutral resizing headers have typed Translate/Stretch
   overscroll policy. Leading negative overlap expands child and paint extent
   while preserving logical scroll extent. Sliver-owned placement fills the

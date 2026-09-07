@@ -1883,6 +1883,101 @@ impl Sliver for SliverResizingHeader {
     }
 }
 
+/// Naturally measured header with typed scroll and overscroll policies.
+///
+/// The logical scroll extent is the child's measured main-axis extent; it is
+/// learned from unstretched layouts and reused while stretched. Stretched
+/// layouts present `natural + leading overlap` without growing the scroll
+/// range and return to the current measurement when overscroll ends. The
+/// default scroll behavior pins and the default overscroll translates.
+#[derive(TypedBuilder)]
+pub struct SliverNaturalHeader {
+    #[builder(setter(into))]
+    child: Widget,
+    #[builder(default)]
+    scroll_behavior: SliverHeaderScrollBehavior,
+    #[builder(default)]
+    overscroll_behavior: SliverHeaderOverscrollBehavior,
+}
+
+impl SliverNaturalHeader {
+    #[must_use]
+    pub fn new(child: impl Into<Widget>) -> Self {
+        Self {
+            child: child.into(),
+            scroll_behavior: SliverHeaderScrollBehavior::Pinned,
+            overscroll_behavior: SliverHeaderOverscrollBehavior::Translate,
+        }
+    }
+
+    #[must_use]
+    pub fn scroll_behavior(mut self, behavior: SliverHeaderScrollBehavior) -> Self {
+        self.scroll_behavior = behavior;
+        self
+    }
+
+    #[must_use]
+    pub fn overscroll_behavior(mut self, behavior: SliverHeaderOverscrollBehavior) -> Self {
+        self.overscroll_behavior = behavior;
+        self
+    }
+}
+
+impl Sliver for SliverNaturalHeader {
+    fn build(&self, controller: &ScrollController) -> Widget {
+        self.build_with_config(controller, Axis::Vertical, false)
+    }
+
+    fn build_with_config(
+        &self,
+        controller: &ScrollController,
+        axis: Axis,
+        reverse: bool,
+    ) -> Widget {
+        match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Scroll => SliverToBoxAdapter::new(self.child.clone())
+                .build_with_config(controller, axis, reverse),
+            SliverHeaderScrollBehavior::Floating => SliverPersistentHeader::new(
+                widget_main_extent_hint(&self.child, axis)
+                    .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
+                    .max(1.),
+                self.child.clone(),
+            )
+            .pinned(false)
+            .build_with_config(controller, axis, reverse),
+            SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => {
+                Widget::persistent_header_with_config(
+                    controller.clone(),
+                    self.child.clone(),
+                    axis,
+                    reverse,
+                    true,
+                )
+            }
+        }
+    }
+
+    fn create_render_sliver(
+        &self,
+        _controller: &ScrollController,
+        axis: Axis,
+        _reverse: bool,
+    ) -> Box<dyn RenderSliver> {
+        Box::new(NaturalHeaderRenderSliver {
+            child: self.child.clone(),
+            scroll_behavior: self.scroll_behavior,
+            overscroll_behavior: self.overscroll_behavior,
+            natural: Cell::new(
+                widget_main_extent_hint(&self.child, axis)
+                    .unwrap_or(DEFAULT_LAZY_ITEM_EXTENT)
+                    .max(0.),
+            ),
+            stretched: Cell::new(false),
+            scroll_state: HeaderScrollState::default(),
+        })
+    }
+}
+
 /// Sliver overlap absorber for nested scroll view coordinators.
 #[derive(TypedBuilder)]
 pub struct SliverOverlapAbsorber {

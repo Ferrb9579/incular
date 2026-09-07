@@ -38,14 +38,16 @@ pub use geometry::{
 pub(crate) use geometry::{SliverViewportDelegate, SliverViewportLayout};
 
 pub use layout::SliverOverlapHandle;
+#[doc(hidden)]
+pub use layout::widget_main_extent_hint;
 use layout::{
     BoxRenderSliver, FillRemainingRenderSliver, FixedExtentRenderSliver,
     FloatingHeaderRenderSliver, GridRenderSliver, HeaderRenderSliver, HeaderScrollState,
-    LayoutBuilderRenderSliver, OverlapAbsorberRenderSliver, OverlapInjectorRenderSliver,
-    PaddingRenderSliver, ResizingHeaderRenderSliver, SequenceRenderSliver,
-    SequenceViewportDelegate, SliverViewportOptions, VariableExtentRenderSliver,
-    ViewportExtentRenderSliver, WidgetWrapRenderSliver, single_sliver_viewport,
-    single_sliver_viewport_with_options, sliver_child_constraints, widget_main_extent_hint,
+    LayoutBuilderRenderSliver, NaturalHeaderRenderSliver, OverlapAbsorberRenderSliver,
+    OverlapInjectorRenderSliver, PaddingRenderSliver, ResizingHeaderRenderSliver,
+    SequenceRenderSliver, SequenceViewportDelegate, SliverViewportOptions,
+    VariableExtentRenderSliver, ViewportExtentRenderSliver, WidgetWrapRenderSliver,
+    single_sliver_viewport, single_sliver_viewport_with_options, sliver_child_constraints,
 };
 
 pub use notifications::*;
