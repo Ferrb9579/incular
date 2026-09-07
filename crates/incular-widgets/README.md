@@ -230,7 +230,10 @@ content changes revalidate unbounded even mid-overscroll; genuine range
 changes then settle through Scroll's extent policy. The same drain covers
 inherited build dependencies and layout-affecting inherited render updates
 at their source, while paint-only updates take no invalidation branch by
-construction. Only genuine content-change sources invalidate —
+construction. Controller-driven edits join the same channel: the layout
+preamble compares text content revisions (caret and selection revisions
+stay visual-only), so a multiline editor that grows mid-overscroll lands
+authoritatively on the next completed layout with no manual recovery. Only genuine content-change sources invalidate —
 constraints-driven rematerializations from scrolling, stretch presentation,
 or measurement passes carry no content signal, so invalidation cannot
 recurse or loop. Replacing a viewport descriptor seeds

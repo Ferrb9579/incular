@@ -59,7 +59,7 @@ impl WidgetTree {
     /// is valid. Non-semantic layout widgets merge their descendants into the
     /// closest meaningful semantic ancestor.
     pub(super) fn refresh_text_fields(&mut self) {
-        let pending = self
+        let pending: Vec<(RenderObjectId, bool)> = self
             .renders
             .iter()
             .filter_map(|(raw, render)| {
@@ -68,13 +68,25 @@ impl WidgetTree {
                 };
                 let (content, visual) = controller.revisions();
                 let state = render.text_field_state()?;
-                ((content != state.content_revision) || (visual != state.visual_revision))
-                    .then_some(RenderObjectId(raw))
+                let content_changed = content != state.content_revision;
+                ((content_changed) || (visual != state.visual_revision))
+                    .then_some((RenderObjectId(raw), content_changed))
             })
             .collect::<Vec<_>>();
-        for render in pending {
+        for (render, content_changed) in pending {
             // Text width can change the size seen by an unconstrained parent.
             self.mark_render_dirty(render, DirtyFlags::LAYOUT | DirtyFlags::PAINT, true);
+            // Content (not caret/selection) changes may alter intrinsic size:
+            // route through the enclosing-sliver invalidation channel so a
+            // natural header revalidates unbounded instead of retaining
+            // staleness. Visual-only changes take no invalidation branch by
+            // construction. Revisions are consumed below in text layout when
+            // the field is measured, so the measurement pass itself can never
+            // re-trigger this: after recording, revisions match until the
+            // next genuine edit.
+            if content_changed && let Some(element) = self.element_for_render(render) {
+                self.invalidate_enclosing_sliver_measurement(element);
+            }
         }
     }
 

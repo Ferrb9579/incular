@@ -1145,3 +1145,123 @@ fn inherited_change_inside_padding_wrapper_routes_invalidation() {
     tree.layout(constraints).expect("recovered layout");
     assert_eq!(tree.render_size(header), Some(Size::new(180., 90.)));
 }
+
+#[test]
+fn controller_driven_text_change_revalidates_same_delegate() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        EditableText, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+        TextEditingController,
+    };
+    use std::time::Instant;
+
+    // A multiline editor mutates intrinsic height through its controller with
+    // no descriptor rebuild and no new delegate. The content-revision check
+    // in the layout preamble routes through the same enclosing-sliver
+    // invalidation channel, so growth during overscroll lands authoritatively
+    // on the next completed layout; visual-only edits disturb nothing.
+    let edit = TextEditingController::with_text("Hi");
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverNaturalHeader::new(Widget::from(
+                EditableText::new(edit.clone()).multiline(true),
+            ))
+            .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+            .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    let short = tree.render_size(header).expect("short size").height;
+    // Multiline growth while settled learns through the ordinary pass.
+    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
+    tree.layout(constraints).expect("grown layout");
+    let grown = tree.render_size(header).expect("grown size").height;
+    assert!(
+        grown > short,
+        "long text must lengthen the editor: {short} -> {grown}"
+    );
+    assert_eq!(controller.content_extent(), 800. + grown);
+    // Growth during overscroll, beyond the old stretched total: the next
+    // completed layout carries the authoritative extent with no manual
+    // recovery step, settling through Scroll's extent policy.
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    let stale_total = grown + stretch;
+    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua pack my box with five dozen liquor jugs how vexingly quick daft zebras jump");
+    tree.layout(constraints).expect("overscroll growth layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    let live = tree.render_size(header).expect("live size").height;
+    assert!(
+        live > stale_total,
+        "growth must exceed {stale_total}, got {live}"
+    );
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 800. + live);
+    assert_eq!(
+        tree.render_id(tree.children(root).expect("children")[0]),
+        Some(header),
+        "controller, element, render, and delegate identity preserved"
+    );
+    // Shrinkage follows the same path; a same-height edit and a
+    // selection-only change preserve range and overscroll instead.
+    controller.apply_physics(physics, -40.);
+    assert!(-controller.offset() > 0.);
+    edit.set_text("Lorem ipsum dolor sit amet");
+    tree.layout(constraints).expect("overscroll shrink layout");
+    assert_eq!(controller.offset(), 0.);
+    let shrunk = tree.render_size(header).expect("shrunk size").height;
+    assert!(shrunk < live);
+    assert_eq!(controller.content_extent(), 800. + shrunk);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    edit.set_text("Lorem ipsum dolor sit amet!");
+    tree.layout(constraints).expect("same-height edit layout");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., shrunk + stretch))
+    );
+    let end = edit.selection().end();
+    edit.set_selection(incular_widgets::TextSelection::collapsed(if end == 0 {
+        1
+    } else {
+        0
+    }));
+    tree.layout(constraints).expect("selection layout");
+    assert_eq!(controller.offset(), -stretch);
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., shrunk + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., shrunk)));
+    assert_eq!(controller.content_extent(), 800. + shrunk);
+}

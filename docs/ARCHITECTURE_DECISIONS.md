@@ -98,7 +98,10 @@ unbounded even mid-overscroll; constraints-driven rebuilds from scrolling,
 presentation, or measurement never invalidate, which keeps the mechanism
 loop-free. The inherited-invalidation drain extends this to inherited build
 dependencies and layout-affecting render updates at their source, while
-paint-only updates structurally take no invalidation branch. Material maps
+paint-only updates structurally take no invalidation branch. Controller
+content revisions observed in the layout preamble join the same channel
+(caret/selection revisions stay visual-only), so growing multiline editors
+land authoritatively without manual recovery. Material maps
 `stretch` into this policy through one Flex
 structure shared by measurement and presentation: the bottom is measured
 under real cross constraints and the toolbar fills the remainder, with no

@@ -955,15 +955,18 @@ impl WidgetTree {
     /// child after its content changed. Walks up past the rebuilt element
     /// itself to the nearest enclosing sliver viewport and notifies exactly
     /// the sliver that owns the rebuilt descendant by viewport-scoped child
-    /// identity — sibling slivers are untouched.
+    /// identity — sibling slivers are untouched. Controller-driven content
+    /// changes (text-field content revisions observed in the layout
+    /// preamble) enter through this same channel rather than a second walk.
     ///
-    /// Only genuine content rebuilds call this: stateful-builder revision
-    /// changes and descriptor replacements. Constraints-driven
-    /// rematerializations from scrolling, stretch presentation, or
-    /// measurement passes never call it (they carry no content signal), so
-    /// invalidation cannot recurse or loop: demotion is idempotent, learning
-    /// passes perform layout only, and every demotion converges within the
-    /// viewport's bounded re-layout passes.
+    /// Only genuine content changes call this: stateful-builder revision
+    /// changes, descriptor replacements, inherited invalidations, and
+    /// controller content revisions. Constraints-driven rematerializations
+    /// from scrolling, stretch presentation, or measurement passes never call
+    /// it (they carry no content signal), so invalidation cannot recurse or
+    /// loop: demotion is idempotent, learning passes perform layout only,
+    /// and every demotion converges within the viewport's bounded re-layout
+    /// passes.
     pub(super) fn invalidate_enclosing_sliver_measurement(&mut self, id: ElementId) {
         let mut child_below = id;
         let mut current = self.elements.get(id.0).and_then(|element| element.parent);

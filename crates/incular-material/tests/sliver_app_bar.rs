@@ -1531,6 +1531,7 @@ fn text_style_change_reflows_bottom_through_render_updates() {
 
 #[test]
 fn controller_driven_text_growth_uses_supported_behavior() {
+    use incular_rendering::{Brush, PaintCommand};
     use incular_widgets::{EditableText, Semantics, TextEditingController};
 
     // An existing controller-driven widget (multiline editor) mutates
@@ -1597,6 +1598,36 @@ fn controller_driven_text_growth_uses_supported_behavior() {
     tree.layout(constraints).expect("edited layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
     assert_eq!(controller.content_extent(), 800. + natural);
+    // The same holds during overscroll: same-height content preserves the
+    // range and the activity with no remeasurement effects.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    edit.set_text("Yo!");
+    tree.layout(constraints)
+        .expect("same-height overscroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., natural + stretch))
+    );
+    assert_eq!(controller.content_extent(), 800. + natural);
+    // Selection and caret movement alone never remeasure either.
+    edit.set_selection(incular_widgets::TextSelection::collapsed(1));
+    tree.layout(constraints).expect("selection layout");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., natural + stretch))
+    );
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(controller.offset(), -stretch);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
     // Multiline growth while settled learns through the ordinary pass.
     edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
     tree.layout(constraints).expect("grown layout");
@@ -1618,15 +1649,20 @@ fn controller_driven_text_growth_uses_supported_behavior() {
         Some(Size::new(200., grown_natural))
     );
     assert_eq!(controller.content_extent(), 800. + grown_natural);
-    // Growth during overscroll: the live-measured bottom stays correct with
-    // the toolbar taking the remainder; the authoritative total lands at
-    // recovery with no drift.
+    // Growth during overscroll, beyond the old stretched total: the edit is
+    // detected through the controller revision before layout, so the next
+    // completed layout already carries the authoritative natural extent —
+    // without any manual recovery step.
     controller.apply_physics(physics, -30.);
     let stretch = -controller.offset();
     assert!(stretch > 0.);
-    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua extra words to wrap further down the viewport");
+    let stale_total = grown_natural + stretch;
+    edit.set_text("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua pack my box with five dozen liquor jugs how vexingly quick daft zebras jump");
     tree.layout(constraints).expect("overscroll growth layout");
     tree.update_compositor(Instant::now()).expect("compositor");
+    // A genuine range change settles through Scroll's documented extent
+    // policy; waiting for a manual jump_to(0) is not required.
+    assert_eq!(controller.offset(), 0.);
     tree.update_semantics();
     let live_bottom = tree
         .semantics()
@@ -1637,37 +1673,76 @@ fn controller_driven_text_growth_uses_supported_behavior() {
         live_bottom.size.height > grown_bottom,
         "editor must keep growing under tight presentation"
     );
+    let live_natural = 40. + live_bottom.size.height;
     assert!(
-        tree.hit_test(Offset::new(100., 150.)).is_some(),
-        "growing header must stay hit-testable"
+        live_natural > stale_total,
+        "growth must exceed the old stretched total"
     );
-    assert!(controller.jump_to(0.));
-    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., live_natural))
+    );
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 800. + live_natural);
+    assert_eq!(live_bottom.origin.y, live_natural - live_bottom.size.height);
+    // Growth never consumes the configured toolbar height.
+    let display = tree.paint();
+    assert!(
+        display.commands().iter().any(|command| matches!(command,
+            PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+            if *color == background && rrect.rect.size.height == 40.
+        )),
+        "toolbar must keep its configured height while the bottom grows"
+    );
+    // Hit tests identify the intended descendants, not merely something. The
+    // bottom probe stays inside both the bottom slot and the visible window
+    // even when the grown header exceeds the viewport.
+    let toolbar_hit = tree.hit_test(Offset::new(100., 10.)).expect("toolbar hit");
+    let bottom_hit = tree
+        .hit_test(Offset::new(100., (live_natural - 2.).min(199.)))
+        .expect("bottom hit");
+    assert_ne!(
+        toolbar_hit, bottom_hit,
+        "toolbar and bottom must hit distinct descendants"
+    );
+    // Shrinkage during overscroll follows the same invalidation path.
+    controller.apply_physics(physics, -30.);
+    assert!(-controller.offset() > 0.);
+    edit.set_text("Lorem ipsum dolor sit amet");
+    tree.layout(constraints).expect("overscroll shrink layout");
+    assert_eq!(controller.offset(), 0.);
     tree.update_semantics();
-    let recovered_bottom = tree
+    let shrunk_bottom = tree
         .semantics()
         .iter()
         .find_map(|(_, node)| {
             (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
         })
-        .expect("recovered bottom");
-    assert_eq!(recovered_bottom, live_bottom.size.height);
+        .expect("shrunk bottom");
+    assert!(shrunk_bottom < live_bottom.size.height);
+    let shrunk_natural = 40. + shrunk_bottom;
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(200., 40. + recovered_bottom))
+        Some(Size::new(200., shrunk_natural))
     );
-    assert_eq!(controller.content_extent(), 800. + 40. + recovered_bottom);
+    assert_eq!(controller.content_extent(), 800. + shrunk_natural);
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., shrunk_natural))
+    );
     controller.apply_physics(physics, -30.);
     let stretch = -controller.offset();
     tree.layout(constraints).expect("final overscroll layout");
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(200., 40. + recovered_bottom + stretch))
+        Some(Size::new(200., shrunk_natural + stretch))
     );
     assert!(controller.jump_to(0.));
     tree.layout(constraints).expect("final settled layout");
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(200., 40. + recovered_bottom))
+        Some(Size::new(200., shrunk_natural))
     );
+    assert_eq!(controller.content_extent(), 800. + shrunk_natural);
 }

@@ -24,6 +24,23 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 controller-driven invalidation: text content revisions observed in the
+  layout preamble now route through the existing enclosing-sliver
+  invalidation channel, so a multiline editor that grows mid-overscroll
+  revalidates unbounded and lands authoritatively on the next completed
+  layout with no manual recovery step; genuine range changes settle through
+  Scroll's policy. Caret/selection revisions stay visual-only and never
+  invalidate, and revisions are consumed when the field is measured so the
+  measurement pass cannot invalidate itself. Controller, element, render,
+  and delegate identity is preserved throughout. Regressions cover neutral
+  and Material growth beyond the old stretched total, shrinkage,
+  toolbar-preserving paint, distinct-descendant hit testing, semantic
+  bounds, same-height and selection-only preservation, convergence, and
+  drift-free recovery; both controller tests failed against the previous
+  implementation. Formatting, workspace compilation, all 1,189 workspace
+  tests, strict all-feature/all-target Clippy, all 87 Material all-feature
+  tests and warning-denied Widgets/Material rustdoc passed. Live native
+  tests were not run. Snapping remains pending; W1 is not marked complete.
 - W1 inherited and controller-driven invalidation: the invalidation drain now
   covers inherited build dependencies and layout-affecting inherited render
   updates at their source, so ordinary LayoutBuilders and reflowed text pick
