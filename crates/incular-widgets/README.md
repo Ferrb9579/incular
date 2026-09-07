@@ -204,6 +204,13 @@ extent. `Scroll` then moves it out of view, `Floating` reveals it on reversal,
 and `FloatingPinned` keeps the minimum visible while re-expanding on reversal.
 Pass descriptors to `CustomScrollView` to use retained resizing geometry.
 
+`overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch)` lets a leading
+resizing header fill negative physical overlap. It expands the child and paint
+extent without changing the logical scroll range, and returns to its normal
+extent when overscroll ends. The default `Translate` preserves normal sizing.
+Stretching requires a scroll physics policy that permits overscroll, such as
+bouncing physics; it does not manufacture overscroll under clamping physics.
+
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry
 that must refresh on every scroll offset. Wrappers forward that dependency.

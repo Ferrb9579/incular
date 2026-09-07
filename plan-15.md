@@ -22,6 +22,18 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 stretch prerequisites: neutral resizing headers have typed Translate/Stretch
+  overscroll policy. Leading negative overlap expands child and paint extent
+  while preserving logical scroll extent. Sliver-owned placement fills the
+  overscroll gap without automatic pinning displacing it. Bouncing positions
+  survive unchanged metric publication; range changes and clamping still settle
+  them, and transient overscroll is not persisted as restoration state.
+  Regressions cover both axes, all header modes, overlap eligibility, restoration
+  of normal size and stable scroll range. Material stretch wiring and snapping
+  remain pending. Formatting, workspace compilation, all 1,162 workspace tests,
+  strict all-feature/all-target Clippy and warning-denied Widgets/Scroll rustdoc
+  passed. Three new regressions cover these contracts. Live native tests were
+  not run.
 - W1 Material collapse: explicit total-header heights select neutral resizing
   with all pinned/floating combinations. Bottom content keeps its measured height;
   the toolbar fills the remainder and retains its slots across scroll changes.

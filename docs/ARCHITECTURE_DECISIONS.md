@@ -76,6 +76,11 @@ compatibility properties into this policy instead of maintaining scroll state.
 The pinned default preserves existing resizing-header behavior; the API inventory
 links the retained mode regression as evidence.
 
+`SliverHeaderOverscrollBehavior` likewise belongs to Widgets. Stretching consumes
+the viewport's negative physical overlap and changes presentation extent only.
+Scroll owns bounded bouncing offsets and preserves them across unchanged metric
+updates; a widget must not synthesize a separate overscroll position.
+
 Retain `incular-painting` as a pure import shim for this pre-1.0 campaign so
 existing imports continue compiling. All new work uses `incular-rendering`.
 Stage J removes the shim and facade alias after examples and downstream migration

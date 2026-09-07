@@ -42,6 +42,30 @@ fn extents_clamp_an_existing_offset() {
 }
 
 #[test]
+fn unchanged_metrics_preserve_bouncing_but_changed_ranges_still_clamp() {
+    let physics = ScrollPhysics::clamping().bouncing();
+    for (start, delta) in [(0., -40.), (100., 40.)] {
+        let controller = ScrollController::new();
+        controller.update_extents_with_physics(200., 100., physics);
+        controller.jump_to(start);
+        controller.apply_physics(physics, delta);
+        let overscroll = controller.offset();
+        let revision = controller.revision();
+        assert!(!(0. ..=100.).contains(&overscroll));
+        controller.update_extents_with_physics(200., 100., physics);
+        assert_eq!(controller.offset(), overscroll);
+        assert_eq!(controller.revision(), revision);
+        controller.update_extents_with_physics(200., 120., physics);
+        assert_eq!(controller.offset(), overscroll.clamp(0., 80.));
+    }
+    let controller = ScrollController::new();
+    controller.update_extents_with_physics(200., 100., physics);
+    controller.apply_physics(physics, -40.);
+    controller.update_extents_with_physics(200., 100., ScrollPhysics::clamping());
+    assert_eq!(controller.offset(), 0.);
+}
+
+#[test]
 fn scroll_notifications_follow_activity_lifecycle_and_unsubscribe() {
     let controller = ScrollController::new();
     controller.set_metrics_context(incular_config::Axis::Horizontal, true);

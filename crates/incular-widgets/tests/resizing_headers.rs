@@ -168,3 +168,102 @@ fn resizing_scroll_modes_preserve_minimum_extent_and_reverse_correctly() {
         assert_eq!(tree.diagnostics().rebuilds, before.rebuilds);
     }
 }
+
+#[test]
+fn stretch_uses_only_leading_overscroll_and_preserves_logical_extent() {
+    use incular_widgets::SliverHeaderOverscrollBehavior;
+    for axis in [Axis::Vertical, Axis::Horizontal] {
+        let header = SliverResizingHeader::builder()
+            .min_extent(40.)
+            .max_extent(100.)
+            .child(Widget::box_(Size::new(100., 100.), Color::WHITE))
+            .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch)
+            .build();
+        let mut render = header.create_render_sliver(&ScrollController::new(), axis, false);
+        for (scroll, preceding, overlap, expected) in [
+            (0., 0., -20., 120.),
+            (0., 0., 0., 100.),
+            (0., 0., 20., 100.),
+            (0., 50., -20., 100.),
+            (30., 0., -20., 70.),
+        ] {
+            let layout = render.perform_layout(SliverConstraints::new(
+                axis, false, scroll, preceding, overlap, 180., 200., 200., 400., 0.,
+            ));
+            assert_eq!(layout.geometry.scroll_extent, 100.);
+            assert_eq!(layout.children[0].extent, expected);
+            if expected == 120. {
+                assert_eq!(layout.geometry.paint_origin, -20.);
+                assert_eq!(layout.geometry.paint_extent, 120.);
+                assert_eq!(layout.geometry.hit_test_extent, 120.);
+                assert_eq!(layout.absorbed_overlap, 0.);
+            }
+        }
+    }
+}
+
+#[test]
+fn stretched_header_fills_overscroll_without_a_gap_or_scroll_range_drift() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior};
+    use std::time::Instant;
+
+    for axis in [Axis::Vertical, Axis::Horizontal] {
+        for behavior in [
+            SliverHeaderScrollBehavior::Scroll,
+            SliverHeaderScrollBehavior::Pinned,
+            SliverHeaderScrollBehavior::Floating,
+            SliverHeaderScrollBehavior::FloatingPinned,
+        ] {
+            let controller = ScrollController::new();
+            let physics = ScrollPhysics::default().bouncing();
+            let slivers: Vec<Box<dyn Sliver>> = vec![
+                Box::new(
+                    SliverResizingHeader::new(
+                        40.,
+                        100.,
+                        Widget::box_(axis.size(100., 200.), Color::WHITE),
+                    )
+                    .scroll_behavior(behavior)
+                    .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+                ),
+                Box::new(SliverToBoxAdapter::new(Widget::box_(
+                    axis.size(800., 200.),
+                    Color::BLACK,
+                ))),
+            ];
+            let mut tree = WidgetTree::new();
+            let root = tree
+                .mount(
+                    CustomScrollView::new(slivers)
+                        .controller(controller.clone())
+                        .scroll_direction(axis)
+                        .physics(physics)
+                        .into(),
+                )
+                .expect("mount");
+            let constraints = Constraints::tight(Size::new(200., 200.));
+            tree.layout(constraints).expect("layout");
+            let children = tree.children(root).expect("children").to_vec();
+            let header = tree.render_id(children[0]).expect("header");
+            let body = tree.render_id(children[1]).expect("body");
+            controller.apply_physics(physics, -40.);
+            let stretch = -controller.offset();
+            assert!(stretch > 0.);
+            tree.layout(constraints).expect("overscroll layout");
+            tree.update_compositor(Instant::now()).expect("compositor");
+            assert_eq!(tree.render_origin(header), Offset::ZERO);
+            assert_eq!(
+                tree.render_size(header),
+                Some(axis.size(100. + stretch, 200.))
+            );
+            assert_eq!(tree.render_origin(body), axis.offset(100. + stretch, 0.));
+            assert_eq!(controller.content_extent(), 900.);
+            assert!(controller.jump_to(0.));
+            tree.layout(constraints).expect("settled layout");
+            assert_eq!(tree.render_size(header), Some(axis.size(100., 200.)));
+            assert_eq!(controller.content_extent(), 900.);
+        }
+    }
+}

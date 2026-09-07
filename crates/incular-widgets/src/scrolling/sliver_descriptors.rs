@@ -1776,6 +1776,16 @@ pub enum SliverHeaderScrollBehavior {
     FloatingPinned,
 }
 
+/// Response of a resizing header to leading overscroll.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SliverHeaderOverscrollBehavior {
+    /// Preserve the header extent and translate with the viewport.
+    #[default]
+    Translate,
+    /// Expand into leading overscroll without increasing logical scroll extent.
+    Stretch,
+}
+
 /// Header that shrinks from its maximum to minimum extent while scrolling.
 /// The default scroll behavior pins the collapsed header.
 /// Negative and non-finite bounds become zero; the effective maximum is at
@@ -1790,6 +1800,8 @@ pub struct SliverResizingHeader {
     child: Widget,
     #[builder(default)]
     scroll_behavior: SliverHeaderScrollBehavior,
+    #[builder(default)]
+    overscroll_behavior: SliverHeaderOverscrollBehavior,
 }
 
 impl SliverResizingHeader {
@@ -1808,12 +1820,19 @@ impl SliverResizingHeader {
             max_extent: Self::normalize_extent(max_extent),
             child: child.into(),
             scroll_behavior: SliverHeaderScrollBehavior::Pinned,
+            overscroll_behavior: SliverHeaderOverscrollBehavior::Translate,
         }
     }
 
     #[must_use]
     pub fn scroll_behavior(mut self, behavior: SliverHeaderScrollBehavior) -> Self {
         self.scroll_behavior = behavior;
+        self
+    }
+
+    #[must_use]
+    pub fn overscroll_behavior(mut self, behavior: SliverHeaderOverscrollBehavior) -> Self {
+        self.overscroll_behavior = behavior;
         self
     }
 
@@ -1858,6 +1877,7 @@ impl Sliver for SliverResizingHeader {
             min_extent: self.min_extent(),
             max_extent: self.max_extent(),
             scroll_behavior: self.scroll_behavior,
+            overscroll_behavior: self.overscroll_behavior,
             scroll_state: HeaderScrollState::default(),
         })
     }

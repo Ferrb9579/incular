@@ -544,6 +544,7 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) min_extent: f32,
     pub(super) max_extent: f32,
     pub(super) scroll_behavior: SliverHeaderScrollBehavior,
+    pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
     pub(super) scroll_state: HeaderScrollState,
 }
 
@@ -701,8 +702,19 @@ impl RenderSliver for ResizingHeaderRenderSliver {
             }
             _ => scroll_offset,
         };
-        let current = (self.max_extent - effective_offset).clamp(self.min_extent, self.max_extent);
-        let (geometry, offset, placement) = match self.scroll_behavior {
+        let stretch = match self.overscroll_behavior {
+            SliverHeaderOverscrollBehavior::Stretch
+                if scroll_offset == 0. && constraints.preceding_scroll_extent == 0. =>
+            {
+                -constraints.overlap.min(0.)
+            }
+            _ => 0.,
+        };
+        let current = ((self.max_extent - effective_offset)
+            .clamp(self.min_extent, self.max_extent)
+            + stretch)
+            .min(f32::MAX);
+        let (mut geometry, offset, mut placement) = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
                 pinned_geometry(constraints, self.max_extent, current),
                 0.,
@@ -719,6 +731,17 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                 SliverChildPlacement::Floating,
             ),
         };
+        if stretch > 0. {
+            let available = (constraints.remaining_paint_extent + stretch).min(f32::MAX);
+            geometry.paint_extent = current.min(available);
+            geometry.hit_test_extent = geometry.paint_extent;
+            geometry.max_paint_extent = current;
+            geometry.paint_origin = -stretch;
+            geometry.visible = geometry.paint_extent > 0.;
+            // This placement cancels the viewport's overscroll translation.
+            // Automatic pinning would move it back down and leave a gap.
+            placement = SliverChildPlacement::Floating;
+        }
         SliverLayout {
             geometry,
             children: vec![SliverChildLayout {
@@ -735,7 +758,11 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                 extent: current,
                 placement,
             }],
-            absorbed_overlap: (geometry.paint_extent - geometry.layout_extent).max(0.),
+            absorbed_overlap: if stretch > 0. {
+                0.
+            } else {
+                (geometry.paint_extent - geometry.layout_extent).max(0.)
+            },
         }
     }
 }

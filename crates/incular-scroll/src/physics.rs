@@ -485,13 +485,29 @@ impl ScrollController {
                     // range changes.  This handles both content mutation and
                     // viewport resize without rebuilding the scroll view.
                     state.max_offset
+                } else if old_content == state.content_extent
+                    && old_viewport == state.viewport_extent
+                    && let BoundaryPhysics::Bouncing { max_overscroll, .. } = physics.boundary
+                {
+                    // Retained layout republishes unchanged metrics during a
+                    // drag. Preserve its visual overscroll until settlement,
+                    // bounded by the currently selected bouncing policy.
+                    let limit = if max_overscroll.is_finite() {
+                        max_overscroll.max(0.)
+                    } else {
+                        0.
+                    };
+                    old_offset.clamp(-limit, (state.max_offset + limit).min(f32::MAX))
                 } else {
                     old_offset.clamp(0., state.max_offset)
                 };
                 if next != state.offset {
                     state.offset = next;
                     state.revision += 1;
-                    Some((state.restoration.clone(), next))
+                    // Bouncing offsets are transient presentation state.
+                    (0. ..=state.max_offset)
+                        .contains(&next)
+                        .then(|| (state.restoration.clone(), next))
                 } else {
                     None
                 }

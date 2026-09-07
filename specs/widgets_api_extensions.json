@@ -1,8 +1,8 @@
 [
   {
-    "symbols": ["SliverHeaderScrollBehavior"],
+    "symbols": ["SliverHeaderScrollBehavior", "SliverHeaderOverscrollBehavior"],
     "owner": "incular-widgets",
-    "reason": "A typed header scroll policy selects scrolling, pinning, floating and floating-pinned geometry without a Material-owned scroll engine.",
+    "reason": "Typed header policies select scrolling, pinning, floating and overscroll stretching without a Material-owned scroll engine.",
     "decision": "B08 / typed resizing header behavior",
     "evidence": "crates/incular-widgets/tests/resizing_headers.rs"
   },
