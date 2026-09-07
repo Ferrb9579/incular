@@ -735,40 +735,48 @@ fn natural_stretch_uses_wrapped_text_height_and_tracks_cross_resize() {
     );
     assert_eq!(controller.content_extent(), 800. + wide_natural);
 
-    // Resizing back during overscroll keeps the re-measured bottom with the
-    // toolbar taking the remainder; no drift accumulates.
+    // Stretching at the wide size still uses the wide measurement.
     controller.apply_physics(physics, -30.);
-    let stretch = -controller.offset();
-    assert!(stretch > 0.);
+    let wide_stretch = -controller.offset();
+    assert!(wide_stretch > 0.);
     tree.layout(wide).expect("wide overscroll layout");
     tree.update_compositor(Instant::now()).expect("compositor");
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(300., wide_natural + stretch))
+        Some(Size::new(300., wide_natural + wide_stretch))
     );
+    // Narrowing during overscroll re-wraps the same retained bottom (same
+    // delegate, no reconstruction) and demotes the wide measurement: the
+    // header revalidates unbounded under the new cross extent instead of
+    // stretching a stale total. The genuine range change settles through
+    // Scroll's documented extent policy rather than preserving overscroll.
     tree.layout(narrow).expect("narrow overscroll layout");
     tree.update_semantics();
     let rewrapped = tree
         .semantics()
         .iter()
-        .find_map(|(_, node)| {
-            (node.label.as_deref() == Some("Bottom")).then_some(node.bounds.size.height)
-        })
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
         .expect("rewrapped bottom");
-    assert_eq!(rewrapped, bottom_height);
-    assert_eq!(
-        tree.render_size(header),
-        Some(Size::new(200., wide_natural + stretch))
-    );
-    assert!(controller.jump_to(0.));
-    tree.layout(narrow).expect("recovered layout");
+    assert_eq!(rewrapped.size.height, bottom_height);
+    assert_eq!(controller.offset(), 0.);
     assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
     assert_eq!(controller.content_extent(), 800. + natural);
+    assert_eq!(rewrapped.origin.y, natural - bottom_height);
+    // Fresh overscroll at the narrowed size stretches the revalidated
+    // measurement exactly, with no accumulated drift.
     controller.apply_physics(physics, -30.);
+    let narrow_stretch = -controller.offset();
+    assert!(narrow_stretch > 0.);
     tree.layout(narrow).expect("repeat overscroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(200., natural + -controller.offset()))
+        Some(Size::new(200., natural + narrow_stretch))
+    );
+    assert!(
+        tree.hit_test(Offset::new(100., natural + narrow_stretch - 1.))
+            .is_some(),
+        "revalidated stretched header must stay hit-testable"
     );
     assert!(controller.jump_to(0.));
     tree.layout(narrow).expect("repeat settled layout");
@@ -837,4 +845,106 @@ fn natural_header_replacement_during_overscroll_keeps_true_size() {
     tree.layout(constraints).expect("settled layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
     assert_eq!(controller.content_extent(), 860.);
+}
+
+#[test]
+fn taller_replacement_bottom_during_overscroll_revalidates() {
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::{LayoutBuilder, Semantics, SizedBox};
+
+    let background = Color::rgba(77, 88, 99, 255);
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let bottom = |height: f32| -> Widget {
+        Semantics::new(Widget::from(LayoutBuilder::new(move |_, _| {
+            Widget::from(SizedBox::new().height(height))
+        })))
+        .role(incular_semantics::Role::Group)
+        .label("Bottom")
+        .into()
+    };
+    let view = |bottom_height: f32| {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverAppBar::from_app_bar(
+                    AppBar::new(Text::new("Header"))
+                        .toolbar_height(40.)
+                        .bottom(bottom(bottom_height))
+                        .background_color(background),
+                )
+                .pinned(true)
+                .stretch(true),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(view(15.)).expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("header")[0])
+        .expect("render");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 55.)));
+    controller.apply_physics(physics, -30.);
+    assert!(-controller.offset() > 0.);
+    // Swap in genuinely taller bottom content during overscroll. The stale
+    // measurement must not be retained: the replacement revalidates unbounded
+    // to its true size, and the resulting range change settles through
+    // Scroll's documented extent policy.
+    tree.update(root, view(25.)).expect("update");
+    tree.layout(constraints).expect("replaced layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 65.)));
+    assert_eq!(controller.content_extent(), 865.);
+    tree.update_semantics();
+    let replaced = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("replaced bottom");
+    assert_eq!(replaced.origin.y, 65. - 25.);
+    assert_eq!(replaced.size.height, 25.);
+    // Fresh overscroll stretches the revalidated measurement with correct
+    // toolbar/bottom placement, paint, hit testing, and semantics.
+    controller.apply_physics(physics, -30.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    let height = 65. + stretch;
+    assert_eq!(tree.render_size(header), Some(Size::new(200., height)));
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    let display = tree.paint();
+    assert!(
+        display.commands().iter().any(|command| matches!(command,
+            PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+            if *color == background && rrect.rect.size.height == height - 25.
+        )),
+        "toolbar must fill remaining height above taller bottom"
+    );
+    assert!(
+        tree.hit_test(Offset::new(100., height - 1.)).is_some(),
+        "stretched header must stay hit-testable"
+    );
+    tree.update_semantics();
+    let stretched = tree
+        .semantics()
+        .iter()
+        .find_map(|(_, node)| (node.label.as_deref() == Some("Bottom")).then_some(node.bounds))
+        .expect("stretched bottom");
+    assert_eq!(stretched.size.height, 25.);
+    assert_eq!(stretched.origin.y, height - 25.);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 65.)));
+    assert_eq!(controller.content_extent(), 865.);
 }

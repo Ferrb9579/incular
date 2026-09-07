@@ -24,6 +24,27 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 natural-header validity: measurement validity now depends on its actual
+  inputs. Validated extents record their cross extent; a cross change demotes
+  back to an estimate for unbounded revalidation, including mid-overscroll,
+  with genuine range changes settling through Scroll's documented extent
+  policy. Transferred measurements arrive strictly as estimate seeds — never
+  validity — with reversal tracking moving only across identical scroll
+  behaviors, so equivalent replacements stay range-stable while taller
+  replacement content re-establishes itself instead of retaining stale sizes.
+  The equal-value estimate transition always requests another layout so
+  presentation constraints still switch. Regressions cover taller
+  replacement bottoms during overscroll (settling per Scroll policy, then
+  exact re-stretch and recovery), same-delegate cross-axis rewrapping settled
+  and during overscroll, first measurement during overscroll with an exact
+  estimate, and a corrected width-change sequence that no longer preserves a
+  stale total after narrowing — all with toolbar/bottom placement, paint,
+  hit testing, semantics, and recovery verified. The width-change, taller
+  replacement, and unbounded-first cases failed against the previous
+  implementation. Formatting, workspace compilation, all 1,178 workspace
+  tests, strict all-feature/all-target Clippy, all 82 Material all-feature
+  tests and warning-denied Widgets/Material rustdoc passed. Live native
+  tests were not run. Snapping remains pending; W1 is not marked complete.
 - W1 Material stretch corrections: the natural header no longer sizes its
   toolbar from bottom extent hints and never silently disables stretching.
   Material uses one retained Flex structure for measurement and presentation:

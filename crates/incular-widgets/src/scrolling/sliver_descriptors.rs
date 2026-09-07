@@ -1885,11 +1885,18 @@ impl Sliver for SliverResizingHeader {
 
 /// Naturally measured header with typed scroll and overscroll policies.
 ///
-/// The logical scroll extent is the child's measured main-axis extent; it is
-/// learned from unstretched layouts and reused while stretched. Stretched
-/// layouts present `natural + leading overlap` without growing the scroll
-/// range and return to the current measurement when overscroll ends. The
-/// default scroll behavior pins and the default overscroll translates.
+/// The logical scroll extent is the child's measured main-axis extent under
+/// an explicit validity lifecycle: an unverified estimate first, then a
+/// measurement tied to the cross extent it was recorded under. Estimates
+/// always measure unbounded first — even mid-overscroll — so stretched
+/// samples can never become logical extent. Stretched layouts present
+/// `natural + leading overlap` without growing the scroll range and return
+/// to the current measurement when overscroll ends; a cross change demotes
+/// back to an estimate for revalidation. Replacing a viewport descriptor
+/// seeds the new header from the predecessor's validated value (never
+/// validity itself), so equivalent replacements stay range-stable while
+/// changed content re-establishes itself. The default scroll behavior pins
+/// and the default overscroll translates.
 #[derive(TypedBuilder)]
 pub struct SliverNaturalHeader {
     #[builder(setter(into))]
@@ -1973,6 +1980,7 @@ impl Sliver for SliverNaturalHeader {
                     .max(0.),
             )),
             presentation: Cell::new(HeaderPresentation::Settled),
+            last_cross: Cell::new(0.),
             scroll_state: HeaderScrollState::default(),
         })
     }

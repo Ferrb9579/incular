@@ -559,18 +559,33 @@ pub(super) struct ResizingHeaderRenderSliver {
 
 /// Lifecycle of a naturally measured header's logical extent.
 ///
-/// An unverified estimate seeds the first frame so a new header has geometry
-/// before its child is measured. It never authorizes stretched presentation:
-/// estimates always measure unbounded first, so a header created during
-/// overscroll establishes its true natural size instead of mistaking
-/// stretched visuals (or a blind default) for its logical extent.
+/// Validity depends on the actual measurement inputs, not on position or
+/// type correspondence:
+///
+/// - An unverified estimate seeds the first frame so a new header has
+///   geometry before its child is measured. It never authorizes stretched
+///   presentation: estimates always measure unbounded first, so a header
+///   created during overscroll establishes its true natural size instead of
+///   mistaking stretched visuals (or a blind default) for logical extent.
+/// - A validated measurement is tied to the cross-axis extent it was recorded
+///   under (wrapping content re-flows when the viewport width changes). A
+///   cross change demotes it back to an estimate for unbounded revalidation,
+///   including mid-overscroll; any genuine range change then settles through
+///   Scroll's documented extent policy.
+/// - Transferred measurements arrive as estimate seeds, never as validity:
+///   matching positions and types prove nothing about current content, so
+///   every seed revalidates unbounded before stretched presentation applies.
+///   Seeding with the predecessor's validated value (rather than a blind
+///   hint) keeps equivalent replacements range-stable through validation,
+///   while changed content authoritatively re-establishes itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum NaturalHeaderExtent {
-    /// Unverified first estimate from a child hint or the lazy default.
+    /// Unverified first estimate: a transferred predecessor value or a child
+    /// hint / lazy default. Always measures unbounded next.
     Estimate(f32),
-    /// Validated by retained child measurement, or inherited from a
-    /// compatible retained header across descriptor updates.
-    Measured(f32),
+    /// Validated by retained child measurement under the recorded cross-axis
+    /// extent.
+    Measured { natural: f32, cross: f32 },
 }
 
 /// Whether the most recent layout presented stretched visuals.
@@ -585,35 +600,44 @@ pub(super) enum HeaderPresentation {
 
 /// Retained naturally measured header with optional leading stretch.
 ///
-/// Only settled layouts with unbounded child constraints may establish or
-/// update the measured extent, plus the unbounded learning pass of an
-/// unverified estimate. Stretched samples are presentation-only and can never
-/// accumulate into the logical scroll range, while genuine content changes
-/// are still learned (and legitimately change the range once settled).
+/// Only unbounded child measurements may establish or update the measured
+/// extent. Stretched (tight) samples are presentation-only and can never
+/// accumulate into the logical scroll range: tight totals conflate natural
+/// size with transient overscroll, so they carry no validity signal.
+/// In-place content changes are learned on the next unbounded pass (at
+/// recovery at the latest); the tight Flex presentation still resolves the
+/// live-measured bottom with the toolbar taking the remainder every pass.
 pub(super) struct NaturalHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) scroll_behavior: SliverHeaderScrollBehavior,
     pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
     pub(super) extent: Cell<NaturalHeaderExtent>,
     pub(super) presentation: Cell<HeaderPresentation>,
+    pub(super) last_cross: Cell<f32>,
     pub(super) scroll_state: HeaderScrollState,
 }
 
 impl NaturalHeaderRenderSliver {
-    /// Adopts validated measurement (and compatible reversal tracking) from a
-    /// retained header replaced by this one, e.g. when application code
-    /// rebuilds a viewport descriptor during active overscroll. Stretched
-    /// presentation is never inherited: it is recomputed from live overlap.
-    /// Returns whether any state was adopted.
+    /// Compatibility and invalidation rules for transfer across descriptor
+    /// updates (applied pairwise by sliver position). Returns whether any
+    /// state was adopted.
+    ///
+    /// - A predecessor's validated measurement is adopted only as an
+    ///   unverified estimate seed, never as validity — even for identical
+    ///   positions and types. The seed revalidates unbounded, so equivalent
+    ///   replacements stay range-stable while changed content cannot retain
+    ///   a stale measurement.
+    /// - Reversal tracking transfers only when `scroll_behavior` is identical,
+    ///   since it defines the effective-offset range semantics.
+    /// - Stretched presentation is never inherited; it recomputes from live
+    ///   overlap on the next layout.
+    /// - A predecessor that never validated contributes nothing; the fresh
+    ///   hint-based seed stands.
     pub(super) fn adopt_compatible_state(&mut self, previous: &Self) -> bool {
         let mut adopted = false;
-        if let NaturalHeaderExtent::Measured(natural) = previous.extent.get()
-            && !matches!(
-                self.extent.get(),
-                NaturalHeaderExtent::Measured(current) if (current - natural).abs() <= f32::EPSILON
-            )
-        {
-            self.extent.set(NaturalHeaderExtent::Measured(natural));
+        if let NaturalHeaderExtent::Measured { natural, .. } = previous.extent.get() {
+            self.extent
+                .set(NaturalHeaderExtent::Estimate(natural.max(0.)));
             adopted = true;
         }
         if self.scroll_behavior == previous.scroll_behavior {
@@ -849,9 +873,25 @@ impl RenderSliver for NaturalHeaderRenderSliver {
     }
 
     fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+        let cross = constraints.cross_axis_extent.max(0.);
+        self.last_cross.set(cross);
+        // A validated measurement only covers the cross extent recorded with
+        // it: wrapping content re-flows when the viewport width changes, so a
+        // cross change demotes back to an estimate for unbounded revalidation
+        // — including mid-overscroll, where any genuine range change then
+        // settles through Scroll's documented extent policy.
+        if let NaturalHeaderExtent::Measured {
+            natural,
+            cross: validated,
+        } = self.extent.get()
+            && (validated - cross).abs() > f32::EPSILON
+        {
+            self.extent
+                .set(NaturalHeaderExtent::Estimate(natural.max(0.)));
+        }
         let (natural, unverified) = match self.extent.get() {
             NaturalHeaderExtent::Estimate(estimate) => (estimate.max(0.), true),
-            NaturalHeaderExtent::Measured(measured) => (measured.max(0.), false),
+            NaturalHeaderExtent::Measured { natural, .. } => (natural.max(0.), false),
         };
         let scroll_offset = constraints.scroll_offset;
         let effective_offset = match self.scroll_behavior {
@@ -954,24 +994,34 @@ impl RenderSliver for NaturalHeaderRenderSliver {
         match self.extent.get() {
             // Learning passes always use unbounded constraints, so any sample
             // here is the true natural size by construction. Adopting it can
-            // never mistake stretched visuals for logical extent.
-            NaturalHeaderExtent::Estimate(estimate) => {
-                self.extent.set(NaturalHeaderExtent::Measured(extent));
-                (estimate - extent).abs() > f32::EPSILON
+            // never mistake stretched visuals for logical extent. The
+            // transition always requests another layout — even when the value
+            // equals the estimate — because presentation constraints must
+            // still switch (unbounded learning to settled or tight stretch).
+            NaturalHeaderExtent::Estimate(_) => {
+                self.extent.set(NaturalHeaderExtent::Measured {
+                    natural: extent,
+                    cross: self.last_cross.get(),
+                });
+                true
             }
-            // Stretched samples describe transient presentation, not logical
-            // extent. Ignoring them keeps overscroll from drifting the range
-            // across repeated stretch/recovery cycles.
-            NaturalHeaderExtent::Measured(_)
+            // Tight samples conflate natural size with transient overscroll
+            // and carry no validity signal, so they are ignored: ignoring
+            // them keeps overscroll from drifting the range across repeated
+            // stretch/recovery cycles.
+            NaturalHeaderExtent::Measured { .. }
                 if self.presentation.get() == HeaderPresentation::Stretched =>
             {
                 false
             }
-            NaturalHeaderExtent::Measured(current) => {
-                if (current - extent).abs() <= f32::EPSILON {
+            NaturalHeaderExtent::Measured { natural, cross } => {
+                if (natural - extent).abs() <= f32::EPSILON {
                     return false;
                 }
-                self.extent.set(NaturalHeaderExtent::Measured(extent));
+                self.extent.set(NaturalHeaderExtent::Measured {
+                    natural: extent,
+                    cross,
+                });
                 true
             }
         }

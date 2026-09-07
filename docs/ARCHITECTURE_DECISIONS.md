@@ -83,17 +83,21 @@ updates; a widget must not synthesize a separate overscroll position.
 
 `SliverNaturalHeader` is the measured counterpart to the explicit resizing
 header. Its logical extent moves explicitly from an unverified estimate to a
-validated measurement via unbounded learning passes; stretched samples are
-presentation-only and can never accumulate into the range. Replacing a
-viewport descriptor transfers validated measurements (and compatible reversal
-tracking) by sliver position into the new delegate, so a header replaced
-during overscroll keeps its true size without cancelling scroll activity.
-Material maps `stretch` into this policy through one Flex structure shared by
-measurement and presentation: the bottom is measured under real cross
-constraints and the toolbar fills the remainder, with no size hints, caches,
-scroll controllers, or animation engines in Material. The viewport reports
-leading overscroll as a negative physical offset in both forward and reversed
-directions so either leading edge can stretch.
+validated measurement via unbounded learning passes; validity is tied to the
+actual inputs (child content as measured, cross extent as constrained), and
+stretched samples are presentation-only and can never accumulate into the
+range. A cross change demotes back to an estimate for revalidation.
+Replacing a viewport descriptor seeds the new header from the predecessor's
+validated value but never grants validity — positional correspondence and
+matching types authorize a seed, not proof — so equivalent replacements stay
+range-stable while changed content re-establishes itself; reversal tracking
+moves only across identical scroll behaviors, and stretched presentation is
+never inherited. Material maps `stretch` into this policy through one Flex
+structure shared by measurement and presentation: the bottom is measured
+under real cross constraints and the toolbar fills the remainder, with no
+size hints, caches, scroll controllers, or animation engines in Material.
+The viewport reports leading overscroll as a negative physical offset in
+both forward and reversed directions so either leading edge can stretch.
 
 Retain `incular-painting` as a pure import shim for this pre-1.0 campaign so
 existing imports continue compiling. All new work uses `incular-rendering`.

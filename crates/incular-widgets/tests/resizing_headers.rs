@@ -367,6 +367,22 @@ fn unmeasured_header_measures_unbounded_before_presenting_stretch() {
     assert_eq!(second.geometry.scroll_extent, 70.);
     assert_eq!(second.children[0].extent, 90.);
     assert_eq!(second.children[0].constraints.max_height(), 90.);
+    // An estimate that validates exactly equal must still request another
+    // layout: presentation constraints have to switch from unbounded
+    // learning to settled or tight stretch even though the value is right.
+    // (The 48px box hints exactly its true size, so estimate and actual
+    // coincide here by construction.)
+    let exact = SliverNaturalHeader::new(Widget::box_(Size::new(48., 48.), Color::WHITE))
+        .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch);
+    let mut exact_render =
+        exact.create_render_sliver(&ScrollController::new(), Axis::Vertical, false);
+    let learning = exact_render.perform_layout(stretched());
+    assert!(!learning.children[0].constraints.max_height().is_finite());
+    assert!(exact_render.set_child_extent(learning.children[0].id, 48.));
+    let tightened = exact_render.perform_layout(stretched());
+    assert_eq!(tightened.children[0].constraints.max_height(), 68.);
+    assert_eq!(tightened.children[0].extent, 68.);
+    assert_eq!(tightened.geometry.scroll_extent, 48.);
 }
 
 #[test]
@@ -411,8 +427,9 @@ fn natural_header_replacement_during_overscroll_inherits_measurement() {
     let stretch = -controller.offset();
     assert!(stretch > 0.);
     // Replace the whole viewport delegate while overscroll is active. The new
-    // retained header inherits the validated measurement instead of an
-    // estimate, so presentation stays exact and the scroll activity survives.
+    // retained header seeds its estimate from the validated measurement and
+    // revalidates unbounded, so equivalent content stays range-stable and
+    // presentation stays exact with the scroll activity surviving.
     tree.update(root, view()).expect("update");
     tree.layout(constraints).expect("replaced layout");
     tree.update_compositor(Instant::now()).expect("compositor");
@@ -426,6 +443,149 @@ fn natural_header_replacement_during_overscroll_inherits_measurement() {
     assert!(controller.jump_to(0.));
     tree.layout(constraints).expect("settled layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+    assert_eq!(controller.content_extent(), 860.);
+}
+
+#[test]
+fn taller_replacement_during_overscroll_revalidates_and_settles() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        LayoutBuilder, SizedBox, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+    };
+    use std::time::Instant;
+
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let view = |height: f32| {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(
+                SliverNaturalHeader::new(Widget::from(LayoutBuilder::new(move |_, _| {
+                    Widget::from(SizedBox::new().height(height))
+                })))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+            ),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(view(60.)).expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    controller.apply_physics(physics, -40.);
+    assert!(-controller.offset() > 0.);
+    // Replace with genuinely taller content during overscroll. The stale
+    // measurement must not be retained: the replacement revalidates unbounded
+    // to its true size, and the resulting range change settles through
+    // Scroll's documented extent policy instead of preserving overscroll.
+    tree.update(root, view(80.)).expect("update");
+    tree.layout(constraints).expect("replaced layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 80.)));
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 880.);
+    // Fresh overscroll stretches the revalidated measurement exactly, with no
+    // accumulated drift.
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 80. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("settled layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 80.)));
+    assert_eq!(controller.content_extent(), 880.);
+}
+
+#[test]
+fn exact_estimate_replacement_still_tightens_presentation() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        LayoutBuilder, SizedBox, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+    };
+    use std::time::Instant;
+
+    // Replacing a hint-less header with a hint-exact box of the same size
+    // during overscroll: the seeded estimate validates exactly equal, which
+    // must still tighten presentation constraints (unbounded learning to
+    // tight stretch) instead of leaving the natural-sized child under
+    // stretched paint. This locks the equal-value transition; the unit test
+    // above is the case that fails without it.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let layout_built = || {
+        Widget::from(LayoutBuilder::new(|_, _| {
+            Widget::from(SizedBox::new().height(60.))
+        }))
+    };
+    let view = |header: SliverNaturalHeader| {
+        let slivers: Vec<Box<dyn Sliver>> = vec![
+            Box::new(header),
+            Box::new(SliverToBoxAdapter::new(Widget::box_(
+                Size::new(200., 800.),
+                Color::BLACK,
+            ))),
+        ];
+        CustomScrollView::new(slivers)
+            .controller(controller.clone())
+            .physics(physics)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(view(
+            SliverNaturalHeader::new(layout_built())
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+        ))
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 60.)));
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.update(
+        root,
+        view(
+            SliverNaturalHeader::new(Widget::box_(Size::new(200., 60.), Color::WHITE))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+        ),
+    )
+    .expect("update");
+    tree.layout(constraints).expect("replaced layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    // The child type changed (LayoutBuilder to box), so the materialized
+    // render object is legitimately new; re-query it instead of the stale id.
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 60. + stretch))
+    );
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
     assert_eq!(controller.content_extent(), 860.);
 }
 
