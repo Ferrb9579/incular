@@ -325,3 +325,62 @@ fn floating_header_without_snap_stays_put_after_scroll_ends() {
     assert!(!active);
     assert_eq!(tree.render_size(render), Some(Size::new(200., 60.)));
 }
+
+#[test]
+fn snap_freezes_through_material_path_when_new_activity_begins() {
+    let controller = ScrollController::new();
+    let (mut tree, root) = snap_viewport(explicit_header(true, true), controller.clone(), false);
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // Partially reveal, then advance the retained snap halfway.
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -60.);
+    tree.layout(constraints).expect("partial layout");
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active, "a started snap must schedule frames");
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+    tree.layout(constraints).expect("mid layout");
+    let frozen = tree.render_size(render).expect("header size").height;
+    assert!(
+        (60.0..120.0).contains(&frozen) && frozen != 60. && frozen != 120.,
+        "mid-snap presentation must lie strictly between: {frozen}"
+    );
+
+    // A new activity with no movement freezes the Material header too, and
+    // ending it afterwards restarts from the frozen presentation.
+    assert!(controller.begin_activity());
+    for at in [250, 400] {
+        let (changed, active) =
+            pump_frame(&mut tree, constraints, start + Duration::from_millis(at));
+        assert!(!changed, "frozen presentation must not move at +{at}ms");
+        assert!(!active, "no frames may be scheduled at +{at}ms");
+        assert_eq!(
+            tree.render_size(render),
+            Some(Size::new(200., frozen)),
+            "Material presentation must remain at the interrupted position"
+        );
+    }
+    assert!(controller.end_activity());
+    tree.layout(constraints).expect("restart layout");
+    let restart = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, restart);
+    assert!(active, "ending the new activity must restart the snap");
+    let (changed, active) =
+        pump_frame(&mut tree, constraints, restart + Duration::from_millis(300));
+    assert!(changed);
+    assert!(active, "one settle frame stays scheduled past completion");
+    let (changed, active) =
+        pump_frame(&mut tree, constraints, restart + Duration::from_millis(400));
+    assert!(!changed);
+    assert!(!active);
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the restarted Material snap must complete revealed"
+    );
+}

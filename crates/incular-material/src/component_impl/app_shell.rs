@@ -336,9 +336,11 @@ impl SliverAppBar {
     /// the header still floats (`Scroll` upgrades to `Floating`, `Pinned`
     /// upgrades to `FloatingPinned`). Snap animates the collapsible range, so
     /// a fixed natural height with no collapse range keeps its floating
-    /// presentation but has no edge to animate to. New scroll movement
-    /// interrupts the animation from its current presentation; leading
-    /// overscroll keeps stretch ownership while it lasts.
+    /// presentation but has no edge to animate to. A new scroll activity
+    /// interrupts the animation from its current presentation even before the
+    /// offset moves, and an end stranded inside that newer activity never
+    /// starts a run; leading overscroll keeps stretch ownership while it
+    /// lasts.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;

@@ -62,6 +62,24 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   all-feature/all-target Clippy, all Material all-feature tests and
   warning-denied Widgets/Material rustdoc passed. Live native tests were not
   run. W1 is not marked complete.
+- W1 snap interruption on activity start: the snap subscription now observes
+  scroll-activity starts as well as ends into one overwriting pending-activity
+  cell, so a new activity cancels running and settling work and invalidates a
+  stranded end even when the offset has not moved, while preserving the
+  current presentation for later movement to continue from. End followed by
+  Start starts nothing; Start followed by End requests a fresh decision.
+  Offset-delta interruption still covers unbracketed programmatic movement,
+  and subscription ownership and disposal are unchanged with no polling, extra
+  controller, or Material-specific handling. Regressions freeze mid-snap
+  presentation across later frames after a moveless begin, assert End-then-
+  Start silence and Start-then-End restart, verify delta continuity from the
+  frozen presentation with no restart without an end, cancel settling work on
+  a new activity, and cover freeze plus restart through the retained Material
+  path. Reduced-motion responsiveness stays unfinished (tracked under W5/W8,
+  not claimed here). Formatting, workspace compilation, constrained workspace
+  tests, strict all-feature/all-target Clippy, all Material all-feature tests
+  and warning-denied Widgets/Material rustdoc passed. Live native tests were
+  not run. W1 is not marked complete.
 - W1 nested-viewport invalidation: the enclosing-sliver invalidation walk now
   continues outward through shrink-wrapping viewports, whose size derives
   from content, so inner content changes revalidate outer natural-header

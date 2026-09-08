@@ -46,7 +46,7 @@ use layout::{
     PaddingRenderSliver, ResizingHeaderRenderSliver, SequenceRenderSliver,
     SequenceViewportDelegate, SliverViewportOptions, VariableExtentRenderSliver,
     ViewportExtentRenderSliver, WidgetWrapRenderSliver, single_sliver_viewport,
-    single_sliver_viewport_with_options, sliver_child_constraints, snap_trigger_subscription,
+    single_sliver_viewport_with_options, sliver_child_constraints, snap_activity_subscription,
     widget_main_extent_hint,
 };
 

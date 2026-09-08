@@ -3,7 +3,9 @@
 //! Snapping starts only from actual scroll-activity ends observed through the
 //! controller's notification stream, advances on compositor ticks with
 //! deterministic test clocks, and animates presentation only: the logical
-//! scroll extent and controller offset never move for it.
+//! scroll extent and controller offset never move for it. A new activity
+//! interrupts running and settling work even before the offset moves, while
+//! preserving the current presentation.
 
 use std::time::{Duration, Instant};
 
@@ -818,4 +820,178 @@ fn snap_does_not_start_while_stretched() {
     assert_eq!(tree.render_size(render), Some(Size::new(200., 100.)));
     let (_, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(300));
     assert!(!active);
+}
+
+/// Drives a floating resizing header to a partially revealed snap start:
+/// hidden at offset 400, then 60 of 120 showing at offset 340.
+fn partial_reveal_fixture() -> (WidgetTree, ElementId, ScrollController, Constraints) {
+    let controller = ScrollController::new();
+    let (mut tree, root) = viewport_with_header(
+        resizing_floating_header(),
+        controller.clone(),
+        Axis::Vertical,
+        false,
+        ScrollPhysics::default(),
+    );
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -60.);
+    tree.layout(constraints).expect("partial layout");
+    (tree, root, controller, constraints)
+}
+
+#[test]
+fn snap_freezes_when_new_activity_begins_without_moving() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active, "a started snap must schedule frames");
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+    tree.layout(constraints).expect("mid layout");
+    let frozen = tree.render_size(render).expect("header size").height;
+    assert!(
+        (60.0..120.0).contains(&frozen) && frozen != 60. && frozen != 120.,
+        "mid-snap presentation must lie strictly between: {frozen}"
+    );
+
+    // A new activity with no movement still interrupts: the run drops while
+    // the current presentation stays put, and later frames stay quiet.
+    assert!(
+        controller.begin_activity(),
+        "the interrupting activity must be genuinely new"
+    );
+    for at in [200, 300, 400] {
+        let (changed, active) =
+            pump_frame(&mut tree, constraints, start + Duration::from_millis(at));
+        assert!(!changed, "frozen presentation must not move at +{at}ms");
+        assert!(!active, "no frames may be scheduled at +{at}ms");
+        assert_eq!(
+            tree.render_size(render),
+            Some(Size::new(200., frozen)),
+            "presentation must remain at the interrupted position"
+        );
+    }
+    assert_eq!(controller.offset(), 340.);
+}
+
+#[test]
+fn snap_ignores_end_stranded_inside_newer_activity() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // The fixture's last scroll already left an end pending with no tick
+    // since. A newer Start overwrites it with no tick between: the overwrite
+    // order must win and no snap may begin inside the new activity.
+    assert!(
+        controller.begin_activity(),
+        "the superseding activity must be genuinely new"
+    );
+    tree.layout(constraints).expect("partial layout");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 60.)));
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(!active, "no snap may schedule frames");
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 60.)),
+        "no snap may move presentation"
+    );
+    // The first compositor also performs one-time transform setup; the
+    // confirming pump must be fully quiet.
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(100));
+    assert!(!changed, "no snap may move presentation");
+    assert!(!active, "no snap may schedule frames");
+    let (_, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(400));
+    assert!(!active);
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 60.)));
+}
+
+#[test]
+fn snap_restarts_after_start_then_end() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // Start followed by End leaves a pending end: a fresh endpoint decision
+    // runs from the current presentation.
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    tree.layout(constraints).expect("partial layout");
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active, "the fresh end must start a snap");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(300));
+    assert!(changed);
+    assert!(active, "one settle frame stays scheduled past completion");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(400));
+    assert!(!changed);
+    assert!(!active);
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the restarted snap must complete revealed"
+    );
+}
+
+#[test]
+fn snap_continues_smoothly_from_activity_cancelled_presentation() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    let start = Instant::now();
+    let _ = pump_frame(&mut tree, constraints, start);
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+    tree.layout(constraints).expect("mid layout");
+    let frozen = tree.render_size(render).expect("header size").height;
+    assert!((60.0..120.0).contains(&frozen) && frozen != 60. && frozen != 120.);
+
+    // Cancel via activity start with no movement, then move unbracketed: the
+    // offset delta complements activity interruption for programmatic moves.
+    assert!(controller.begin_activity());
+    assert!(controller.scroll_by(5.));
+    tree.layout(constraints).expect("moved layout");
+    let resumed = tree.render_size(render).expect("header size").height;
+    assert!(
+        resumed < frozen,
+        "scrolling down must hide further from the frozen value"
+    );
+    assert!(
+        (frozen - resumed - 5.).abs() <= 1.,
+        "movement must continue from the frozen presentation: {frozen} -> {resumed}"
+    );
+    // No end followed, so no snap restarts.
+    let (_, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(250));
+    assert!(!active, "movement without an end must not restart a snap");
+}
+
+#[test]
+fn snap_cancels_settling_work_on_new_activity() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // Drive the run to its completing tick: the endpoint is exact and one
+    // settle frame stays scheduled.
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active);
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(300));
+    assert!(changed);
+    assert!(active);
+
+    // A new activity cancels the settling work. The already-exact endpoint
+    // still presents through the pending layout, then frames stop.
+    assert!(controller.begin_activity());
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(400));
+    assert!(!changed, "cancelling settle work must move nothing further");
+    assert!(!active, "frames must stop once settling is cancelled");
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the exact endpoint still presents"
+    );
 }

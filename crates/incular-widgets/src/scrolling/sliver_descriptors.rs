@@ -1712,8 +1712,9 @@ impl Sliver for PinnedHeaderSliver {
 /// When `snap` is set, scroll-activity ends animate a partially revealed
 /// header to the revealed or hidden edge (whichever half is showing) over the
 /// shared neutral snap timing. Snapping animates presentation only: the
-/// logical scroll extent and controller offset never move, and new scroll
-/// movement interrupts from the current presentation.
+/// logical scroll extent and controller offset never move. A new scroll
+/// activity interrupts from the current presentation even before the offset
+/// moves, and an end stranded inside that newer activity never starts a run.
 #[derive(TypedBuilder)]
 pub struct SliverFloatingHeader {
     #[builder(setter(into))]
@@ -1732,7 +1733,8 @@ impl SliverFloatingHeader {
     }
 
     /// Enables snap-to-edge when a scroll activity ends with the header
-    /// partially revealed.
+    /// partially revealed. A new activity interrupts the animation even
+    /// before the offset moves, preserving the current presentation.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -1767,7 +1769,7 @@ impl Sliver for SliverFloatingHeader {
         axis: Axis,
         _reverse: bool,
     ) -> Box<dyn RenderSliver> {
-        let (snap_trigger, snap_subscription) = snap_trigger_subscription(controller, self.snap);
+        let (snap_activity, snap_subscription) = snap_activity_subscription(controller, self.snap);
         Box::new(FloatingHeaderRenderSliver {
             child: self.child.clone(),
             extent: Cell::new(
@@ -1778,7 +1780,7 @@ impl Sliver for SliverFloatingHeader {
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
             snap_frame: Cell::new(HeaderSnapFrame::default()),
-            snap_trigger,
+            snap_activity,
             snap_subscription,
         })
     }
@@ -1863,7 +1865,8 @@ impl SliverResizingHeader {
 
     /// Enables snap-to-edge when a scroll activity ends with the header
     /// partially revealed. Engages only for Floating/FloatingPinned behavior;
-    /// inert for Scroll/Pinned.
+    /// inert for Scroll/Pinned. A new activity interrupts the animation even
+    /// before the offset moves, preserving the current presentation.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -1916,8 +1919,8 @@ impl Sliver for SliverResizingHeader {
             self.scroll_behavior,
             SliverHeaderScrollBehavior::Floating | SliverHeaderScrollBehavior::FloatingPinned
         );
-        let (snap_trigger, snap_subscription) =
-            snap_trigger_subscription(controller, self.snap && floating);
+        let (snap_activity, snap_subscription) =
+            snap_activity_subscription(controller, self.snap && floating);
         Box::new(ResizingHeaderRenderSliver {
             child: self.child.clone(),
             min_extent: self.min_extent(),
@@ -1927,7 +1930,7 @@ impl Sliver for SliverResizingHeader {
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
             snap_frame: Cell::new(HeaderSnapFrame::default()),
-            snap_trigger,
+            snap_activity,
             snap_subscription,
         })
     }
@@ -1983,7 +1986,8 @@ impl SliverNaturalHeader {
 
     /// Enables snap-to-edge when a scroll activity ends with the header
     /// partially revealed. Engages only for Floating/FloatingPinned behavior;
-    /// inert for Scroll/Pinned.
+    /// inert for Scroll/Pinned. A new activity interrupts the animation even
+    /// before the offset moves, preserving the current presentation.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -2041,8 +2045,8 @@ impl Sliver for SliverNaturalHeader {
             self.scroll_behavior,
             SliverHeaderScrollBehavior::Floating | SliverHeaderScrollBehavior::FloatingPinned
         );
-        let (snap_trigger, snap_subscription) =
-            snap_trigger_subscription(controller, self.snap && floating);
+        let (snap_activity, snap_subscription) =
+            snap_activity_subscription(controller, self.snap && floating);
         Box::new(NaturalHeaderRenderSliver {
             child: self.child.clone(),
             scroll_behavior: self.scroll_behavior,
@@ -2058,7 +2062,7 @@ impl Sliver for SliverNaturalHeader {
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
             snap_frame: Cell::new(HeaderSnapFrame::default()),
-            snap_trigger,
+            snap_activity,
             snap_subscription,
         })
     }

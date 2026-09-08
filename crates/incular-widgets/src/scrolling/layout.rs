@@ -413,8 +413,8 @@ pub(super) struct FloatingHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
-    pub(super) snap_trigger: Rc<Cell<bool>>,
-    /// Owns the scroll-end listener while snapping can engage. Never read:
+    pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
+    /// Owns the scroll-activity listener while snapping can engage. Never read:
     /// dropping the subscription unsubscribes, so disposal stops snap
     /// triggers without further cleanup. `None` when snapping cannot engage.
     #[allow(dead_code)]
@@ -465,28 +465,34 @@ impl HeaderScrollState {
         )
     }
 
-    /// Consumes a scroll-end event and advances snap presentation.
+    /// Consumes pending scroll activity and advances snap presentation.
     ///
     /// `spec` carries the header's snap configuration and live snap range;
-    /// `frame` is the last layout's paint/overlap/scroll snapshot. A run
-    /// starts only from an actual scroll-end signal while the header is
-    /// partially revealed and free of leading overscroll — never from an
-    /// unchanged offset. The revealed half (or more) animates to fully
-    /// revealed; the hidden half animates to fully hidden, clamped to the
-    /// scrolled distance the scroll state itself enforces. The logical scroll
-    /// extent and controller offset are untouched: only the effective
-    /// (presentation) offset moves, and on completion it equals the endpoint
-    /// exactly so later scrolls continue coherently. Returns whether the
-    /// effective offset moved.
+    /// `frame` is the last layout's paint/overlap/scroll snapshot. A new
+    /// activity cancels running and settling work first — even when the
+    /// offset has not moved — while preserving the current presentation as
+    /// the baseline later movement continues from. A run starts only from an
+    /// actual scroll-end signal while the header is partially revealed and
+    /// free of leading overscroll — never from an unchanged offset. The
+    /// revealed half (or more) animates to fully revealed; the hidden half
+    /// animates to fully hidden, clamped to the scrolled distance the scroll
+    /// state itself enforces. The logical scroll extent and controller offset
+    /// are untouched: only the effective (presentation) offset moves, and on
+    /// completion it equals the endpoint exactly so later scrolls continue
+    /// coherently. Returns whether the effective offset moved.
     pub(super) fn advance_snap(
         &mut self,
         now: Instant,
-        scroll_end: bool,
+        activity: HeaderSnapActivity,
         spec: HeaderSnapSpec,
         frame: HeaderSnapFrame,
     ) -> bool {
+        if activity == HeaderSnapActivity::Started {
+            self.snap = HeaderSnapProgress::Idle;
+            return false;
+        }
         let range = spec.range.max(0.);
-        if scroll_end
+        if activity == HeaderSnapActivity::Ended
             && spec.enabled
             && spec.floating
             && range > 0.
@@ -544,6 +550,22 @@ impl HeaderScrollState {
 /// header, so snapping stays a presentation policy rather than per-header
 /// configuration.
 const HEADER_SNAP_DURATION: Duration = Duration::from_millis(300);
+
+/// Unconsumed scroll-activity signal for snap decisions. Each event
+/// overwrites the previous one, which preserves ordering across frames: End
+/// followed by Start leaves `Started` (no snap may begin inside the new
+/// activity), while Start followed by End leaves `Ended` (a fresh endpoint
+/// decision runs).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum HeaderSnapActivity {
+    /// No unconsumed activity transition.
+    #[default]
+    None,
+    /// A scroll activity began: cancel snap work, start nothing.
+    Started,
+    /// A scroll activity ended: a partially revealed header may snap.
+    Ended,
+}
 
 /// Mutually exclusive snap presentation states. A running animation carries
 /// its start presentation, resolved target, and timing together; there are no
@@ -605,28 +627,34 @@ pub(super) struct HeaderSnapFrame {
     pub(super) scroll: f32,
 }
 
-/// Creates the shared scroll-end trigger and its controller subscription for
-/// a header that can snap. The listener records actual scroll-activity `End`
-/// transitions; starting from unchanged offsets is never inferred. Pass
-/// `false` unless snapping can engage, so inert headers keep their existing
-/// behavior exactly. The returned subscription must be retained by the render
-/// sliver: dropping it unsubscribes, so disposal stops snap triggers without
-/// further cleanup.
-pub(super) fn snap_trigger_subscription(
+/// Creates the shared scroll-activity signal and its controller subscription
+/// for a header that can snap. The listener records actual scroll-activity
+/// `Start` and `End` transitions, each overwriting the previous one, so an
+/// `End` stranded inside a newer activity can never start a snap; starting
+/// from unchanged offsets is never inferred. Pass `false` unless snapping
+/// can engage, so inert headers keep their existing behavior exactly. The
+/// returned subscription must be retained by the render sliver: dropping it
+/// unsubscribes, so disposal stops snap signals without further cleanup.
+pub(super) fn snap_activity_subscription(
     controller: &ScrollController,
     enabled: bool,
-) -> (Rc<Cell<bool>>, Option<ScrollNotificationSubscription>) {
-    let trigger = Rc::new(Cell::new(false));
+) -> (
+    Rc<Cell<HeaderSnapActivity>>,
+    Option<ScrollNotificationSubscription>,
+) {
+    let activity = Rc::new(Cell::new(HeaderSnapActivity::None));
     let subscription = enabled.then(|| {
-        let trigger = trigger.clone();
+        let activity = activity.clone();
         controller.add_notification_listener(move |notification| {
-            if notification.kind == ScrollNotificationType::End {
-                trigger.set(true);
+            match notification.kind {
+                ScrollNotificationType::Start => activity.set(HeaderSnapActivity::Started),
+                ScrollNotificationType::End => activity.set(HeaderSnapActivity::Ended),
+                _ => {}
             }
             false
         })
     });
-    (trigger, subscription)
+    (activity, subscription)
 }
 
 fn floating_geometry(
@@ -712,10 +740,12 @@ impl RenderSliver for FloatingHeaderRenderSliver {
     }
 
     fn tick(&mut self, now: Instant) -> bool {
-        let scroll_end = self.snap_trigger.take();
+        // Consuming here (before advancing) applies the ordering rule: a
+        // newer Start already overwrote any stranded End.
+        let activity = self.snap_activity.take();
         self.scroll_state.advance_snap(
             now,
-            scroll_end,
+            activity,
             HeaderSnapSpec {
                 enabled: self.snap,
                 floating: true,
@@ -776,8 +806,8 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
-    pub(super) snap_trigger: Rc<Cell<bool>>,
-    /// Owns the scroll-end listener while snapping can engage. Never read:
+    pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
+    /// Owns the scroll-activity listener while snapping can engage. Never read:
     /// dropping the subscription unsubscribes, so disposal stops snap
     /// triggers without further cleanup. `None` when snapping cannot engage.
     #[allow(dead_code)]
@@ -846,8 +876,8 @@ pub(super) struct NaturalHeaderRenderSliver {
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
-    pub(super) snap_trigger: Rc<Cell<bool>>,
-    /// Owns the scroll-end listener while snapping can engage. Never read:
+    pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
+    /// Owns the scroll-activity listener while snapping can engage. Never read:
     /// dropping the subscription unsubscribes, so disposal stops snap
     /// triggers without further cleanup. `None` when snapping cannot engage.
     #[allow(dead_code)]
@@ -1127,7 +1157,9 @@ impl RenderSliver for ResizingHeaderRenderSliver {
     }
 
     fn tick(&mut self, now: Instant) -> bool {
-        let scroll_end = self.snap_trigger.take();
+        // Consuming here (before advancing) applies the ordering rule: a
+        // newer Start already overwrote any stranded End.
+        let activity = self.snap_activity.take();
         let (range, pinned) = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Floating => (self.max_extent, 0.),
             SliverHeaderScrollBehavior::FloatingPinned => {
@@ -1137,7 +1169,7 @@ impl RenderSliver for ResizingHeaderRenderSliver {
         };
         self.scroll_state.advance_snap(
             now,
-            scroll_end,
+            activity,
             HeaderSnapSpec {
                 enabled: self.snap,
                 floating: matches!(
@@ -1289,7 +1321,9 @@ impl RenderSliver for NaturalHeaderRenderSliver {
     }
 
     fn tick(&mut self, now: Instant) -> bool {
-        let scroll_end = self.snap_trigger.take();
+        // Consuming here (before advancing) applies the ordering rule: a
+        // newer Start already overwrote any stranded End.
+        let activity = self.snap_activity.take();
         let natural = match self.extent.get() {
             NaturalHeaderExtent::Estimate(estimate) => estimate.max(0.),
             NaturalHeaderExtent::Measured { natural, .. } => natural.max(0.),
@@ -1303,7 +1337,7 @@ impl RenderSliver for NaturalHeaderRenderSliver {
         };
         self.scroll_state.advance_snap(
             now,
-            scroll_end,
+            activity,
             HeaderSnapSpec {
                 enabled: self.snap,
                 floating: matches!(
