@@ -249,8 +249,8 @@ impl From<AppBar> for Widget {
 
 /// Material app bar for a [`incular_widgets::CustomScrollView`]. Pass this
 /// descriptor as a [`incular_widgets::Sliver`] to enable retained pinning,
-/// floating or stretching. A pinned fixed-height toolbar remains visible even
-/// when floating is also enabled.
+/// floating, snapping or stretching. A pinned fixed-height toolbar remains
+/// visible even when floating is also enabled.
 /// Conversion to an ordinary [`Widget`] supplies only the static box
 /// presentation; stretching applies only to the retained sliver because it
 /// consumes the viewport's leading overscroll.
@@ -259,7 +259,14 @@ impl From<AppBar> for Widget {
 /// configured toolbar height; the expanded default is the collapsed height.
 /// Without explicit heights, the header measures its natural content and
 /// stretches that measurement.
-/// Snapping remains pending.
+/// Snapping animates a partially revealed floating header to the revealed or
+/// hidden edge when scrolling ends. Snap implies floating presentation: with
+/// `floating` unset, a snapped header still floats (`Scroll` upgrades to
+/// `Floating`, `Pinned` upgrades to `FloatingPinned`) so the option always
+/// has observable behavior. Snap animates the collapsible range; a fixed
+/// natural height with no collapse range keeps floating presentation but
+/// stays put. The animation drives presentation only; the logical scroll
+/// extent never moves for it.
 #[derive(Clone, TypedBuilder)]
 pub struct SliverAppBar {
     #[builder(default = AppBar::new(Text::new("")))]
@@ -324,6 +331,14 @@ impl SliverAppBar {
         self
     }
 
+    /// Enables snap-to-edge when scrolling ends with the header partially
+    /// revealed. Snap implies floating presentation: without [`Self::floating`]
+    /// the header still floats (`Scroll` upgrades to `Floating`, `Pinned`
+    /// upgrades to `FloatingPinned`). Snap animates the collapsible range, so
+    /// a fixed natural height with no collapse range keeps its floating
+    /// presentation but has no edge to animate to. New scroll movement
+    /// interrupts the animation from its current presentation; leading
+    /// overscroll keeps stretch ownership while it lasts.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -394,7 +409,11 @@ impl incular_widgets::Sliver for SliverAppBar {
 impl SliverAppBar {
     fn retained_header(&self) -> Box<dyn incular_widgets::Sliver> {
         // Keep theme lookup in the mounted subtree. The neutral header owns
-        // scroll geometry; Material supplies only its deferred presentation.
+        // scroll geometry and the snap presentation animation; Material maps
+        // its configuration into neutral behavior and supplies only deferred
+        // presentation. Snap implies floating so the option always has
+        // observable behavior.
+        let floating = self.floating || self.snap;
         if self.expanded_height.is_some() || self.collapsed_height.is_some() {
             use incular_widgets::{
                 SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior, SliverResizingHeader,
@@ -402,7 +421,7 @@ impl SliverAppBar {
 
             let min = self.collapsed_height.unwrap_or(self.app_bar.toolbar_height);
             let max = self.expanded_height.unwrap_or(min).max(min);
-            let behavior = match (self.pinned, self.floating) {
+            let behavior = match (self.pinned, floating) {
                 (false, false) => SliverHeaderScrollBehavior::Scroll,
                 (true, false) => SliverHeaderScrollBehavior::Pinned,
                 (false, true) => SliverHeaderScrollBehavior::Floating,
@@ -416,13 +435,14 @@ impl SliverAppBar {
             return Box::new(
                 SliverResizingHeader::new(min, max, self.resizing_child())
                     .scroll_behavior(behavior)
-                    .overscroll_behavior(overscroll),
+                    .overscroll_behavior(overscroll)
+                    .snap(self.snap),
             );
         }
         if self.stretch {
             use incular_widgets::{SliverHeaderScrollBehavior, SliverNaturalHeader};
 
-            let behavior = match (self.pinned, self.floating) {
+            let behavior = match (self.pinned, floating) {
                 (false, false) => SliverHeaderScrollBehavior::Scroll,
                 (true, false) => SliverHeaderScrollBehavior::Pinned,
                 (false, true) => SliverHeaderScrollBehavior::Floating,
@@ -434,14 +454,32 @@ impl SliverAppBar {
             return Box::new(
                 SliverNaturalHeader::new(self.resizing_child())
                     .scroll_behavior(behavior)
-                    .overscroll_behavior(incular_widgets::SliverHeaderOverscrollBehavior::Stretch),
+                    .overscroll_behavior(incular_widgets::SliverHeaderOverscrollBehavior::Stretch)
+                    .snap(self.snap),
             );
         }
         let child = Widget::from(self.clone());
-        if self.pinned {
+        if self.pinned && !self.snap {
+            // Fixed-height pinning keeps precedence when floating is also
+            // enabled; only an explicit snap upgrades past it.
             Box::new(incular_widgets::PinnedHeaderSliver::new(child))
-        } else if self.floating {
-            Box::new(incular_widgets::SliverFloatingHeader::new(child))
+        } else if floating {
+            if self.pinned {
+                // Snap-implied FloatingPinned without explicit heights or
+                // stretch: measure naturally so the upgrade has content to
+                // present. A fixed natural height has no collapse range, so
+                // snap stays inert there by construction (documented on
+                // [`Self::snap`]); the floating presentation itself applies.
+                Box::new(
+                    incular_widgets::SliverNaturalHeader::new(self.resizing_child())
+                        .scroll_behavior(
+                            incular_widgets::SliverHeaderScrollBehavior::FloatingPinned,
+                        )
+                        .snap(self.snap),
+                )
+            } else {
+                Box::new(incular_widgets::SliverFloatingHeader::new(child).snap(self.snap))
+            }
         } else {
             Box::new(incular_widgets::SliverToBoxAdapter::new(child))
         }

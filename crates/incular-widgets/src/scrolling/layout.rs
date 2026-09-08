@@ -404,22 +404,39 @@ impl HeaderRenderSliver {
 
 /// Retained floating-header state. A floating header follows the normal
 /// scroll offset while moving forward, but reveals by the same delta when the
-/// viewport starts moving back toward the leading edge.
+/// viewport starts moving back toward the leading edge. When `snap` is set,
+/// scroll-activity ends animate the effective offset to the revealed or
+/// hidden edge instead of leaving partial presentation in place.
 pub(super) struct FloatingHeaderRenderSliver {
     pub(super) child: Widget,
     pub(super) extent: Cell<f32>,
     pub(super) scroll_state: HeaderScrollState,
+    pub(super) snap: bool,
+    pub(super) snap_frame: Cell<HeaderSnapFrame>,
+    pub(super) snap_trigger: Rc<Cell<bool>>,
+    /// Owns the scroll-end listener while snapping can engage. Never read:
+    /// dropping the subscription unsubscribes, so disposal stops snap
+    /// triggers without further cleanup. `None` when snapping cannot engage.
+    #[allow(dead_code)]
+    pub(super) snap_subscription: Option<ScrollNotificationSubscription>,
 }
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct HeaderScrollState {
     last_scroll_offset: Option<f32>,
     effective_scroll_offset: f32,
+    snap: HeaderSnapProgress,
 }
 
 impl HeaderScrollState {
     fn update(&mut self, scroll_offset: f32, extent: f32) -> f32 {
         if let Some(previous) = self.last_scroll_offset {
+            if scroll_offset != previous {
+                // New scroll movement interrupts a running snap; the
+                // animation's current presentation becomes the baseline the
+                // delta continues from, so interruption never jumps.
+                self.snap = HeaderSnapProgress::Idle;
+            }
             // Hidden distance stops at the header extent. Accumulating the
             // rest of the document would delay revealing it on reversal.
             self.effective_scroll_offset = (self.effective_scroll_offset
@@ -432,6 +449,184 @@ impl HeaderScrollState {
         self.last_scroll_offset = Some(scroll_offset);
         self.effective_scroll_offset
     }
+
+    /// Drops a running snap without touching the effective offset, so
+    /// presentation falls back to whatever the scroll offset determines.
+    pub(super) fn cancel_snap(&mut self) {
+        self.snap = HeaderSnapProgress::Idle;
+    }
+
+    /// Whether snap work remains: a running animation, or a completed one
+    /// whose exact endpoint still needs one presenting frame.
+    pub(super) fn is_snapping(&self) -> bool {
+        matches!(
+            self.snap,
+            HeaderSnapProgress::Running(_) | HeaderSnapProgress::Settling
+        )
+    }
+
+    /// Consumes a scroll-end event and advances snap presentation.
+    ///
+    /// `spec` carries the header's snap configuration and live snap range;
+    /// `frame` is the last layout's paint/overlap/scroll snapshot. A run
+    /// starts only from an actual scroll-end signal while the header is
+    /// partially revealed and free of leading overscroll — never from an
+    /// unchanged offset. The revealed half (or more) animates to fully
+    /// revealed; the hidden half animates to fully hidden, clamped to the
+    /// scrolled distance the scroll state itself enforces. The logical scroll
+    /// extent and controller offset are untouched: only the effective
+    /// (presentation) offset moves, and on completion it equals the endpoint
+    /// exactly so later scrolls continue coherently. Returns whether the
+    /// effective offset moved.
+    pub(super) fn advance_snap(
+        &mut self,
+        now: Instant,
+        scroll_end: bool,
+        spec: HeaderSnapSpec,
+        frame: HeaderSnapFrame,
+    ) -> bool {
+        let range = spec.range.max(0.);
+        if scroll_end
+            && spec.enabled
+            && spec.floating
+            && range > 0.
+            && frame.overlap >= 0.
+            && frame.scroll.is_finite()
+        {
+            let visible = (frame.paint - spec.pinned).clamp(0., range);
+            // The hidden edge can never lie past the scrolled distance:
+            // scroll-driven presentation clamps hidden distance to it, so a
+            // target past it would fight every layout back. When the header
+            // is already maximally hidden for its offset, the target equals
+            // the current presentation and no run starts.
+            let target = if visible >= range / 2. {
+                0.
+            } else {
+                range.min(frame.scroll).max(0.)
+            };
+            let from = self.effective_scroll_offset.clamp(0., range);
+            self.snap = if target == from {
+                HeaderSnapProgress::Idle
+            } else {
+                HeaderSnapProgress::Running(HeaderSnapRun {
+                    from,
+                    target,
+                    started_at: now,
+                    duration: HEADER_SNAP_DURATION,
+                    curve: Curve::EaseOut,
+                })
+            };
+        }
+        let HeaderSnapProgress::Running(run) = self.snap else {
+            if matches!(self.snap, HeaderSnapProgress::Settling) {
+                self.snap = HeaderSnapProgress::Idle;
+            }
+            return false;
+        };
+        let target = run.target.clamp(0., range);
+        let elapsed = now.saturating_duration_since(run.started_at);
+        let progress = (elapsed.as_secs_f32() / run.duration.as_secs_f32()).clamp(0., 1.);
+        let value = if progress >= 1. {
+            target
+        } else {
+            f32::interpolate(run.from, target, run.curve.apply(progress))
+        };
+        let changed = value != self.effective_scroll_offset;
+        self.effective_scroll_offset = value;
+        if progress >= 1. {
+            self.snap = HeaderSnapProgress::Settling;
+        }
+        changed
+    }
+}
+
+/// Neutral snap timing: one fixed duration and curve shared by every floating
+/// header, so snapping stays a presentation policy rather than per-header
+/// configuration.
+const HEADER_SNAP_DURATION: Duration = Duration::from_millis(300);
+
+/// Mutually exclusive snap presentation states. A running animation carries
+/// its start presentation, resolved target, and timing together; there are no
+/// partially valid flag combinations.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) enum HeaderSnapProgress {
+    /// No snap animation; presentation follows scroll deltas.
+    #[default]
+    Idle,
+    /// A snap animation is driving the effective offset.
+    Running(HeaderSnapRun),
+    /// The animation reached its endpoint exactly on the last tick. One more
+    /// frame stays scheduled so the exact endpoint is laid out and presented
+    /// before the state returns to idle; without it the completing tick would
+    /// mark layout dirty while reporting no active animation, and no frame
+    /// would present the endpoint.
+    Settling,
+}
+
+/// One snap animation: where presentation started, the resolved absolute
+/// effective target, and when/how fast it gets there. The target is resolved
+/// against the live range every tick, so geometry changes retarget the run
+/// instead of stranding it past a new edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct HeaderSnapRun {
+    from: f32,
+    target: f32,
+    started_at: Instant,
+    duration: Duration,
+    curve: Curve,
+}
+
+/// A header's snap configuration plus its live snap range for one tick.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct HeaderSnapSpec {
+    /// The descriptor enabled snapping.
+    pub(super) enabled: bool,
+    /// The behavior presents a floating range (Floating or FloatingPinned).
+    pub(super) floating: bool,
+    /// Snap travel: the full extent for Floating, the collapse range for
+    /// FloatingPinned.
+    pub(super) range: f32,
+    /// The minimum that stays visible and is excluded from snap travel (the
+    /// pinned minimum for FloatingPinned, zero for Floating).
+    pub(super) pinned: f32,
+}
+
+/// The last layout's paint/overlap snapshot a snap tick decides from.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct HeaderSnapFrame {
+    /// Painted extent of the last layout.
+    pub(super) paint: f32,
+    /// Constraint overlap of the last layout; negative means leading
+    /// overscroll is presenting instead.
+    pub(super) overlap: f32,
+    /// Scroll offset the last layout ran under; hidden targets can never
+    /// exceed it, since scroll-driven presentation clamps hidden distance to
+    /// the scrolled distance.
+    pub(super) scroll: f32,
+}
+
+/// Creates the shared scroll-end trigger and its controller subscription for
+/// a header that can snap. The listener records actual scroll-activity `End`
+/// transitions; starting from unchanged offsets is never inferred. Pass
+/// `false` unless snapping can engage, so inert headers keep their existing
+/// behavior exactly. The returned subscription must be retained by the render
+/// sliver: dropping it unsubscribes, so disposal stops snap triggers without
+/// further cleanup.
+pub(super) fn snap_trigger_subscription(
+    controller: &ScrollController,
+    enabled: bool,
+) -> (Rc<Cell<bool>>, Option<ScrollNotificationSubscription>) {
+    let trigger = Rc::new(Cell::new(false));
+    let subscription = enabled.then(|| {
+        let trigger = trigger.clone();
+        controller.add_notification_listener(move |notification| {
+            if notification.kind == ScrollNotificationType::End {
+                trigger.set(true);
+            }
+            false
+        })
+    });
+    (trigger, subscription)
 }
 
 fn floating_geometry(
@@ -476,6 +671,11 @@ impl RenderSliver for FloatingHeaderRenderSliver {
         let scroll_offset = constraints.scroll_offset;
         let effective_offset = self.scroll_state.update(scroll_offset, extent);
         let geometry = floating_geometry(constraints, extent, effective_offset);
+        self.snap_frame.set(HeaderSnapFrame {
+            paint: geometry.paint_extent,
+            overlap: constraints.overlap,
+            scroll: constraints.scroll_offset,
+        });
         SliverLayout {
             geometry,
             // The sequence converts this back through the viewport transform.
@@ -509,6 +709,25 @@ impl RenderSliver for FloatingHeaderRenderSliver {
         }
         self.extent.set(extent);
         true
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        let scroll_end = self.snap_trigger.take();
+        self.scroll_state.advance_snap(
+            now,
+            scroll_end,
+            HeaderSnapSpec {
+                enabled: self.snap,
+                floating: true,
+                range: self.extent.get().max(0.),
+                pinned: 0.,
+            },
+            self.snap_frame.get(),
+        )
+    }
+
+    fn is_animating(&self) -> bool {
+        self.scroll_state.is_snapping()
     }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
@@ -555,6 +774,14 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) scroll_behavior: SliverHeaderScrollBehavior,
     pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
     pub(super) scroll_state: HeaderScrollState,
+    pub(super) snap: bool,
+    pub(super) snap_frame: Cell<HeaderSnapFrame>,
+    pub(super) snap_trigger: Rc<Cell<bool>>,
+    /// Owns the scroll-end listener while snapping can engage. Never read:
+    /// dropping the subscription unsubscribes, so disposal stops snap
+    /// triggers without further cleanup. `None` when snapping cannot engage.
+    #[allow(dead_code)]
+    pub(super) snap_subscription: Option<ScrollNotificationSubscription>,
 }
 
 /// Lifecycle of a naturally measured header's logical extent.
@@ -617,6 +844,14 @@ pub(super) struct NaturalHeaderRenderSliver {
     pub(super) last_cross: Cell<f32>,
     pub(super) sample_unbounded: Cell<bool>,
     pub(super) scroll_state: HeaderScrollState,
+    pub(super) snap: bool,
+    pub(super) snap_frame: Cell<HeaderSnapFrame>,
+    pub(super) snap_trigger: Rc<Cell<bool>>,
+    /// Owns the scroll-end listener while snapping can engage. Never read:
+    /// dropping the subscription unsubscribes, so disposal stops snap
+    /// triggers without further cleanup. `None` when snapping cannot engage.
+    #[allow(dead_code)]
+    pub(super) snap_subscription: Option<ScrollNotificationSubscription>,
 }
 
 impl NaturalHeaderRenderSliver {
@@ -654,6 +889,11 @@ impl NaturalHeaderRenderSliver {
             self.scroll_state = previous.scroll_state;
             adopted = true;
         }
+        // A running snap never transfers: replacement always re-seeds the
+        // extent to an unverified estimate, so the snap range basis is
+        // uncertain until revalidation. Presentation falls back to whatever
+        // the scroll offset determines, which is always coherent.
+        self.scroll_state.cancel_snap();
         adopted
     }
 }
@@ -824,6 +1064,11 @@ impl RenderSliver for ResizingHeaderRenderSliver {
             .clamp(self.min_extent, self.max_extent)
             + stretch)
             .min(f32::MAX);
+        if stretch > 0. {
+            // Stretch owns presentation during leading overscroll; a running
+            // snap yields to it and the next scroll end decides again.
+            self.scroll_state.cancel_snap();
+        }
         let (mut geometry, offset, mut placement) = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
                 pinned_geometry(constraints, self.max_extent, current),
@@ -852,6 +1097,11 @@ impl RenderSliver for ResizingHeaderRenderSliver {
             // Automatic pinning would move it back down and leave a gap.
             placement = SliverChildPlacement::Floating;
         }
+        self.snap_frame.set(HeaderSnapFrame {
+            paint: geometry.paint_extent,
+            overlap: constraints.overlap,
+            scroll: constraints.scroll_offset,
+        });
         SliverLayout {
             geometry,
             children: vec![SliverChildLayout {
@@ -874,6 +1124,36 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                 (geometry.paint_extent - geometry.layout_extent).max(0.)
             },
         }
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        let scroll_end = self.snap_trigger.take();
+        let (range, pinned) = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Floating => (self.max_extent, 0.),
+            SliverHeaderScrollBehavior::FloatingPinned => {
+                ((self.max_extent - self.min_extent).max(0.), self.min_extent)
+            }
+            _ => (0., 0.),
+        };
+        self.scroll_state.advance_snap(
+            now,
+            scroll_end,
+            HeaderSnapSpec {
+                enabled: self.snap,
+                floating: matches!(
+                    self.scroll_behavior,
+                    SliverHeaderScrollBehavior::Floating
+                        | SliverHeaderScrollBehavior::FloatingPinned
+                ),
+                range,
+                pinned,
+            },
+            self.snap_frame.get(),
+        )
+    }
+
+    fn is_animating(&self) -> bool {
+        self.scroll_state.is_snapping()
     }
 }
 
@@ -930,6 +1210,11 @@ impl RenderSliver for NaturalHeaderRenderSliver {
         } else {
             HeaderPresentation::Settled
         });
+        if stretched_now {
+            // Stretch owns presentation during leading overscroll; a running
+            // snap yields to it and the next scroll end decides again.
+            self.scroll_state.cancel_snap();
+        }
         let current = (natural + stretch).min(f32::MAX);
         let (mut geometry, offset, mut placement) = match self.scroll_behavior {
             SliverHeaderScrollBehavior::Pinned | SliverHeaderScrollBehavior::FloatingPinned => (
@@ -978,6 +1263,11 @@ impl RenderSliver for NaturalHeaderRenderSliver {
                 Some(current),
             )
         };
+        self.snap_frame.set(HeaderSnapFrame {
+            paint: geometry.paint_extent,
+            overlap: constraints.overlap,
+            scroll: constraints.scroll_offset,
+        });
         SliverLayout {
             geometry,
             children: vec![SliverChildLayout {
@@ -996,6 +1286,40 @@ impl RenderSliver for NaturalHeaderRenderSliver {
                 (geometry.paint_extent - geometry.layout_extent).max(0.)
             },
         }
+    }
+
+    fn tick(&mut self, now: Instant) -> bool {
+        let scroll_end = self.snap_trigger.take();
+        let natural = match self.extent.get() {
+            NaturalHeaderExtent::Estimate(estimate) => estimate.max(0.),
+            NaturalHeaderExtent::Measured { natural, .. } => natural.max(0.),
+        };
+        // A floating-pinned natural header has no collapse range, so its snap
+        // endpoints coincide and the run below stays inert by construction.
+        let (range, pinned) = match self.scroll_behavior {
+            SliverHeaderScrollBehavior::Floating => (natural, 0.),
+            SliverHeaderScrollBehavior::FloatingPinned => (0., natural),
+            _ => (0., 0.),
+        };
+        self.scroll_state.advance_snap(
+            now,
+            scroll_end,
+            HeaderSnapSpec {
+                enabled: self.snap,
+                floating: matches!(
+                    self.scroll_behavior,
+                    SliverHeaderScrollBehavior::Floating
+                        | SliverHeaderScrollBehavior::FloatingPinned
+                ),
+                range,
+                pinned,
+            },
+            self.snap_frame.get(),
+        )
+    }
+
+    fn is_animating(&self) -> bool {
+        self.scroll_state.is_snapping()
     }
 
     fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
@@ -1631,6 +1955,12 @@ fn adopt_floating_header_state(
         fresh.extent.set(retained.extent.get());
     }
     fresh.scroll_state = retained.scroll_state;
+    if fresh.snap != retained.snap {
+        // A running snap belongs to the retained snap configuration. Without
+        // an identical flag the fresh header settles to scroll-determined
+        // presentation instead of inheriting a foreign animation.
+        fresh.scroll_state.cancel_snap();
+    }
     true
 }
 

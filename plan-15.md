@@ -9,8 +9,9 @@ integration and pinning are committed (`835bdcd`), as is title preservation
 (`8a51032`). Floating integration is committed (`7bc9cf8`); resizing bounds
 and scroll invalidation are committed (`a4095c9`), followed by typed resizing
 modes (`83c88b1`). Material expanded/collapsed composition is complete and validated.
-Material stretch is complete and validated. Snapping remains pending, so W1 is
-not marked complete.
+Material stretch is complete and validated. Snapping is complete and validated;
+W1 is not marked complete (other R01 Scaffold and SliverAppBar options remain
+pending).
 Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -24,6 +25,43 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 retained snapping: `SliverAppBar.snap(true)` maps to neutral retained
+  snap behavior on all floating header slivers instead of remaining a silent
+  setter. Scroll owns activity: snap runs start only from actual scroll-end
+  notifications observed through the controller's listener stream (owned by
+  each snap-enabled render sliver, so disposal unsubscribes), never from
+  unchanged offsets; programmatic jumps never start a snap. Widgets owns the
+  retained presentation animation: an explicit idle/running/settling state
+  drives the effective offset over the shared 300ms EaseOut timing, animating
+  presentation only while logical extent and controller offset never move.
+  The revealed half (or more) completes revealed, the hidden half completes
+  hidden clamped to the scrolled distance scroll-driven presentation enforces
+  (an already-maximally-hidden header starts no run); floating-pinned headers
+  animate only their collapse range. New scroll movement interrupts smoothly
+  from the current presentation, reversal and repeated cycles re-decide on the
+  next end, stretch keeps presentation ownership during overscroll, and
+  descriptor replacement transfers only compatible in-flight runs (fixed
+  floating headers with identical flags) while range-changing replacements
+  yield coherently through anchor correction. Frames continue through the
+  existing sliver tick/is_animating plumbing with a settling frame that
+  presents the exact endpoint before stopping; no Material timer, polling
+  loop, second controller, or duplicate engine exists. Regressions cover both
+  endpoints with intermediate geometry, floating/floating-pinned,
+  explicit/natural heights, reverse, disabled snapping, the documented
+  non-floating policy (neutral inert, Material snap-implies-floating),
+  interruption, reversal, repeated exact cycles, completion frame scheduling,
+  stretch suppression, content-size and descriptor replacement, retained
+  paint, targeted hit tests, semantic bounds, and Material retained-path
+  integration for plain/pinned/natural headers. The regressions exercise new
+  snap API and animation state absent before this slice, so none pass without
+  the implementation. Intermediate states were verified along the way:
+  without the settling frame the exact endpoint never presents; without the
+  feasibility clamp a hide target fights scroll presentation instead of
+  settling; overlay paint reads empty without its compositor pass.
+  Formatting, workspace compilation, constrained workspace tests, strict
+  all-feature/all-target Clippy, all Material all-feature tests and
+  warning-denied Widgets/Material rustdoc passed. Live native tests were not
+  run. W1 is not marked complete.
 - W1 nested-viewport invalidation: the enclosing-sliver invalidation walk now
   continues outward through shrink-wrapping viewports, whose size derives
   from content, so inner content changes revalidate outer natural-header

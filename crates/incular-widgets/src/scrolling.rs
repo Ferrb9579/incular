@@ -5,12 +5,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use incular_animation::AnimationController;
+use incular_animation::{AnimationController, Curve, Tween};
 use incular_config::{Axis, Clip, Constraints, EdgeInsets, WidgetDefaults};
 use incular_core::Size;
 use incular_scroll::{
-    MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollPhysics, SliverConstraints,
-    SliverGeometry,
+    MeasuredExtentIndex, ScrollController, ScrollNotification, ScrollNotificationSubscription,
+    ScrollNotificationType, ScrollPhysics, SliverConstraints, SliverGeometry,
 };
 use typed_builder::TypedBuilder;
 
@@ -41,12 +41,13 @@ pub use layout::SliverOverlapHandle;
 use layout::{
     BoxRenderSliver, FillRemainingRenderSliver, FixedExtentRenderSliver,
     FloatingHeaderRenderSliver, GridRenderSliver, HeaderPresentation, HeaderRenderSliver,
-    HeaderScrollState, LayoutBuilderRenderSliver, NaturalHeaderExtent, NaturalHeaderRenderSliver,
-    OverlapAbsorberRenderSliver, OverlapInjectorRenderSliver, PaddingRenderSliver,
-    ResizingHeaderRenderSliver, SequenceRenderSliver, SequenceViewportDelegate,
-    SliverViewportOptions, VariableExtentRenderSliver, ViewportExtentRenderSliver,
-    WidgetWrapRenderSliver, single_sliver_viewport, single_sliver_viewport_with_options,
-    sliver_child_constraints, widget_main_extent_hint,
+    HeaderScrollState, HeaderSnapFrame, LayoutBuilderRenderSliver, NaturalHeaderExtent,
+    NaturalHeaderRenderSliver, OverlapAbsorberRenderSliver, OverlapInjectorRenderSliver,
+    PaddingRenderSliver, ResizingHeaderRenderSliver, SequenceRenderSliver,
+    SequenceViewportDelegate, SliverViewportOptions, VariableExtentRenderSliver,
+    ViewportExtentRenderSliver, WidgetWrapRenderSliver, single_sliver_viewport,
+    single_sliver_viewport_with_options, sliver_child_constraints, snap_trigger_subscription,
+    widget_main_extent_hint,
 };
 
 pub use notifications::*;
