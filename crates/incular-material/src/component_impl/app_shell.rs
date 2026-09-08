@@ -2,13 +2,13 @@ use std::rc::Rc;
 
 use super::common::finite_non_negative;
 use crate::foundation::{Material, Theme};
-use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisAlignment, MainAxisSize};
+use incular_config::{Alignment, CrossAxisAlignment, EdgeInsets, MainAxisSize};
 use incular_controls::{ControlTheme, current_control_theme};
 use incular_core::Color;
 use incular_text::TextStyle;
 use incular_widgets::internal::Expanded;
 use incular_widgets::{
-    BorderRadius, Column, Container, DefaultTextStyle, IconTheme, Padding, Positioned, Row,
+    Align, BorderRadius, Column, Container, DefaultTextStyle, IconTheme, Padding, Positioned, Row,
     SizedBox, Stack, Text, Widget,
 };
 use typed_builder::TypedBuilder;
@@ -133,6 +133,11 @@ impl AppBar {
         self
     }
 
+    /// Centers the title in the remaining width between the leading slot
+    /// and the actions instead of aligning it to the leading edge. The
+    /// title gap is kept as the minimum on each side; wider content is
+    /// constrained to the remaining width and stays centered, while side
+    /// slots keep their reserved sizes and positions.
     #[must_use]
     pub fn center_title(mut self, value: bool) -> Self {
         self.center_title = value;
@@ -141,13 +146,18 @@ impl AppBar {
 
     /// Gap between the leading control (or leading edge) and the title.
     /// In the default start-aligned toolbar this gap is exact; with
-    /// `center_title` it applies as the row's inter-item spacing instead.
+    /// `center_title` it is the minimum gap kept on each side of the
+    /// centered title.
     #[must_use]
     pub fn title_spacing(mut self, value: f32) -> Self {
         self.title_spacing = Some(value.max(0.0));
         self
     }
 
+    /// Width of the leading slot. Applies around explicit leading content
+    /// as well as the implied placeholder: content fills the slot, and the
+    /// title starts one slot plus the title gap later. Unset means the
+    /// natural content width (or zero with no leading).
     #[must_use]
     pub fn leading_width(mut self, value: f32) -> Self {
         self.leading_width = Some(value.max(0.0));
@@ -183,49 +193,49 @@ impl AppBar {
         let background = self.background.unwrap_or(theme.colors.surface);
         let foreground = self.foreground.unwrap_or(theme.colors.foreground);
         let spacing = self.title_spacing.unwrap_or(16.0);
-        // Centered composition keeps its existing inter-item spacing
-        // behavior. The start-aligned row below places each slot explicitly
-        // instead: distributing alignment would absorb inter-item spacing
-        // into the free space, hiding the title gap (and the leading
-        // placeholder width) behind identical geometry.
-        let row: Widget = if self.center_title {
-            let mut row_children = Vec::with_capacity(2 + self.actions.len());
-            if let Some(leading) = self.leading.clone() {
-                row_children.push(leading);
-            } else if self.automatically_imply_leading {
-                row_children.push(
-                    SizedBox::new()
-                        .width(self.leading_width.unwrap_or(0.0))
-                        .into(),
-                );
+        // Shared slot geometry for both alignments, composed from neutral
+        // primitives. The Row measures fixed slots first — the leading slot
+        // at exactly `leading_width` when configured (around explicit
+        // content as well as the implied placeholder), then each action at
+        // its natural size — and the title cell takes whatever width
+        // remains via one `Expanded`. The title is therefore constrained
+        // to the remaining width instead of pushing fitting actions out,
+        // and fixed slots are never shrunk or dropped: when the toolbar is
+        // too narrow the excess extends past the trailing edge.
+        // Distributing alignment would absorb the title gap into free
+        // space, so the row stays start-aligned and the title cell carries
+        // its own alignment: leading edge with the exact gap, or centered
+        // in the remaining width with the gap kept as the minimum on each
+        // side.
+        let leading_slot: Option<Widget> = match (self.leading.clone(), self.leading_width) {
+            (Some(leading), Some(width)) => {
+                Some(SizedBox::new().width(width).child(leading).into())
             }
-            row_children.push(self.title.clone());
-            row_children.extend(self.actions.clone());
-            Row::new(row_children)
-                .spacing(spacing)
-                .main_axis_alignment(MainAxisAlignment::Center)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .into()
-        } else {
-            let mut row_children = Vec::with_capacity(3 + self.actions.len());
-            if let Some(leading) = self.leading.clone() {
-                row_children.push(leading);
-            } else if self.automatically_imply_leading {
-                row_children.push(
-                    SizedBox::new()
-                        .width(self.leading_width.unwrap_or(0.0))
-                        .into(),
-                );
-            }
-            row_children.push(
-                Padding::new(EdgeInsets::only(spacing, 0.0, 0.0, 0.0), self.title.clone()).into(),
-            );
-            row_children.push(Expanded::new(SizedBox::shrink()).into());
-            row_children.extend(self.actions.clone());
-            Row::new(row_children)
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .into()
+            (Some(leading), None) => Some(leading),
+            (None, _) if self.automatically_imply_leading => Some(
+                SizedBox::new()
+                    .width(self.leading_width.unwrap_or(0.0))
+                    .into(),
+            ),
+            (None, _) => None,
         };
+        let title_content: Widget = if self.center_title {
+            Padding::symmetric(spacing, 0.0, self.title.clone()).into()
+        } else {
+            Padding::new(EdgeInsets::only(spacing, 0.0, 0.0, 0.0), self.title.clone()).into()
+        };
+        let title_alignment = if self.center_title {
+            Alignment::CENTER
+        } else {
+            Alignment::CENTER_LEFT
+        };
+        let mut row_children = Vec::with_capacity(2 + self.actions.len());
+        row_children.extend(leading_slot);
+        row_children.push(Expanded::new(Align::new(title_alignment, title_content)).into());
+        row_children.extend(self.actions.clone());
+        let row: Widget = Row::new(row_children)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .into();
         let toolbar_child: Widget = if let Some(flexible) = self.flexible_space.clone() {
             // Flexible space is a background layer. Keeping the toolbar row
             // above it prevents the common accidental child replacement that
