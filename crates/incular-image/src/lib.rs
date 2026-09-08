@@ -5,7 +5,7 @@
 //! crates, preserving a one-way dependency from those consumers to images.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -301,6 +301,25 @@ impl ImageHandle {
         )
     }
     fn decode(bytes: &[u8], source: ImageSource) -> Result<Self, ImageError> {
+        // Header-only pre-check with checked arithmetic before any pixel
+        // allocation. The decoder (image 0.25) additionally enforces its
+        // own default memory limits while reading the header, so hostile
+        // dimensions fail through either layer; the checked product below
+        // is the decoder-independent backstop. Unparseable headers fall
+        // through to the normal decode path unchanged.
+        let dimensions = image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        if let Some((width, height)) = dimensions {
+            let allocatable = u64::from(width)
+                .checked_mul(u64::from(height))
+                .and_then(|pixels| pixels.checked_mul(4))
+                .is_some_and(|byte_len| byte_len <= isize::MAX as u64);
+            if !allocatable {
+                return Err(ImageError::InvalidDimensions);
+            }
+        }
         let decoded = image::load_from_memory(bytes)
             .map_err(|error| ImageError::Decode(error.to_string()))?
             .to_rgba8();
@@ -353,36 +372,142 @@ impl PartialEq for ImageHandle {
 }
 impl Eq for ImageHandle {}
 
+/// Budget for an application-owned decoded-image cache.
+///
+/// `max_bytes` counts cache-owned residency per entry: decoded RGBA8 pixel
+/// bytes plus the retained encoded key bytes. It does not count memory held
+/// by live handles cloned out of the cache — eviction releases the cache's
+/// references, never memory still owned elsewhere. A zero entry or byte
+/// limit disables admission (loads still decode fresh on every call).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageCacheLimits {
+    pub max_entries: usize,
+    pub max_bytes: usize,
+}
+
+impl Default for ImageCacheLimits {
+    fn default() -> Self {
+        Self {
+            max_entries: 64,
+            max_bytes: 32 * 1024 * 1024,
+        }
+    }
+}
+
+impl ImageCacheLimits {
+    #[must_use]
+    pub const fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            max_entries,
+            max_bytes,
+        }
+    }
+}
+
 /// Application-owned decoded-image cache. Equal byte payloads resolve to the
 /// same immutable handle, so repeated widgets share one CPU resource.
-#[derive(Default)]
+///
+/// Lookup compares full payload bytes (hash plus byte equality, never the
+/// hash alone) and never copies the input on a hit. Admission is bounded by
+/// [`ImageCacheLimits`]: entries larger than the byte budget are served
+/// fresh without admission so one oversized image cannot evict the working
+/// set, and failures are never cached. Eviction and [`Self::clear`] drop the
+/// cache's references only — previously returned handles stay valid because
+/// pixels and keys are reference-counted.
 pub struct ImageCache {
-    images: HashMap<Vec<u8>, ImageHandle>,
+    limits: ImageCacheLimits,
+    images: HashMap<Arc<[u8]>, ImageHandle>,
+    /// Insertion order (front is oldest) for oldest-first eviction. Touched
+    /// entries move to the back, so churn evicts the least recently used.
+    order: VecDeque<Arc<[u8]>>,
+    resident_bytes: usize,
     diagnostics: ImageCacheDiagnostics,
 }
+
+impl Default for ImageCache {
+    fn default() -> Self {
+        Self::with_limits(ImageCacheLimits::default())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImageCacheDiagnostics {
     pub loads_requested: u64,
     pub load_cache_hits: u64,
     pub load_failures: u64,
     pub image_decodes: u64,
+    pub evictions: u64,
 }
+
 impl ImageCache {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+
+    #[must_use]
+    pub fn with_limits(limits: ImageCacheLimits) -> Self {
+        Self {
+            limits,
+            images: HashMap::new(),
+            order: VecDeque::new(),
+            resident_bytes: 0,
+            diagnostics: ImageCacheDiagnostics::default(),
+        }
+    }
+
+    /// Replaces the budget and immediately evicts oldest-first down to it.
+    /// Live handles previously returned are unaffected.
+    pub fn set_limits(&mut self, limits: ImageCacheLimits) {
+        self.limits = limits;
+        self.evict_excess();
+    }
+
+    /// Drops every cached entry, releasing the cache's references. Live
+    /// handles previously returned stay valid. Counters are cumulative and
+    /// are not reset.
+    pub fn clear(&mut self) {
+        self.images.clear();
+        self.order.clear();
+        self.resident_bytes = 0;
+    }
+
+    #[must_use]
+    pub const fn limits(&self) -> ImageCacheLimits {
+        self.limits
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.images.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.images.is_empty()
+    }
+
+    /// Cache-owned resident bytes (decoded pixels plus encoded keys) as
+    /// defined by [`ImageCacheLimits`]. Excludes memory retained only by
+    /// live handles outside the cache.
+    #[must_use]
+    pub const fn resident_bytes(&self) -> usize {
+        self.resident_bytes
+    }
+
     pub fn load_bytes(&mut self, bytes: impl AsRef<[u8]>) -> Result<ImageHandle, ImageError> {
         self.diagnostics.loads_requested += 1;
-        let key = bytes.as_ref().to_vec();
-        if let Some(image) = self.images.get(&key) {
+        let bytes = bytes.as_ref();
+        if let Some(image) = self.images.get(bytes) {
+            let image = image.clone();
+            self.touch(bytes);
             self.diagnostics.load_cache_hits += 1;
-            return Ok(image.clone());
+            return Ok(image);
         }
-        match ImageHandle::from_bytes(&key) {
+        match ImageHandle::from_bytes(bytes) {
             Ok(image) => {
                 self.diagnostics.image_decodes += 1;
-                self.images.insert(key, image.clone());
+                self.admit(bytes, image.clone());
                 Ok(image)
             }
             Err(error) => {
@@ -391,8 +516,50 @@ impl ImageCache {
             }
         }
     }
+
     #[must_use]
     pub const fn diagnostics(&self) -> ImageCacheDiagnostics {
         self.diagnostics
+    }
+
+    /// Moves a present key to the back of the eviction order. The key must
+    /// be present; callers check membership first.
+    fn touch(&mut self, bytes: &[u8]) {
+        if let Some(position) = self.order.iter().position(|key| &**key == bytes)
+            && let Some(key) = self.order.remove(position)
+        {
+            self.order.push_back(key);
+        }
+    }
+
+    /// Admits a freshly decoded image unless it cannot fit the budget, then
+    /// evicts oldest-first back within the limits.
+    fn admit(&mut self, bytes: &[u8], image: ImageHandle) {
+        let entry_bytes = bytes.len().saturating_add(image.decoded().byte_len());
+        if self.limits.max_entries == 0 || entry_bytes > self.limits.max_bytes {
+            return;
+        }
+        let key: Arc<[u8]> = Arc::from(bytes);
+        self.resident_bytes = self.resident_bytes.saturating_add(entry_bytes);
+        self.images.insert(Arc::clone(&key), image);
+        self.order.push_back(key);
+        self.evict_excess();
+    }
+
+    /// Evicts oldest-first until both limits hold. The just-admitted entry
+    /// sits at the back, so a fitting admission is never its own victim.
+    fn evict_excess(&mut self) {
+        while self.images.len() > self.limits.max_entries
+            || self.resident_bytes > self.limits.max_bytes
+        {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(image) = self.images.remove(&oldest) {
+                let entry_bytes = oldest.len().saturating_add(image.decoded().byte_len());
+                self.resident_bytes = self.resident_bytes.saturating_sub(entry_bytes);
+                self.diagnostics.evictions += 1;
+            }
+        }
     }
 }

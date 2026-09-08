@@ -11,8 +11,9 @@ and scroll invalidation are committed (`a4095c9`), followed by typed resizing
 modes (`83c88b1`). Material expanded/collapsed composition is complete and validated.
 Material stretch is complete and validated. Snapping is complete and validated,
 including interruption, reduced motion, and the Scaffold/SliverAppBar
-inventory. The AppBar slot-constraint correction above reopens the toolbar
-rows, so W1 is not marked complete.
+inventory. The AppBar slot-constraint correction is complete and validated,
+and the corrected toolbar rows carry implementation and regression evidence
+in the inventory below. W1 is marked complete.
 Audit baseline `42befb7`, 2026-09-06. W2–W9 are pending.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
@@ -48,7 +49,7 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   workspace compilation, constrained workspace tests, strict
   all-feature/all-target Clippy, all Material all-feature tests and
   warning-denied Material rustdoc passed. Live native tests were not run.
-  W1 stays open until the inventory rows below are re-verified.
+  The inventory rows below record the verified evidence.
 - W1 AppBar toolbar composition: `title_spacing`, `leading_width`, and
   `automatically_imply_leading` now reach retained geometry. Before, the
   toolbar row used distributing alignment, which absorbed the inter-item
@@ -69,7 +70,8 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   compilation, constrained workspace tests, strict all-feature/all-target
   Clippy, all Material all-feature tests and warning-denied Material rustdoc
   passed. Live native tests were not run. The slot-constraint follow-up
-  above reopens the toolbar rows; W1 is not marked complete.
+  above supersedes the centered-composition claim with the defined
+  slot-constraint contract.
 - W1 retained snapping: `SliverAppBar.snap(true)` maps to neutral retained
   snap behavior on all floating header slivers instead of remaining a silent
   setter. Scroll owns activity: snap runs start only from actual scroll-end
@@ -555,8 +557,12 @@ No option above is silently ignored and none required an explicit-unsupported
 migration: every accepted setter reaches retained execution with observable
 behavior. Per-option styling exhaustiveness beyond this table belongs to the
 W3 ledger (property-by-property evidence) and W7 (control/Material inventory).
-W1 stays open until the toolbar rows above hold under review; no other W1
-rows are known-open.
+
+W1 is marked complete: every inventory row above is implemented with named
+regression evidence, all numeric fields funnel through checked construction,
+grapheme/composition formatting holds per the cited slices, and Material
+adds no hidden state manager (the toolbar composes existing neutral
+primitives). No W1 rows remain open.
 
 Exit: every identified ignored option has observable behavior or an explicit
 unsupported migration; all fields validate; formatting respects grapheme and
@@ -581,10 +587,43 @@ composition boundaries. No additional hidden state manager in a Material wrapper
    bounded resident bytes, retained live resources and reclamation after closure.
    Record GPU-driver-dependent native tests separately from policy tests.
 
+### W2 resource inventory
+
+Surveyed against the implementation paths cited; "guarantee" means observed
+code, "missing" means absent with no compensating path.
+
+| Resource | Owner / path | Key, identity | Budget, eviction | Live/in-flight protection, counters |
+| --- | --- | --- | --- | --- |
+| CPU decoded images + encoded keys | `incular-image` `ImageCache` (`crates/incular-image/src/lib.rs`) | Full payload bytes (`Arc<[u8]>`, hash + byte equality); `ImageId` per decode | **Now:** `ImageCacheLimits` (default 64 entries / 32 MiB decoded + key bytes), oldest-first LRU, `clear`/`set_limits`, oversized served fresh | Eviction drops cache refs only; `Arc` handles stay valid. Counters: requests/hits/failures/decodes/evictions + `resident_bytes()` gauge |
+| CPU font bytes | `incular-text` `TextEngine::font_handles` (`crates/incular-text/src/engine.rs`) | `(usize, usize, u32)` blob identity, one shared `Arc` per blob | No byte budget; unbounded map | Shared `Arc` keeps bytes alive while layouts reference them; no counters |
+| CPU text layouts | `incular-text` `TextEngine::{cache, order}` | `LayoutKey`, `Arc<TextLayout>` | **Guarantee:** 2048-entry FIFO (`LAYOUT_CACHE_CAPACITY`) | Shared `Arc`; eviction by count only, no byte bound, no counters surfaced |
+| GPU images | `incular-wgpu` `SharedGpuResources::images` (`crates/incular-wgpu/src/resources.rs`) | `ImageId` → `Arc<SharedGpuImage>` | **Missing:** no budget, no eviction; per-renderer removal does not free shared textures (R04/R06) | Shared `Arc`; upload bytes counted (`texture_upload_bytes`), residency unbounded |
+| GPU gradients | `SharedGpuResources::gradients` | `(GradientId, TextureFormat)` key | **Missing:** same as GPU images | Same as GPU images |
+| GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts, append-only pages | **Partial:** oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards; pages/entries/fonts unbounded, no clear/trim | Entries never move/compact; page/memory counters (`GlyphAtlasMemory`) |
+| GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Format / `ImageId`→`SharedGpuResourceId` | **Missing:** unbounded, no eviction | Registry length counter only |
+| Offscreen/effect textures, path meshes | Renderer passes (`crates/incular-wgpu/src/renderer/`) | Per-frame transient allocations | **Guarantee:** frame-scoped; no cross-frame retention to budget | Upload-byte counters only |
+
+- W2 CPU image-cache slice: requests byte payloads through
+  `ImageCache::load_bytes` with hit lookup that borrows the input (no copy
+  on hits; one shared `Arc` on admission). Failures never cached; oversized
+  entries decode fresh without admission; `clear`/`set_limits` release cache
+  ownership while live handles stay valid; header dimensions are pre-read
+  with checked arithmetic (plus the decoder's own header-time limits) before
+  any pixel allocation. Regressions (`cache_policy`: shared identity,
+  LRU order, exact byte accounting, oversized/zero-limit admission, clear
+  with live handles, oldest-first trim, uncached failures, alias safety,
+  hostile dimensions) pass; prior cache tests unchanged. Formatting,
+  workspace compilation, constrained workspace tests, strict
+  all-feature/all-target Clippy, focused image tests and warning-denied
+  image rustdoc passed. Live native tests were not run.
+- Remaining W2 work: shared GPU eviction at device ownership (images,
+  gradients, glyph pages/entries/fonts, pipelines, identity maps), presented
+  vs failed outcome separation, and two-window churn tests. Text font-byte
+  budgets are not scheduled (unbounded map noted above; layouts already
+  bounded by count).
+
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.
-
-## W3 — One complete property-to-phase contract
 
 1. Complete a machine-checkable exported-widget property ledger, not only the
    initial families. Fields: public symbol/option, default, constructor and builder

@@ -19,3 +19,6 @@ path = "src/lib.rs"
 image = { workspace = true }
 incular-config = { workspace = true }
 incular-core = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }

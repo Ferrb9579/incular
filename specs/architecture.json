@@ -147,7 +147,7 @@
       "name": "incular-image",
       "default_api_class": "application",
       "owner": "Raster image identities, decoding and CPU image caches.",
-      "support": "Available; cache budgets and release migrate in H.",
+      "support": "Available; CPU cache budgets, eviction, and release are implemented. Shared GPU eviction stays in W2.",
       "allowed_dependencies": [
         "incular-config",
         "incular-core"
