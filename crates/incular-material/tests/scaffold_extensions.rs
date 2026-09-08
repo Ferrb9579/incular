@@ -121,3 +121,66 @@ fn extended_regions_remain_above_keyboard_inset() {
     assert_eq!(bounds(&runtime, "Sheet").1.origin.y, 365.);
     assert_eq!(bounds(&runtime, "Navigation").1.origin.y, 390.);
 }
+
+#[test]
+fn drawers_bottom_app_bar_and_background_execute() {
+    use incular_core::{InputEvent, Offset, PointerPhase};
+    use incular_rendering::{Brush, PaintCommand};
+    use incular_widgets::internal::ActionSurface;
+    use std::{cell::Cell, rc::Rc};
+
+    let background = Color::rgba(9, 9, 9, 255);
+    let hits = Rc::new(Cell::new(0));
+    let button = |label: &str, size: Size, bit: i32| {
+        let observed = hits.clone();
+        ActionSurface::new(label)
+            .size(size)
+            .on_click(move || observed.set(observed.get() | bit))
+    };
+    let widget: Widget = Scaffold::new(button("Body", Size::new(300., 600.), 1))
+        .drawer(button("Drawer", Size::new(80., 600.), 2))
+        .end_drawer(button("EndDrawer", Size::new(80., 600.), 4))
+        .bottom_app_bar(button("BottomAppBar", Size::new(300., 30.), 8))
+        .background_color(background)
+        .into();
+    let mut runtime = Runtime::new(widget).expect("mount");
+    frame(&mut runtime);
+    // Drawers dock at the leading and trailing edges across the full height;
+    // the bottom app bar fills the bottom region on its own.
+    assert_eq!(
+        bounds(&runtime, "Drawer").1,
+        Rect::from_origin_size(Offset::new(0., 0.), Size::new(80., 600.))
+    );
+    assert_eq!(
+        bounds(&runtime, "EndDrawer").1,
+        Rect::from_origin_size(Offset::new(220., 0.), Size::new(80., 600.))
+    );
+    assert_eq!(
+        bounds(&runtime, "BottomAppBar").1,
+        Rect::from_origin_size(Offset::new(0., 570.), Size::new(300., 30.))
+    );
+    // The background color reaches the body paint.
+    let painted = runtime.tree_mut().paint();
+    assert!(
+        painted.commands().iter().any(|command| {
+            matches!(command,
+                PaintCommand::Rect { color, .. }
+                | PaintCommand::RRect { brush: Brush::Solid(color), .. } if *color == background)
+        }),
+        "scaffold background must paint"
+    );
+    // Clicks land on the topmost slot: drawers win over the body beneath.
+    let mut expected = 0;
+    for (label, bit) in [("Drawer", 2), ("EndDrawer", 4), ("BottomAppBar", 8)] {
+        let rect = bounds(&runtime, label).1;
+        let position = Offset::new(
+            rect.origin.x + rect.size.width / 2.,
+            rect.origin.y + rect.size.height / 2.,
+        );
+        for phase in [PointerPhase::Down, PointerPhase::Up] {
+            let _ = runtime.handle_input(InputEvent::Pointer { phase, position });
+        }
+        expected |= bit;
+        assert_eq!(hits.get(), expected, "{label} must receive its click");
+    }
+}

@@ -139,6 +139,9 @@ impl AppBar {
         self
     }
 
+    /// Gap between the leading control (or leading edge) and the title.
+    /// In the default start-aligned toolbar this gap is exact; with
+    /// `center_title` it applies as the row's inter-item spacing instead.
     #[must_use]
     pub fn title_spacing(mut self, value: f32) -> Self {
         self.title_spacing = Some(value.max(0.0));
@@ -179,28 +182,50 @@ impl AppBar {
     pub fn build(&self, theme: &ControlTheme) -> Widget {
         let background = self.background.unwrap_or(theme.colors.surface);
         let foreground = self.foreground.unwrap_or(theme.colors.foreground);
-        let mut row_children = Vec::with_capacity(2 + self.actions.len());
-        if let Some(leading) = self.leading.clone() {
-            row_children.push(leading);
-        } else if self.automatically_imply_leading {
-            row_children.push(
-                SizedBox::new()
-                    .width(self.leading_width.unwrap_or(0.0))
-                    .into(),
-            );
-        }
-        row_children.push(self.title.clone());
-        row_children.extend(self.actions.clone());
         let spacing = self.title_spacing.unwrap_or(16.0);
-        let row = Row::new(row_children)
-            .spacing(spacing)
-            .main_axis_alignment(if self.center_title {
-                MainAxisAlignment::Center
-            } else {
-                MainAxisAlignment::SpaceBetween
-            })
-            .cross_axis_alignment(CrossAxisAlignment::Center);
-        let row: Widget = row.into();
+        // Centered composition keeps its existing inter-item spacing
+        // behavior. The start-aligned row below places each slot explicitly
+        // instead: distributing alignment would absorb inter-item spacing
+        // into the free space, hiding the title gap (and the leading
+        // placeholder width) behind identical geometry.
+        let row: Widget = if self.center_title {
+            let mut row_children = Vec::with_capacity(2 + self.actions.len());
+            if let Some(leading) = self.leading.clone() {
+                row_children.push(leading);
+            } else if self.automatically_imply_leading {
+                row_children.push(
+                    SizedBox::new()
+                        .width(self.leading_width.unwrap_or(0.0))
+                        .into(),
+                );
+            }
+            row_children.push(self.title.clone());
+            row_children.extend(self.actions.clone());
+            Row::new(row_children)
+                .spacing(spacing)
+                .main_axis_alignment(MainAxisAlignment::Center)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
+        } else {
+            let mut row_children = Vec::with_capacity(3 + self.actions.len());
+            if let Some(leading) = self.leading.clone() {
+                row_children.push(leading);
+            } else if self.automatically_imply_leading {
+                row_children.push(
+                    SizedBox::new()
+                        .width(self.leading_width.unwrap_or(0.0))
+                        .into(),
+                );
+            }
+            row_children.push(
+                Padding::new(EdgeInsets::only(spacing, 0.0, 0.0, 0.0), self.title.clone()).into(),
+            );
+            row_children.push(Expanded::new(SizedBox::shrink()).into());
+            row_children.extend(self.actions.clone());
+            Row::new(row_children)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
+        };
         let toolbar_child: Widget = if let Some(flexible) = self.flexible_space.clone() {
             // Flexible space is a background layer. Keeping the toolbar row
             // above it prevents the common accidental child replacement that
@@ -616,6 +641,9 @@ impl Scaffold {
         self
     }
 
+    /// Bottom bar shown when no bottom navigation bar is set. When both are
+    /// set, `bottom_navigation_bar` takes the bottom region and the bottom
+    /// app bar is not shown.
     #[must_use]
     pub fn bottom_app_bar(mut self, bar: impl Into<Widget>) -> Self {
         self.bottom_app_bar = Some(bar.into());

@@ -9,10 +9,11 @@ integration and pinning are committed (`835bdcd`), as is title preservation
 (`8a51032`). Floating integration is committed (`7bc9cf8`); resizing bounds
 and scroll invalidation are committed (`a4095c9`), followed by typed resizing
 modes (`83c88b1`). Material expanded/collapsed composition is complete and validated.
-Material stretch is complete and validated. Snapping is complete and validated;
-W1 is not marked complete (other R01 Scaffold and SliverAppBar options remain
-pending).
-Audit baseline `42befb7`, 2026-09-06. Remaining W1 items and W2–W9 are pending.
+Material stretch is complete and validated. Snapping is complete and validated,
+including interruption, reduced motion, and the closing Scaffold/SliverAppBar
+inventory. W1 is complete (see the retained-behavior inventory under W1).
+Audit baseline `42befb7`, 2026-09-06. W2–W9 are pending; W1 has no remaining
+items.
 This expands the remaining scope of plan 14 F–J. Completed plan 14 commits stay
 complete; its architecture decisions remain authoritative. Use this document
 as the remaining-work schedule, with plan 14 retained as the implementation
@@ -25,6 +26,27 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 AppBar toolbar composition: `title_spacing`, `leading_width`, and
+  `automatically_imply_leading` now reach retained geometry. Before, the
+  toolbar row used distributing alignment, which absorbed the inter-item
+  spacing into free space: changing `title_spacing` (or the implied-leading
+  placeholder width) left identical geometry (title at x=144 regardless of
+  the setting). After, the default start-aligned toolbar places each slot
+  explicitly — leading (or its placeholder), an exact title gap, an
+  `Expanded` spacer pushing actions to the trailing edge — reusing the
+  existing Row/Padding/Expanded mechanisms with no new state; centered
+  composition is preserved byte-for-byte. Scaffold `drawer`/`end_drawer`/
+  `bottom_app_bar`/`background` execution is locked by a retained regression
+  (dock positions, bottom-region fill, background paint, topmost click
+  order), and `bottom_app_bar` precedence is now documented. Regressions
+  (`app_bar_toolbar`: spacing values, placeholder, opt-out, rebuild update
+  with hit test, centering lock, flexible-space order, shadow on/off;
+  `scaffold_extensions`: drawer/bottom-app-bar/background execution) failed
+  before the fix (spacing/geometry) and pass after. Formatting, workspace
+  compilation, constrained workspace tests, strict all-feature/all-target
+  Clippy, all Material all-feature tests and warning-denied Material rustdoc
+  passed. Live native tests were not run. With the inventory below, W1 has no
+  remaining items and is marked complete.
 - W1 retained snapping: `SliverAppBar.snap(true)` maps to neutral retained
   snap behavior on all floating header slivers instead of remaining a silent
   setter. Scroll owns activity: snap runs start only from actual scroll-end
@@ -484,6 +506,31 @@ are known.
    never retain a silent accepted setter solely to satisfy parity.
 4. Update affected specification entries to precise behavior and tests. Keep
    ListTile spacing behavior; remove only its redundant discard code if touched.
+
+### W1 retained-behavior inventory
+
+Every option below was traced through retained execution (not just storage);
+disposition reflects observed geometry, paint, input, or semantics plus a
+named regression. Box presentation (`Widget` conversion) stays static by
+contract wherever noted.
+
+| Option | Retained path | Behavior + evidence | Disposition |
+| --- | --- | --- | --- |
+| SliverAppBar pinned/floating/snap/stretch, expanded/collapsed heights, title/slots/theme | Neutral resizing/natural/floating headers own geometry; Material maps config | Collapse, float, snap, stretch, title, theme regressions (`sliver_app_bar*`) | implemented |
+| AppBar title/leading/actions/bottom/background/foreground/elevation/toolbar_height | `AppBar::build` composition + Material surface | Slot paint, bottom measurement, toolbar background, shadow on/off (`sliver_app_bar`, `app_bar_toolbar`) | implemented |
+| AppBar title_spacing | Was absorbed by distributing alignment (no effect); now an explicit title gap in the start-aligned toolbar | `title_spacing_separates_title_from_leading` failed before, passes after | implemented |
+| AppBar leading_width, automatically_imply_leading | Implied placeholder composition in `AppBar::build` | `leading_width_and_imply_place_title_deterministically` | implemented |
+| AppBar center_title | Centered row composition, preserved byte-for-byte | `center_title_keeps_centered_composition` lock | implemented |
+| AppBar flexible_space, shadow_color, surface_tint_color, shape | Stack background layer; Material surface paint params | Paint presence/order, shadow on/off (`app_bar_toolbar`) | implemented |
+| Scaffold body/app_bar/bottom_navigation_bar/bottom_sheet/FAB/regions/insets/extensions | Slot composition, measured regions, neutral padding | Extension, inset, identity regressions (`scaffold_*`) | implemented |
+| Scaffold drawer/end_drawer/bottom_app_bar/background | Positioned slots; bottom-bar precedence documented; body paint | `drawers_bottom_app_bar_and_background_execute` (positions, paint, topmost clicks) | implemented |
+| Card border order/semantic-container; Checkbox error; ListTile autofocus | Prior W1 slices | Card, checkbox, ListTile regressions | implemented |
+| Form validate/save/callbacks; grapheme length formatting | Prior W1 slices | Form, formatter regressions | implemented |
+
+No option above is silently ignored and none required an explicit-unsupported
+migration: every accepted setter reaches retained execution with observable
+behavior. Per-option styling exhaustiveness beyond this table belongs to the
+W3 ledger (property-by-property evidence) and W7 (control/Material inventory).
 
 Exit: every identified ignored option has observable behavior or an explicit
 unsupported migration; all fields validate; formatting respects grapheme and
