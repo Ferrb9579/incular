@@ -255,8 +255,15 @@ when child measurement changes the authoritative extent the viewport
 recomputes its constrained size and re-runs layout with consistent
 constraints and metrics inside the same bounded convergence loop — one
 completed layout already agrees on size, scroll range, and child geometry,
-in both axes and in reverse. Fixed-size viewports keep their
-constraint-driven size regardless of content estimates.
+in both axes and in reverse. When viewport-dependent content keeps moving
+with every new viewport extent, the bounded loop exhausts instead of
+converging; the fallback then retains the last published attempt as one
+consistent frame — reported size, metrics, geometry, child constraints, and
+offsets from that single attempt — while the natural size stays unresolved
+at the attempt's input basis rather than being recomputed from newer
+content. Measurement work stays bounded at three convergence sweeps plus one
+fallback positioning sweep per viewport layout. Fixed-size viewports keep
+their constraint-driven size regardless of content estimates.
 
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry
