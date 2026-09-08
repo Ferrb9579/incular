@@ -14,6 +14,7 @@ use std::{
     },
 };
 
+use image::ImageDecoder as _;
 use incular_config::{Locale, TextDirection};
 use incular_core::Size;
 
@@ -246,18 +247,26 @@ impl DecodedImage {
     }
 }
 
-/// Practical bound on decoded image dimensions, each side. Images wider or
-/// taller are rejected by [`ImageError::DecodeTooLarge`] before any pixel
-/// buffer is requested. The value matches common GPU maximum texture
-/// dimensions, so anything this policy accepts can still be sampled by the
-/// renderer; anything larger could never reach the screen through Incular.
+/// Practical CPU decode-policy bound on image dimensions, each side. Images
+/// wider or taller are rejected by [`ImageError::DecodeTooLarge`] before any
+/// pixel buffer is requested. This is a policy choice, not a device query:
+/// it sits at the top end of common GPU texture limits so accepted images
+/// stay sampleable in practice, but it promises nothing about any single
+/// device's capabilities.
+///
+/// Peak memory is not this number alone: the native decoded storage (capped
+/// by the allocation budget below), the RGBA8 conversion output (capped by
+/// [`MAX_DECODE_OUTPUT_BYTES`]), and decoder-internal scratch can coexist
+/// transiently. Each stage is bounded; their sum is not a fourth bound.
 pub const MAX_DECODE_IMAGE_DIMENSION: u32 = 16_384;
 
-/// Practical bound on RGBA8 output bytes per decode (256 MiB, e.g. an
-/// 8192 x 8192 image). Checked with overflow-safe arithmetic against both
-/// the container header dimensions and the actual decoded dimensions, so the
-/// conversion to RGBA8 — which can expand sub-byte and luminance sources up
-/// to fourfold — is covered by the same bound.
+/// Practical CPU decode-policy bound on RGBA8 output bytes per decode
+/// (256 MiB, e.g. an 8192 x 8192 image). Checked with overflow-safe
+/// arithmetic against both the container header dimensions and the actual
+/// decoded dimensions, so the conversion to RGBA8 — which can expand
+/// sub-byte and luminance sources up to fourfold — is covered by the same
+/// bound. The final ownership handoff (`Vec` into `Arc`) reuses the
+/// conversion allocation rather than copying it.
 pub const MAX_DECODE_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Image loading and decoding failure.
@@ -336,11 +345,17 @@ impl ImageHandle {
     }
     /// Decoder limits expressing the [`MAX_DECODE_IMAGE_DIMENSION`] /
     /// [`MAX_DECODE_OUTPUT_BYTES`] policy through the decoder's own
-    /// facilities. Strict dimensions fail fast at header time on decoders
-    /// that read them eagerly (PNG); the explicit gate below covers every
-    /// format unconditionally, including dimension limits the decoder only
-    /// learns after construction and native allocations beyond the RGBA8
-    /// output size (e.g. 16-bit sources).
+    /// facilities. Strict dimensions fail fast at header-construction time
+    /// on decoders that read them eagerly (PNG); the explicit gate below
+    /// covers every format unconditionally, including dimension limits a
+    /// decoder only learns after construction and native allocations beyond
+    /// the RGBA8 output size (e.g. 16-bit sources). `max_alloc` cooperation
+    /// is best-effort per decoder — some ignore parts of it — so the
+    /// explicit gate, not the cooperation, is the guarantee. Known
+    /// decoder-internal gaps this policy does not close: PNG internal
+    /// buffers are not constrainable after construction, and header parsing
+    /// itself (chunk buffers, text/metadata) draws on `max_alloc`
+    /// cooperation rather than on the dimension gate.
     fn decode_policy_limits() -> image::Limits {
         let mut limits = image::Limits::default();
         limits.max_image_width = Some(MAX_DECODE_IMAGE_DIMENSION);
@@ -352,7 +367,10 @@ impl ImageHandle {
     /// Rejects dimensions outside the decode policy with the offending size
     /// attached. The checked product covers the RGBA8 conversion output, so
     /// a passing result means both the native decode and the conversion fit
-    /// the policy before any pixel buffer is requested.
+    /// the policy before any pixel buffer is requested. Decoder construction
+    /// (`into_decoder`) already enforces the strict dimensions for every
+    /// cooperating format, so the dimension half of this gate is a backstop;
+    /// the output-bytes half is live wherever construction succeeds.
     fn check_decode_policy(width: u32, height: u32) -> Result<(), ImageError> {
         let fits_dimensions =
             width <= MAX_DECODE_IMAGE_DIMENSION && height <= MAX_DECODE_IMAGE_DIMENSION;
@@ -377,46 +395,40 @@ impl ImageHandle {
         }
     }
 
-    /// Reads container header dimensions, parsing headers up to the image
-    /// data without requesting any pixel buffer on any supported path
-    /// (decoders report stored header fields; nothing is decompressed).
-    /// Header/limit failures are returned, never discarded for a blind
-    /// retry: a header this step cannot parse is not one the decode step
-    /// could salvage with different limits.
-    fn read_header_dimensions(bytes: &[u8]) -> Result<(u32, u32), ImageError> {
-        let mut probe = image::ImageReader::new(std::io::Cursor::new(bytes))
+    fn decode(bytes: &[u8], source: ImageSource) -> Result<Self, ImageError> {
+        // One bounded decoder for the whole decode. Finite policy limits
+        // apply from the first construction: dimensions are read from that
+        // same instance, the RGBA output gate runs on them, and the pixel
+        // decode runs through the instance. `load_from_memory` cannot
+        // express this — it decodes under the decoder defaults with no
+        // strict dimensions — so the reader is configured directly instead.
+        // Limit rejections are preserved with the known dimensions; nothing
+        // is ever retried under weaker settings.
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
             .with_guessed_format()
             .map_err(|error| ImageError::Decode(error.to_string()))?;
-        // No allocation budget: this probe must never reserve pixel memory.
-        // Limit rejections here carry no dimensions yet, so they surface as
-        // a zero-sized policy rejection rather than an opaque string.
-        probe.limits(image::Limits::no_limits());
-        probe.into_dimensions().map_err(|error| match error {
+        reader.limits(Self::decode_policy_limits());
+        let decoder = reader.into_decoder().map_err(|error| match error {
+            // The limit fired during header construction, before dimensions
+            // were available through any decoder API.
             image::ImageError::Limits(_) => ImageError::DecodeTooLarge {
                 width: 0,
                 height: 0,
             },
             other => ImageError::Decode(other.to_string()),
-        })
-    }
-
-    fn decode(bytes: &[u8], source: ImageSource) -> Result<Self, ImageError> {
-        // One policy, one reader configuration, applied in order: header
-        // probe (no pixel budget), explicit gate, then the full decode under
-        // the same limits. `load_from_memory` cannot express this — it
-        // decodes under the decoder defaults with no strict dimensions —
-        // so the reader is configured directly instead.
-        let (width, height) = Self::read_header_dimensions(bytes)?;
+        })?;
+        let (width, height) = decoder.dimensions();
         Self::check_decode_policy(width, height)?;
-        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()
-            .map_err(|error| ImageError::Decode(error.to_string()))?;
-        reader.limits(Self::decode_policy_limits());
-        let decoded = reader
-            .decode()
+        // Reserve the native output against the policy before the pixel
+        // buffer exists. The decoder already carries the same limits for
+        // its internal allocations; this covers the output buffer itself.
+        let mut output_budget = Self::decode_policy_limits();
+        output_budget
+            .reserve(decoder.total_bytes())
+            .map_err(|_| ImageError::DecodeTooLarge { width, height })?;
+        let decoded = image::DynamicImage::from_decoder(decoder)
             .map_err(|error| Self::map_decode_error(error, width, height))?;
-        // The allocation above was already reserved against the policy, but
-        // header and actual dimensions travel separately through decoders;
+        // Header and actual dimensions travel separately through decoders;
         // re-gate the actual size before converting so the RGBA8 output is
         // covered by checked arithmetic rather than by assumption.
         Self::check_decode_policy(decoded.width(), decoded.height())?;

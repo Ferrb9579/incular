@@ -272,6 +272,63 @@ fn decode_policy_rejects_absurd_dimensions_with_reason() {
 }
 
 #[test]
+fn decode_policy_enforces_limits_during_header_construction() {
+    use image::codecs::jpeg::JpegEncoder;
+
+    // 20000 x 100 is a small file (tens of kilobytes) that would decode to
+    // ~6-8 MiB — inexpensive either way, and far inside the output budget.
+    // Only the per-side dimension cap rejects it. Both formats enforce it
+    // inside decoder construction (`into_decoder`: PNG at `with_limits`
+    // time, JPEG at `set_limits` time), so dimensions are never returned
+    // and both rejections carry the zero-sized shape. That shape is the
+    // evidence enforcement happened during header construction rather than
+    // after dimensions came back: contrast the output-gate test below,
+    // where dimensions survive into the rejection. Both reject before any
+    // pixel buffer is requested and neither admits nor counts a decode.
+    let wide_rgba: Vec<u8> = (0..20_000u32 * 100)
+        .flat_map(|i| {
+            let i = i as u8;
+            [i, i.wrapping_mul(3), 255 - i, 255]
+        })
+        .collect();
+    let mut wide_png = Vec::new();
+    PngEncoder::new(&mut wide_png)
+        .write_image(&wide_rgba, 20_000, 100, ExtendedColorType::Rgba8)
+        .expect("encode wide test png");
+    let mut wide_rgb = Vec::with_capacity(wide_rgba.len() / 4 * 3);
+    for (index, byte) in wide_rgba.iter().enumerate() {
+        if index % 4 != 3 {
+            wide_rgb.push(*byte);
+        }
+    }
+    let mut wide_jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut wide_jpeg, 80)
+        .write_image(&wide_rgb, 20_000, 100, ExtendedColorType::Rgb8)
+        .expect("encode wide test jpeg");
+
+    let mut cache = ImageCache::new();
+    assert_eq!(
+        cache.load_bytes(&wide_png).unwrap_err(),
+        ImageError::DecodeTooLarge {
+            width: 0,
+            height: 0
+        }
+    );
+    assert_eq!(
+        cache.load_bytes(&wide_jpeg).unwrap_err(),
+        ImageError::DecodeTooLarge {
+            width: 0,
+            height: 0
+        }
+    );
+    assert_eq!(cache.len(), 0);
+    assert_eq!(cache.resident_bytes(), 0);
+    assert_eq!(cache.diagnostics().image_decodes, 0);
+    assert_eq!(cache.diagnostics().load_failures, 2);
+    assert_eq!(cache.diagnostics().evictions, 0);
+}
+
+#[test]
 fn decode_policy_rejects_excessive_output_bytes() {
     // 16384 x 16384 passes the per-side dimension cap with plainly valid
     // arithmetic (2^30 output bytes, no overflow anywhere), yet the RGBA8

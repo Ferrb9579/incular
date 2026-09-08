@@ -618,27 +618,33 @@ code, "missing" means absent with no compensating path.
   separate decode policy governs the work to produce an image — a cache
   budget never becomes a decode limit. Inspected the installed decoder
   (image 0.25.9): `load_from_memory` decodes under defaults with no strict
-  dimensions, while `into_dimensions` enforces limits only at header
-  construction (PNG) or after it (JPEG/WebP via `set_limits`, whose default
-  never reports unsupported); native `max_alloc` cooperation is best-effort
-  per decoder, and the RGBA8 conversion can expand sources up to fourfold.
-  Decoding now runs on one explicitly configured `ImageReader` path: a
-  no-budget header probe (parses headers up to the image data, requests no
-  pixel buffer), an explicit gate on strict 16384px dimensions plus checked
-  `w*h*4` output bytes against a 256 MiB cap, then the full decode under the
-  same limits with decoder limit errors preserved as `DecodeTooLarge`
-  (dims attached; zero-sized only when the header itself was limit-rejected
-  first, e.g. the PNG layer's own overflow guard). Actual decoded dims are
-  re-gated before conversion, and `from_rgba8` verifies the exact output
-  length by construction. Oversized-for-cache images decode normally within
-  the decode policy; failures and rejections never touch admission.
-  Regressions assert the rejection reason precisely (absurd dims, valid-
-  arithmetic 1 GiB-output headers, malformed/truncated/error
-  discrimination, grayscale conversion sizing, valid-but-uncacheable loads,
-  rejection-without-eviction). Uncovered by any bound: decoder-internal
-  transient allocations where decoders ignore cooperation (noted PNG
-  post-construction buffers), and already-decoded caller buffers passed to
-  `from_rgba8`. Same validation as above; no GPU/rendering changes.
+  dimensions; `into_decoder` applies the reader limits (PNG eagerly at
+  construction, JPEG/WebP in `set_limits`, whose default never reports
+  unsupported); native `max_alloc` cooperation is best-effort per decoder;
+  and the RGBA8 conversion can expand sources up to fourfold. Decoding now
+  runs through one bounded decoder instance carrying finite limits from its
+  construction — no unlimited header probe: dimensions are read from that
+  instance, an explicit gate checks strict 16384px dimensions plus checked
+  `w*h*4` output bytes against a 256 MiB cap, the native output is reserved
+  against the same budget, and pixels decode through the instance, with
+  decoder limit errors preserved as `DecodeTooLarge` (dims attached when
+  known; zero-sized when the limit fired during header construction before
+  dims were available). Actual decoded dims are re-gated before conversion,
+  and `from_rgba8` verifies the exact output length by construction.
+  Oversized-for-cache images decode normally within the decode policy;
+  failures and rejections never touch admission. Regressions assert the
+  rejection reason precisely (header-construction enforcement in PNG and
+  JPEG with a cheap 20000x100 fixture, absurd dims, valid-arithmetic 1
+  GiB-output headers, malformed/truncated/error discrimination, grayscale
+  conversion sizing, valid-but-uncacheable loads, rejection-without-
+  eviction). Contract notes: 16384 is a CPU policy choice, not a GPU
+  capability promise; the output cap bounds one stage while native storage,
+  conversion output, and decoder scratch can coexist transiently (final
+  `Vec`-into-`Arc` handoff reuses the conversion allocation); decoder-
+  internal gaps (PNG post-construction buffers, best-effort cooperation,
+  header-parse scratch) are stated, not closed; caller-decoded buffers for
+  `from_rgba8` stay out of scope. Same validation as above; no
+  GPU/rendering changes.
 - Remaining W2 work: shared GPU eviction at device ownership (images,
   gradients, glyph pages/entries/fonts, pipelines, identity maps), presented
   vs failed outcome separation, and two-window churn tests. Text font-byte
