@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use incular_assets::{FontHandle, FontId};
 use incular_core::{Color, Offset, Rect, Size, Transform};
 use incular_image::{ImageHandle, ImageId};
@@ -216,6 +218,7 @@ fn atlas_starts_with_one_normal_page() {
 fn atlas_uvs_use_the_allocated_region() {
     let entry = AtlasEntry {
         page: 3,
+        generation: 7,
         x: 11,
         y: 20,
         width: 10,
@@ -260,6 +263,7 @@ fn glyph_atlas_exposes_linear_coverage_filtering_and_padding() {
 fn atlas_padding_keeps_odd_sized_content_inside_allocation() {
     let entry = AtlasEntry {
         page: 0,
+        generation: 0,
         x: GLYPH_ATLAS_PADDING,
         y: GLYPH_ATLAS_PADDING,
         width: 7,
@@ -378,9 +382,18 @@ fn raster_cache_reuses_color_independent_glyphs_but_not_dpi_size() {
     let run = &layout.lines[0].runs[0];
     let glyph = run.glyphs[0].id;
     let mut atlas = GlyphAtlas::new();
-    let first = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap().entry;
-    let same = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap().entry;
-    let higher_dpi = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap().entry;
+    let first = atlas
+        .lookup_or_rasterize(run, glyph, 1.0, &HashSet::new())
+        .unwrap()
+        .entry;
+    let same = atlas
+        .lookup_or_rasterize(run, glyph, 1.0, &HashSet::new())
+        .unwrap()
+        .entry;
+    let higher_dpi = atlas
+        .lookup_or_rasterize(run, glyph, 2.0, &HashSet::new())
+        .unwrap()
+        .entry;
     let one_x = GlyphRasterRequest::new(run.font_size, 1.0);
     let two_x = GlyphRasterRequest::new(run.font_size, 2.0);
     assert_eq!(first, same);
@@ -416,11 +429,17 @@ fn dpi_change_creates_one_new_variant_then_warms() {
     let run = &layout.lines[0].runs[0];
     let glyph = run.glyphs[0].id;
     let mut atlas = GlyphAtlas::new();
-    let _ = atlas.lookup_or_rasterize(run, glyph, 1.0).unwrap();
+    let _ = atlas
+        .lookup_or_rasterize(run, glyph, 1.0, &HashSet::new())
+        .unwrap();
     let one_x = atlas.counters();
-    let _ = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap();
+    let _ = atlas
+        .lookup_or_rasterize(run, glyph, 2.0, &HashSet::new())
+        .unwrap();
     let two_x = atlas.counters();
-    let _ = atlas.lookup_or_rasterize(run, glyph, 2.0).unwrap();
+    let _ = atlas
+        .lookup_or_rasterize(run, glyph, 2.0, &HashSet::new())
+        .unwrap();
     let warm_two_x = atlas.counters();
     assert_eq!(two_x.glyphs_rasterized - one_x.glyphs_rasterized, 1);
     assert_eq!(two_x.glyph_atlas_uploads - one_x.glyph_atlas_uploads, 1);
@@ -435,7 +454,9 @@ fn glyph_debug_reports_logical_and_physical_units() {
     let run = &layout.lines[0].runs[0];
     let glyph = run.glyphs[0].id;
     let mut atlas = GlyphAtlas::new();
-    let _ = atlas.lookup_or_rasterize(run, glyph, 1.5).unwrap();
+    let _ = atlas
+        .lookup_or_rasterize(run, glyph, 1.5, &HashSet::new())
+        .unwrap();
     let info = atlas
         .debug_glyph(run, glyph, 1.5)
         .expect("cached diagnostic");
@@ -479,7 +500,7 @@ fn raster_debug_classifies_physical_ppem() {
         let run = &layout.lines[0].runs[0];
         let glyph = run.glyphs[0].id;
         atlas
-            .lookup_or_rasterize(run, glyph, scale)
+            .lookup_or_rasterize(run, glyph, scale, &HashSet::new())
             .expect("supported size");
         assert_eq!(
             atlas.debug_glyph(run, glyph, scale).unwrap().atlas_class,
@@ -505,7 +526,7 @@ fn glyph_masks_are_safe_and_warm_across_supported_sizes() {
         let run = &layout.lines[0].runs[0];
         let glyph = run.glyphs[0].id;
         let first = atlas
-            .lookup_or_rasterize(run, glyph, 1.)
+            .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
             .expect("supported size");
         assert!(first.entry.width > 0 && first.entry.height > 0);
         let debug = atlas.debug_glyph(run, glyph, 1.).unwrap();
@@ -513,7 +534,11 @@ fn glyph_masks_are_safe_and_warm_across_supported_sizes() {
             debug.bitmap_bytes,
             first.entry.width as usize * first.entry.height as usize
         );
-        assert!(atlas.lookup_or_rasterize(run, glyph, 1.).is_some());
+        assert!(
+            atlas
+                .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+                .is_some()
+        );
     }
     assert!(atlas.counters().micro_glyph_rasters > 0);
     assert!(atlas.counters().normal_glyph_rasters > 0);
@@ -538,7 +563,7 @@ fn unsupported_gigantic_requests_are_rejected_without_rasterizing() {
     let mut atlas = GlyphAtlas::new();
     assert!(
         atlas
-            .lookup_or_rasterize(run, run.glyphs[0].id, 1.)
+            .lookup_or_rasterize(run, run.glyphs[0].id, 1., &HashSet::new())
             .is_none()
     );
     assert_eq!(atlas.counters().glyphs_rasterized, 0);
@@ -551,11 +576,17 @@ fn fractional_gpu_placement_reuses_one_fontdue_mask() {
     let run = &layout.lines[0].runs[0];
     let glyph = run.glyphs[0].id;
     let mut atlas = GlyphAtlas::new();
-    let first = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry;
+    let first = atlas
+        .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+        .unwrap()
+        .entry;
     let cold = atlas.counters();
     for _x in [0., 0.25, 0.5, 0.75] {
         assert_eq!(
-            atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry,
+            atlas
+                .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+                .unwrap()
+                .entry,
             first
         );
     }
@@ -578,10 +609,13 @@ fn glyph_cache_keeps_font_ids_separate() {
     );
 
     let mut atlas = GlyphAtlas::new();
-    let first = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap().entry;
+    let first = atlas
+        .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+        .unwrap()
+        .entry;
     let before_alternate = atlas.counters();
     let second = atlas
-        .lookup_or_rasterize(&alternate, glyph, 1.)
+        .lookup_or_rasterize(&alternate, glyph, 1., &HashSet::new())
         .unwrap()
         .entry;
     let after_alternate = atlas.counters();
@@ -623,7 +657,7 @@ fn counter_text_warms_the_atlas_incrementally() {
             for line in layout.lines.iter() {
                 for run in line.runs.iter() {
                     for glyph in run.glyphs.iter() {
-                        let _ = atlas.lookup_or_rasterize(run, glyph.id, 1.0);
+                        let _ = atlas.lookup_or_rasterize(run, glyph.id, 1.0, &HashSet::new());
                     }
                 }
             }

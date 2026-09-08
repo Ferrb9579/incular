@@ -245,10 +245,11 @@ impl WgpuRenderer {
             .sync_with_shared(&mut shared.gradient_textures);
     }
     /// Releases locally retained textures the shared owner no longer
-    /// retains, with their bind groups, for images and gradients together.
-    /// Safe on a renderer presenting no frames: staleness is pure
-    /// generation comparison, and anything still referenced by submitted
-    /// work stays valid through the wgpu lifetime contract.
+    /// retains, with their bind groups, for images, gradients, and glyph
+    /// atlas pages together. Safe on a renderer presenting no frames:
+    /// staleness is pure generation comparison, and anything still
+    /// referenced by submitted work stays valid through the wgpu lifetime
+    /// contract.
     ///
     /// Reclamation events and executors: the per-frame sync above covers
     /// active renderers; the unconfigured early-return path in `frame.rs`
@@ -271,6 +272,9 @@ impl WgpuRenderer {
                 .gradient_cache
                 .reclaim_stale(&shared.gradient_textures)
                 .len()
+            + self
+                .atlas_pages
+                .reclaim(&|page| shared.glyph_atlas.page_generation(page))
     }
 
     pub(super) fn evict_unused_images(&mut self) {
@@ -419,8 +423,11 @@ impl WgpuRenderer {
             .get(&sampling)
     }
     pub(super) fn upload_glyph(&mut self, entry: AtlasEntry, bitmap: &[u8]) {
-        self.ensure_atlas_page(entry.page);
-        let page = &self.atlas_pages[usize::from(entry.page)];
+        self.ensure_atlas_page(entry.page, entry.generation);
+        let page = self
+            .atlas_pages
+            .get(entry.page)
+            .expect("atlas page just ensured");
         let padded_width = usize::from(entry.width + ATLAS_PADDING * 2);
         let padded_height = usize::from(entry.height + ATLAS_PADDING * 2);
         // A freshly allocated texture has undefined contents. Explicitly write
@@ -459,11 +466,16 @@ impl WgpuRenderer {
             },
         );
     }
-    pub(super) fn ensure_atlas_page(&mut self, page: u16) {
-        while self.atlas_pages.len() <= usize::from(page) {
-            let texture = self
-                .shared
-                .shared_glyph_texture(self.atlas_pages.len() as u16);
+    pub(super) fn ensure_atlas_page(&mut self, page: u16, generation: u64) {
+        // A generation mismatch replaces the slot: the shared page was
+        // evicted and reused for different content since this binding was
+        // built. Replacement is safe here because callers only ensure
+        // freshly resolved generations, and frame-pinned pages can never be
+        // selected for eviction mid-frame — so no already-emitted batch of
+        // this frame can reference the replaced texture.
+        let missing_or_stale = self.atlas_pages.generation(page) != Some(generation);
+        if missing_or_stale {
+            let texture = self.shared.shared_glyph_texture(page, generation);
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("incular glyph atlas bind group"),
@@ -479,7 +491,7 @@ impl WgpuRenderer {
                     },
                 ],
             });
-            self.atlas_pages.push(GpuAtlasPage {
+            self.atlas_pages.ensure(page, generation, || GpuAtlasPage {
                 texture,
                 bind_group,
             });

@@ -45,6 +45,14 @@ pub struct GpuCounters {
     pub oversize_cache_hits: u64,
     pub oversize_cache_misses: u64,
     pub atlas_texture_recreations: u64,
+    /// Atlas pages retired by budget eviction (entries dropped with them).
+    pub glyph_page_evictions: u64,
+    /// Glyph resolves skipped because the page budget is full and every
+    /// page is protected by the current frame.
+    pub glyph_pressure_skips: u64,
+    /// Stale placements (evicted page generations) detected at resolve
+    /// time and re-rasterized instead of drawn.
+    pub glyph_stale_refreshes: u64,
     pub text_draw_calls: u64,
     pub text_pipeline_creations: u64,
     pub rectangle_pipeline_creations: u64,

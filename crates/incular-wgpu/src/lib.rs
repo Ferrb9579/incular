@@ -57,7 +57,7 @@ pub use geometry::{PathMesh, tessellate_path};
 pub use glyphs::{
     AtlasEntry, CoverageHistogram, GLYPH_ATLAS_PADDING, GlyphAtlas, GlyphAtlasClass,
     GlyphAtlasMemory, GlyphCacheKey, GlyphRasterDebug, GlyphRasterRequest, GlyphSizeClass,
-    RasterizedGlyph, coverage_histogram,
+    RasterizedGlyph, RendererGlyphPages, coverage_histogram,
 };
 pub use renderer::WgpuRenderer;
 pub use resources::{

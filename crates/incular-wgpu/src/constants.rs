@@ -1,6 +1,11 @@
 pub(crate) const ATLAS_PAGE_SIZE: u16 = 1024;
 pub(crate) const ATLAS_PADDING: u16 = 1;
 pub(crate) const OVERSIZE_PAGE_AREA_DIVISOR: u32 = 4;
+/// Default device-owned budget for glyph atlas pages (8 MiB nominal at one
+/// byte per texel). Constrains retained pages, not raster work: eviction
+/// retires the least-recently-used page and its entries, and later uses
+/// re-rasterize on demand.
+pub(crate) const DEFAULT_MAX_GLYPH_ATLAS_PAGES: usize = 8;
 /// Prevent an untrusted font size from causing a multi-gigabyte CPU bitmap
 /// allocation before the renderer can reject it.
 pub(crate) const MAX_GLYPH_BITMAP_BYTES: usize = 8 * 1024 * 1024;

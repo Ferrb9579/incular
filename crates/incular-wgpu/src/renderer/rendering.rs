@@ -290,7 +290,7 @@ impl WgpuRenderer {
                     let start = glyph_offset;
                     glyph_offset +=
                         (instances.len() * std::mem::size_of::<GpuGlyphInstance>()) as u64;
-                    let Some(atlas_page) = self.atlas_pages.get(usize::from(*page)) else {
+                    let Some(atlas_page) = self.atlas_pages.get(*page) else {
                         continue;
                     };
                     pass.set_pipeline(&self.text_pipeline);

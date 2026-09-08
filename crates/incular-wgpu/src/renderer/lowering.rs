@@ -106,9 +106,12 @@ impl WgpuRenderer {
                         continue;
                     }
                     for glyph in run.glyphs.iter() {
-                        let Some(raster) =
-                            self.shared.rasterize_glyph(run, glyph.id, f64::from(scale))
-                        else {
+                        let Some(raster) = self.shared.rasterize_glyph(
+                            run,
+                            glyph.id,
+                            f64::from(scale),
+                            &self.frame_pinned_glyph_pages,
+                        ) else {
                             self.counters.glyphs_skipped += 1;
                             continue;
                         };
@@ -118,7 +121,7 @@ impl WgpuRenderer {
                             // The texture is device-shared, while this window
                             // still needs its own pipeline-compatible bind
                             // group for that atlas page.
-                            self.ensure_atlas_page(raster.entry.page);
+                            self.ensure_atlas_page(raster.entry.page, raster.entry.generation);
                         }
                         if raster.entry.width > 0 && raster.entry.height > 0 {
                             append_glyph(
@@ -138,6 +141,12 @@ impl WgpuRenderer {
                                     },
                                 ),
                             );
+                            // Pin the page for the rest of this frame: shared
+                            // eviction must not reuse it while an emitted
+                            // batch still references its content, or the
+                            // replacement would rebind under those batches at
+                            // submit time.
+                            self.frame_pinned_glyph_pages.insert(raster.entry.page);
                         }
                     }
                 }

@@ -705,6 +705,9 @@ impl WgpuRenderer {
         // age-based eviction below. Submitted work stays valid through the
         // wgpu lifetime contract.
         self.sync_shared_textures();
+        // Frame-pinned atlas pages protected this frame's emitted batches
+        // from shared eviction; submission is done, so release the pins.
+        self.frame_pinned_glyph_pages.clear();
         self.evict_unused_images();
         self.evict_unused_path_meshes();
         self.evict_unused_gradients();

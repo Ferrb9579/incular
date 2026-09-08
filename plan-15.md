@@ -796,8 +796,32 @@ code, "missing" means absent with no compensating path.
   class as the renderer-integration handoff, not as test scaffolding.
   Same validation as above; upload-path GPU coverage still recorded as
   unverified.
-- Remaining W2 work: shared eviction for glyph pages/entries/fonts,
-  pipelines, and identity maps; presented-vs-failed outcome separation;
+- W2 bounded shared glyph-atlas ownership: page slots carry a content
+  generation (`AtlasEntry.generation`, `AtlasPage::{generation,last_use}`)
+  under a device-owned budget (`DEFAULT_MAX_GLYPH_ATLAS_PAGES=8`,
+  `with_max_pages`/`set_max_pages` for tuning). Eviction retires the
+  victim's placement/identity metadata (`take_retired_keys` cleanup in
+  the shared rasterize path), bumps the page generation so stale
+  (page, generation) pairs fail validation, and resets the shelf cursor
+  for in-place reuse. Renderer bindings live in the generation-validated
+  `RendererGlyphPages` table (replace-on-mismatch, reclaim against
+  `page_generation`); the current frame's pages are pinned through
+  lowering (`frame_pinned_glyph_pages`, cleared after submit) and a
+  fully pinned budget degrades to one counted pressure skip, never a
+  loop. Host `SharedImageMaintenance` dispatch is unchanged: the
+  combined revision already sums glyph evictions, and renderer reclaim
+  now also drops superseded atlas bindings. Over-budget LRU (recency
+  then index) is deterministic across identical passes. Font-object
+  budgeting stays pending. Evidence:
+  `crates/incular-wgpu/tests/shared_glyph_pages.rs` (7 tests, production
+  `GlyphAtlas`/`RendererGlyphPages`/dispatch, `u32` stand-ins only for
+  GPU page textures): two-client reuse + recency refresh, churn
+  retirement, pre-draw stale detection, no cross-glyph display through
+  old identities, host-driven idle reclaim, pinned-active validity with
+  clean pressure skips, over-budget determinism. Native/headless
+  coverage only; GPU-backed upload/bind/draw paths recorded as
+  unverified. Same validation as above plus warning-denied rustdoc.
+- Remaining W2 work: shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
   two-window GPU churn tests. Text font-byte budgets are not scheduled
   (unbounded map noted above; layouts already bounded by count).
 

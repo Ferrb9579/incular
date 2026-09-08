@@ -60,6 +60,12 @@ impl SharedGpuResourceRegistry {
     /// texture. A later re-upload allocates a fresh identity; identity
     /// values are never reused, so a stale handle can never alias a new
     /// texture. Glyph identities are untouched by image eviction.
+    /// Drops the context-local glyph identity retained for an evicted
+    /// placement. Re-resolution re-registers the same key idempotently; a
+    /// fresh identity is only allocated when the key was actually absent.
+    pub fn remove_glyph(&mut self, glyph: GlyphCacheKey) -> bool {
+        self.glyphs.remove(&glyph).is_some()
+    }
     pub fn remove_image(&mut self, image: ImageId) -> bool {
         self.images.remove(&image).is_some()
     }
@@ -821,7 +827,7 @@ pub(crate) struct SharedGpuResources {
     /// within one key's re-upload history.
     pub(crate) gradient_generation: u64,
     pub(crate) glyph_atlas: GlyphAtlas,
-    pub(crate) glyph_pages: Vec<SharedGpuAtlasPage>,
+    pub(crate) glyph_pages: Vec<Option<SharedGpuAtlasPage>>,
 }
 pub(crate) struct SharedGpuImage {
     pub(crate) identity: SharedGpuResourceId,
@@ -912,6 +918,7 @@ pub struct GradientResourceKey {
 pub const SHARED_GRADIENT_TEXEL_BYTES: u64 = 256 * 4;
 pub(crate) struct SharedGpuAtlasPage {
     pub(crate) texture: wgpu::Texture,
+    pub(crate) generation: u64,
 }
 impl SharedGpuContext {
     /// Creates the one device context to be shared by every desktop window in
@@ -1074,11 +1081,11 @@ impl SharedGpuContext {
             .eviction_revision()
     }
 
-    /// Combined texture-eviction revision across the image and gradient
-    /// caches: the saturating sum of both families' revisions. Either
-    /// family's eviction strictly advances it (neither ever decreases), so
-    /// one comparison gates host maintenance for both — while neither
-    /// family evicts, no renderer is visited at all.
+    /// Combined texture-eviction revision across the image, gradient, and
+    /// glyph-page caches: the saturating sum of all three revisions. Any
+    /// family's eviction strictly advances it (none ever decreases), so one
+    /// comparison gates host maintenance for all — while no family evicts,
+    /// no renderer is visited at all.
     #[must_use]
     pub fn texture_eviction_revision(&self) -> u64 {
         let resources = self.inner.resources.lock().expect("shared resource lock");
@@ -1086,6 +1093,7 @@ impl SharedGpuContext {
             .image_textures
             .eviction_revision()
             .saturating_add(resources.gradient_textures.eviction_revision())
+            .saturating_add(resources.glyph_atlas.eviction_revision())
     }
 
     /// Whether the shared gradient map currently retains `key`. Used by
@@ -1279,6 +1287,7 @@ impl SharedGpuContext {
         run: &GlyphRun,
         glyph: u16,
         scale: f64,
+        protected_pages: &std::collections::HashSet<u16>,
     ) -> Option<RasterizedGlyph> {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         let request = GlyphRasterRequest::new(run.font_size, scale);
@@ -1287,9 +1296,16 @@ impl SharedGpuContext {
             glyph,
             physical_size: request.physical_size,
         };
-        let raster = resources
-            .glyph_atlas
-            .lookup_or_rasterize(run, glyph, scale)?;
+        let raster =
+            resources
+                .glyph_atlas
+                .lookup_or_rasterize(run, glyph, scale, protected_pages)?;
+        // Retire placement identities evicted while resolving above, then
+        // (re-)register this key. Re-registration is idempotent, so the
+        // stale-refresh path below neither leaks nor duplicates identities.
+        for retired in resources.glyph_atlas.take_retired_keys() {
+            resources.registry.remove_glyph(retired);
+        }
         resources.registry.glyph_identity(key);
         Some(raster)
     }
@@ -1381,10 +1397,17 @@ impl SharedGpuContext {
         }
         SharedGradientAcquisition::new(resource, true, generation)
     }
-    pub(crate) fn shared_glyph_texture(&self, page: u16) -> wgpu::Texture {
+    pub(crate) fn shared_glyph_texture(&self, page: u16, generation: u64) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         while resources.glyph_pages.len() <= usize::from(page) {
-            resources.glyph_pages.push(SharedGpuAtlasPage {
+            resources.glyph_pages.push(None);
+        }
+        let replace = !matches!(
+            &resources.glyph_pages[usize::from(page)],
+            Some(slot) if slot.generation == generation
+        );
+        if replace {
+            resources.glyph_pages[usize::from(page)] = Some(SharedGpuAtlasPage {
                 texture: self.inner.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("incular shared glyph atlas page"),
                     size: wgpu::Extent3d {
@@ -1399,9 +1422,14 @@ impl SharedGpuContext {
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 }),
+                generation,
             });
         }
-        resources.glyph_pages[usize::from(page)].texture.clone()
+        resources.glyph_pages[usize::from(page)]
+            .as_ref()
+            .expect("glyph texture slot just ensured")
+            .texture
+            .clone()
     }
 }
 

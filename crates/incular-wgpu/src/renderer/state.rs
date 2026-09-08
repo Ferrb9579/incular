@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 /// Owns one window's surface, transient buffers, and retained compositor
 /// caches. Device-level resources are borrowed from [`SharedGpuContext`].
@@ -85,7 +86,11 @@ pub struct WgpuRenderer {
     pub(super) target_height: u32,
     pub(super) target_origin: Offset,
     pub(super) offscreen_nesting_depth: u64,
-    pub(super) atlas_pages: Vec<GpuAtlasPage>,
+    pub(super) atlas_pages: RendererGlyphPages<GpuAtlasPage>,
+    /// Atlas pages with batches emitted this frame. Shared eviction skips
+    /// these victims: replacing a page mid-frame would rebind already
+    /// emitted batches to the replacement content at submit time.
+    pub(super) frame_pinned_glyph_pages: HashSet<u16>,
     pub(super) counters: GpuCounters,
 }
 impl Deref for WgpuRenderer {
@@ -323,7 +328,8 @@ impl WgpuRenderer {
             target_height,
             target_origin: Offset::ZERO,
             offscreen_nesting_depth: 0,
-            atlas_pages: Vec::new(),
+            atlas_pages: RendererGlyphPages::new(),
+            frame_pinned_glyph_pages: HashSet::new(),
             counters: GpuCounters {
                 rectangle_pipeline_creations: 1,
                 text_pipeline_creations: 1,
@@ -469,7 +475,8 @@ impl WgpuRenderer {
             target_height,
             target_origin: Offset::ZERO,
             offscreen_nesting_depth: 0,
-            atlas_pages: Vec::new(),
+            atlas_pages: RendererGlyphPages::new(),
+            frame_pinned_glyph_pages: HashSet::new(),
             counters: GpuCounters {
                 stencil_texture_creations: 1,
                 stencil_pipeline_creations: 0,

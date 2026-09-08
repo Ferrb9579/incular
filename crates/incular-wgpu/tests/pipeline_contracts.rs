@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use incular_assets::FontId;
 use incular_core::{Color, Offset, Rect, Size};
 use incular_rendering::{
@@ -135,9 +137,15 @@ fn public_glyph_pipeline_contract_keeps_cache_identity_and_dpi_variants() {
     let glyph = run.glyphs[0].id;
     let mut atlas = GlyphAtlas::new();
 
-    let first = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap();
-    let warm = atlas.lookup_or_rasterize(run, glyph, 1.).unwrap();
-    let high_dpi = atlas.lookup_or_rasterize(run, glyph, 2.).unwrap();
+    let first = atlas
+        .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+        .unwrap();
+    let warm = atlas
+        .lookup_or_rasterize(run, glyph, 1., &HashSet::new())
+        .unwrap();
+    let high_dpi = atlas
+        .lookup_or_rasterize(run, glyph, 2., &HashSet::new())
+        .unwrap();
     assert_eq!(first.entry, warm.entry);
     assert_ne!(first.entry, high_dpi.entry);
     assert_eq!(atlas.counters().glyph_cache_hits, 1);
