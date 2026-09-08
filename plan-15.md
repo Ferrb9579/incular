@@ -637,14 +637,21 @@ code, "missing" means absent with no compensating path.
   JPEG with a cheap 20000x100 fixture, absurd dims, valid-arithmetic 1
   GiB-output headers, malformed/truncated/error discrimination, grayscale
   conversion sizing, valid-but-uncacheable loads, rejection-without-
-  eviction). Contract notes: 16384 is a CPU policy choice, not a GPU
-  capability promise; the output cap bounds one stage while native storage,
-  conversion output, and decoder scratch can coexist transiently (final
-  `Vec`-into-`Arc` handoff reuses the conversion allocation); decoder-
-  internal gaps (PNG post-construction buffers, best-effort cooperation,
-  header-parse scratch) are stated, not closed; caller-decoded buffers for
-  `from_rgba8` stay out of scope. Same validation as above; no
-  GPU/rendering changes.
+  eviction). Separate guarantees: checked RGBA output size (explicit gate),
+  checked native output size (`total_bytes` reservation — the RGBA gate
+  alone does not establish it), best-effort decoder-cooperative scratch,
+  and conversion/ownership-transfer peak accounting. The consuming
+  `into_rgba8` hands over already-RGBA8 buffers instead of cloning them;
+  other sources still allocate fresh output beside the native buffer, and
+  the `Vec`-into-`Arc` handoff may reallocate on excess capacity, so source
+  and `Arc` storage coexist transiently. 16384 is a CPU policy choice, not
+  a GPU capability promise, and 256 MiB is a per-stage output bound, not an
+  aggregate peak bound. Decoder-internal gaps (PNG post-construction
+  buffers, best-effort cooperation, header-parse scratch) are stated, not
+  closed; caller-decoded buffers for `from_rgba8` stay out of scope. Pixel
+  correctness for native RGBA8 and converting sources rests on the existing
+  pixel-asserting tests; no allocation behavior is claimed from them. Same
+  validation as above; no GPU/rendering changes.
 - Remaining W2 work: shared GPU eviction at device ownership (images,
   gradients, glyph pages/entries/fonts, pipelines, identity maps), presented
   vs failed outcome separation, and two-window churn tests. Text font-byte

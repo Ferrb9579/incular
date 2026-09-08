@@ -253,11 +253,6 @@ impl DecodedImage {
 /// it sits at the top end of common GPU texture limits so accepted images
 /// stay sampleable in practice, but it promises nothing about any single
 /// device's capabilities.
-///
-/// Peak memory is not this number alone: the native decoded storage (capped
-/// by the allocation budget below), the RGBA8 conversion output (capped by
-/// [`MAX_DECODE_OUTPUT_BYTES`]), and decoder-internal scratch can coexist
-/// transiently. Each stage is bounded; their sum is not a fourth bound.
 pub const MAX_DECODE_IMAGE_DIMENSION: u32 = 16_384;
 
 /// Practical CPU decode-policy bound on RGBA8 output bytes per decode
@@ -265,8 +260,15 @@ pub const MAX_DECODE_IMAGE_DIMENSION: u32 = 16_384;
 /// arithmetic against both the container header dimensions and the actual
 /// decoded dimensions, so the conversion to RGBA8 — which can expand
 /// sub-byte and luminance sources up to fourfold — is covered by the same
-/// bound. The final ownership handoff (`Vec` into `Arc`) reuses the
-/// conversion allocation rather than copying it.
+/// bound.
+///
+/// This bounds the conversion output only, not peak memory. During a decode
+/// the native decoded storage (bounded separately by the allocation
+/// reservation below), the RGBA8 conversion output (bounded here), and
+/// decoder-internal scratch (best-effort cooperation only) can coexist;
+/// the final `Vec`-into-`Arc` handoff may also reallocate when the `Vec`
+/// carries excess capacity, so source buffer and `Arc` storage coexist
+/// transiently. No aggregate peak bound is claimed.
 pub const MAX_DECODE_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Image loading and decoding failure.
@@ -345,14 +347,15 @@ impl ImageHandle {
     }
     /// Decoder limits expressing the [`MAX_DECODE_IMAGE_DIMENSION`] /
     /// [`MAX_DECODE_OUTPUT_BYTES`] policy through the decoder's own
-    /// facilities. Strict dimensions fail fast at header-construction time
-    /// on decoders that read them eagerly (PNG); the explicit gate below
-    /// covers every format unconditionally, including dimension limits a
-    /// decoder only learns after construction and native allocations beyond
-    /// the RGBA8 output size (e.g. 16-bit sources). `max_alloc` cooperation
-    /// is best-effort per decoder — some ignore parts of it — so the
-    /// explicit gate, not the cooperation, is the guarantee. Known
-    /// decoder-internal gaps this policy does not close: PNG internal
+    /// facilities: strict per-side dimensions plus a native-allocation
+    /// budget. Strict dimensions fail fast at header-construction time on
+    /// decoders that read them eagerly (PNG); the explicit gate below covers
+    /// every format unconditionally. The RGBA dimension gate alone does not
+    /// establish the native output bound — a 16-bit source can need twice
+    /// the RGBA8 bytes natively — so the reservation in [`Self::decode`]
+    /// checks `total_bytes()` separately. `max_alloc` cooperation is
+    /// best-effort per decoder and is not presented as a strict bound.
+    /// Known decoder-internal gaps this policy does not close: PNG internal
     /// buffers are not constrainable after construction, and header parsing
     /// itself (chunk buffers, text/metadata) draws on `max_alloc`
     /// cooperation rather than on the dimension gate.
@@ -365,12 +368,13 @@ impl ImageHandle {
     }
 
     /// Rejects dimensions outside the decode policy with the offending size
-    /// attached. The checked product covers the RGBA8 conversion output, so
-    /// a passing result means both the native decode and the conversion fit
-    /// the policy before any pixel buffer is requested. Decoder construction
-    /// (`into_decoder`) already enforces the strict dimensions for every
-    /// cooperating format, so the dimension half of this gate is a backstop;
-    /// the output-bytes half is live wherever construction succeeds.
+    /// attached: the checked RGBA output size. A passing result means the
+    /// conversion output fits the policy; it says nothing about native
+    /// storage, which the separate `total_bytes()` reservation covers.
+    /// Decoder construction (`into_decoder`) already enforces the strict
+    /// dimensions for every cooperating format, so the dimension half of
+    /// this gate is a backstop; the output-bytes half is live wherever
+    /// construction succeeds.
     fn check_decode_policy(width: u32, height: u32) -> Result<(), ImageError> {
         let fits_dimensions =
             width <= MAX_DECODE_IMAGE_DIMENSION && height <= MAX_DECODE_IMAGE_DIMENSION;
@@ -433,12 +437,15 @@ impl ImageHandle {
         // covered by checked arithmetic rather than by assumption.
         Self::check_decode_policy(decoded.width(), decoded.height())?;
         let (actual_width, actual_height) = (decoded.width(), decoded.height());
+        // Consuming conversion: an already-RGBA8 image hands over its buffer
+        // instead of cloning it first (`to_rgba8` would copy unconditionally).
+        // Other sources still allocate fresh output beside the native buffer.
         Self::ready(
             source,
             DecodedImage::from_rgba8(
                 actual_width,
                 actual_height,
-                Arc::<[u8]>::from(decoded.to_rgba8().into_raw()),
+                Arc::<[u8]>::from(decoded.into_rgba8().into_raw()),
             )?,
         )
     }
