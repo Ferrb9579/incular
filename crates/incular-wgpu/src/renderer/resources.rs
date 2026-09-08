@@ -181,14 +181,18 @@ impl WgpuRenderer {
                 "window image cache must reference the context-wide texture identity"
             );
         }
-        let generation = acquisition.resource.identity.get();
+        // Bypassed uploads have no shared generation to name: they are
+        // retained locally only, bounded by the age rule below.
+        let retention = acquisition.admitted.then(|| LocalImageRetention::Shared {
+            generation: acquisition.resource.identity.get(),
+        });
         self.image_cache.insert(
             id,
             GpuImage {
                 resource: acquisition.resource,
                 bind_groups: HashMap::new(),
             },
-            generation,
+            retention.unwrap_or(LocalImageRetention::Bypassed),
             self.counters.frames,
         );
         self.counters.image_cache_misses += 1;
@@ -215,6 +219,30 @@ impl WgpuRenderer {
             .expect("shared resource lock");
         self.image_cache
             .sync_with_shared(&mut shared.image_textures);
+    }
+    /// Releases locally retained textures the shared owner no longer
+    /// retains, with their bind groups. Safe on a renderer presenting no
+    /// frames: staleness is pure generation comparison, and anything still
+    /// referenced by submitted work stays valid through the wgpu lifetime
+    /// contract.
+    ///
+    /// Reclamation events and executors: the per-frame sync above covers
+    /// active renderers; the unconfigured early-return path in `frame.rs`
+    /// covers renderers still driven while presenting nothing; otherwise
+    /// the window owner calls this during idle maintenance (event-loop idle
+    /// work, memory-pressure handling, pre-resume) or simply drops the
+    /// renderer, which releases everything. No background reaper keeps idle
+    /// renderers alive, and shared eviction never reaches into a renderer
+    /// it does not own — all mutation here runs on the owning thread under
+    /// one shared lock, the same order the frame path uses.
+    pub fn reclaim_stale_images(&mut self) -> usize {
+        let shared = self
+            .shared
+            .inner
+            .resources
+            .lock()
+            .expect("shared resource lock");
+        self.image_cache.reclaim_stale(&shared.image_textures).len()
     }
     pub(super) fn evict_unused_images(&mut self) {
         let dropped = self

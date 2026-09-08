@@ -356,14 +356,26 @@ impl SharedImageTextureCache {
     }
 }
 
-/// One renderer-local entry: the retained resource plus the texture
-/// generation recorded when the shared owner admitted it. The generation is
-/// what lets later coordination tell "same upload, still current" from "a
-/// different upload that reused this identity".
+/// How one renderer-local entry is retained. Shared-backed entries name
+/// the texture generation the shared owner admitted, so later coordination
+/// can tell "same upload, still current" from "a different upload that
+/// reused this identity". Bypassed entries (oversized-for-budget uploads)
+/// have no shared entry and no usable generation: shared-generation pruning
+/// never applies to them, and only the local age bound releases them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalImageRetention {
+    /// Retained in the shared map under this texture generation.
+    Shared { generation: u64 },
+    /// Served without shared admission; retained locally only.
+    Bypassed,
+}
+
+/// One renderer-local entry: the retained resource plus how it is
+/// retained (see [`LocalImageRetention`]).
 #[derive(Clone, Debug)]
 pub struct RendererImageEntry<R> {
     pub resource: R,
-    pub generation: u64,
+    pub retention: LocalImageRetention,
 }
 
 /// One window's local image-texture retention, coordinated with the shared
@@ -435,15 +447,16 @@ impl<R> RendererImageCache<R> {
     }
 
     /// Inserts (or replaces) a locally retained entry, recording use for
-    /// `frame`. `generation` must be the shared identity value current at
-    /// admission, so later syncs can prove the entry still names it.
-    pub fn insert(&mut self, id: ImageId, resource: R, generation: u64, frame: u64) {
+    /// `frame`. Shared entries must carry the identity value current at
+    /// admission, so later syncs can prove the entry still names it;
+    /// bypassed entries carry [`LocalImageRetention::Bypassed`].
+    pub fn insert(&mut self, id: ImageId, resource: R, retention: LocalImageRetention, frame: u64) {
         self.entries.insert(
             id,
             (
                 RendererImageEntry {
                     resource,
-                    generation,
+                    retention,
                 },
                 LocalImageUse {
                     last_used_frame: frame,
@@ -453,25 +466,26 @@ impl<R> RendererImageCache<R> {
         );
     }
 
-    /// Takes this frame's used `(id, generation)` pairs, clearing use flags.
+    /// Takes this frame's used `(id, retention)` pairs, clearing use flags.
     /// Deduplicated by construction: an id drawn many times appears once.
-    pub fn drain_frame_use(&mut self) -> Vec<(ImageId, u64)> {
+    pub fn drain_frame_use(&mut self) -> Vec<(ImageId, LocalImageRetention)> {
         let mut used = Vec::new();
         for (id, (entry, state)) in self.entries.iter_mut() {
             if state.used_this_frame {
                 state.used_this_frame = false;
-                used.push((*id, entry.generation));
+                used.push((*id, entry.retention));
             }
         }
         used
     }
 
-    /// Drops entries whose shared generation differs or is gone, returning
-    /// the dropped `(id, resource)` pairs for the caller to release.
+    /// Drops shared-backed entries whose generation differs or is gone,
+    /// returning the dropped `(id, resource)` pairs for the caller to
+    /// release. Bypassed entries are never generation-pruned — they have no
+    /// shared generation — and are bounded by age eviction instead.
     /// Dropping is always safe: submitted GPU work outlives the handles by
     /// the wgpu lifetime contract, and the next use re-resolves to the
-    /// current shared generation. Safe to call on an idle client that has
-    /// presented no frames: staleness needs no activity, only comparison.
+    /// current shared generation.
     pub fn prune_stale(
         &mut self,
         current_generation: &dyn Fn(ImageId) -> Option<u64>,
@@ -479,7 +493,12 @@ impl<R> RendererImageCache<R> {
         let stale: Vec<ImageId> = self
             .entries
             .iter()
-            .filter(|(id, (entry, _))| current_generation(**id) != Some(entry.generation))
+            .filter(|(id, (entry, _))| match entry.retention {
+                LocalImageRetention::Shared { generation } => {
+                    current_generation(**id) != Some(generation)
+                }
+                LocalImageRetention::Bypassed => false,
+            })
             .map(|(id, _)| *id)
             .collect();
         let mut dropped = Vec::with_capacity(stale.len());
@@ -489,6 +508,18 @@ impl<R> RendererImageCache<R> {
             }
         }
         dropped
+    }
+
+    /// Reclaims entries the shared owner no longer retains, without needing
+    /// frame activity: drops locally stale entries against the live shared
+    /// generations and returns the dropped `(id, resource)` pairs. This is
+    /// the production idle-reclamation orchestration — it reads generations
+    /// from the shared policy itself rather than taking an arbitrary
+    /// comparison closure — for renderers that present no frames while
+    /// shared churn moves on. Safe on idle clients for the same reason as
+    /// [`Self::prune_stale`].
+    pub fn reclaim_stale(&mut self, shared: &SharedImageTextureCache) -> Vec<(ImageId, R)> {
+        self.prune_stale(&|id| shared.generation(id))
     }
 
     /// Drops entries unused for more than `max_unused_frames`, returning
@@ -503,11 +534,12 @@ impl<R> RendererImageCache<R> {
     }
 
     /// Coordinates one frame with the shared owner: flushes this frame's
-    /// batched use as generation-checked touches, then drops locally stale
-    /// entries. Returns `(refreshed, pruned_ids)`. Holds no lock itself;
-    /// the caller passes the (already locked) shared policy once, so a
-    /// frame costs at most one shared acquisition no matter how many draws
-    /// ran.
+    /// batched use as generation-checked touches (shared-backed entries
+    /// only; bypassed entries never contact shared state), then drops
+    /// locally stale entries. Returns `(refreshed, pruned_ids)`. Holds no
+    /// lock itself; the caller passes the (already locked) shared policy
+    /// once, so a frame costs at most one shared acquisition no matter how
+    /// many draws ran.
     ///
     /// Coherence granularity is one frame: protection lands when the sync
     /// runs, so a churn admission earlier in the same frame can still evict
@@ -519,8 +551,10 @@ impl<R> RendererImageCache<R> {
         shared: &mut SharedImageTextureCache,
     ) -> (usize, Vec<ImageId>) {
         let mut refreshed = 0;
-        for (id, generation) in self.drain_frame_use() {
-            if shared.touch(id, generation) {
+        for (id, retention) in self.drain_frame_use() {
+            if let LocalImageRetention::Shared { generation } = retention
+                && shared.touch(id, generation)
+            {
                 refreshed += 1;
             }
         }

@@ -15,7 +15,7 @@ use std::sync::{Arc, Weak};
 
 use incular_image::ImageHandle;
 use incular_wgpu::{
-    RendererImageCache, SharedImageTextureBudget, SharedImageTextureCache,
+    LocalImageRetention, RendererImageCache, SharedImageTextureBudget, SharedImageTextureCache,
     shared_image_texture_bytes,
 };
 
@@ -229,7 +229,12 @@ fn local_hits_keep_shared_entry_alive_across_churn() {
     // every `image_id` call mints a fresh identity.
     let churn_ids: Vec<incular_image::ImageId> = (111..=115u8).map(image_id).collect();
     assert!(shared.admit(work, 100, 7, &DEAD).is_empty());
-    client_a.insert(work, test_texture(), 7, 0);
+    client_a.insert(
+        work,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        0,
+    );
     for frame in 1..=5u64 {
         assert!(client_a.record_use(work, frame));
         let churn = churn_ids[(frame - 1) as usize];
@@ -246,7 +251,14 @@ fn local_hits_keep_shared_entry_alive_across_churn() {
                 vec![churn_ids[(frame - 3) as usize]],
             );
         }
-        client_b.insert(churn, test_texture(), 100 + frame, frame);
+        client_b.insert(
+            churn,
+            test_texture(),
+            LocalImageRetention::Shared {
+                generation: 100 + frame,
+            },
+            frame,
+        );
         let (touched, pruned) = client_a.sync_with_shared(&mut shared);
         assert_eq!(touched, 1);
         assert!(pruned.is_empty());
@@ -277,7 +289,12 @@ fn stale_touch_cannot_refresh_a_replacement() {
     let mut client = RendererImageCache::new();
     let x = image_id(121);
     shared.admit(x, 100, 7, &DEAD);
-    client.insert(x, test_texture(), 7, 1);
+    client.insert(
+        x,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
     // Another client evicts x and the same identity is re-uploaded under a
     // new generation while this client is not syncing.
     let y = image_id(122);
@@ -294,7 +311,12 @@ fn stale_touch_cannot_refresh_a_replacement() {
     assert_eq!(shared.counters().shared_hits, 0);
     assert_eq!(shared.generation(x), Some(9));
     // Re-resolving converges onto the single current generation.
-    client.insert(x, test_texture(), 9, 3);
+    client.insert(
+        x,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 9 },
+        3,
+    );
     let (touched, pruned) = client.sync_with_shared(&mut shared);
     assert_eq!(touched, 1);
     assert!(pruned.is_empty());
@@ -307,9 +329,19 @@ fn idle_client_stale_ownership_is_reclaimable() {
     let mut idle = RendererImageCache::new();
     let (a, b) = (image_id(131), image_id(132));
     shared.admit(a, 100, 7, &DEAD);
-    idle.insert(a, test_texture(), 7, 1);
+    idle.insert(
+        a,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
     shared.admit(b, 100, 8, &DEAD);
-    idle.insert(b, test_texture(), 8, 1);
+    idle.insert(
+        b,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 8 },
+        1,
+    );
     // The client presents no further frames while churn evicts both entries
     // from shared ownership.
     for (index, seed) in (133..135u8).enumerate() {
@@ -317,12 +349,13 @@ fn idle_client_stale_ownership_is_reclaimable() {
     }
     assert_eq!(shared.generation(a), None);
     assert_eq!(shared.generation(b), None);
-    // Reclaim needs no frame activity, only comparison: prune against the
-    // shared generations and release the dropped resources. One clone stands
-    // in for submitted work still referencing the texture.
+    // Reclaim through the production idle orchestration — not the raw
+    // pruning helper: release against the live shared generations with no
+    // frame activity. One clone stands in for submitted work still
+    // referencing the texture.
     let inflight = Arc::clone(&idle.get(&a).expect("local entry").resource);
     let probe: Weak<TestTexture> = Arc::downgrade(&inflight);
-    let dropped = idle.prune_stale(&|id| shared.generation(id));
+    let dropped = idle.reclaim_stale(&shared);
     assert_eq!(dropped.len(), 2);
     assert!(idle.is_empty());
     assert!(probe.upgrade().is_some());
@@ -366,10 +399,18 @@ fn shared_gauges_count_retention_not_outstanding_holders() {
 fn frame_use_drains_once_per_id() {
     let mut local = RendererImageCache::new();
     let id = image_id(151);
-    local.insert(id, test_texture(), 4, 1);
+    local.insert(
+        id,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 4 },
+        1,
+    );
     assert!(local.record_use(id, 2));
     assert!(local.record_use(id, 3));
-    assert_eq!(local.drain_frame_use(), vec![(id, 4)]);
+    assert_eq!(
+        local.drain_frame_use(),
+        vec![(id, LocalImageRetention::Shared { generation: 4 })]
+    );
     assert!(local.drain_frame_use().is_empty());
 }
 
@@ -377,11 +418,92 @@ fn frame_use_drains_once_per_id() {
 fn unused_local_entries_evict_by_age() {
     let mut local = RendererImageCache::new();
     let (a, b) = (image_id(161), image_id(162));
-    local.insert(a, test_texture(), 1, 10);
-    local.insert(b, test_texture(), 1, 10);
+    local.insert(
+        a,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 1 },
+        10,
+    );
+    local.insert(
+        b,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 1 },
+        10,
+    );
     assert!(local.record_use(a, 15));
     // B unseen for 5 frames exceeds a 4-frame budget; A was just used.
     assert_eq!(local.evict_unused(15, 4), 1);
     assert!(local.contains(&a));
     assert!(!local.contains(&b));
+}
+
+#[test]
+fn bypassed_images_reuse_locally_with_bounded_retention() {
+    // An oversized-for-budget image has no shared entry: drawing it across
+    // frames reuses the local resource with zero shared contact, and once
+    // unused it is bounded by the same age rule instead of lingering.
+    let mut shared = SharedImageTextureCache::new();
+    let mut local = RendererImageCache::new();
+    let big = image_id(171);
+    local.insert(big, test_texture(), LocalImageRetention::Bypassed, 1);
+    for frame in 2..=4u64 {
+        assert!(local.record_use(big, frame));
+        let (touched, pruned) = local.sync_with_shared(&mut shared);
+        assert_eq!(touched, 0);
+        assert!(pruned.is_empty());
+    }
+    assert_eq!(shared.counters().shared_hits, 0);
+    assert_eq!(shared.counters().admissions, 0);
+    assert!(local.contains(&big));
+    // Unused for 601 frames past its last use at frame 4: released.
+    assert_eq!(local.evict_unused(605, 600), 1);
+    assert!(!local.contains(&big));
+}
+
+#[test]
+fn generation_pruning_applies_only_to_shared_entries() {
+    // A stale shared-backed entry and a bypassed entry side by side:
+    // reclamation drops exactly the shared one. The bypassed entry has no
+    // shared generation to compare, so pruning can never release it — only
+    // the age bound can.
+    let mut shared =
+        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut local = RendererImageCache::new();
+    let (old, big, next) = (image_id(181), image_id(182), image_id(183));
+    shared.admit(old, 100, 7, &DEAD);
+    local.insert(
+        old,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
+    local.insert(big, test_texture(), LocalImageRetention::Bypassed, 1);
+    // Supersede the shared entry while the client is not syncing.
+    shared.admit(next, 100, 8, &DEAD);
+    let dropped = local.reclaim_stale(&shared);
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].0, old);
+    assert!(local.contains(&big));
+    assert_eq!(local.len(), 1);
+}
+
+#[test]
+fn cumulative_counters_do_not_measure_current_retention() {
+    // Two histories with identical cumulative counters but different live
+    // sets: counters alone cannot establish current retained bytes.
+    let history = |first: u8, second: u8| {
+        let mut shared =
+            SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+        let a = image_id(first);
+        let b = image_id(second);
+        shared.admit(a, 100, 1, &DEAD);
+        shared.admit(b, 100, 2, &DEAD);
+        (shared.counters(), shared.retained_bytes(), b)
+    };
+    let (counters_one, bytes_one, live_one) = history(191, 192);
+    let (counters_two, bytes_two, live_two) = history(193, 194);
+    assert_eq!(counters_one, counters_two);
+    assert_eq!(bytes_one, 100);
+    assert_eq!(bytes_two, 100);
+    assert_ne!(live_one, live_two);
 }

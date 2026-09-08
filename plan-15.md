@@ -705,6 +705,30 @@ code, "missing" means absent with no compensating path.
   outstanding gauges, age eviction, drain dedup); standalone LRU and
   Arc-simulation tests remain for the policy alone. Same validation as
   above; upload-path GPU coverage still recorded as unverified.
+- W2 idle reclamation and bypass retention: renderer-local entries now
+  carry an explicit retention state — shared-generation-backed versus
+  locally retained bypass — instead of a bare generation. Shared-
+  generation pruning applies only to shared-backed entries; bypassed
+  entries never contact shared state and are bounded by the same local age
+  rule, so a repeatedly drawn oversized image reuses its resource without
+  lingering once unused. Idle reclamation is a production path, not just
+  an exposed helper: `RendererImageCache::reclaim_stale` compares against
+  live shared generations with no frame activity, `WgpuRenderer::reclaim_stale_images` runs it on the owning thread under one shared
+  lock, and the unconfigured early-return path in `frame.rs` invokes it
+  for renderers still driven while presenting nothing. Otherwise the
+  window owner calls it during idle maintenance (event-loop idle work,
+  memory-pressure handling, pre-resume) or drops the renderer; no
+  background reaper keeps idle renderers alive, shared eviction never
+  reaches into a renderer it does not own, and no frame-delay retirement
+  was invented (submitted work stays valid by the wgpu lifetime
+  contract). Coherence granularity remains one frame by design. Regressions
+  use the production orchestration throughout: bypassed reuse with zero
+  shared contact then age release, generation pruning skipping bypassed
+  entries, idle reclaim after churn via the production method (never the
+  raw helper), and identical cumulative counters with different live sets
+  proving counters alone cannot establish current retention. Same
+  validation as above; upload-path GPU coverage still recorded as
+  unverified.
 - Remaining W2 work: shared eviction for gradients, glyph pages/entries/
   fonts, pipelines, and identity maps; presented vs failed outcome
   separation; two-window churn tests. Text font-byte budgets are not

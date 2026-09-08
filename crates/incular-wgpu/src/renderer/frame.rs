@@ -467,6 +467,10 @@ impl WgpuRenderer {
         scale_factor: f64,
     ) -> Result<RenderStats, RendererError> {
         if !self.window_gpu.presentation.configured {
+            // Still driven but presenting nothing (zero-size surface): no
+            // frame advances, so age eviction cannot run — but stale shared
+            // generations can still be released safely here.
+            self.reclaim_stale_images();
             return Ok(RenderStats::default());
         }
         // Profiling deltas: every counter touched between these snapshots is

@@ -61,10 +61,10 @@ pub use glyphs::{
 };
 pub use renderer::WgpuRenderer;
 pub use resources::{
-    CachedSharedImageTexture, RendererImageCache, RendererImageEntry, SharedGpuContext,
-    SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry, SharedImageTextureBudget,
-    SharedImageTextureCache, SharedImageTextureCounters, SharedImageTextureEviction,
-    WindowGpuPresentation, WindowGpuState, shared_image_texture_bytes,
+    CachedSharedImageTexture, LocalImageRetention, RendererImageCache, RendererImageEntry,
+    SharedGpuContext, SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry,
+    SharedImageTextureBudget, SharedImageTextureCache, SharedImageTextureCounters,
+    SharedImageTextureEviction, WindowGpuPresentation, WindowGpuState, shared_image_texture_bytes,
 };
 pub use surface::{
     SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation, WindowSurfaceTarget,
