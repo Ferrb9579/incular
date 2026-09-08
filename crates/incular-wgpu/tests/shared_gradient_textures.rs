@@ -301,13 +301,17 @@ fn acquisition_conversion_preserves_outer_arc_identity() {
     // re-wrapping the inner handle, which would mint a new allocation even
     // with identical content — the exact bug class this locks out.
     let outer = Arc::new(TestOuter { inner: TestInner });
-    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, true, Some(11));
+    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, Some(11));
+    // Admission is derived, not stored: no second flag can contradict the
+    // generation in any build.
+    assert!(acquisition.admitted());
     let (resource, retention) = acquisition.into_local_parts();
     assert!(Arc::ptr_eq(&resource, &outer));
     assert_eq!(retention, LocalImageRetention::Shared { generation: 11 });
     // Bypassed acquisitions resolve to local-only retention with the same
     // move semantics.
-    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, false, None);
+    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, None);
+    assert!(!acquisition.admitted());
     let (resource, retention) = acquisition.into_local_parts();
     assert!(Arc::ptr_eq(&resource, &outer));
     assert_eq!(retention, LocalImageRetention::Bypassed);
@@ -338,7 +342,7 @@ fn gradient_eviction_observes_renderer_ownership() {
     resolve_gradient(
         &mut local,
         held_key,
-        SharedTextureAcquisition::new(Arc::clone(&outer), false, true, Some(7)),
+        SharedTextureAcquisition::new(Arc::clone(&outer), false, Some(7)),
         1,
     );
     assert!(Arc::ptr_eq(

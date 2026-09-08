@@ -830,36 +830,40 @@ pub(crate) struct SharedGpuImage {
     pub(crate) width: u32,
     pub(crate) height: u32,
 }
-/// What one renderer acquisition of a shared texture established.
-/// `uploaded` reports a fresh GPU upload (versus shared reuse) while
-/// `admitted` reports shared-map retention: oversized-for-budget uploads
-/// return `uploaded: true, admitted: false` and bypass admission and the
-/// policy entirely. `generation` names the admitted upload for local
-/// retention bookkeeping (registry identity for images, admission sequence
-/// for gradients); it is `None` exactly when `admitted` is false.
+/// What one renderer acquisition of a shared texture established: the
+/// renderer-integration handoff between shared upload and local retention
+/// (this crate's API class is backend, covering custom rendering
+/// integrations that acquire from the shared context the same way).
+/// `uploaded` reports a fresh GPU upload versus shared reuse — an
+/// independent fact, kept separate. Admission has one authoritative
+/// representation, the `generation`: `Some` names the admitted upload for
+/// local retention bookkeeping (registry identity for images, admission
+/// sequence for gradients), `None` means the upload bypassed admission.
+/// A contradictory state is unrepresentable in every build, not merely
+/// debug-asserted.
 pub struct SharedTextureAcquisition<R> {
     pub(crate) resource: R,
     pub(crate) uploaded: bool,
-    pub(crate) admitted: bool,
     pub(crate) generation: Option<u64>,
 }
 
 impl<R> SharedTextureAcquisition<R> {
-    /// Builds an acquisition, enforcing that a generation is present
-    /// exactly for admitted uploads. Bypassed uploads name no generation
-    /// because they were never admitted anywhere.
-    pub fn new(resource: R, uploaded: bool, admitted: bool, generation: Option<u64>) -> Self {
-        debug_assert_eq!(
-            admitted,
-            generation.is_some(),
-            "admitted acquisitions must name a generation",
-        );
+    /// Builds an acquisition. Admission follows from `generation` alone:
+    /// `Some` admits, `None` bypasses. There is no separate admission flag
+    /// to contradict it.
+    pub fn new(resource: R, uploaded: bool, generation: Option<u64>) -> Self {
         Self {
             resource,
             uploaded,
-            admitted,
             generation,
         }
+    }
+
+    /// Whether the upload was admitted to shared retention. Derived from
+    /// the generation; see the type documentation.
+    #[must_use]
+    pub fn admitted(&self) -> bool {
+        self.generation.is_some()
     }
 
     /// Splits an acquisition into the `(resource, retention)` pair the
@@ -1174,7 +1178,6 @@ impl SharedGpuContext {
             return Ok(SharedImageAcquisition::new(
                 resource,
                 false,
-                true,
                 image_textures.generation(id),
             ));
         }
@@ -1269,9 +1272,7 @@ impl SharedGpuContext {
             image_textures.note_unadmitted_upload();
         }
         let generation = admitted.then(|| resource.identity.get());
-        Ok(SharedImageAcquisition::new(
-            resource, true, admitted, generation,
-        ))
+        Ok(SharedImageAcquisition::new(resource, true, generation))
     }
     pub(crate) fn rasterize_glyph(
         &self,
@@ -1329,7 +1330,7 @@ impl SharedGpuContext {
             if let Some(generation) = generation {
                 gradient_textures.touch(key, generation);
             }
-            return SharedGradientAcquisition::new(resource, false, true, generation);
+            return SharedGradientAcquisition::new(resource, false, generation);
         }
         // Lookup textures are fixed-size: every entry costs the same nominal
         // bytes, so the byte budget behaves as a scaled entry budget. The
@@ -1378,7 +1379,7 @@ impl SharedGpuContext {
         } else {
             gradient_textures.note_unadmitted_upload();
         }
-        SharedGradientAcquisition::new(resource, true, admitted, generation)
+        SharedGradientAcquisition::new(resource, true, generation)
     }
     pub(crate) fn shared_glyph_texture(&self, page: u16) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");

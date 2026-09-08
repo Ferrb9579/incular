@@ -151,7 +151,7 @@ impl WgpuRenderer {
             &self.gradient_bind_group_layout,
             &self.gradient_sampler,
         );
-        let admitted = acquisition.admitted;
+        let admitted = acquisition.admitted();
         let uploaded = acquisition.uploaded;
         if admitted {
             debug_assert!(
@@ -198,7 +198,7 @@ impl WgpuRenderer {
         // (oversized-for-budget) uploads hold a fresh per-upload identity
         // with no registry entry, so the identity check below covers
         // admitted acquisitions only.
-        if acquisition.admitted {
+        if acquisition.admitted() {
             debug_assert_eq!(
                 self.shared.image_resource_identity(id),
                 Some(acquisition.resource.identity),

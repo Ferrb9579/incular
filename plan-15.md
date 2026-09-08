@@ -785,6 +785,17 @@ code, "missing" means absent with no compensating path.
   observation with real strong counts, and the decay (not immediate)
   behavior. Same validation as above; upload-path GPU coverage still
   recorded as unverified.
+- W2 acquisition validity by construction: `SharedTextureAcquisition`
+  previously took a redundant admission flag alongside the generation,
+  reconciled only by a debug assertion absent in release builds. The flag
+  is gone: the constructor takes `(resource, uploaded, generation)` and
+  admission derives from the generation (`Some` admits), so contradictory
+  state is unrepresentable in every build while upload occurrence stays an
+  independent answer. Both `ensure_*` paths and all conversion tests use
+  the narrowed API; the type remains exported under this crate's backend
+  class as the renderer-integration handoff, not as test scaffolding.
+  Same validation as above; upload-path GPU coverage still recorded as
+  unverified.
 - Remaining W2 work: shared eviction for glyph pages/entries/fonts,
   pipelines, and identity maps; presented-vs-failed outcome separation;
   two-window GPU churn tests. Text font-byte budgets are not scheduled
