@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use incular_config::{Axis, Constraints};
+use incular_config::{Axis, Constraints, RuntimeEnvironment};
 use incular_core::{Color, Offset, Size};
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_widgets::{
@@ -994,4 +994,296 @@ fn snap_cancels_settling_work_on_new_activity() {
         Some(Size::new(200., 120.)),
         "the exact endpoint still presents"
     );
+}
+
+/// Sets the ambient reduced-motion policy through the real
+/// environment-update path.
+fn set_reduced_motion(tree: &mut WidgetTree, reduced: bool) {
+    let _ = tree.set_environment(RuntimeEnvironment {
+        reduced_motion: reduced,
+        ..tree.environment().clone()
+    });
+}
+
+#[test]
+fn snap_resolves_immediately_when_reduced_motion_is_set() {
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    // Enabled before mounting: the first decision already skips animation.
+    set_reduced_motion(&mut tree, true);
+    let root = tree
+        .mount(
+            CustomScrollView::new(vec![
+                resizing_floating_header(),
+                Box::new(SliverToBoxAdapter::new(Widget::box_(
+                    Size::new(200., 800.),
+                    Color::BLACK,
+                ))),
+            ])
+            .controller(controller.clone())
+            .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -60.);
+    tree.layout(constraints).expect("partial layout");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 60.)));
+
+    let start = Instant::now();
+    let (changed, active) = pump_frame(&mut tree, constraints, start);
+    assert!(changed, "the endpoint must apply on the deciding tick");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    // +50ms later the endpoint already presents: interpolation could never
+    // get there that fast, so this proves no animation ran.
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(50));
+    assert!(!changed, "nothing further may move");
+    assert!(!active, "frames must stop once the endpoint presents");
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "reduced motion must complete exactly at the revealed edge"
+    );
+    assert_eq!(
+        white_rects(&mut tree),
+        vec![(Offset::ZERO, Size::new(200., 120.))],
+        "the revealed header must paint fully"
+    );
+    assert_eq!(
+        tree.hit_test(Offset::new(100., 110.)),
+        Some(render),
+        "the revealed header must hit near its far edge"
+    );
+    assert_eq!(controller.offset(), 340.);
+    assert_eq!(controller.content_extent(), 920.);
+}
+
+#[test]
+fn snap_resolves_running_reveal_immediately_when_reduced_motion_starts() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+    let header = header_child(&tree, root);
+    let before_render = render;
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active, "a started snap must schedule frames");
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+    tree.layout(constraints).expect("mid layout");
+    let mid = tree.render_size(render).expect("header size").height;
+    assert!((60.0..120.0).contains(&mid) && mid != 60. && mid != 120.);
+
+    // Enabling reduced motion mid-flight resolves the run's own target on
+    // the next tick instead of interpolating toward it.
+    set_reduced_motion(&mut tree, true);
+    // Identity survives the policy update: no rebuild, no replacement.
+    assert_eq!(header_child(&tree, root), header);
+    assert_eq!(tree.render_id(header), Some(before_render));
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(200));
+    assert!(changed, "the resolve tick must apply the endpoint");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(250));
+    assert!(!changed, "nothing further may move");
+    assert!(!active, "frames must stop once the endpoint presents");
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the run's revealed target must present exactly"
+    );
+    assert_eq!(controller.offset(), 340.);
+    assert_eq!(controller.content_extent(), 920.);
+}
+
+#[test]
+fn snap_resolves_running_hide_immediately_when_reduced_motion_starts() {
+    let controller = ScrollController::new();
+    let (mut tree, root) = viewport_with_header(
+        resizing_floating_header(),
+        controller.clone(),
+        Axis::Vertical,
+        false,
+        ScrollPhysics::default(),
+    );
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // Return until only 30 of 120 show so the run heads for hidden.
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -30.);
+    tree.layout(constraints).expect("partial layout");
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active, "a started snap must schedule frames");
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+
+    set_reduced_motion(&mut tree, true);
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(200));
+    assert!(changed, "the resolve tick must apply the endpoint");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(250));
+    assert!(!changed, "nothing further may move");
+    assert!(!active, "frames must stop once the endpoint presents");
+    assert_eq!(
+        white_rects(&mut tree),
+        Vec::<(Offset, Size)>::new(),
+        "the run's hidden target must present exactly"
+    );
+    assert_ne!(
+        tree.hit_test(Offset::new(100., 20.)),
+        Some(render),
+        "the hidden header must not hit"
+    );
+    assert_eq!(controller.offset(), 370.);
+}
+
+#[test]
+fn snap_does_not_restart_when_reduced_motion_is_disabled() {
+    let controller = ScrollController::new();
+    let (mut tree, root) = viewport_with_header(
+        resizing_floating_header(),
+        controller.clone(),
+        Axis::Vertical,
+        false,
+        ScrollPhysics::default(),
+    );
+    set_reduced_motion(&mut tree, true);
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -60.);
+    tree.layout(constraints).expect("partial layout");
+
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active);
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(50));
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 120.)));
+
+    // Disabling afterwards completes nothing anew and restarts nothing: a
+    // bare end at the endpoint stays quiet under normal timing too.
+    set_reduced_motion(&mut tree, false);
+    for at in [200, 400] {
+        let (changed, active) =
+            pump_frame(&mut tree, constraints, start + Duration::from_millis(at));
+        assert!(!changed, "disabling must not move presentation at +{at}ms");
+        assert!(!active, "disabling must not schedule frames at +{at}ms");
+    }
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 120.)));
+    // A bare Start-then-End at the endpoint stays quiet too: the decision
+    // finds nothing to animate under normal timing either.
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    tree.layout(constraints).expect("end layout");
+    let (_, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(500));
+    assert!(!active, "a bare end at the endpoint must stay quiet");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 120.)));
+}
+
+#[test]
+fn snap_start_cancel_applies_under_reduced_motion() {
+    let (mut tree, root, controller, constraints) = partial_reveal_fixture();
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+
+    // Cancel a running snap via activity start, then flip the policy: the
+    // cancelled run must stay cancelled, and only a new end may resolve.
+    let start = Instant::now();
+    let (_, active) = pump_frame(&mut tree, constraints, start);
+    assert!(active);
+    let _ = pump_frame(&mut tree, constraints, start + Duration::from_millis(150));
+    assert!(controller.begin_activity());
+    set_reduced_motion(&mut tree, true);
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(200));
+    assert!(!changed, "cancelled work must not move");
+    assert!(!active, "cancelled work must schedule nothing");
+    tree.layout(constraints).expect("frozen layout");
+    let frozen = tree.render_size(render).expect("header size").height;
+    assert!((60.0..120.0).contains(&frozen) && frozen != 60. && frozen != 120.);
+
+    assert!(controller.end_activity());
+    tree.layout(constraints).expect("end layout");
+    let restart = Instant::now();
+    let (changed, active) = pump_frame(&mut tree, constraints, restart);
+    assert!(changed, "the fresh end must resolve immediately");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    let (changed, active) = pump_frame(&mut tree, constraints, restart + Duration::from_millis(50));
+    assert!(!changed);
+    assert!(!active);
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the fresh decision resolves revealed without animating"
+    );
+}
+
+#[test]
+fn snap_reduced_motion_natural_header_resolves_with_semantics() {
+    use incular_semantics::SemanticRole;
+    use incular_widgets::Semantics;
+
+    let controller = ScrollController::new();
+    let child: Widget = Semantics::new(Widget::box_(Size::new(200., 55.), Color::WHITE))
+        .role(SemanticRole::GenericContainer)
+        .label("snap-row")
+        .into();
+    let (mut tree, root) = viewport_with_header(
+        Box::new(
+            SliverNaturalHeader::new(child)
+                .scroll_behavior(SliverHeaderScrollBehavior::Floating)
+                .snap(true),
+        ) as Box<dyn Sliver>,
+        controller.clone(),
+        Axis::Vertical,
+        false,
+        ScrollPhysics::default(),
+    );
+    set_reduced_motion(&mut tree, true);
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 55.)));
+
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -40.);
+    tree.layout(constraints).expect("partial layout");
+
+    let start = Instant::now();
+    let (changed, active) = pump_frame(&mut tree, constraints, start);
+    assert!(changed, "the endpoint must apply on the deciding tick");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(50));
+    assert!(!changed, "nothing further may move");
+    assert!(!active, "frames must stop once the endpoint presents");
+    assert_eq!(
+        white_rects(&mut tree),
+        vec![(Offset::ZERO, Size::new(200., 55.))],
+        "the measured extent must paint fully"
+    );
+    assert_eq!(
+        tree.hit_test(Offset::new(100., 50.)),
+        Some(render),
+        "the resolved header must hit near its far edge"
+    );
+    tree.update_semantics();
+    let (_, bounds) = tree
+        .semantics()
+        .iter()
+        .find_map(|(id, node)| {
+            (node.label.as_deref() == Some("snap-row")).then_some((id, node.bounds))
+        })
+        .expect("row semantics");
+    assert_eq!(bounds.origin, Offset::ZERO);
+    assert_eq!(bounds.size, Size::new(200., 55.));
+    assert_eq!(controller.offset(), 360.);
+    assert_eq!(controller.content_extent(), 855.);
 }

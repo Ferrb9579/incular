@@ -412,6 +412,11 @@ pub(super) struct FloatingHeaderRenderSliver {
     pub(super) extent: Cell<f32>,
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
+    /// Last reduced-motion policy stamped by the owning delegate. The tree
+    /// pushes the retained environment value before every tick, so fresh
+    /// render slivers observe the current policy on their first decision
+    /// without any rebuild or replacement.
+    pub(super) reduced_motion: Cell<bool>,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
     pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
     /// Owns the scroll-activity listener while snapping can engage. Never read:
@@ -456,6 +461,21 @@ impl HeaderScrollState {
         self.snap = HeaderSnapProgress::Idle;
     }
 
+    /// Applies the running snap's own target immediately and schedules the
+    /// single presenting frame through the shared completion path. Used when
+    /// reduced motion is enabled mid-flight; the endpoint selection is
+    /// unchanged, only the interpolation is skipped.
+    fn resolve_snap_immediately(&mut self, range: f32) -> bool {
+        let HeaderSnapProgress::Running(run) = self.snap else {
+            return false;
+        };
+        let target = run.target.clamp(0., range);
+        let changed = target != self.effective_scroll_offset;
+        self.effective_scroll_offset = target;
+        self.snap = HeaderSnapProgress::Settling;
+        changed
+    }
+
     /// Whether snap work remains: a running animation, or a completed one
     /// whose exact endpoint still needs one presenting frame.
     pub(super) fn is_snapping(&self) -> bool {
@@ -476,22 +496,32 @@ impl HeaderScrollState {
     /// free of leading overscroll — never from an unchanged offset. The
     /// revealed half (or more) animates to fully revealed; the hidden half
     /// animates to fully hidden, clamped to the scrolled distance the scroll
-    /// state itself enforces. The logical scroll extent and controller offset
-    /// are untouched: only the effective (presentation) offset moves, and on
-    /// completion it equals the endpoint exactly so later scrolls continue
-    /// coherently. Returns whether the effective offset moved.
+    /// state itself enforces. Under reduced motion the same endpoint
+    /// resolves immediately through the shared completion path instead of
+    /// interpolating: no animation runs, but the endpoint is still presented
+    /// exactly before scheduling goes idle. The logical scroll extent and
+    /// controller offset are untouched: only the effective (presentation)
+    /// offset moves, and on completion it equals the endpoint exactly so
+    /// later scrolls continue coherently. Returns whether the effective
+    /// offset moved.
     pub(super) fn advance_snap(
         &mut self,
         now: Instant,
         activity: HeaderSnapActivity,
         spec: HeaderSnapSpec,
         frame: HeaderSnapFrame,
+        reduced_motion: bool,
     ) -> bool {
         if activity == HeaderSnapActivity::Started {
             self.snap = HeaderSnapProgress::Idle;
             return false;
         }
         let range = spec.range.max(0.);
+        // Enabling reduced motion mid-flight resolves the run's own target
+        // on this tick instead of interpolating toward it.
+        if reduced_motion && matches!(self.snap, HeaderSnapProgress::Running(_)) {
+            return self.resolve_snap_immediately(range);
+        }
         if activity == HeaderSnapActivity::Ended
             && spec.enabled
             && spec.floating
@@ -511,17 +541,21 @@ impl HeaderScrollState {
                 range.min(frame.scroll).max(0.)
             };
             let from = self.effective_scroll_offset.clamp(0., range);
-            self.snap = if target == from {
-                HeaderSnapProgress::Idle
+            if target == from {
+                self.snap = HeaderSnapProgress::Idle;
+            } else if reduced_motion {
+                self.effective_scroll_offset = target;
+                self.snap = HeaderSnapProgress::Settling;
+                return true;
             } else {
-                HeaderSnapProgress::Running(HeaderSnapRun {
+                self.snap = HeaderSnapProgress::Running(HeaderSnapRun {
                     from,
                     target,
                     started_at: now,
                     duration: HEADER_SNAP_DURATION,
                     curve: Curve::EaseOut,
-                })
-            };
+                });
+            }
         }
         let HeaderSnapProgress::Running(run) = self.snap else {
             if matches!(self.snap, HeaderSnapProgress::Settling) {
@@ -753,11 +787,16 @@ impl RenderSliver for FloatingHeaderRenderSliver {
                 pinned: 0.,
             },
             self.snap_frame.get(),
+            self.reduced_motion.get(),
         )
     }
 
     fn is_animating(&self) -> bool {
         self.scroll_state.is_snapping()
+    }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion.set(reduced);
     }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
@@ -805,6 +844,11 @@ pub(super) struct ResizingHeaderRenderSliver {
     pub(super) overscroll_behavior: SliverHeaderOverscrollBehavior,
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
+    /// Last reduced-motion policy stamped by the owning delegate. The tree
+    /// pushes the retained environment value before every tick, so fresh
+    /// render slivers observe the current policy on their first decision
+    /// without any rebuild or replacement.
+    pub(super) reduced_motion: Cell<bool>,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
     pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
     /// Owns the scroll-activity listener while snapping can engage. Never read:
@@ -875,6 +919,11 @@ pub(super) struct NaturalHeaderRenderSliver {
     pub(super) sample_unbounded: Cell<bool>,
     pub(super) scroll_state: HeaderScrollState,
     pub(super) snap: bool,
+    /// Last reduced-motion policy stamped by the owning delegate. The tree
+    /// pushes the retained environment value before every tick, so fresh
+    /// render slivers observe the current policy on their first decision
+    /// without any rebuild or replacement.
+    pub(super) reduced_motion: Cell<bool>,
     pub(super) snap_frame: Cell<HeaderSnapFrame>,
     pub(super) snap_activity: Rc<Cell<HeaderSnapActivity>>,
     /// Owns the scroll-activity listener while snapping can engage. Never read:
@@ -1181,11 +1230,16 @@ impl RenderSliver for ResizingHeaderRenderSliver {
                 pinned,
             },
             self.snap_frame.get(),
+            self.reduced_motion.get(),
         )
     }
 
     fn is_animating(&self) -> bool {
         self.scroll_state.is_snapping()
+    }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion.set(reduced);
     }
 }
 
@@ -1349,11 +1403,16 @@ impl RenderSliver for NaturalHeaderRenderSliver {
                 pinned,
             },
             self.snap_frame.get(),
+            self.reduced_motion.get(),
         )
     }
 
     fn is_animating(&self) -> bool {
         self.scroll_state.is_snapping()
+    }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion.set(reduced);
     }
 
     fn set_child_extent(&mut self, child: SliverChildId, extent: f32) -> bool {
@@ -1536,6 +1595,10 @@ impl RenderSliver for PaddingRenderSliver {
         self.inner.borrow().is_animating()
     }
 
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.inner.borrow_mut().set_reduced_motion(reduced);
+    }
+
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
@@ -1654,6 +1717,10 @@ impl RenderSliver for OverlapAbsorberRenderSliver {
         self.inner.borrow().is_animating()
     }
 
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.inner.borrow_mut().set_reduced_motion(reduced);
+    }
+
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
@@ -1705,6 +1772,10 @@ impl RenderSliver for WidgetWrapRenderSliver {
 
     fn is_animating(&self) -> bool {
         self.inner.borrow().is_animating()
+    }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        self.inner.borrow_mut().set_reduced_motion(reduced);
     }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
@@ -1878,6 +1949,12 @@ impl RenderSliver for SequenceRenderSliver {
             .any(|child| child.borrow().is_animating())
     }
 
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        for child in &self.children {
+            child.borrow_mut().set_reduced_motion(reduced);
+        }
+    }
+
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
@@ -2038,12 +2115,18 @@ fn transfer_single_inner_sliver_state<T: SingleInnerSliver + 'static>(
 
 pub(super) struct SequenceViewportDelegate {
     pub(super) sequence: RefCell<SequenceRenderSliver>,
+    /// Last reduced-motion policy stamped into snap-capable descendants.
+    /// `None` forces the first push, so freshly built delegates (including
+    /// replacements) observe the current policy on their first frame without
+    /// any rebuild. Steady-state pushes early-out on equality.
+    snap_policy: Cell<Option<bool>>,
 }
 
 impl SequenceViewportDelegate {
     pub(super) fn new(slivers: Vec<Box<dyn RenderSliver>>) -> Self {
         Self {
             sequence: RefCell::new(SequenceRenderSliver::new(slivers)),
+            snap_policy: Cell::new(None),
         }
     }
 }
@@ -2083,6 +2166,14 @@ impl SliverViewportDelegate for SequenceViewportDelegate {
 
     fn is_animating(&self) -> bool {
         self.sequence.borrow().is_animating()
+    }
+
+    fn set_reduced_motion(&self, reduced: bool) {
+        if self.snap_policy.get() == Some(reduced) {
+            return;
+        }
+        self.sequence.borrow_mut().set_reduced_motion(reduced);
+        self.snap_policy.set(Some(reduced));
     }
 
     fn as_any(&self) -> Option<&dyn Any> {

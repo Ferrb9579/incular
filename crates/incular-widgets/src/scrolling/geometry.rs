@@ -133,6 +133,12 @@ pub trait RenderSliver {
         false
     }
 
+    /// Receives the ambient reduced-motion policy. The owning viewport pushes
+    /// it before ticking; wrappers forward it to their inner sliver. The
+    /// default ignores it so slivers without motion policy keep existing
+    /// behavior exactly.
+    fn set_reduced_motion(&mut self, _reduced: bool) {}
+
     /// Downcast hook for compatible-state transfer across descriptor updates.
     /// Only slivers with retained measurement override this; the default
     /// keeps every other sliver replaceable without coupling them together.
@@ -183,6 +189,10 @@ pub(crate) trait SliverViewportDelegate {
     fn invalidate_sliver_child(&self, _child: SliverChildId) -> bool {
         false
     }
+    /// Pushes the ambient reduced-motion policy toward snap-capable
+    /// descendants. The default ignores it; sequence delegates override it to
+    /// reach headers nested behind transparent wrappers.
+    fn set_reduced_motion(&self, _reduced: bool) {}
 }
 
 pub struct SliverViewportConfig {

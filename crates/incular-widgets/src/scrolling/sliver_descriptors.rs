@@ -1291,6 +1291,12 @@ impl RenderSliver for CrossAxisGroupRenderSliver {
             .iter()
             .any(|(sliver, _)| sliver.borrow().is_animating())
     }
+
+    fn set_reduced_motion(&mut self, reduced: bool) {
+        for (sliver, _) in &self.children {
+            sliver.borrow_mut().set_reduced_motion(reduced);
+        }
+    }
 }
 
 /// Expands a sliver across cross-axis group space.
@@ -1715,6 +1721,7 @@ impl Sliver for PinnedHeaderSliver {
 /// logical scroll extent and controller offset never move. A new scroll
 /// activity interrupts from the current presentation even before the offset
 /// moves, and an end stranded inside that newer activity never starts a run.
+/// Under reduced motion the endpoint resolves immediately without animating.
 #[derive(TypedBuilder)]
 pub struct SliverFloatingHeader {
     #[builder(setter(into))]
@@ -1734,7 +1741,8 @@ impl SliverFloatingHeader {
 
     /// Enables snap-to-edge when a scroll activity ends with the header
     /// partially revealed. A new activity interrupts the animation even
-    /// before the offset moves, preserving the current presentation.
+    /// before the offset moves, preserving the current presentation. Under
+    /// reduced motion the endpoint resolves immediately without animating.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -1779,6 +1787,7 @@ impl Sliver for SliverFloatingHeader {
             ),
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
+            reduced_motion: Cell::new(false),
             snap_frame: Cell::new(HeaderSnapFrame::default()),
             snap_activity,
             snap_subscription,
@@ -1866,7 +1875,8 @@ impl SliverResizingHeader {
     /// Enables snap-to-edge when a scroll activity ends with the header
     /// partially revealed. Engages only for Floating/FloatingPinned behavior;
     /// inert for Scroll/Pinned. A new activity interrupts the animation even
-    /// before the offset moves, preserving the current presentation.
+    /// before the offset moves, preserving the current presentation. Under
+    /// reduced motion the endpoint resolves immediately without animating.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -1929,6 +1939,7 @@ impl Sliver for SliverResizingHeader {
             overscroll_behavior: self.overscroll_behavior,
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
+            reduced_motion: Cell::new(false),
             snap_frame: Cell::new(HeaderSnapFrame::default()),
             snap_activity,
             snap_subscription,
@@ -1987,7 +1998,8 @@ impl SliverNaturalHeader {
     /// Enables snap-to-edge when a scroll activity ends with the header
     /// partially revealed. Engages only for Floating/FloatingPinned behavior;
     /// inert for Scroll/Pinned. A new activity interrupts the animation even
-    /// before the offset moves, preserving the current presentation.
+    /// before the offset moves, preserving the current presentation. Under
+    /// reduced motion the endpoint resolves immediately without animating.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;
@@ -2061,6 +2073,7 @@ impl Sliver for SliverNaturalHeader {
             sample_unbounded: Cell::new(true),
             scroll_state: HeaderScrollState::default(),
             snap: self.snap,
+            reduced_motion: Cell::new(false),
             snap_frame: Cell::new(HeaderSnapFrame::default()),
             snap_activity,
             snap_subscription,

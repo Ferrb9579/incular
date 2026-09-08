@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use incular_config::Constraints;
+use incular_config::{Constraints, RuntimeEnvironment};
 use incular_core::{Color, Offset, Size};
 use incular_material::{AppBar, SliverAppBar};
 use incular_scroll::{ScrollController, ScrollPhysics};
@@ -383,4 +383,92 @@ fn snap_freezes_through_material_path_when_new_activity_begins() {
         Some(Size::new(200., 120.)),
         "the restarted Material snap must complete revealed"
     );
+}
+
+/// Sets the ambient reduced-motion policy through the real
+/// environment-update path.
+fn set_reduced_motion(tree: &mut WidgetTree, reduced: bool) {
+    let _ = tree.set_environment(RuntimeEnvironment {
+        reduced_motion: reduced,
+        ..tree.environment().clone()
+    });
+}
+
+#[test]
+fn snap_resolves_immediately_through_material_path_under_reduced_motion() {
+    use incular_rendering::{Brush, PaintCommand};
+
+    let background = Color::rgba(30, 60, 90, 255);
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    // Enabled before mounting: the first decision already skips animation.
+    set_reduced_motion(&mut tree, true);
+    let root = tree
+        .mount(
+            CustomScrollView::new(vec![
+                Box::new(
+                    SliverAppBar::from_app_bar(
+                        AppBar::new(Text::new("Header")).background_color(background),
+                    )
+                    .expanded_height(120.)
+                    .collapsed_height(60.)
+                    .floating(true)
+                    .snap(true),
+                ) as Box<dyn Sliver>,
+                Box::new(SliverToBoxAdapter::new(Widget::box_(
+                    Size::new(200., 800.),
+                    Color::BLACK,
+                ))),
+            ])
+            .controller(controller.clone())
+            .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let render = tree.render_id(header_child(&tree, root)).expect("render");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 120.)));
+
+    // Partially reveal, then end: the retained Material header must resolve
+    // to the revealed edge without interpolating.
+    end_scroll_by(&controller, 400.);
+    tree.layout(constraints).expect("hidden layout");
+    end_scroll_by(&controller, -60.);
+    tree.layout(constraints).expect("partial layout");
+    assert_eq!(tree.render_size(render), Some(Size::new(200., 60.)));
+
+    let start = Instant::now();
+    let (changed, active) = pump_frame(&mut tree, constraints, start);
+    assert!(changed, "the endpoint must apply on the deciding tick");
+    assert!(active, "one settle frame stays scheduled past resolution");
+    let (changed, active) = pump_frame(&mut tree, constraints, start + Duration::from_millis(50));
+    assert!(!changed, "nothing further may move");
+    assert!(!active, "frames must stop once the endpoint presents");
+    assert_eq!(
+        tree.render_size(render),
+        Some(Size::new(200., 120.)),
+        "the Material header must complete revealed without animating"
+    );
+    assert!(
+        tree.paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command,
+                PaintCommand::RRect { rrect, brush: Brush::Solid(color), .. }
+                if *color == background && rrect.rect.size.height == 120.
+            )),
+        "toolbar background must fill the revealed header"
+    );
+    let body = tree.children(root).expect("body")[1];
+    let hit = tree
+        .hit_test(Offset::new(100., 110.))
+        .map(|hit| tree.element_for_render(hit));
+    assert!(hit.is_some(), "the revealed header must hit");
+    assert_ne!(
+        hit.flatten(),
+        Some(body),
+        "the hit must land inside the header, not the body"
+    );
+    assert_eq!(controller.offset(), 340.);
+    assert_eq!(controller.content_extent(), 920.);
 }

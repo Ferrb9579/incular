@@ -838,6 +838,15 @@ impl WidgetTree {
                     }
                 }
                 RenderKind::SliverViewport { config } => {
+                    // Push the retained reduced-motion policy before ticking
+                    // so snap decisions observe the current value, including
+                    // delegates and render slivers built after the last
+                    // environment change. The delegate stamps snap-capable
+                    // descendants itself and skips unchanged values, so this
+                    // stays one cheap call per viewport per frame.
+                    config
+                        .delegate
+                        .set_reduced_motion(self.environment.reduced_motion);
                     if ticking && config.delegate.tick(now) {
                         changed = true;
                         self.diagnostics.animation_ticks += 1;

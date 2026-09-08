@@ -340,7 +340,8 @@ impl SliverAppBar {
     /// interrupts the animation from its current presentation even before the
     /// offset moves, and an end stranded inside that newer activity never
     /// starts a run; leading overscroll keeps stretch ownership while it
-    /// lasts.
+    /// lasts. Under reduced motion the endpoint resolves immediately without
+    /// animating.
     #[must_use]
     pub fn snap(mut self, value: bool) -> Self {
         self.snap = value;

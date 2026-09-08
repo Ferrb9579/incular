@@ -75,11 +75,33 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   Start silence and Start-then-End restart, verify delta continuity from the
   frozen presentation with no restart without an end, cancel settling work on
   a new activity, and cover freeze plus restart through the retained Material
-  path. Reduced-motion responsiveness stays unfinished (tracked under W5/W8,
-  not claimed here). Formatting, workspace compilation, constrained workspace
-  tests, strict all-feature/all-target Clippy, all Material all-feature tests
-  and warning-denied Widgets/Material rustdoc passed. Live native tests were
-  not run. W1 is not marked complete.
+  path. Formatting, workspace compilation, constrained workspace tests,
+  strict all-feature/all-target Clippy, all Material all-feature tests and
+  warning-denied Widgets/Material rustdoc passed. Live native tests were not
+  run. W1 is not marked complete.
+- W1 snap reduced motion: header snapping now honors the retained
+  `reduced_motion` environment policy, including changes while mounted. The
+  tree pushes the retained value into each sliver-viewport delegate before
+  ticking (delegates cache the last push and stamp snap-capable descendants,
+  forwarding through transparent wrappers, so fresh delegates and render
+  slivers observe the current policy on their first frame with no rebuild and
+  all controller/delegate/element/render identities preserved). Under reduced
+  motion an eligible end resolves directly to the same endpoint with no
+  interpolation, and enabling it mid-flight resolves the run's own target on
+  the next tick; both flow through the shared completion path so the endpoint
+  still presents exactly before scheduling goes idle, with controller offset
+  and logical extent unchanged. Disabling restarts nothing, and activity
+  starts still cancel without resurrecting work. Regressions set the policy
+  through the real environment-update path: enabled before mounting, enabled
+  mid-snap toward both endpoints, disabled afterwards with a bare end staying
+  quiet, start cancellation composed with a policy change, natural headers
+  with semantic bounds, and a retained Material integration with endpoint
+  paint, hit testing, and frame scheduling. Other animation policies remain
+  untouched; reduced motion outside header snapping stays tracked under
+  W5/W8. Formatting, workspace compilation, constrained workspace tests,
+  strict all-feature/all-target Clippy, all Material all-feature tests and
+  warning-denied Widgets/Material rustdoc passed. Live native tests were not
+  run. W1 is not marked complete.
 - W1 nested-viewport invalidation: the enclosing-sliver invalidation walk now
   continues outward through shrink-wrapping viewports, whose size derives
   from content, so inner content changes revalidate outer natural-header
