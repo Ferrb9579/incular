@@ -265,10 +265,10 @@ pub const MAX_DECODE_IMAGE_DIMENSION: u32 = 16_384;
 /// This bounds the conversion output only, not peak memory. During a decode
 /// the native decoded storage (bounded separately by the allocation
 /// reservation below), the RGBA8 conversion output (bounded here), and
-/// decoder-internal scratch (best-effort cooperation only) can coexist;
-/// the final `Vec`-into-`Arc` handoff may also reallocate when the `Vec`
-/// carries excess capacity, so source buffer and `Arc` storage coexist
-/// transiently. No aggregate peak bound is claimed.
+/// decoder-internal scratch (best-effort cooperation only) can coexist.
+/// The final handoff allocates `Arc` storage and moves the bytes, so source
+/// buffer and destination coexist transiently. No aggregate peak bound is
+/// claimed while decoder scratch remains best-effort.
 pub const MAX_DECODE_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Image loading and decoding failure.

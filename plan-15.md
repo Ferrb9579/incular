@@ -597,7 +597,7 @@ code, "missing" means absent with no compensating path.
 | CPU decoded images + encoded keys | `incular-image` `ImageCache` (`crates/incular-image/src/lib.rs`) | Full payload bytes (`Arc<[u8]>`, hash + byte equality); `ImageId` per decode | **Now:** `ImageCacheLimits` (default 64 entries / 32 MiB decoded + key bytes), oldest-first LRU, `clear`/`set_limits`, oversized served fresh | Eviction drops cache refs only; `Arc` handles stay valid. Counters: requests/hits/failures/decodes/evictions + `resident_bytes()` gauge |
 | CPU font bytes | `incular-text` `TextEngine::font_handles` (`crates/incular-text/src/engine.rs`) | `(usize, usize, u32)` blob identity, one shared `Arc` per blob | No byte budget; unbounded map | Shared `Arc` keeps bytes alive while layouts reference them; no counters |
 | CPU text layouts | `incular-text` `TextEngine::{cache, order}` | `LayoutKey`, `Arc<TextLayout>` | **Guarantee:** 2048-entry FIFO (`LAYOUT_CACHE_CAPACITY`) | Shared `Arc`; eviction by count only, no byte bound, no counters surfaced |
-| GPU images | `incular-wgpu` `SharedGpuResources::images` (`crates/incular-wgpu/src/resources.rs`) | `ImageId` → `Arc<SharedGpuImage>` | **Missing:** no budget, no eviction; per-renderer removal does not free shared textures (R04/R06) | Shared `Arc`; upload bytes counted (`texture_upload_bytes`), residency unbounded |
+| GPU images | `incular-wgpu` `SharedGpuResources::{images, image_textures}` + per-renderer `image_cache` (`crates/incular-wgpu/src/resources.rs`, `renderer/resources.rs`, `pipelines.rs`) | Content `ImageId` → one `Arc<SharedGpuImage>`; context-local `SharedGpuResourceId` while retained | **Now:** `SharedImageTextureBudget` (default 256 entries / 256 MiB nominal texel bytes), cross-renderer LRU, oldest-first eviction at shared-device ownership, oversized served without admission; per-renderer 600-unused-frame eviction retained | Shared `Arc` (map + renderer maps + frame locals); evictions report entry drops + still-referenced counts, never freed bytes; `texture_upload_bytes` stays cumulative traffic, residency is the policy gauge |
 | GPU gradients | `SharedGpuResources::gradients` | `(GradientId, TextureFormat)` key | **Missing:** same as GPU images | Same as GPU images |
 | GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts, append-only pages | **Partial:** oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards; pages/entries/fonts unbounded, no clear/trim | Entries never move/compact; page/memory counters (`GlyphAtlasMemory`) |
 | GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Format / `ImageId`→`SharedGpuResourceId` | **Missing:** unbounded, no eviction | Registry length counter only |
@@ -643,8 +643,8 @@ code, "missing" means absent with no compensating path.
   and conversion/ownership-transfer peak accounting. The consuming
   `into_rgba8` hands over already-RGBA8 buffers instead of cloning them;
   other sources still allocate fresh output beside the native buffer, and
-  the `Vec`-into-`Arc` handoff may reallocate on excess capacity, so source
-  and `Arc` storage coexist transiently. 16384 is a CPU policy choice, not
+  the `Vec`-into-`Arc` handoff allocates `Arc` storage and moves the bytes,
+  so source and destination coexist transiently. 16384 is a CPU policy choice, not
   a GPU capability promise, and 256 MiB is a per-stage output bound, not an
   aggregate peak bound. Decoder-internal gaps (PNG post-construction
   buffers, best-effort cooperation, header-parse scratch) are stated, not
@@ -652,11 +652,39 @@ code, "missing" means absent with no compensating path.
   correctness for native RGBA8 and converting sources rests on the existing
   pixel-asserting tests; no allocation behavior is claimed from them. Same
   validation as above; no GPU/rendering changes.
-- Remaining W2 work: shared GPU eviction at device ownership (images,
-  gradients, glyph pages/entries/fonts, pipelines, identity maps), presented
-  vs failed outcome separation, and two-window churn tests. Text font-byte
-  budgets are not scheduled (unbounded map noted above; layouts already
-  bounded by count).
+- W2 shared image-texture cache: admission and eviction moved to
+  shared-device ownership (`SharedGpuContext::image_resource`) instead of
+  living independently per window. Ownership graph, in liveness order:
+  device-owned map entries (one `Arc` each, keys always equal the policy
+  entries) → per-renderer maps (`GpuImage.resource`, bounded by the
+  existing 600-unused-frame eviction, released on window disposal) →
+  transient frame locals and in-flight submissions (wgpu keeps submitted
+  work valid after `Arc` drop — verified against the vendored wgpu 30
+  sources and the codebase's existing submit-then-evict practice — so no
+  retirement delay was invented). Bind groups hold views at the wgpu level
+  without holding the `Arc` and die with their renderer's entry. The
+  headless `SharedImageTextureCache` owns limits (entries + nominal
+  `w*h*4` texel bytes via checked arithmetic; row-pitch/driver overhead
+  explicitly uncounted), cross-renderer LRU ticks, oldest-first eviction,
+  and counters; evictions report dropped entries, nominal bytes, and how
+  many stayed alive elsewhere — never freed GPU memory. Oversized textures
+  upload with a fresh non-registry identity and bypass admission (per-
+  renderer frame-evicted retention only); shrinking limits trims
+  immediately; identity metadata is pruned on eviction so the registry
+  cannot grow past retained entries (re-uploads mint fresh identities).
+  Temporary budget excess from live/in-flight holders is reported, not
+  enforced. Regressions (`shared_image_textures`, 11 tests, display-server
+  free): cross-client reuse, LRU order, live-flag accounting, exact byte
+  residency, oversized/zero-limit admission, oldest-first trim, re-upload,
+  checked sizing incl. overflow, missing touch, and client-close
+  reclamation with real `Arc`/`Weak` counts mirroring the wiring ops.
+  Upload-path (`create_texture`/`write_texture`) coverage needs a native
+  window target and is recorded as unverified here, not substituted.
+  Gradients, glyphs, pipelines, and rendering outcomes are untouched.
+- Remaining W2 work: shared eviction for gradients, glyph pages/entries/
+  fonts, pipelines, and identity maps; presented vs failed outcome
+  separation; two-window churn tests. Text font-byte budgets are not
+  scheduled (unbounded map noted above; layouts already bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.
