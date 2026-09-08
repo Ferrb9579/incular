@@ -1147,6 +1147,297 @@ fn inherited_change_inside_padding_wrapper_routes_invalidation() {
 }
 
 #[test]
+fn shrink_wrap_converges_when_estimate_smaller_than_content() {
+    use incular_core::Offset;
+    use incular_rendering::PaintCommand;
+    use incular_semantics::SemanticRole;
+    use incular_widgets::{Semantics, internal::ShrinkWrappingViewport};
+
+    fn labeled_row(label: &str, height: f32) -> Widget {
+        Semantics::new(Widget::box_(Size::new(200., height), Color::WHITE))
+            .role(SemanticRole::GenericContainer)
+            .label(label)
+            .into()
+    }
+
+    let slivers: Vec<Box<dyn Sliver>> =
+        vec![Box::new(SliverToBoxAdapter::new(labeled_row("row", 120.)))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::from(ShrinkWrappingViewport::new(slivers)))
+        .expect("mount");
+    let constraints = Constraints::loose(Size::new(200., 200.));
+    // One completed layout: the 48px lazy estimate must already agree with
+    // the measured 120px content in size, metrics, and child geometry.
+    tree.layout(constraints).expect("layout");
+    eprintln!("DEBUG root={root:?} children={:?}", tree.children(root));
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 120.)));
+    let row = tree.children(root).expect("viewport child")[0];
+    let row_render = tree.render_id(row).expect("row render");
+    assert_eq!(tree.render_size(row_render), Some(Size::new(200., 120.)));
+    assert_eq!(tree.render_origin(row_render), Offset::ZERO);
+    assert_eq!(tree.hit_test(Offset::new(100., 60.)), Some(row_render));
+    assert!(tree.paint().commands().iter().any(|command| matches!(
+        command,
+        PaintCommand::Rect { rect, color }
+            if rect.origin == Offset::ZERO && rect.size == Size::new(200., 120.) && *color == Color::WHITE
+    )));
+    tree.update_semantics();
+    let (_, bounds) = tree
+        .semantics()
+        .iter()
+        .find_map(|(id, node)| (node.label.as_deref() == Some("row")).then_some((id, node.bounds)))
+        .expect("row semantics");
+    assert_eq!(bounds.origin, Offset::ZERO);
+    assert_eq!(bounds.size, Size::new(200., 120.));
+}
+
+#[test]
+fn shrink_wrap_converges_when_estimate_larger_than_content() {
+    use incular_widgets::internal::ShrinkWrappingViewport;
+
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(Widget::box_(
+        Size::new(200., 30.),
+        Color::WHITE,
+    )))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::from(ShrinkWrappingViewport::new(slivers)))
+        .expect("mount");
+    let constraints = Constraints::loose(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 30.)));
+    let row = tree.children(root).expect("viewport child")[0];
+    assert_eq!(
+        tree.render_size(tree.render_id(row).expect("row render")),
+        Some(Size::new(200., 30.))
+    );
+}
+
+#[test]
+fn shrink_wrap_retained_growth_and_shrinkage() {
+    use incular_widgets::{SizedBox, internal::ShrinkWrappingViewport};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let height = Rc::new(Cell::new(60.));
+    let revision = Rc::new(Cell::new(0_u64));
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(
+        Widget::stateful_layout_builder(revision.clone(), {
+            let height = height.clone();
+            move |_, _| Widget::from(SizedBox::new().height(height.get()))
+        }),
+    ))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::from(ShrinkWrappingViewport::new(slivers)))
+        .expect("mount");
+    let constraints = Constraints::loose(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 60.)));
+    height.set(140.);
+    revision.set(1);
+    tree.layout(constraints).expect("grown layout");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 140.)));
+    let row = tree.children(root).expect("viewport child")[0];
+    assert_eq!(
+        tree.render_size(tree.render_id(row).expect("row render")),
+        Some(Size::new(200., 140.))
+    );
+    height.set(30.);
+    revision.set(2);
+    tree.layout(constraints).expect("shrunk layout");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 30.)));
+}
+
+#[test]
+fn shrink_wrap_respects_parent_min_max() {
+    use incular_widgets::internal::ShrinkWrappingViewport;
+
+    // Content taller than the parent maximum clamps to the maximum.
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(Widget::box_(
+        Size::new(200., 300.),
+        Color::WHITE,
+    )))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::from(ShrinkWrappingViewport::new(slivers)))
+        .expect("mount");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 200.)));
+    let row = tree.children(root).expect("viewport child")[0];
+    assert_eq!(
+        tree.render_size(tree.render_id(row).expect("row render")),
+        Some(Size::new(200., 300.))
+    );
+
+    // Content shorter than the parent minimum expands to the minimum.
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(Widget::box_(
+        Size::new(200., 30.),
+        Color::WHITE,
+    )))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Widget::from(ShrinkWrappingViewport::new(slivers)))
+        .expect("mount");
+    tree.layout(Constraints::new(0., 200., 100., 200.))
+        .expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 100.)));
+}
+
+#[test]
+fn shrink_wrap_horizontal_and_reverse_lists() {
+    use incular_core::Offset;
+    use incular_widgets::ListView;
+
+    // Horizontal: estimate (2 x 48px) differs from measured content width.
+    let controller = ScrollController::new();
+    let view = ListView::new([
+        Widget::box_(Size::new(60., 200.), Color::WHITE),
+        Widget::box_(Size::new(60., 200.), Color::WHITE),
+    ])
+    .scroll_direction(Axis::Horizontal)
+    .shrink_wrap(true)
+    .controller(controller.clone());
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(view.into()).expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(120., 200.)));
+    assert_eq!(controller.content_extent(), 120.);
+    let rows = tree.children(root).expect("rows").to_vec();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        tree.element_for_render(tree.hit_test(Offset::new(30., 100.)).expect("hit row 0")),
+        Some(rows[0])
+    );
+    assert_eq!(
+        tree.element_for_render(tree.hit_test(Offset::new(90., 100.)).expect("hit row 1")),
+        Some(rows[1])
+    );
+
+    // Reverse: identical content agreement with no artificial scroll offset.
+    let controller = ScrollController::new();
+    let view = ListView::new([
+        Widget::box_(Size::new(200., 60.), Color::WHITE),
+        Widget::box_(Size::new(200., 60.), Color::WHITE),
+    ])
+    .reverse(true)
+    .shrink_wrap(true)
+    .controller(controller.clone());
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(view.into()).expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 120.)));
+    assert_eq!(controller.content_extent(), 120.);
+    assert_eq!(controller.offset(), 0.);
+    let rows = tree.children(root).expect("rows").to_vec();
+    assert_eq!(rows.len(), 2);
+    let first = tree.element_for_render(tree.hit_test(Offset::new(100., 30.)).expect("hit"));
+    let second = tree.element_for_render(tree.hit_test(Offset::new(100., 90.)).expect("hit"));
+    assert!(first.is_some() && second.is_some());
+    assert_ne!(first, second);
+}
+
+#[test]
+fn nested_natural_header_with_mismatched_initial_content() {
+    use incular_core::Offset;
+    use incular_rendering::PaintCommand;
+    use incular_semantics::SemanticRole;
+    use incular_widgets::{Semantics, internal::ShrinkWrappingViewport};
+
+    // The inner box hints nothing usable, so the first frame must still agree:
+    // outer content 900, outer size from constraints, inner size 100.
+    let outer = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(SliverNaturalHeader::new(Widget::from(
+            ShrinkWrappingViewport::new(vec![Box::new(SliverToBoxAdapter::new(Widget::from(
+                Semantics::new(Widget::box_(Size::new(200., 100.), Color::WHITE))
+                    .role(SemanticRole::GenericContainer)
+                    .label("inner"),
+            ))) as Box<dyn Sliver>]),
+        ))),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(outer.clone())
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    assert_eq!(outer.content_extent(), 900.);
+    let header = tree.children(root).expect("header")[0];
+    let header_render = tree.render_id(header).expect("header render");
+    assert_eq!(tree.render_size(header_render), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_origin(header_render), Offset::ZERO);
+    let inner = tree.children(header).expect("inner viewport")[0];
+    let inner_render = tree.render_id(inner).expect("inner render");
+    assert_eq!(tree.render_size(inner_render), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_origin(inner_render), Offset::ZERO);
+    assert!(tree.paint().commands().iter().any(|command| matches!(
+        command,
+        PaintCommand::Rect { rect, color }
+            if rect.origin == Offset::ZERO && rect.size == Size::new(200., 100.) && *color == Color::WHITE
+    )));
+    let header_hit = tree.hit_test(Offset::new(100., 50.)).expect("header hit");
+    let body_hit = tree.hit_test(Offset::new(100., 150.)).expect("body hit");
+    assert_ne!(
+        header_hit, body_hit,
+        "hits must identify header versus body descendants"
+    );
+    tree.update_semantics();
+    let (_, bounds) = tree
+        .semantics()
+        .iter()
+        .find_map(|(id, node)| {
+            (node.label.as_deref() == Some("inner")).then_some((id, node.bounds))
+        })
+        .expect("inner semantics");
+    assert_eq!(bounds.origin, Offset::ZERO);
+    assert_eq!(bounds.size, Size::new(200., 100.));
+}
+
+#[test]
+fn fixed_size_viewport_keeps_constraint_size() {
+    // A non-shrink viewport never derives size from content: estimates may
+    // change the scroll range, but the frame size comes from constraints.
+    let controller = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(Widget::box_(
+        Size::new(200., 120.),
+        Color::WHITE,
+    )))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let viewport = tree.render_id(root).expect("viewport render");
+    assert_eq!(tree.render_size(viewport), Some(Size::new(200., 200.)));
+    assert_eq!(controller.content_extent(), 120.);
+}
+
+#[test]
 fn controller_driven_text_change_revalidates_same_delegate() {
     use incular_core::Offset;
     use incular_scroll::ScrollPhysics;
@@ -1272,7 +1563,7 @@ fn nested_shrink_wrap_content_change_during_outer_overscroll() {
     use incular_core::Offset;
     use incular_scroll::ScrollPhysics;
     use incular_widgets::{
-        SizedBox, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+        SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
         internal::ShrinkWrappingViewport,
     };
     use std::cell::Cell;
@@ -1283,16 +1574,28 @@ fn nested_shrink_wrap_content_change_during_outer_overscroll() {
     // header. Mutating inner content in place retains both delegates; the
     // rebuild must invalidate the outer measurement through the
     // shrink-wrapping boundary so the next layout revalidates unbounded.
-    // Initial content matches the lazy default so the test isolates
-    // propagation from first-frame estimate convergence.
+    // Initial content deliberately differs from the lazy default, so the
+    // first completed layout must already converge both viewports.
+    use incular_rendering::PaintCommand;
+    use incular_semantics::SemanticRole;
+    use incular_widgets::Semantics;
     let controller = ScrollController::new();
     let physics = ScrollPhysics::default().bouncing();
-    let inner_height = Rc::new(Cell::new(48.));
+    let inner_height = Rc::new(Cell::new(100.));
     let inner_revision = Rc::new(Cell::new(0_u64));
     let inner_slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(
         Widget::stateful_layout_builder(inner_revision.clone(), {
             let inner_height = inner_height.clone();
-            move |_, _| Widget::from(SizedBox::new().height(inner_height.get()))
+            move |_, _| {
+                Widget::from(
+                    Semantics::new(Widget::box_(
+                        Size::new(200., inner_height.get()),
+                        Color::WHITE,
+                    ))
+                    .role(SemanticRole::GenericContainer)
+                    .label("inner"),
+                )
+            }
         }),
     ))];
     let slivers: Vec<Box<dyn Sliver>> = vec![
@@ -1316,24 +1619,54 @@ fn nested_shrink_wrap_content_change_during_outer_overscroll() {
         )
         .expect("mount");
     let constraints = Constraints::tight(Size::new(200., 200.));
+    // Initial content deliberately differs from the lazy default: the first
+    // completed layout must already agree across inner size, outer size,
+    // and controller metrics.
     tree.layout(constraints).expect("layout");
     let header = tree
         .render_id(tree.children(root).expect("children")[0])
         .expect("header");
-    assert_eq!(tree.render_size(header), Some(Size::new(200., 48.)));
-    assert_eq!(controller.content_extent(), 848.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
+    assert_eq!(controller.content_extent(), 900.);
+    let header_element = tree.element_for_render(header).expect("header element");
+    let inner = tree.children(header_element).expect("inner viewport")[0];
+    let inner_render = tree.render_id(inner).expect("inner render");
+    assert_eq!(tree.render_size(inner_render), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_origin(inner_render), Offset::ZERO);
+    let header_hit = tree.hit_test(Offset::new(100., 50.)).expect("header hit");
+    let body_hit = tree.hit_test(Offset::new(100., 150.)).expect("body hit");
+    assert_ne!(
+        header_hit, body_hit,
+        "hits must identify header versus body descendants"
+    );
+    assert!(tree.paint().commands().iter().any(|command| matches!(
+        command,
+        PaintCommand::Rect { rect, color }
+            if rect.origin == Offset::ZERO && rect.size == Size::new(200., 100.) && *color == Color::WHITE
+    )));
+    tree.update_semantics();
+    let (_, bounds) = tree
+        .semantics()
+        .iter()
+        .find_map(|(id, node)| {
+            (node.label.as_deref() == Some("inner")).then_some((id, node.bounds))
+        })
+        .expect("inner semantics");
+    assert_eq!(bounds.origin, Offset::ZERO);
+    assert_eq!(bounds.size, Size::new(200., 100.));
     controller.apply_physics(physics, -40.);
     let stretch = -controller.offset();
     assert!(stretch > 0.);
-    // Grow beyond the old stretched total (48 + stretch) during overscroll.
-    inner_height.set(100.);
+    // Grow beyond the old stretched total (100 + stretch) during overscroll.
+    inner_height.set(140.);
     inner_revision.set(1);
     tree.layout(constraints).expect("grown layout");
     tree.update_compositor(Instant::now()).expect("compositor");
     assert_eq!(controller.offset(), 0.);
-    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 140.)));
     assert_eq!(tree.render_origin(header), Offset::ZERO);
-    assert_eq!(controller.content_extent(), 900.);
+    assert_eq!(controller.content_extent(), 940.);
+    assert_eq!(tree.render_size(inner_render), Some(Size::new(200., 140.)));
     // Both delegates and the retained header survived the in-place change.
     assert_eq!(
         tree.render_id(tree.children(root).expect("children")[0]),
@@ -1346,7 +1679,7 @@ fn nested_shrink_wrap_content_change_during_outer_overscroll() {
     tree.layout(constraints).expect("overscroll layout");
     assert_eq!(
         tree.render_size(header),
-        Some(Size::new(200., 100. + stretch))
+        Some(Size::new(200., 140. + stretch))
     );
     assert!(controller.jump_to(0.));
     tree.layout(constraints).expect("settled layout");

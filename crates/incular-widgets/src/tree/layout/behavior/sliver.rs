@@ -1,5 +1,26 @@
 use super::super::*;
 
+/// Computes the constrained shrink-wrap size and viewport main-axis extent
+/// from authoritative content in one place. Both initial sizing and
+/// convergence corrections below must use this calculation so the reported
+/// size, the sliver constraints, the controller metrics, and the scroll
+/// geometry cannot drift apart.
+fn shrink_wrap_viewport_geometry(
+    axis: Axis,
+    content_extent: f32,
+    constraints: Constraints,
+    cross_extent: f32,
+) -> (Size, f32) {
+    let content_extent = content_extent.max(0.);
+    let main = if axis.is_vertical() {
+        content_extent.clamp(constraints.min_height(), constraints.max_height())
+    } else {
+        content_extent.clamp(constraints.min_width(), constraints.max_width())
+    };
+    let size = constraints.constrain(axis.size(main, cross_extent));
+    (size, scroll_viewport_extent(axis, size))
+}
+
 impl WidgetTree {
     pub(super) fn layout_sliver_kind(
         &mut self,
@@ -45,20 +66,22 @@ impl WidgetTree {
                     viewport_extent,
                     config.physics,
                 );
+                // Content extent the current size/viewport were computed
+                // from. Fixed-size viewports never consult it; shrink-wrap
+                // viewports keep it in sync below as measurement converges.
+                let mut sized_content = sliver_layout.geometry.scroll_extent.max(0.);
 
                 // A shrink-wrapping viewport derives its own main-axis size
                 // from the sliver geometry. The first pass supplies a
                 // provisional zero/unbounded extent, then the real viewport
                 // extent is laid out again before children are materialized.
                 if config.shrink_wrap {
-                    let content_extent = sliver_layout.geometry.scroll_extent.max(0.);
-                    let main = if config.axis.is_vertical() {
-                        content_extent.clamp(constraints.min_height(), constraints.max_height())
-                    } else {
-                        content_extent.clamp(constraints.min_width(), constraints.max_width())
-                    };
-                    size = constraints.constrain(config.axis.size(main, cross_extent));
-                    viewport_extent = scroll_viewport_extent(config.axis, size);
+                    (size, viewport_extent) = shrink_wrap_viewport_geometry(
+                        config.axis,
+                        sized_content,
+                        constraints,
+                        cross_extent,
+                    );
                     sliver_layout = config.delegate.perform_layout(make_constraints(
                         physical_scroll_offset(&config.controller, config.reverse),
                         viewport_extent,
@@ -172,6 +195,54 @@ impl WidgetTree {
                         }
                     }
                     sliver_layout = next_layout;
+                    // Shrink-wrapping viewports derive size from content: when
+                    // measurement changed the authoritative extent, the size
+                    // computed above from provisional content is stale, so
+                    // recompute it here with the same calculation and re-run
+                    // layout with consistent constraints and metrics. Another
+                    // pass happens only on a genuine content change — the
+                    // following iteration breaks on unchanged measurements —
+                    // and stability is established when content, size,
+                    // viewport, and metrics all agree, all within this loop's
+                    // existing bound.
+                    if config.shrink_wrap {
+                        let authoritative = sliver_layout.geometry.scroll_extent.max(0.);
+                        if (authoritative - sized_content).abs() > f32::EPSILON {
+                            sized_content = authoritative;
+                            (size, viewport_extent) = shrink_wrap_viewport_geometry(
+                                config.axis,
+                                authoritative,
+                                constraints,
+                                cross_extent,
+                            );
+                            let physical =
+                                physical_scroll_offset(&config.controller, config.reverse);
+                            sliver_layout = config
+                                .delegate
+                                .perform_layout(make_constraints(physical, viewport_extent));
+                            config.controller.update_extents_with_physics(
+                                sliver_layout.geometry.scroll_extent,
+                                viewport_extent,
+                                config.physics,
+                            );
+                            // A content shrink can clamp the offset (notably
+                            // with a reversed origin), which would leave the
+                            // fresh geometry in a stale coordinate space.
+                            let physical_after =
+                                physical_scroll_offset(&config.controller, config.reverse);
+                            if physical_after != physical {
+                                sliver_layout = config.delegate.perform_layout(make_constraints(
+                                    physical_after,
+                                    viewport_extent,
+                                ));
+                                config.controller.update_extents_with_physics(
+                                    sliver_layout.geometry.scroll_extent,
+                                    viewport_extent,
+                                    config.physics,
+                                );
+                            }
+                        }
+                    }
                 }
                 if let Some(correction) = sliver_layout.geometry.scroll_offset_correction {
                     let physical = (physical_scroll_offset(&config.controller, config.reverse)

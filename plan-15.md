@@ -39,8 +39,8 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
   repeat stretch/recovery, and the fixed-size negative. The nested growth
   case failed against the previous implementation; the fixed-size case
   passes as a preservation lock. Formatting, workspace compilation, all
-  1,191 workspace tests, strict all-feature/all-target Clippy, all Material
-  all-feature tests and warning-denied Widgets/Material rustdoc passed. Live
+  1,199 workspace tests, strict all-feature/all-target Clippy, all 87
+  Material all-feature tests and warning-denied Widgets rustdoc passed. Live
   native tests were not run. Snapping remains pending; W1 is not marked
   complete.
 - W1 controller-driven invalidation: text content revisions observed in the

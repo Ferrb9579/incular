@@ -250,6 +250,14 @@ behaviors, and stretched presentation is always recomputed live. Reversed
 viewports represent leading overscroll as a negative physical offset in both
 directions, so stretching applies at the reversed leading edge as well.
 
+A shrink-wrapping viewport derives its frame size from measured content, so
+when child measurement changes the authoritative extent the viewport
+recomputes its constrained size and re-runs layout with consistent
+constraints and metrics inside the same bounded convergence loop — one
+completed layout already agrees on size, scroll range, and child geometry,
+in both axes and in reverse. Fixed-size viewports keep their
+constraint-driven size regardless of content estimates.
+
 For custom implementations using the internal `RenderSliver` bridge,
 `scroll_layout_dependency()` distinguishes cache-window reuse from geometry
 that must refresh on every scroll offset. Wrappers forward that dependency.
