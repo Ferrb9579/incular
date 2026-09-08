@@ -17,8 +17,8 @@ use std::sync::{Arc, Weak};
 
 use incular_image::ImageHandle;
 use incular_wgpu::{
-    LocalImageRetention, ReclaimStaleImages, RendererImageCache, SharedImageMaintenance,
-    SharedImageTextureBudget, SharedImageTextureCache, shared_image_texture_bytes,
+    LocalImageRetention, ReclaimStaleTextures, RendererImageCache, SharedImageMaintenance,
+    SharedTextureBudget, SharedTextureCache, shared_image_texture_bytes,
 };
 
 /// Distinct content identities from CPU-only handles (no GPU involved).
@@ -35,7 +35,7 @@ const DEAD: fn(incular_image::ImageId) -> bool = |_| false;
 fn shared_reuse_across_two_clients_counts_one_admission() {
     // One shared instance, two simulated renderer clients interleaving use:
     // the second client's touch is a hit, not a second upload.
-    let mut cache = SharedImageTextureCache::new();
+    let mut cache = SharedTextureCache::new();
     let id = image_id(1);
     assert!(cache.admit(id, 64, 1, &DEAD).is_empty());
     assert!(cache.touch(id, 1));
@@ -48,8 +48,7 @@ fn shared_reuse_across_two_clients_counts_one_admission() {
 
 #[test]
 fn eviction_order_is_lru_across_clients() {
-    let mut cache =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(2, u64::MAX));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(2, u64::MAX));
     let (x, y, z) = (image_id(11), image_id(12), image_id(13));
     cache.admit(x, 100, 1, &DEAD);
     cache.admit(y, 100, 1, &DEAD);
@@ -74,8 +73,7 @@ fn eviction_order_is_lru_across_clients() {
 
 #[test]
 fn live_references_are_reported_not_freed() {
-    let mut cache =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
     let (held, cold) = (image_id(21), image_id(22));
     cache.admit(held, 100, 1, &DEAD);
     // Selective liveness: only `held` is referenced elsewhere at eviction.
@@ -89,7 +87,7 @@ fn live_references_are_reported_not_freed() {
 
 #[test]
 fn byte_budget_bounds_residency_exactly() {
-    let mut cache = SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(100, 300));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(100, 300));
     let (a, b, c) = (image_id(31), image_id(32), image_id(33));
     assert!(cache.admit(a, 100, 1, &DEAD).is_empty());
     assert!(cache.admit(b, 200, 1, &DEAD).is_empty());
@@ -104,7 +102,7 @@ fn byte_budget_bounds_residency_exactly() {
 
 #[test]
 fn oversized_entries_do_not_admit() {
-    let mut cache = SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(100, 300));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(100, 300));
     let big = image_id(41);
     assert!(!cache.fits(301));
     assert!(cache.fits(300));
@@ -121,7 +119,7 @@ fn oversized_entries_do_not_admit() {
 
 #[test]
 fn zero_limits_admit_nothing() {
-    let mut cache = SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(0, 0));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(0, 0));
     assert!(!cache.fits(1));
     assert!(cache.admit(image_id(51), 64, 1, &DEAD).is_empty());
     assert_eq!(cache.retained_entries(), 0);
@@ -130,12 +128,12 @@ fn zero_limits_admit_nothing() {
 
 #[test]
 fn set_limits_trims_oldest_first() {
-    let mut cache = SharedImageTextureCache::new();
+    let mut cache = SharedTextureCache::new();
     let ids = [image_id(61), image_id(62), image_id(63)];
     for id in ids {
         cache.admit(id, 100, 1, &DEAD);
     }
-    let evicted = cache.set_limits(SharedImageTextureBudget::new(1, u64::MAX), &DEAD);
+    let evicted = cache.set_limits(SharedTextureBudget::new(1, u64::MAX), &DEAD);
     assert_eq!(evicted.len(), 2);
     assert_eq!([evicted[0].id, evicted[1].id], [ids[0], ids[1]]);
     assert_eq!(cache.retained_entries(), 1);
@@ -144,8 +142,7 @@ fn set_limits_trims_oldest_first() {
 
 #[test]
 fn re_admission_after_eviction_works() {
-    let mut cache =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
     let (a, b) = (image_id(71), image_id(72));
     cache.admit(a, 100, 1, &DEAD);
     cache.admit(b, 100, 1, &DEAD);
@@ -170,7 +167,7 @@ fn checked_texture_bytes_rejects_overflow() {
 
 #[test]
 fn touch_missing_identity_reports_false() {
-    let mut cache = SharedImageTextureCache::new();
+    let mut cache = SharedTextureCache::new();
     assert!(!cache.touch(image_id(81), 1));
     assert_eq!(cache.counters().shared_hits, 0);
 }
@@ -181,8 +178,7 @@ fn client_close_reclaims_evicted_ownership() {
     // map holds one `Arc`, a renderer client holds another, and eviction
     // drops only the map's reference. Releasing the client then frees the
     // resource fully — reclamation needs no GPU, just ownership.
-    let mut cache =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut cache = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
     let (pinned, next) = (image_id(91), image_id(92));
     let mut map: HashMap<incular_image::ImageId, Arc<()>> = HashMap::new();
     map.insert(pinned, Arc::new(()));
@@ -222,8 +218,7 @@ fn local_hits_keep_shared_entry_alive_across_churn() {
     // fits the steady working set (the working image plus two churn slots),
     // so A's once-per-frame batched touch must protect its entry across the
     // whole run while each older churn image falls out in turn.
-    let mut shared =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(3, u64::MAX));
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(3, u64::MAX));
     let mut client_a = RendererImageCache::new();
     let mut client_b = RendererImageCache::new();
     let work = image_id(101);
@@ -286,8 +281,7 @@ fn local_hits_keep_shared_entry_alive_across_churn() {
 
 #[test]
 fn stale_touch_cannot_refresh_a_replacement() {
-    let mut shared =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
     let mut client = RendererImageCache::new();
     let x = image_id(121);
     shared.admit(x, 100, 7, &DEAD);
@@ -326,8 +320,7 @@ fn stale_touch_cannot_refresh_a_replacement() {
 
 #[test]
 fn idle_client_stale_ownership_is_reclaimable() {
-    let mut shared =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(2, u64::MAX));
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(2, u64::MAX));
     let mut idle = RendererImageCache::new();
     let (a, b) = (image_id(131), image_id(132));
     shared.admit(a, 100, 7, &DEAD);
@@ -370,8 +363,7 @@ fn idle_client_stale_ownership_is_reclaimable() {
 fn shared_gauges_count_retention_not_outstanding_holders() {
     // Mirrors the wiring ops: a simulated shared map plus client clones,
     // with liveness observed from real reference counts.
-    let mut shared =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(2, u64::MAX));
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(2, u64::MAX));
     let mut map: HashMap<incular_image::ImageId, Arc<TestTexture>> = HashMap::new();
     let (x, y, z) = (image_id(141), image_id(142), image_id(143));
     for (id, generation) in [(x, 1), (y, 2)] {
@@ -444,7 +436,7 @@ fn bypassed_images_reuse_locally_with_bounded_retention() {
     // An oversized-for-budget image has no shared entry: drawing it across
     // frames reuses the local resource with zero shared contact, and once
     // unused it is bounded by the same age rule instead of lingering.
-    let mut shared = SharedImageTextureCache::new();
+    let mut shared = SharedTextureCache::new();
     let mut local = RendererImageCache::new();
     let big = image_id(171);
     local.insert(big, test_texture(), LocalImageRetention::Bypassed, 1);
@@ -468,8 +460,7 @@ fn generation_pruning_applies_only_to_shared_entries() {
     // reclamation drops exactly the shared one. The bypassed entry has no
     // shared generation to compare, so pruning can never release it — only
     // the age bound can.
-    let mut shared =
-        SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
     let mut local = RendererImageCache::new();
     let (old, big, next) = (image_id(181), image_id(182), image_id(183));
     shared.admit(old, 100, 7, &DEAD);
@@ -494,8 +485,7 @@ fn cumulative_counters_do_not_measure_current_retention() {
     // Two histories with identical cumulative counters but different live
     // sets: counters alone cannot establish current retained bytes.
     let history = |first: u8, second: u8| {
-        let mut shared =
-            SharedImageTextureCache::with_limits(SharedImageTextureBudget::new(1, u64::MAX));
+        let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
         let a = image_id(first);
         let b = image_id(second);
         shared.admit(a, 100, 1, &DEAD);
@@ -510,32 +500,75 @@ fn cumulative_counters_do_not_measure_current_retention() {
     assert_ne!(live_one, live_two);
 }
 
-/// Stand-in renderer behind the real host dispatch interface: it owns a
-/// production [`RendererImageCache`] and shares the real policy handle,
-/// so dispatch, generation checks, and reclamation all run production
-/// code. Only the GPU resource itself is a test stand-in.
+/// Stand-in renderer behind the real host dispatch interface: it owns
+/// production [`RendererImageCache`]s for both texture families and shares
+/// the real policy handles, so dispatch, generation checks, and
+/// reclamation all run production code. Only the GPU resources themselves
+/// are test stand-ins.
 struct FakeRenderer {
-    local: RendererImageCache<Arc<TestTexture>>,
-    shared: Rc<RefCell<SharedImageTextureCache>>,
+    local: RendererImageCache<incular_image::ImageId, Arc<TestTexture>>,
+    gradient_local: RendererImageCache<incular_wgpu::GradientResourceKey, Arc<TestTexture>>,
+    shared: Rc<RefCell<SharedTextureCache<incular_image::ImageId>>>,
+    gradient_shared: Rc<RefCell<SharedTextureCache<incular_wgpu::GradientResourceKey>>>,
     reclaim_calls: usize,
 }
 
 impl FakeRenderer {
-    fn new(shared: Rc<RefCell<SharedImageTextureCache>>) -> Self {
+    fn new(
+        shared: Rc<RefCell<SharedTextureCache<incular_image::ImageId>>>,
+        gradient_shared: Rc<RefCell<SharedTextureCache<incular_wgpu::GradientResourceKey>>>,
+    ) -> Self {
         Self {
             local: RendererImageCache::new(),
+            gradient_local: RendererImageCache::new(),
             shared,
+            gradient_shared,
             reclaim_calls: 0,
         }
     }
-}
 
-impl ReclaimStaleImages for FakeRenderer {
-    fn reclaim_stale_images(&mut self) -> usize {
-        self.reclaim_calls += 1;
-        self.local.reclaim_stale(&self.shared.borrow()).len()
+    /// Combined revision exactly as production computes it for host
+    /// dispatch: the saturating sum of both families' revisions.
+    fn combined_revision(&self) -> u64 {
+        self.shared
+            .borrow()
+            .eviction_revision()
+            .saturating_add(self.gradient_shared.borrow().eviction_revision())
     }
 }
+
+impl ReclaimStaleTextures for FakeRenderer {
+    fn reclaim_stale_textures(&mut self) -> usize {
+        self.reclaim_calls += 1;
+        self.local.reclaim_stale(&self.shared.borrow()).len()
+            + self
+                .gradient_local
+                .reclaim_stale(&self.gradient_shared.borrow())
+                .len()
+    }
+}
+
+fn gradient_stops(seed: u8) -> incular_rendering::GradientStops {
+    incular_rendering::GradientStops::new(vec![
+        incular_rendering::GradientStop {
+            offset: 0.,
+            color: incular_core::Color::rgba(seed, 0, 0, 255),
+        },
+        incular_rendering::GradientStop {
+            offset: 1.,
+            color: incular_core::Color::rgba(0, seed, 0, 255),
+        },
+    ])
+}
+
+fn gradient_key(stops: &incular_rendering::GradientStops) -> incular_wgpu::GradientResourceKey {
+    incular_wgpu::GradientResourceKey {
+        gradient: stops.id(),
+        format: wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
+const GRADIENT_DEAD: fn(incular_wgpu::GradientResourceKey) -> bool = |_| false;
 
 #[test]
 fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
@@ -544,12 +577,13 @@ fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
     // image. The production host dispatch — revision gate plus per-client
     // reclamation — must release A's stale ownership with A never
     // rendering and the test never touching A's cleanup helper.
-    let shared = Rc::new(RefCell::new(SharedImageTextureCache::with_limits(
-        SharedImageTextureBudget::new(2, u64::MAX),
+    let shared = Rc::new(RefCell::new(SharedTextureCache::with_limits(
+        SharedTextureBudget::new(2, u64::MAX),
     )));
+    let gradient_shared = Rc::new(RefCell::new(SharedTextureCache::new()));
     let mut host = SharedImageMaintenance::new();
-    let mut client_a = FakeRenderer::new(Rc::clone(&shared));
-    let mut client_b = FakeRenderer::new(Rc::clone(&shared));
+    let mut client_a = FakeRenderer::new(Rc::clone(&shared), Rc::clone(&gradient_shared));
+    let mut client_b = FakeRenderer::new(Rc::clone(&shared), Rc::clone(&gradient_shared));
     let work = image_id(201);
     assert!(shared.borrow_mut().admit(work, 100, 7, &DEAD).is_empty());
     client_a.local.insert(
@@ -572,8 +606,8 @@ fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
     let released = host.maintain(
         revision,
         [
-            &mut client_a as &mut dyn ReclaimStaleImages,
-            &mut client_b as &mut dyn ReclaimStaleImages,
+            &mut client_a as &mut dyn ReclaimStaleTextures,
+            &mut client_b as &mut dyn ReclaimStaleTextures,
         ],
     );
     assert_eq!(released, 1);
@@ -586,8 +620,8 @@ fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
     let released = host.maintain(
         shared.borrow().eviction_revision(),
         [
-            &mut client_a as &mut dyn ReclaimStaleImages,
-            &mut client_b as &mut dyn ReclaimStaleImages,
+            &mut client_a as &mut dyn ReclaimStaleTextures,
+            &mut client_b as &mut dyn ReclaimStaleTextures,
         ],
     );
     assert_eq!(released, 0);
@@ -601,11 +635,91 @@ fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
 fn host_dispatch_rests_without_evictions() {
     // A fresh shared owner (revision zero) dispatches nothing at all, not
     // even an empty scan of the clients.
-    let shared = Rc::new(RefCell::new(SharedImageTextureCache::new()));
+    let shared = Rc::new(RefCell::new(SharedTextureCache::new()));
+    let gradient_shared = Rc::new(RefCell::new(SharedTextureCache::new()));
     let mut host = SharedImageMaintenance::new();
-    let mut client = FakeRenderer::new(Rc::clone(&shared));
+    let mut client = FakeRenderer::new(Rc::clone(&shared), Rc::clone(&gradient_shared));
     assert_eq!(shared.borrow().eviction_revision(), 0);
-    let released = host.maintain(0, [&mut client as &mut dyn ReclaimStaleImages]);
+    let released = host.maintain(0, [&mut client as &mut dyn ReclaimStaleTextures]);
     assert_eq!(released, 0);
     assert_eq!(client.reclaim_calls, 0);
+}
+
+#[test]
+fn host_dispatch_reaches_both_families_without_regressing_images() {
+    // Gradient-only churn must still dispatch (the combined revision
+    // moves), visiting image-holding clients too — and a later image
+    // eviction must reclaim image entries exactly as before the gradient
+    // extension. Either family advancing the sum Strictly advances it.
+    let shared = Rc::new(RefCell::new(SharedTextureCache::with_limits(
+        SharedTextureBudget::new(2, u64::MAX),
+    )));
+    let gradient_shared = Rc::new(RefCell::new(SharedTextureCache::with_limits(
+        SharedTextureBudget::new(1, u64::MAX),
+    )));
+    let mut host = SharedImageMaintenance::new();
+    let mut client_a = FakeRenderer::new(Rc::clone(&shared), Rc::clone(&gradient_shared));
+    let mut client_b = FakeRenderer::new(Rc::clone(&shared), Rc::clone(&gradient_shared));
+    // Client A idles on one image entry and one gradient entry.
+    let work = image_id(205);
+    let held = gradient_stops(31);
+    assert!(shared.borrow_mut().admit(work, 100, 7, &DEAD).is_empty());
+    client_a.local.insert(
+        work,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
+    assert!(
+        gradient_shared
+            .borrow_mut()
+            .admit(gradient_key(&held), 1024, 3, &GRADIENT_DEAD)
+            .is_empty()
+    );
+    client_a.gradient_local.insert(
+        gradient_key(&held),
+        test_texture(),
+        LocalImageRetention::Shared { generation: 3 },
+        1,
+    );
+    // Gradient churn evicts A's gradient only. The combined revision moves
+    // on the gradient family's account, and dispatch visits both clients.
+    let churn = gradient_stops(32);
+    gradient_shared
+        .borrow_mut()
+        .admit(gradient_key(&churn), 1024, 4, &GRADIENT_DEAD);
+    assert_eq!(client_a.combined_revision(), 1);
+    let released = host.maintain(
+        client_a.combined_revision(),
+        [
+            &mut client_a as &mut dyn ReclaimStaleTextures,
+            &mut client_b as &mut dyn ReclaimStaleTextures,
+        ],
+    );
+    assert_eq!(released, 1);
+    assert_eq!(client_a.reclaim_calls, 1);
+    assert!(client_a.local.contains(&work));
+    assert!(!client_a.gradient_local.contains(&gradient_key(&held)));
+    // Image churn then reclaims the image entry through the same dispatch:
+    // no regression from the gradient extension.
+    for seed in 202..204u8 {
+        shared.borrow_mut().admit(image_id(seed), 100, 20, &DEAD);
+    }
+    let released = host.maintain(
+        client_a.combined_revision(),
+        [
+            &mut client_a as &mut dyn ReclaimStaleTextures,
+            &mut client_b as &mut dyn ReclaimStaleTextures,
+        ],
+    );
+    assert_eq!(released, 1);
+    assert_eq!(client_a.reclaim_calls, 2);
+    assert!(!client_a.local.contains(&work));
+    // Settled state schedules nothing further.
+    let released = host.maintain(
+        client_a.combined_revision(),
+        [&mut client_a as &mut dyn ReclaimStaleTextures],
+    );
+    assert_eq!(released, 0);
+    assert_eq!(client_a.reclaim_calls, 2);
 }

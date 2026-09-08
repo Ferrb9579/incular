@@ -470,7 +470,7 @@ impl WgpuRenderer {
             // Still driven but presenting nothing (zero-size surface): no
             // frame advances, so age eviction cannot run — but stale shared
             // generations can still be released safely here.
-            self.reclaim_stale_images();
+            self.reclaim_stale_textures();
             return Ok(RenderStats::default());
         }
         // Profiling deltas: every counter touched between these snapshots is
@@ -704,7 +704,7 @@ impl WgpuRenderer {
         // generation-checked) and drop locally stale entries before the
         // age-based eviction below. Submitted work stays valid through the
         // wgpu lifetime contract.
-        self.sync_shared_image_use();
+        self.sync_shared_textures();
         self.evict_unused_images();
         self.evict_unused_path_meshes();
         self.evict_unused_gradients();

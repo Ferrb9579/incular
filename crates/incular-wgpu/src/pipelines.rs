@@ -126,7 +126,6 @@ pub(crate) struct GpuPathMesh {
 pub(crate) struct GpuGradient {
     pub(crate) _texture: wgpu::Texture,
     pub(crate) bind_group: wgpu::BindGroup,
-    pub(crate) last_used_frame: u64,
 }
 
 pub(crate) const RECT_SHADER: &str = r#"
@@ -1501,7 +1500,6 @@ pub(crate) fn create_gradient_resource(
     GpuGradient {
         _texture: texture,
         bind_group,
-        last_used_frame: 0,
     }
 }
 pub(crate) fn gradient_lut_pixels(stops: &incular_painting::GradientStops) -> Vec<[u8; 4]> {

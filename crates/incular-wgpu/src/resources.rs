@@ -1,5 +1,6 @@
 use super::prelude::*;
 use super::*;
+use std::hash::Hash;
 
 /// Stable, process-local identity for an immutable GPU resource shared by all
 /// windows attached to one [`SharedGpuContext`]. It intentionally exposes no
@@ -64,20 +65,20 @@ impl SharedGpuResourceRegistry {
     }
 }
 
-/// Budget for device-owned shared image textures.
+/// Budget for one device-owned shared texture cache.
 ///
-/// `max_bytes` counts nominal texel bytes per entry (`width × height × 4`
-/// for the single-mip `Rgba8UnormSrgb` textures this cache admits),
-/// computed with checked arithmetic. It is an accounting estimate, not
-/// physical GPU memory: row-pitch padding, driver overhead, samplers, and
-/// bind groups are not counted.
+/// `max_bytes` counts nominal texel bytes per entry, computed with checked
+/// arithmetic (per-extent `width × height × 4` for the single-mip
+/// `Rgba8UnormSrgb` image textures; a fixed LUT constant for gradients).
+/// It is an accounting estimate, not physical GPU memory: row-pitch
+/// padding, driver overhead, samplers, and bind groups are not counted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SharedImageTextureBudget {
+pub struct SharedTextureBudget {
     pub max_entries: usize,
     pub max_bytes: u64,
 }
 
-impl Default for SharedImageTextureBudget {
+impl Default for SharedTextureBudget {
     fn default() -> Self {
         Self {
             max_entries: 256,
@@ -86,7 +87,7 @@ impl Default for SharedImageTextureBudget {
     }
 }
 
-impl SharedImageTextureBudget {
+impl SharedTextureBudget {
     #[must_use]
     pub const fn new(max_entries: usize, max_bytes: u64) -> Self {
         Self {
@@ -107,14 +108,15 @@ pub fn shared_image_texture_bytes(width: u32, height: u32) -> Option<u64> {
 }
 
 /// One retained entry: nominal bytes, the last-use tick, and the texture
-/// generation (the context-local identity value) the entry was admitted
-/// with. Ticks come from the cache's own monotonic counter, so interleaved
-/// renderers share one recency order without any frame clock. The
-/// generation binds recency updates to one upload: a touch carrying a
-/// superseded generation refreshes nothing, so a stale local entry can
-/// never keep a different upload alive in the order.
+/// generation the entry was admitted with (the context-local identity
+/// value for images; a per-family sequence otherwise). Ticks come from
+/// the cache's own monotonic counter, so interleaved renderers share one
+/// recency order without any frame clock. The generation binds recency
+/// updates to one upload: a touch carrying a superseded generation
+/// refreshes nothing, so a stale local entry can never keep a different
+/// upload alive in the order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CachedSharedImageTexture {
+pub struct CachedTexture {
     pub bytes: u64,
     pub last_use: u64,
     pub generation: u64,
@@ -123,18 +125,18 @@ pub struct CachedSharedImageTexture {
 /// One eviction: the dropped entry plus whether its texture stayed alive in
 /// renderer bindings, active frames, or submitted work at drop time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SharedImageTextureEviction {
-    pub id: ImageId,
+pub struct SharedTextureEviction<K> {
+    pub id: K,
     pub bytes: u64,
     pub live_elsewhere: bool,
 }
 
-/// Counters for the device-owned image-texture cache. Cumulative since
+/// Counters for one device-owned texture cache. Cumulative since
 /// construction except where noted; gauges are current values. Together
 /// they separate shared-cache retention (`shared_hits`, gauges below) from
 /// outstanding ownership elsewhere (`evicted_live`, `stale_touches`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SharedImageTextureCounters {
+pub struct SharedTextureCounters {
     /// Textures uploaded and admitted to the shared map.
     pub admissions: u64,
     /// Shared-map hits across all renderers (each reuses one upload).
@@ -159,7 +161,8 @@ pub struct SharedImageTextureCounters {
 /// window evicts oldest-first across both.
 ///
 /// Ownership contract for one retained texture: exactly one cache entry
-/// exists per retained texture, keyed by the content [`ImageId`]. The
+/// exists per retained texture, keyed by content identity (an [`ImageId`]
+/// for image textures, the full gradient description for gradients). The
 /// texture stays alive while any of these hold it: the device-owned map
 /// (one `Arc` each), a renderer's local map (bounded by that window's
 /// unused-frame eviction and released on window disposal), or transient
@@ -171,31 +174,45 @@ pub struct SharedImageTextureCounters {
 /// drops one reference, never a texture: counters report dropped entries
 /// and their nominal bytes, plus how many were still referenced elsewhere.
 /// They never claim freed GPU memory.
-#[derive(Debug, Default)]
-pub struct SharedImageTextureCache {
-    limits: SharedImageTextureBudget,
-    entries: HashMap<ImageId, CachedSharedImageTexture>,
+#[derive(Debug)]
+pub struct SharedTextureCache<K> {
+    limits: SharedTextureBudget,
+    entries: HashMap<K, CachedTexture>,
     /// Least-recently-used order; front is evicted first. Touch moves to
     /// the back. Length always equals entries length, so metadata scales
     /// with retained entries — themselves capped by the budget.
-    lru: VecDeque<ImageId>,
+    lru: VecDeque<K>,
     tick: u64,
     retained_bytes: u64,
     /// Bumped once per dropped entry. Host event loops compare this
     /// against their last serviced value to run per-renderer reclamation
     /// only on passes where something actually evicted.
     eviction_revision: u64,
-    counters: SharedImageTextureCounters,
+    counters: SharedTextureCounters,
 }
 
-impl SharedImageTextureCache {
+impl<K> Default for SharedTextureCache<K> {
+    fn default() -> Self {
+        Self {
+            limits: SharedTextureBudget::default(),
+            entries: HashMap::new(),
+            lru: VecDeque::new(),
+            tick: 0,
+            retained_bytes: 0,
+            eviction_revision: 0,
+            counters: SharedTextureCounters::default(),
+        }
+    }
+}
+
+impl<K> SharedTextureCache<K> {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     #[must_use]
-    pub fn with_limits(limits: SharedImageTextureBudget) -> Self {
+    pub fn with_limits(limits: SharedTextureBudget) -> Self {
         Self {
             limits,
             entries: HashMap::new(),
@@ -203,7 +220,7 @@ impl SharedImageTextureCache {
             tick: 0,
             retained_bytes: 0,
             eviction_revision: 0,
-            counters: SharedImageTextureCounters::default(),
+            counters: SharedTextureCounters::default(),
         }
     }
 
@@ -216,12 +233,12 @@ impl SharedImageTextureCache {
     }
 
     #[must_use]
-    pub const fn limits(&self) -> SharedImageTextureBudget {
+    pub const fn limits(&self) -> SharedTextureBudget {
         self.limits
     }
 
     #[must_use]
-    pub const fn counters(&self) -> SharedImageTextureCounters {
+    pub const fn counters(&self) -> SharedTextureCounters {
         self.counters
     }
 
@@ -230,8 +247,15 @@ impl SharedImageTextureCache {
         self.entries.len()
     }
 
+    /// Counts one upload served without admission (over budget by size).
+    pub fn note_unadmitted_upload(&mut self) {
+        self.counters.unadmitted_uploads += 1;
+    }
+}
+
+impl<K: Copy + Eq + Hash> SharedTextureCache<K> {
     /// Nominal texel bytes currently retained. An accounting estimate, not
-    /// physical GPU memory (see [`SharedImageTextureBudget`]).
+    /// physical GPU memory (see [`SharedTextureBudget`]).
     #[must_use]
     pub const fn retained_bytes(&self) -> u64 {
         self.retained_bytes
@@ -244,12 +268,21 @@ impl SharedImageTextureCache {
         self.limits.max_entries > 0 && bytes <= self.limits.max_bytes
     }
 
+    /// Whether the shared map currently retains `id`.
+    #[must_use]
+    pub fn contains(&self, id: &K) -> bool
+    where
+        K: Eq + Hash,
+    {
+        self.entries.contains_key(id)
+    }
+
     /// Records a shared-map hit for `id` carrying the caller's `generation`.
     /// Refreshes recency only when the generation matches the admitted
     /// entry; a superseded generation counts a stale touch and refreshes
     /// nothing, so a stale local entry can never keep a different upload
     /// alive. Returns false for unknown ids (uncounted).
-    pub fn touch(&mut self, id: ImageId, generation: u64) -> bool {
+    pub fn touch(&mut self, id: K, generation: u64) -> bool {
         let matched = self
             .entries
             .get(&id)
@@ -278,7 +311,7 @@ impl SharedImageTextureCache {
     /// Renderer-local caches compare this against the generation recorded
     /// at admission to detect superseded entries without refreshing them.
     #[must_use]
-    pub fn generation(&self, id: ImageId) -> Option<u64> {
+    pub fn generation(&self, id: K) -> Option<u64> {
         self.entries.get(&id).map(|entry| entry.generation)
     }
 
@@ -291,11 +324,11 @@ impl SharedImageTextureCache {
     /// these entries) never holds what the policy cannot account for.
     pub fn admit(
         &mut self,
-        id: ImageId,
+        id: K,
         bytes: u64,
         generation: u64,
-        is_live: &dyn Fn(ImageId) -> bool,
-    ) -> Vec<SharedImageTextureEviction> {
+        is_live: &dyn Fn(K) -> bool,
+    ) -> Vec<SharedTextureEviction<K>> {
         if self.entries.contains_key(&id) {
             self.touch(id, generation);
             return Vec::new();
@@ -307,7 +340,7 @@ impl SharedImageTextureCache {
         let tick = self.tick;
         self.entries.insert(
             id,
-            CachedSharedImageTexture {
+            CachedTexture {
                 bytes,
                 last_use: tick,
                 generation,
@@ -319,17 +352,12 @@ impl SharedImageTextureCache {
         self.evict_excess(is_live)
     }
 
-    /// Counts one upload served without admission (over budget by size).
-    pub fn note_unadmitted_upload(&mut self) {
-        self.counters.unadmitted_uploads += 1;
-    }
-
     /// Replaces the budget and immediately trims oldest-first to it.
     pub fn set_limits(
         &mut self,
-        limits: SharedImageTextureBudget,
-        is_live: &dyn Fn(ImageId) -> bool,
-    ) -> Vec<SharedImageTextureEviction> {
+        limits: SharedTextureBudget,
+        is_live: &dyn Fn(K) -> bool,
+    ) -> Vec<SharedTextureEviction<K>> {
         self.limits = limits;
         self.evict_excess(is_live)
     }
@@ -337,10 +365,7 @@ impl SharedImageTextureCache {
     /// Evicts least-recently-used entries until both limits hold. The
     /// just-admitted entry sits at the back, so a fitting admission is
     /// never its own victim.
-    fn evict_excess(
-        &mut self,
-        is_live: &dyn Fn(ImageId) -> bool,
-    ) -> Vec<SharedImageTextureEviction> {
+    fn evict_excess(&mut self, is_live: &dyn Fn(K) -> bool) -> Vec<SharedTextureEviction<K>> {
         let mut evicted = Vec::new();
         while self.entries.len() > self.limits.max_entries
             || self.retained_bytes > self.limits.max_bytes
@@ -358,7 +383,7 @@ impl SharedImageTextureCache {
                 if live_elsewhere {
                     self.counters.evicted_live += 1;
                 }
-                evicted.push(SharedImageTextureEviction {
+                evicted.push(SharedTextureEviction {
                     id: oldest,
                     bytes: entry.bytes,
                     live_elsewhere,
@@ -397,20 +422,20 @@ pub struct RendererImageEntry<R> {
     pub retention: LocalImageRetention,
 }
 
-/// One window's local image-texture retention, coordinated with the shared
-/// owner. Generic over the retained resource so the coordination logic —
-/// frame-use batching, generation-checked refresh, stale pruning, age
-/// eviction — is the same code production renderers and headless tests run:
-/// production instantiates it with its GPU entry type, tests with plain
-/// reference-counted stand-ins.
+/// One window's local texture retention, coordinated with the shared
+/// owner. Generic over the cache key and the retained resource so the
+/// coordination logic — frame-use batching, generation-checked refresh,
+/// stale pruning, age eviction — is the same code production renderers and
+/// headless tests run: production instantiates it with its GPU entry
+/// types, tests with plain reference-counted stand-ins.
 ///
 /// A local entry is retention, not proof of use: only ids drained through
 /// [`Self::drain_frame_use`] count as used, and only
 /// [`Self::sync_with_shared`] refreshes shared recency — at most one shared
-/// lock per frame no matter how many draws referenced the images.
-#[derive(Clone, Debug, Default)]
-pub struct RendererImageCache<R> {
-    entries: HashMap<ImageId, (RendererImageEntry<R>, LocalImageUse)>,
+/// lock per frame no matter how many draws referenced the textures.
+#[derive(Clone, Debug)]
+pub struct RendererImageCache<K, R> {
+    entries: HashMap<K, (RendererImageEntry<R>, LocalImageUse)>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -419,12 +444,18 @@ struct LocalImageUse {
     used_this_frame: bool,
 }
 
-impl<R> RendererImageCache<R> {
-    #[must_use]
-    pub fn new() -> Self {
+impl<K, R> Default for RendererImageCache<K, R> {
+    fn default() -> Self {
         Self {
             entries: HashMap::new(),
         }
+    }
+}
+
+impl<K, R> RendererImageCache<K, R> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
 
     #[must_use]
@@ -436,26 +467,28 @@ impl<R> RendererImageCache<R> {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
 
+impl<K: Copy + Eq + Hash, R> RendererImageCache<K, R> {
     #[must_use]
-    pub fn contains(&self, id: &ImageId) -> bool {
+    pub fn contains(&self, id: &K) -> bool {
         self.entries.contains_key(id)
     }
 
     #[must_use]
-    pub fn get(&self, id: &ImageId) -> Option<&RendererImageEntry<R>> {
+    pub fn get(&self, id: &K) -> Option<&RendererImageEntry<R>> {
         self.entries.get(id).map(|(entry, _)| entry)
     }
 
     #[must_use]
-    pub fn get_mut(&mut self, id: &ImageId) -> Option<&mut RendererImageEntry<R>> {
+    pub fn get_mut(&mut self, id: &K) -> Option<&mut RendererImageEntry<R>> {
         self.entries.get_mut(id).map(|(entry, _)| entry)
     }
 
     /// Records use of a locally retained entry for `frame`. Returns false
     /// when absent. Takes no shared lock; use is flushed in batch by
     /// [`Self::sync_with_shared`].
-    pub fn record_use(&mut self, id: ImageId, frame: u64) -> bool {
+    pub fn record_use(&mut self, id: K, frame: u64) -> bool {
         if let Some((_, state)) = self.entries.get_mut(&id) {
             state.last_used_frame = frame;
             state.used_this_frame = true;
@@ -469,7 +502,7 @@ impl<R> RendererImageCache<R> {
     /// `frame`. Shared entries must carry the identity value current at
     /// admission, so later syncs can prove the entry still names it;
     /// bypassed entries carry [`LocalImageRetention::Bypassed`].
-    pub fn insert(&mut self, id: ImageId, resource: R, retention: LocalImageRetention, frame: u64) {
+    pub fn insert(&mut self, id: K, resource: R, retention: LocalImageRetention, frame: u64) {
         self.entries.insert(
             id,
             (
@@ -487,7 +520,7 @@ impl<R> RendererImageCache<R> {
 
     /// Takes this frame's used `(id, retention)` pairs, clearing use flags.
     /// Deduplicated by construction: an id drawn many times appears once.
-    pub fn drain_frame_use(&mut self) -> Vec<(ImageId, LocalImageRetention)> {
+    pub fn drain_frame_use(&mut self) -> Vec<(K, LocalImageRetention)> {
         let mut used = Vec::new();
         for (id, (entry, state)) in self.entries.iter_mut() {
             if state.used_this_frame {
@@ -505,11 +538,8 @@ impl<R> RendererImageCache<R> {
     /// Dropping is always safe: submitted GPU work outlives the handles by
     /// the wgpu lifetime contract, and the next use re-resolves to the
     /// current shared generation.
-    pub fn prune_stale(
-        &mut self,
-        current_generation: &dyn Fn(ImageId) -> Option<u64>,
-    ) -> Vec<(ImageId, R)> {
-        let stale: Vec<ImageId> = self
+    pub fn prune_stale(&mut self, current_generation: &dyn Fn(K) -> Option<u64>) -> Vec<(K, R)> {
+        let stale: Vec<K> = self
             .entries
             .iter()
             .filter(|(id, (entry, _))| match entry.retention {
@@ -537,7 +567,7 @@ impl<R> RendererImageCache<R> {
     /// comparison closure — for renderers that present no frames while
     /// shared churn moves on. Safe on idle clients for the same reason as
     /// [`Self::prune_stale`].
-    pub fn reclaim_stale(&mut self, shared: &SharedImageTextureCache) -> Vec<(ImageId, R)> {
+    pub fn reclaim_stale(&mut self, shared: &SharedTextureCache<K>) -> Vec<(K, R)> {
         self.prune_stale(&|id| shared.generation(id))
     }
 
@@ -568,10 +598,7 @@ impl<R> RendererImageCache<R> {
     /// an entry whose touch has not landed yet. That entry's owner
     /// re-resolves on its next use (a shared hit on the replacement, or a
     /// counted re-upload), so the system converges instead of sticking.
-    pub fn sync_with_shared(
-        &mut self,
-        shared: &mut SharedImageTextureCache,
-    ) -> (usize, Vec<ImageId>) {
+    pub fn sync_with_shared(&mut self, shared: &mut SharedTextureCache<K>) -> (usize, Vec<K>) {
         let mut refreshed = 0;
         for (id, retention) in self.drain_frame_use() {
             if let LocalImageRetention::Shared { generation } = retention
@@ -580,7 +607,7 @@ impl<R> RendererImageCache<R> {
                 refreshed += 1;
             }
         }
-        let pruned: Vec<ImageId> = self
+        let pruned: Vec<K> = self
             .prune_stale(&|id| shared.generation(id))
             .into_iter()
             .map(|(id, _)| id)
@@ -593,8 +620,8 @@ impl<R> RendererImageCache<R> {
 /// locally retained textures the shared owner dropped, returning how many
 /// went. This is the dispatch interface hosts program against; fakes
 /// implement it behind the same dispatch in tests.
-pub trait ReclaimStaleImages {
-    fn reclaim_stale_images(&mut self) -> usize;
+pub trait ReclaimStaleTextures {
+    fn reclaim_stale_textures(&mut self) -> usize;
 }
 
 /// Host-side maintenance dispatch for shared image retention. Tracks the
@@ -623,7 +650,7 @@ impl SharedImageMaintenance {
     pub fn maintain<'a>(
         &mut self,
         eviction_revision: u64,
-        clients: impl IntoIterator<Item = &'a mut dyn ReclaimStaleImages>,
+        clients: impl IntoIterator<Item = &'a mut dyn ReclaimStaleTextures>,
     ) -> usize {
         if eviction_revision == self.last_seen_eviction_revision {
             return 0;
@@ -631,7 +658,7 @@ impl SharedImageMaintenance {
         self.last_seen_eviction_revision = eviction_revision;
         clients
             .into_iter()
-            .map(|client| client.reclaim_stale_images())
+            .map(|client| client.reclaim_stale_textures())
             .sum()
     }
 }
@@ -652,7 +679,7 @@ pub struct SharedGpuDiagnostics {
     pub shared_gradient_resources: usize,
     pub glyph_atlas_pages: usize,
     /// Nominal texel bytes retained in the shared image map. An accounting
-    /// estimate, not physical GPU memory (see [`SharedImageTextureBudget`]).
+    /// estimate, not physical GPU memory (see [`SharedTextureBudget`]).
     pub shared_image_texel_bytes: u64,
     /// Map entries dropped by image-texture budget eviction.
     pub shared_image_evictions: u64,
@@ -662,6 +689,17 @@ pub struct SharedGpuDiagnostics {
     pub shared_image_unadmitted: u64,
     /// Touches refused because the caller named a superseded generation.
     pub shared_image_stale_touches: u64,
+    /// Nominal texel bytes retained in the shared gradient map. An
+    /// accounting estimate, not physical GPU memory.
+    pub shared_gradient_texel_bytes: u64,
+    /// Map entries dropped by gradient budget eviction.
+    pub shared_gradient_evictions: u64,
+    /// Dropped gradient entries still referenced elsewhere at drop time.
+    pub shared_gradient_evicted_live: u64,
+    /// Gradient uploads served without shared admission.
+    pub shared_gradient_unadmitted: u64,
+    /// Gradient touches refused on superseded generations.
+    pub shared_gradient_stale_touches: u64,
 }
 
 /// Per-window presentation state that is independent of the shared GPU
@@ -772,8 +810,16 @@ pub(crate) struct SharedGpuResources {
     /// Device-owned admission/eviction/accounting for `images`. The map
     /// keys always equal the policy entries: every admission and eviction
     /// updates both together, and oversized uploads bypass both.
-    pub(crate) image_textures: SharedImageTextureCache,
+    pub(crate) image_textures: SharedTextureCache<ImageId>,
     pub(crate) gradients: HashMap<GradientResourceKey, Arc<SharedGpuGradient>>,
+    /// Device-owned admission/eviction/accounting for `gradients`, under
+    /// the same map-keys-equal-policy-entries invariant.
+    pub(crate) gradient_textures: SharedTextureCache<GradientResourceKey>,
+    /// Per-family admission sequence for gradients, which carry no registry
+    /// identity. Bumped once per gradient admission; unlike registry
+    /// identities it is scoped to this cache and only needs uniqueness
+    /// within one key's re-upload history.
+    pub(crate) gradient_generation: u64,
     pub(crate) glyph_atlas: GlyphAtlas,
     pub(crate) glyph_pages: Vec<SharedGpuAtlasPage>,
 }
@@ -787,23 +833,46 @@ pub(crate) struct SharedGpuImage {
 /// What one renderer acquisition of a shared texture established.
 /// `uploaded` reports a fresh GPU upload (versus shared reuse) while
 /// `admitted` reports shared-map retention: oversized-for-budget uploads
-/// return `uploaded: true, admitted: false` and bypass admission, registry
-/// identity, and the policy entirely.
-pub(crate) struct SharedImageAcquisition {
-    pub(crate) resource: Arc<SharedGpuImage>,
+/// return `uploaded: true, admitted: false` and bypass admission and the
+/// policy entirely. `generation` names the admitted upload for local
+/// retention bookkeeping (registry identity for images, admission sequence
+/// for gradients); it is `None` exactly when `admitted` is false.
+pub(crate) struct SharedTextureAcquisition<R> {
+    pub(crate) resource: R,
     pub(crate) uploaded: bool,
     pub(crate) admitted: bool,
+    pub(crate) generation: Option<u64>,
 }
+
+/// Image-texture acquisition: admitted uploads additionally carry a
+/// registry identity; bypassed uploads hold a fresh per-upload identity
+/// with no registry entry.
+pub(crate) type SharedImageAcquisition = SharedTextureAcquisition<Arc<SharedGpuImage>>;
+
+/// Gradient-texture acquisition. Gradients carry no registry identity at
+/// all; generations come from the per-family admission sequence.
+pub(crate) type SharedGradientAcquisition = SharedTextureAcquisition<Arc<SharedGpuGradient>>;
 pub(crate) struct SharedGpuGradient {
     pub(crate) resource: GpuGradient,
 }
+/// Shared-cache key for one gradient lookup texture: the normalized stops
+/// identity plus the target surface format. Stops identities are minted
+/// per construction (clones intentionally share), so distinct descriptions
+/// never alias — even byte-identical stops built separately upload
+/// separately — while geometry (kind, endpoints) flows to shaders through
+/// instance parameters, never through this key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct GradientResourceKey {
-    pub(crate) gradient: GradientId,
+pub struct GradientResourceKey {
+    pub gradient: GradientId,
     /// A bind group is pipeline-layout compatible only within this explicit
     /// target-format pipeline variant.
-    pub(crate) format: wgpu::TextureFormat,
+    pub format: wgpu::TextureFormat,
 }
+
+/// Nominal texel bytes of one gradient lookup texture: a fixed
+/// 256-sample single-row RGBA8 upload. Constant for every entry, so the
+/// byte budget for gradients behaves as a scaled entry budget.
+pub const SHARED_GRADIENT_TEXEL_BYTES: u64 = 256 * 4;
 pub(crate) struct SharedGpuAtlasPage {
     pub(crate) texture: wgpu::Texture,
 }
@@ -886,8 +955,10 @@ impl SharedGpuContext {
                 resources: Mutex::new(SharedGpuResources {
                     registry: SharedGpuResourceRegistry::default(),
                     images: HashMap::new(),
-                    image_textures: SharedImageTextureCache::new(),
+                    image_textures: SharedTextureCache::new(),
                     gradients: HashMap::new(),
+                    gradient_textures: SharedTextureCache::new(),
+                    gradient_generation: 0,
                     glyph_atlas: GlyphAtlas::new(),
                     glyph_pages: Vec::new(),
                 }),
@@ -925,6 +996,7 @@ impl SharedGpuContext {
             resources.image_textures.retained_entries()
         );
         let image_counters = resources.image_textures.counters();
+        let gradient_counters = resources.gradient_textures.counters();
         SharedGpuDiagnostics {
             device_generation: self.inner.device_generation,
             pipeline_variants: pipelines.len(),
@@ -938,6 +1010,11 @@ impl SharedGpuContext {
             shared_image_evicted_live: image_counters.evicted_live,
             shared_image_unadmitted: image_counters.unadmitted_uploads,
             shared_image_stale_touches: image_counters.stale_touches,
+            shared_gradient_texel_bytes: resources.gradient_textures.retained_bytes(),
+            shared_gradient_evictions: gradient_counters.evictions,
+            shared_gradient_evicted_live: gradient_counters.evicted_live,
+            shared_gradient_unadmitted: gradient_counters.unadmitted_uploads,
+            shared_gradient_stale_touches: gradient_counters.stale_touches,
         }
     }
     /// Context-local identity of the currently retained texture for
@@ -945,6 +1022,7 @@ impl SharedGpuContext {
     /// the texture (a re-upload allocates a fresh one), and oversized
     /// uploads never register, so `None` means "not retained", never a
     /// missing allocation.
+    ///
     /// Eviction revision of the device-owned image-texture cache: advances
     /// once per dropped entry. Host event loops service per-renderer
     /// reclamation only when this moves, so idle passes cost one integer
@@ -957,6 +1035,31 @@ impl SharedGpuContext {
             .expect("shared resource lock")
             .image_textures
             .eviction_revision()
+    }
+
+    /// Combined texture-eviction revision across the image and gradient
+    /// caches: the saturating sum of both families' revisions. Either
+    /// family's eviction strictly advances it (neither ever decreases), so
+    /// one comparison gates host maintenance for both — while neither
+    /// family evicts, no renderer is visited at all.
+    #[must_use]
+    pub fn texture_eviction_revision(&self) -> u64 {
+        let resources = self.inner.resources.lock().expect("shared resource lock");
+        resources
+            .image_textures
+            .eviction_revision()
+            .saturating_add(resources.gradient_textures.eviction_revision())
+    }
+
+    /// Whether the shared gradient map currently retains `key`. Used by
+    /// renderer debug assertions to verify admitted acquisitions.
+    pub(crate) fn gradient_textures_contains(&self, key: &GradientResourceKey) -> bool {
+        self.inner
+            .resources
+            .lock()
+            .expect("shared resource lock")
+            .gradient_textures
+            .contains(key)
     }
 
     #[must_use]
@@ -1039,6 +1142,7 @@ impl SharedGpuContext {
                 resource,
                 uploaded: false,
                 admitted: true,
+                generation: image_textures.generation(id),
             });
         }
         let decoded = image.decoded();
@@ -1131,10 +1235,12 @@ impl SharedGpuContext {
         } else {
             image_textures.note_unadmitted_upload();
         }
+        let generation = admitted.then(|| resource.identity.get());
         Ok(SharedImageAcquisition {
             resource,
             uploaded: true,
             admitted,
+            generation,
         })
     }
     pub(crate) fn rasterize_glyph(
@@ -1171,15 +1277,45 @@ impl SharedGpuContext {
         pixels: &[[u8; 4]],
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
-    ) -> (Arc<SharedGpuGradient>, bool) {
+    ) -> SharedGradientAcquisition {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         let key = GradientResourceKey {
             gradient: id,
             format,
         };
-        if let Some(resource) = resources.gradients.get(&key) {
-            return (Arc::clone(resource), false);
+        // Split field borrows up front: the liveness closure below observes
+        // the texture map while admission mutates the policy.
+        let SharedGpuResources {
+            gradients,
+            gradient_textures,
+            gradient_generation,
+            ..
+        } = &mut *resources;
+        let hit = gradients.get(&key).cloned();
+        if let Some(resource) = hit {
+            // The generation comes from the retained entry itself, so a hit
+            // always names the current upload.
+            let generation = gradient_textures.generation(key);
+            if let Some(generation) = generation {
+                gradient_textures.touch(key, generation);
+            }
+            return SharedGradientAcquisition {
+                resource,
+                uploaded: false,
+                admitted: true,
+                generation,
+            };
         }
+        // Lookup textures are fixed-size: every entry costs the same nominal
+        // bytes, so the byte budget behaves as a scaled entry budget. The
+        // oversized/bypass path below exists for tiny custom budgets, not
+        // for real uploads.
+        debug_assert_eq!(
+            pixels.len().max(1) * 4,
+            SHARED_GRADIENT_TEXEL_BYTES as usize,
+            "gradient lookup uploads must stay fixed-size",
+        );
+        let admitted = gradient_textures.fits(SHARED_GRADIENT_TEXEL_BYTES);
         self.inner.texture_upload_bytes.fetch_add(
             (pixels.len().max(1) * 4) as u64,
             std::sync::atomic::Ordering::Relaxed,
@@ -1193,8 +1329,36 @@ impl SharedGpuContext {
                 pixels,
             ),
         });
-        resources.gradients.insert(key, Arc::clone(&resource));
-        (resource, true)
+        let generation = if admitted {
+            *gradient_generation = gradient_generation.saturating_add(1);
+            Some(*gradient_generation)
+        } else {
+            None
+        };
+        if admitted {
+            let evicted = gradient_textures.admit(
+                key,
+                SHARED_GRADIENT_TEXEL_BYTES,
+                generation.expect("admitted uploads name a generation"),
+                &|candidate| {
+                    gradients
+                        .get(&candidate)
+                        .is_some_and(|held| Arc::strong_count(held) > 1)
+                },
+            );
+            for eviction in &evicted {
+                gradients.remove(&eviction.id);
+            }
+            gradients.insert(key, Arc::clone(&resource));
+        } else {
+            gradient_textures.note_unadmitted_upload();
+        }
+        SharedGradientAcquisition {
+            resource,
+            uploaded: true,
+            admitted,
+            generation,
+        }
     }
     pub(crate) fn shared_glyph_texture(&self, page: u16) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");

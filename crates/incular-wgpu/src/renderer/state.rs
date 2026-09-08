@@ -51,7 +51,7 @@ pub struct WgpuRenderer {
     pub(super) gpu_path_cache: HashMap<PathMeshKey, GpuPathMesh>,
     pub(super) gradient_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) gradient_sampler: wgpu::Sampler,
-    pub(super) gradient_cache: HashMap<GradientId, GpuGradient>,
+    pub(super) gradient_cache: RendererImageCache<GradientResourceKey, GpuGradient>,
     pub(super) solid_gradient: GpuGradient,
     pub(super) atlas_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) atlas_sampler: wgpu::Sampler,
@@ -60,7 +60,7 @@ pub struct WgpuRenderer {
     /// This window's image retention, coordinated with the shared owner
     /// through [`RendererImageCache`]: frame use is recorded locally
     /// without shared locks and flushed in one batch per frame.
-    pub(super) image_cache: RendererImageCache<GpuImage>,
+    pub(super) image_cache: RendererImageCache<ImageId, GpuImage>,
     pub(super) composite_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) composite_sampler: wgpu::Sampler,
     pub(super) blur_bind_group_layout: wgpu::BindGroupLayout,
@@ -294,7 +294,7 @@ impl WgpuRenderer {
             gpu_path_cache: HashMap::new(),
             gradient_bind_group_layout,
             gradient_sampler,
-            gradient_cache: HashMap::new(),
+            gradient_cache: RendererImageCache::new(),
             solid_gradient,
             atlas_bind_group_layout,
             atlas_sampler,
@@ -440,7 +440,7 @@ impl WgpuRenderer {
             gpu_path_cache: HashMap::new(),
             gradient_bind_group_layout: pipelines.gradient_bind_group_layout.clone(),
             gradient_sampler: pipelines.gradient_sampler.clone(),
-            gradient_cache: HashMap::new(),
+            gradient_cache: RendererImageCache::new(),
             solid_gradient: pipelines.solid_gradient.clone(),
             atlas_bind_group_layout: pipelines.atlas_bind_group_layout.clone(),
             atlas_sampler: pipelines.atlas_sampler.clone(),

@@ -65,7 +65,7 @@ use incular_runtime::{
     NativeFileDialogCompletion, NativeWindowCommand, RenderFrameMetrics, Runtime, RuntimeWake,
     TransientFallbackReason,
 };
-use incular_wgpu::{ReclaimStaleImages, RenderStats, SharedGpuContext, SharedImageMaintenance};
+use incular_wgpu::{ReclaimStaleTextures, RenderStats, SharedGpuContext, SharedImageMaintenance};
 use incular_widgets::{PlatformMenuDelegate, ShortcutModifiers, internal::ActionId};
 use std::{
     collections::{HashMap, HashSet},
@@ -1146,11 +1146,13 @@ impl DesktopHost {
         let Some(shared) = self.shared_gpu.as_ref() else {
             return;
         };
+        // One combined revision gates both texture families: while neither
+        // evicts, no renderer is visited at all.
         self.shared_image_maintenance.maintain(
-            shared.image_eviction_revision(),
+            shared.texture_eviction_revision(),
             self.windows
                 .values_mut()
-                .map(|state| &mut state.renderer as &mut dyn ReclaimStaleImages),
+                .map(|state| &mut state.renderer as &mut dyn ReclaimStaleTextures),
         );
     }
 

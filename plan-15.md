@@ -597,7 +597,8 @@ code, "missing" means absent with no compensating path.
 | CPU decoded images + encoded keys | `incular-image` `ImageCache` (`crates/incular-image/src/lib.rs`) | Full payload bytes (`Arc<[u8]>`, hash + byte equality); `ImageId` per decode | **Now:** `ImageCacheLimits` (default 64 entries / 32 MiB decoded + key bytes), oldest-first LRU, `clear`/`set_limits`, oversized served fresh | Eviction drops cache refs only; `Arc` handles stay valid. Counters: requests/hits/failures/decodes/evictions + `resident_bytes()` gauge |
 | CPU font bytes | `incular-text` `TextEngine::font_handles` (`crates/incular-text/src/engine.rs`) | `(usize, usize, u32)` blob identity, one shared `Arc` per blob | No byte budget; unbounded map | Shared `Arc` keeps bytes alive while layouts reference them; no counters |
 | CPU text layouts | `incular-text` `TextEngine::{cache, order}` | `LayoutKey`, `Arc<TextLayout>` | **Guarantee:** 2048-entry FIFO (`LAYOUT_CACHE_CAPACITY`) | Shared `Arc`; eviction by count only, no byte bound, no counters surfaced |
-| GPU images | `incular-wgpu` `SharedGpuResources::{images, image_textures}` + per-renderer `image_cache` (`crates/incular-wgpu/src/resources.rs`, `renderer/resources.rs`, `pipelines.rs`) | Content `ImageId` → one `Arc<SharedGpuImage>`; context-local `SharedGpuResourceId` while retained | **Now:** `SharedImageTextureBudget` (default 256 entries / 256 MiB nominal texel bytes), cross-renderer LRU, oldest-first eviction at shared-device ownership, oversized served without admission; per-renderer 600-unused-frame eviction retained | Shared `Arc` (map + renderer maps + frame locals); evictions report entry drops + still-referenced counts, never freed bytes; `texture_upload_bytes` stays cumulative traffic, residency is the policy gauge |
+| GPU images | `incular-wgpu` `SharedGpuResources::{images, image_textures}` + per-renderer `image_cache` (`crates/incular-wgpu/src/resources.rs`, `renderer/resources.rs`, `pipelines.rs`) | Content `ImageId` → one `Arc<SharedGpuImage>`; context-local `SharedGpuResourceId` while retained | **Now:** `SharedTextureBudget` (default 256 entries / 256 MiB nominal texel bytes), cross-renderer LRU, oldest-first eviction at shared-device ownership, oversized served without admission, generation-checked touches, host dispatch on combined revision; per-renderer 600-unused-frame eviction retained | Shared `Arc` (map + renderer maps + frame locals); evictions report entry drops + still-referenced counts, never freed bytes; `texture_upload_bytes` stays cumulative traffic, residency is the policy gauge |
+| GPU gradients | `SharedGpuResources::{gradients, gradient_textures}` + per-renderer `gradient_cache`, same files | Full `(stops identity, surface format)` key → one `Arc<SharedGpuGradient>`; stops identities mint per construction (clones share, distinct builds never alias); no registry | **Now:** same generic `SharedTextureCache`/`RendererImageCache` machinery (fixed 1 KiB nominal bytes, per-family generation sequence, bypass + age bound, combined-revision dispatch) | Same `Arc` graph as images; per-family counters; oversized path defined though unreachable at real sizes |
 | GPU gradients | `SharedGpuResources::gradients` | `(GradientId, TextureFormat)` key | **Missing:** same as GPU images | Same as GPU images |
 | GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts, append-only pages | **Partial:** oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards; pages/entries/fonts unbounded, no clear/trim | Entries never move/compact; page/memory counters (`GlyphAtlasMemory`) |
 | GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Format / `ImageId`→`SharedGpuResourceId` | **Missing:** unbounded, no eviction | Registry length counter only |
@@ -747,10 +748,29 @@ code, "missing" means absent with no compensating path.
   gate test. Upload-path GPU coverage and per-window native dispatch
   remain recorded as unverified; gradients, glyphs, pipelines, and
   rendering outcomes are untouched.
-- Remaining W2 work: shared eviction for gradients, glyph pages/entries/
-  fonts, pipelines, and identity maps; presented vs failed outcome
-  separation; two-window churn tests. Text font-byte budgets are not
-  scheduled (unbounded map noted above; layouts already bounded by count).
+- W2 shared gradient-cache eviction: gradients reuse the image-cache
+  mechanisms exactly where the ownership contract is identical — the
+  generic `SharedTextureCache<K>` policy and `RendererImageCache<K, R>`
+  coordinator, one combined revision gating host maintenance for both
+  families, and the same per-frame sync / idle-reclaim / disposal paths.
+  Gradient-specific and deliberately not factored: the full-description
+  key (stops identity plus surface format; per-construction identities
+  mean distinct builds never alias, verified by regression), the fixed
+  1 KiB nominal size, the per-family generation sequence (no registry),
+  upload wiring, and per-family counters. Renderer-local gradient keys
+  widened to the full shared key, so a surface reconfiguration retires
+  old-format entries as stale instead of reusing them. Regressions
+  (`shared_gradient_textures`, 8 tests, display-server free): no-alias
+  descriptions, reuse, churn eviction, stale refusal, bypass bound, idle
+  reclaim skipping bypassed entries, metadata reclamation, and
+  cross-client protection; the image dispatch suite additionally proves
+  gradient-only evictions still visit image-holding clients and image
+  reclamation is unregressed. Upload-path GPU coverage stays recorded as
+  unverified, as for images.
+- Remaining W2 work: shared eviction for glyph pages/entries/fonts,
+  pipelines, and identity maps; presented vs failed outcome separation;
+  two-window GPU churn tests. Text font-byte budgets are not scheduled
+  (unbounded map noted above; layouts already bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.

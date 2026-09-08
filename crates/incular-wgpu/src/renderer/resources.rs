@@ -112,8 +112,16 @@ impl WgpuRenderer {
         true
     }
     /// Makes the paint lookup retained independently from all geometry.
+    /// The local key spans the stops identity and this window's surface
+    /// format, matching the shared key exactly; a surface reconfiguration
+    /// therefore retires old-format entries as stale instead of reusing
+    /// them.
     pub(super) fn ensure_gradient(&mut self, brush: &Brush) -> Option<GradientId> {
         let id = gradient_id(brush)?;
+        let key = GradientResourceKey {
+            gradient: id,
+            format: self.window_gpu.config.format,
+        };
         self.counters.gradient_instances += 1;
         match brush {
             Brush::LinearGradient(_) => self.counters.linear_gradient_instances += 1,
@@ -121,8 +129,8 @@ impl WgpuRenderer {
             Brush::SweepGradient(_) => self.counters.radial_gradient_instances += 1,
             Brush::Solid(_) => {}
         }
-        if let Some(resource) = self.gradient_cache.get_mut(&id) {
-            resource.last_used_frame = self.counters.frames;
+        if self.gradient_cache.get(&key).is_some() {
+            self.gradient_cache.record_use(key, self.counters.frames);
             self.counters.gradient_cache_hits += 1;
             return Some(id);
         }
@@ -136,17 +144,32 @@ impl WgpuRenderer {
         // before the renderer's straight-alpha source-over blend, avoiding
         // dark fringes across transparent stops.
         let pixels = gradient_lut_pixels(stops);
-        let (shared_resource, uploaded) = self.shared.gradient_resource(
+        let acquisition = self.shared.gradient_resource(
             id,
             self.window_gpu.config.format,
             &pixels,
             &self.gradient_bind_group_layout,
             &self.gradient_sampler,
         );
-        self.gradient_cache
-            .insert(id, shared_resource.resource.clone());
+        if acquisition.admitted {
+            debug_assert!(
+                self.shared.gradient_textures_contains(&key),
+                "window gradient cache must reference a retained shared entry"
+            );
+        }
+        let retention = acquisition
+            .generation
+            .map_or(LocalImageRetention::Bypassed, |generation| {
+                LocalImageRetention::Shared { generation }
+            });
+        self.gradient_cache.insert(
+            key,
+            acquisition.resource.resource.clone(),
+            retention,
+            self.counters.frames,
+        );
         self.counters.gradient_cache_misses += 1;
-        if uploaded {
+        if acquisition.uploaded {
             self.counters.gradient_resource_creations += 1;
             self.counters.gradient_resource_uploads += 1;
         }
@@ -155,8 +178,11 @@ impl WgpuRenderer {
     pub(super) fn gradient_bind_group(&self, id: Option<GradientId>) -> &wgpu::BindGroup {
         id.and_then(|id| {
             self.gradient_cache
-                .get(&id)
-                .map(|resource| &resource.bind_group)
+                .get(&GradientResourceKey {
+                    gradient: id,
+                    format: self.window_gpu.config.format,
+                })
+                .map(|entry| &entry.resource.bind_group)
         })
         .unwrap_or(&self.solid_gradient.bind_group)
     }
@@ -173,7 +199,8 @@ impl WgpuRenderer {
         let acquisition = self.shared.image_resource(image)?;
         // Only admitted textures carry a context-wide identity: bypassed
         // (oversized-for-budget) uploads hold a fresh per-upload identity
-        // with no registry entry, so the identity check applies to them.
+        // with no registry entry, so the identity check below covers
+        // admitted acquisitions only.
         if acquisition.admitted {
             debug_assert_eq!(
                 self.shared.image_resource_identity(id),
@@ -183,16 +210,18 @@ impl WgpuRenderer {
         }
         // Bypassed uploads have no shared generation to name: they are
         // retained locally only, bounded by the age rule below.
-        let retention = acquisition.admitted.then(|| LocalImageRetention::Shared {
-            generation: acquisition.resource.identity.get(),
-        });
+        let retention = acquisition
+            .generation
+            .map_or(LocalImageRetention::Bypassed, |generation| {
+                LocalImageRetention::Shared { generation }
+            });
         self.image_cache.insert(
             id,
             GpuImage {
                 resource: acquisition.resource,
                 bind_groups: HashMap::new(),
             },
-            retention.unwrap_or(LocalImageRetention::Bypassed),
+            retention,
             self.counters.frames,
         );
         self.counters.image_cache_misses += 1;
@@ -202,15 +231,16 @@ impl WgpuRenderer {
         }
         Ok(())
     }
-    /// Flushes this frame's image use into the shared owner in one batch
-    /// and drops locally stale entries. Runs once per frame after submit,
-    /// so per-draw image references cost no shared lock: use is recorded
-    /// locally during encoding and reported here, deduplicated by id.
-    /// Stale entries (shared-evicted, or superseded by a re-upload under a
-    /// new generation) are dropped with their bind groups; submitted work
-    /// stays valid through the wgpu lifetime contract, and the next use
+    /// Flushes this frame's texture use into the shared owner in one batch
+    /// and drops locally stale entries, for images and gradients together
+    /// under a single shared lock. Runs once per frame after submit, so
+    /// per-draw references cost no shared lock: use is recorded locally
+    /// during encoding and reported here, deduplicated by id. Stale entries
+    /// (shared-evicted, or superseded by a re-upload under a new
+    /// generation) are dropped with their bind groups; submitted work stays
+    /// valid through the wgpu lifetime contract, and the next use
     /// re-resolves to the current shared generation.
-    pub(super) fn sync_shared_image_use(&mut self) {
+    pub(super) fn sync_shared_textures(&mut self) {
         let mut shared = self
             .shared
             .inner
@@ -219,12 +249,14 @@ impl WgpuRenderer {
             .expect("shared resource lock");
         self.image_cache
             .sync_with_shared(&mut shared.image_textures);
+        self.gradient_cache
+            .sync_with_shared(&mut shared.gradient_textures);
     }
     /// Releases locally retained textures the shared owner no longer
-    /// retains, with their bind groups. Safe on a renderer presenting no
-    /// frames: staleness is pure generation comparison, and anything still
-    /// referenced by submitted work stays valid through the wgpu lifetime
-    /// contract.
+    /// retains, with their bind groups, for images and gradients together.
+    /// Safe on a renderer presenting no frames: staleness is pure
+    /// generation comparison, and anything still referenced by submitted
+    /// work stays valid through the wgpu lifetime contract.
     ///
     /// Reclamation events and executors: the per-frame sync above covers
     /// active renderers; the unconfigured early-return path in `frame.rs`
@@ -235,7 +267,7 @@ impl WgpuRenderer {
     /// renderers alive, and shared eviction never reaches into a renderer
     /// it does not own — all mutation here runs on the owning thread under
     /// one shared lock, the same order the frame path uses.
-    pub fn reclaim_stale_images(&mut self) -> usize {
+    pub fn reclaim_stale_textures(&mut self) -> usize {
         let shared = self
             .shared
             .inner
@@ -243,6 +275,10 @@ impl WgpuRenderer {
             .lock()
             .expect("shared resource lock");
         self.image_cache.reclaim_stale(&shared.image_textures).len()
+            + self
+                .gradient_cache
+                .reclaim_stale(&shared.gradient_textures)
+                .len()
     }
 
     pub(super) fn evict_unused_images(&mut self) {
@@ -260,12 +296,10 @@ impl WgpuRenderer {
         self.counters.path_gpu_evictions += (before - self.gpu_path_cache.len()) as u64;
     }
     pub(super) fn evict_unused_gradients(&mut self) {
-        let frame = self.counters.frames;
-        let before = self.gradient_cache.len();
-        self.gradient_cache.retain(|_, gradient| {
-            frame.saturating_sub(gradient.last_used_frame) <= GRADIENT_CACHE_MAX_UNUSED_FRAMES
-        });
-        self.counters.gradient_resource_evictions += (before - self.gradient_cache.len()) as u64;
+        let dropped = self
+            .gradient_cache
+            .evict_unused(self.counters.frames, GRADIENT_CACHE_MAX_UNUSED_FRAMES);
+        self.counters.gradient_resource_evictions += dropped as u64;
     }
     pub(super) fn evict_offscreen_cache(&mut self) {
         let frame = self.counters.frames;
@@ -462,8 +496,8 @@ impl WgpuRenderer {
     }
 }
 
-impl crate::ReclaimStaleImages for WgpuRenderer {
-    fn reclaim_stale_images(&mut self) -> usize {
-        WgpuRenderer::reclaim_stale_images(self)
+impl crate::ReclaimStaleTextures for WgpuRenderer {
+    fn reclaim_stale_textures(&mut self) -> usize {
+        WgpuRenderer::reclaim_stale_textures(self)
     }
 }
