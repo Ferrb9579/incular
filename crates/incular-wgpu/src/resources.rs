@@ -181,6 +181,10 @@ pub struct SharedImageTextureCache {
     lru: VecDeque<ImageId>,
     tick: u64,
     retained_bytes: u64,
+    /// Bumped once per dropped entry. Host event loops compare this
+    /// against their last serviced value to run per-renderer reclamation
+    /// only on passes where something actually evicted.
+    eviction_revision: u64,
     counters: SharedImageTextureCounters,
 }
 
@@ -198,8 +202,17 @@ impl SharedImageTextureCache {
             lru: VecDeque::new(),
             tick: 0,
             retained_bytes: 0,
+            eviction_revision: 0,
             counters: SharedImageTextureCounters::default(),
         }
+    }
+
+    /// Eviction revision: advances once per dropped entry. Hosts compare
+    /// this across maintenance passes so passes with no evictions touch no
+    /// renderer at all.
+    #[must_use]
+    pub const fn eviction_revision(&self) -> u64 {
+        self.eviction_revision
     }
 
     #[must_use]
@@ -337,6 +350,7 @@ impl SharedImageTextureCache {
             };
             if let Some(entry) = self.entries.remove(&oldest) {
                 self.retained_bytes = self.retained_bytes.saturating_sub(entry.bytes);
+                self.eviction_revision = self.eviction_revision.saturating_add(1);
                 self.counters.evictions += 1;
                 self.counters.evicted_bytes =
                     self.counters.evicted_bytes.saturating_add(entry.bytes);
@@ -366,7 +380,12 @@ impl SharedImageTextureCache {
 pub enum LocalImageRetention {
     /// Retained in the shared map under this texture generation.
     Shared { generation: u64 },
-    /// Served without shared admission; retained locally only.
+    /// Served without shared admission; retained locally only. Bounded by
+    /// the local age rule below — never by shared generations — with one
+    /// honest limit: the age rule counts presented frames, not elapsed
+    /// idle time, so a renderer that stops presenting keeps its bypassed
+    /// entries until it resumes, reclaims, or is dropped. Idle retention
+    /// of bypassed textures is bounded by disposal, not by this variant.
     Bypassed,
 }
 
@@ -524,7 +543,10 @@ impl<R> RendererImageCache<R> {
 
     /// Drops entries unused for more than `max_unused_frames`, returning
     /// how many went. This is the age half of local retention; generation
-    /// staleness is handled by [`Self::prune_stale`].
+    /// staleness is handled by [`Self::prune_stale`]. The bound counts
+    /// presented frames, not wall-clock idle time: a renderer presenting
+    /// no frames retains everything until it resumes, reclaims, or drops.
+    /// Do not read this as an idle-retention bound.
     pub fn evict_unused(&mut self, frame: u64, max_unused_frames: u64) -> usize {
         let before = self.entries.len();
         self.entries.retain(|_, (_, state)| {
@@ -564,6 +586,53 @@ impl<R> RendererImageCache<R> {
             .map(|(id, _)| id)
             .collect();
         (refreshed, pruned)
+    }
+}
+
+/// Renderer capability driven by host event-loop maintenance: release
+/// locally retained textures the shared owner dropped, returning how many
+/// went. This is the dispatch interface hosts program against; fakes
+/// implement it behind the same dispatch in tests.
+pub trait ReclaimStaleImages {
+    fn reclaim_stale_images(&mut self) -> usize;
+}
+
+/// Host-side maintenance dispatch for shared image retention. Tracks the
+/// shared eviction revision across passes so passes with no evictions
+/// touch no renderer: `maintain` returns 0 without calling any client.
+/// Otherwise it drives reclamation on every client and returns the total
+/// released. The revision is read before any client runs and no shared
+/// lock is held while clients run, so an eviction landing mid-pass is
+/// picked up — with a fresh comparison — on the next pass instead of
+/// being missed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SharedImageMaintenance {
+    last_seen_eviction_revision: u64,
+}
+
+impl SharedImageMaintenance {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Runs one maintenance pass against `eviction_revision` (read from
+    /// [`SharedGpuContext::image_eviction_revision`]). Returns textures
+    /// released across all clients, or 0 without contacting any client
+    /// when nothing evicted since the last pass.
+    pub fn maintain<'a>(
+        &mut self,
+        eviction_revision: u64,
+        clients: impl IntoIterator<Item = &'a mut dyn ReclaimStaleImages>,
+    ) -> usize {
+        if eviction_revision == self.last_seen_eviction_revision {
+            return 0;
+        }
+        self.last_seen_eviction_revision = eviction_revision;
+        clients
+            .into_iter()
+            .map(|client| client.reclaim_stale_images())
+            .sum()
     }
 }
 
@@ -876,6 +945,20 @@ impl SharedGpuContext {
     /// the texture (a re-upload allocates a fresh one), and oversized
     /// uploads never register, so `None` means "not retained", never a
     /// missing allocation.
+    /// Eviction revision of the device-owned image-texture cache: advances
+    /// once per dropped entry. Host event loops service per-renderer
+    /// reclamation only when this moves, so idle passes cost one integer
+    /// comparison and no renderer visits.
+    #[must_use]
+    pub fn image_eviction_revision(&self) -> u64 {
+        self.inner
+            .resources
+            .lock()
+            .expect("shared resource lock")
+            .image_textures
+            .eviction_revision()
+    }
+
     #[must_use]
     pub fn image_resource_identity(&self, image: ImageId) -> Option<SharedGpuResourceId> {
         self.inner

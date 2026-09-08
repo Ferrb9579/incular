@@ -10,13 +10,15 @@
 //! `Arc` ownership, mirrored by the client-close test below with real
 //! reference counts.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Weak};
 
 use incular_image::ImageHandle;
 use incular_wgpu::{
-    LocalImageRetention, RendererImageCache, SharedImageTextureBudget, SharedImageTextureCache,
-    shared_image_texture_bytes,
+    LocalImageRetention, ReclaimStaleImages, RendererImageCache, SharedImageMaintenance,
+    SharedImageTextureBudget, SharedImageTextureCache, shared_image_texture_bytes,
 };
 
 /// Distinct content identities from CPU-only handles (no GPU involved).
@@ -506,4 +508,104 @@ fn cumulative_counters_do_not_measure_current_retention() {
     assert_eq!(bytes_one, 100);
     assert_eq!(bytes_two, 100);
     assert_ne!(live_one, live_two);
+}
+
+/// Stand-in renderer behind the real host dispatch interface: it owns a
+/// production [`RendererImageCache`] and shares the real policy handle,
+/// so dispatch, generation checks, and reclamation all run production
+/// code. Only the GPU resource itself is a test stand-in.
+struct FakeRenderer {
+    local: RendererImageCache<Arc<TestTexture>>,
+    shared: Rc<RefCell<SharedImageTextureCache>>,
+    reclaim_calls: usize,
+}
+
+impl FakeRenderer {
+    fn new(shared: Rc<RefCell<SharedImageTextureCache>>) -> Self {
+        Self {
+            local: RendererImageCache::new(),
+            shared,
+            reclaim_calls: 0,
+        }
+    }
+}
+
+impl ReclaimStaleImages for FakeRenderer {
+    fn reclaim_stale_images(&mut self) -> usize {
+        self.reclaim_calls += 1;
+        self.local.reclaim_stale(&self.shared.borrow()).len()
+    }
+}
+
+#[test]
+fn host_dispatch_reclaims_idle_client_after_shared_eviction() {
+    // Client A resolves an image and goes idle: no touches, no syncs, no
+    // frames. Client B churns through the shared owner and evicts A's
+    // image. The production host dispatch — revision gate plus per-client
+    // reclamation — must release A's stale ownership with A never
+    // rendering and the test never touching A's cleanup helper.
+    let shared = Rc::new(RefCell::new(SharedImageTextureCache::with_limits(
+        SharedImageTextureBudget::new(2, u64::MAX),
+    )));
+    let mut host = SharedImageMaintenance::new();
+    let mut client_a = FakeRenderer::new(Rc::clone(&shared));
+    let mut client_b = FakeRenderer::new(Rc::clone(&shared));
+    let work = image_id(201);
+    assert!(shared.borrow_mut().admit(work, 100, 7, &DEAD).is_empty());
+    client_a.local.insert(
+        work,
+        test_texture(),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
+    for (index, seed) in (202..204u8).enumerate() {
+        shared
+            .borrow_mut()
+            .admit(image_id(seed), 100, 20 + index as u64, &DEAD);
+    }
+    let revision = shared.borrow().eviction_revision();
+    assert!(revision > 0);
+    // One clone stands in for submitted work still referencing the texture:
+    // reclamation must not invalidate it.
+    let inflight = Arc::clone(&client_a.local.get(&work).expect("A retains work").resource);
+    let probe: Weak<TestTexture> = Arc::downgrade(&inflight);
+    let released = host.maintain(
+        revision,
+        [
+            &mut client_a as &mut dyn ReclaimStaleImages,
+            &mut client_b as &mut dyn ReclaimStaleImages,
+        ],
+    );
+    assert_eq!(released, 1);
+    assert_eq!(client_a.reclaim_calls, 1);
+    assert_eq!(client_b.reclaim_calls, 1);
+    assert!(!client_a.local.contains(&work));
+    assert!(probe.upgrade().is_some());
+    // Unchanged eviction state schedules nothing further: the gate stops
+    // the pass before any client is contacted.
+    let released = host.maintain(
+        shared.borrow().eviction_revision(),
+        [
+            &mut client_a as &mut dyn ReclaimStaleImages,
+            &mut client_b as &mut dyn ReclaimStaleImages,
+        ],
+    );
+    assert_eq!(released, 0);
+    assert_eq!(client_a.reclaim_calls, 1);
+    assert_eq!(client_b.reclaim_calls, 1);
+    drop(inflight);
+    assert!(probe.upgrade().is_none());
+}
+
+#[test]
+fn host_dispatch_rests_without_evictions() {
+    // A fresh shared owner (revision zero) dispatches nothing at all, not
+    // even an empty scan of the clients.
+    let shared = Rc::new(RefCell::new(SharedImageTextureCache::new()));
+    let mut host = SharedImageMaintenance::new();
+    let mut client = FakeRenderer::new(Rc::clone(&shared));
+    assert_eq!(shared.borrow().eviction_revision(), 0);
+    let released = host.maintain(0, [&mut client as &mut dyn ReclaimStaleImages]);
+    assert_eq!(released, 0);
+    assert_eq!(client.reclaim_calls, 0);
 }

@@ -729,6 +729,24 @@ code, "missing" means absent with no compensating path.
   proving counters alone cannot establish current retention. Same
   validation as above; upload-path GPU coverage still recorded as
   unverified.
+- W2 host-driven idle reclamation: shared evictions advance a
+  device-owned eviction revision (one bump per dropped entry), and the
+  desktop host compares it once per event-loop pass in `about_to_wait`
+  before sleeping — the pass that always follows the event handling where
+  evictions happen, so no extra wakeup, redraw, or polling timer exists.
+  On advance only, the production `SharedImageMaintenance::maintain`
+  dispatch drives `reclaim_stale_images` on every window's renderer on the
+  owning thread: the revision is read first and no shared lock is held
+  across renderer calls (the frame path's lock order). Bypassed age
+  honesty: the local age rule counts presented frames, never idle time —
+  an idle renderer keeps bypassed entries until it resumes, reclaims, or
+  drops, and no claim to the contrary is made. Regressions run the real
+  dispatch with fake renderers owning production coordinators: idle-A/
+  churning-B release without rendering or helper calls, active references
+  surviving, unchanged revisions contacting zero clients, plus a resting
+  gate test. Upload-path GPU coverage and per-window native dispatch
+  remain recorded as unverified; gradients, glyphs, pipelines, and
+  rendering outcomes are untouched.
 - Remaining W2 work: shared eviction for gradients, glyph pages/entries/
   fonts, pipelines, and identity maps; presented vs failed outcome
   separation; two-window churn tests. Text font-byte budgets are not

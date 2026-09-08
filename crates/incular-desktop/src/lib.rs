@@ -65,7 +65,7 @@ use incular_runtime::{
     NativeFileDialogCompletion, NativeWindowCommand, RenderFrameMetrics, Runtime, RuntimeWake,
     TransientFallbackReason,
 };
-use incular_wgpu::{RenderStats, SharedGpuContext};
+use incular_wgpu::{ReclaimStaleImages, RenderStats, SharedGpuContext, SharedImageMaintenance};
 use incular_widgets::{PlatformMenuDelegate, ShortcutModifiers, internal::ActionId};
 use std::{
     collections::{HashMap, HashSet},
@@ -412,6 +412,7 @@ pub fn run_application_with_services(
         transient_native_ids: HashMap::new(),
         transient_native_rejections: HashMap::new(),
         shared_gpu: None,
+        shared_image_maintenance: SharedImageMaintenance::new(),
         frame_timestamp: Instant::now(),
         event_proxy: proxy,
         displays: DesktopDisplayRegistry::default(),
@@ -446,6 +447,11 @@ struct DesktopHost {
     transient_native_ids: HashMap<TransientHostKey, NativeWindowId>,
     transient_native_rejections: HashMap<TransientHostKey, TransientNativeRejection>,
     shared_gpu: Option<SharedGpuContext>,
+    /// Revision gate for shared image-texture reclamation. Compared against
+    /// the device-owned eviction revision once per event-loop pass; only an
+    /// advanced revision visits any renderer, so idle passes cost one
+    /// integer comparison.
+    shared_image_maintenance: SharedImageMaintenance,
     frame_timestamp: Instant,
     event_proxy: winit::event_loop::EventLoopProxy<RuntimeWakeEvent>,
     displays: DesktopDisplayRegistry,
@@ -1123,6 +1129,29 @@ impl DesktopHost {
             state.window.request_redraw();
             self.application.note_frame_requested(id);
         }
+    }
+
+    /// Releases shared-evicted image textures held by idle renderers.
+    ///
+    /// Runs at the end of every event-loop pass (`about_to_wait`), which is
+    /// what makes eviction-caused maintenance runnable without any extra
+    /// wakeup: an eviction always happens while handling an event, and this
+    /// pass always follows before the loop sleeps. Passes with no evictions
+    /// cost one revision comparison and visit no renderer; no redraws are
+    /// requested and no polling timer exists. Every renderer is reclaimed
+    /// on this (owning) thread, the revision is read before any renderer
+    /// runs, and no shared lock is held across renderer calls — the same
+    /// lock order the frame path uses.
+    fn reclaim_stale_shared_images(&mut self) {
+        let Some(shared) = self.shared_gpu.as_ref() else {
+            return;
+        };
+        self.shared_image_maintenance.maintain(
+            shared.image_eviction_revision(),
+            self.windows
+                .values_mut()
+                .map(|state| &mut state.renderer as &mut dyn ReclaimStaleImages),
+        );
     }
 
     fn redraw_window(&mut self, target: &ActiveEventLoop, id: IncularWindowId) {
@@ -2036,6 +2065,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
         }
+        self.reclaim_stale_shared_images();
         target.set_control_flow(winit::event_loop::ControlFlow::Wait);
     }
 

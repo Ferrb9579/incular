@@ -244,6 +244,7 @@ impl WgpuRenderer {
             .expect("shared resource lock");
         self.image_cache.reclaim_stale(&shared.image_textures).len()
     }
+
     pub(super) fn evict_unused_images(&mut self) {
         let dropped = self
             .image_cache
@@ -458,5 +459,11 @@ impl WgpuRenderer {
             });
             self.counters.atlas_texture_recreations += 1;
         }
+    }
+}
+
+impl crate::ReclaimStaleImages for WgpuRenderer {
+    fn reclaim_stale_images(&mut self) -> usize {
+        WgpuRenderer::reclaim_stale_images(self)
     }
 }
