@@ -607,15 +607,38 @@ code, "missing" means absent with no compensating path.
   `ImageCache::load_bytes` with hit lookup that borrows the input (no copy
   on hits; one shared `Arc` on admission). Failures never cached; oversized
   entries decode fresh without admission; `clear`/`set_limits` release cache
-  ownership while live handles stay valid; header dimensions are pre-read
-  with checked arithmetic (plus the decoder's own header-time limits) before
-  any pixel allocation. Regressions (`cache_policy`: shared identity,
-  LRU order, exact byte accounting, oversized/zero-limit admission, clear
-  with live handles, oldest-first trim, uncached failures, alias safety,
-  hostile dimensions) pass; prior cache tests unchanged. Formatting,
-  workspace compilation, constrained workspace tests, strict
-  all-feature/all-target Clippy, focused image tests and warning-denied
-  image rustdoc passed. Live native tests were not run.
+  ownership while live handles stay valid. Regressions (`cache_policy`:
+  shared identity, LRU order, exact byte accounting, oversized/zero-limit
+  admission, clear with live handles, oldest-first trim, uncached failures,
+  alias safety) pass; prior cache tests unchanged. Formatting, workspace
+  compilation, constrained workspace tests, strict all-feature/all-target
+  Clippy, focused image tests and warning-denied image rustdoc passed. Live
+  native tests were not run.
+- W2 decode-size/error policy: cache limits govern retained entries while a
+  separate decode policy governs the work to produce an image — a cache
+  budget never becomes a decode limit. Inspected the installed decoder
+  (image 0.25.9): `load_from_memory` decodes under defaults with no strict
+  dimensions, while `into_dimensions` enforces limits only at header
+  construction (PNG) or after it (JPEG/WebP via `set_limits`, whose default
+  never reports unsupported); native `max_alloc` cooperation is best-effort
+  per decoder, and the RGBA8 conversion can expand sources up to fourfold.
+  Decoding now runs on one explicitly configured `ImageReader` path: a
+  no-budget header probe (parses headers up to the image data, requests no
+  pixel buffer), an explicit gate on strict 16384px dimensions plus checked
+  `w*h*4` output bytes against a 256 MiB cap, then the full decode under the
+  same limits with decoder limit errors preserved as `DecodeTooLarge`
+  (dims attached; zero-sized only when the header itself was limit-rejected
+  first, e.g. the PNG layer's own overflow guard). Actual decoded dims are
+  re-gated before conversion, and `from_rgba8` verifies the exact output
+  length by construction. Oversized-for-cache images decode normally within
+  the decode policy; failures and rejections never touch admission.
+  Regressions assert the rejection reason precisely (absurd dims, valid-
+  arithmetic 1 GiB-output headers, malformed/truncated/error
+  discrimination, grayscale conversion sizing, valid-but-uncacheable loads,
+  rejection-without-eviction). Uncovered by any bound: decoder-internal
+  transient allocations where decoders ignore cooperation (noted PNG
+  post-construction buffers), and already-decoded caller buffers passed to
+  `from_rgba8`. Same validation as above; no GPU/rendering changes.
 - Remaining W2 work: shared GPU eviction at device ownership (images,
   gradients, glyph pages/entries/fonts, pipelines, identity maps), presented
   vs failed outcome separation, and two-window churn tests. Text font-byte

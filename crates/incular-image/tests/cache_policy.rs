@@ -214,28 +214,169 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-#[test]
-fn hostile_dimensions_fail_before_any_decoding_allocation() {
-    // IHDR claiming 2^31 x 2^31 pixels: 2^64 pixel bytes, far beyond any
-    // allocator. Header-time limits (the decoder's own defaults plus the
-    // checked pre-read) must reject it cheaply with a clean error — never
-    // an allocation attempt, an admission, or a counted decode.
+/// Appends one checksummed chunk to a PNG under construction.
+fn push_chunk(png_bytes: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    png_bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    png_bytes.extend_from_slice(kind);
+    png_bytes.extend_from_slice(data);
+    let mut checksummed = kind.to_vec();
+    checksummed.extend_from_slice(data);
+    png_bytes.extend_from_slice(&crc32(&checksummed).to_be_bytes());
+}
+
+/// Minimal PNG carrying a signature, IHDR, an empty IDAT, and IEND. The
+/// decoder's header parse requires the image-data stream to begin (it reads
+/// past IHDR), so the empty zlib stored block stands in for pixel data that
+/// decoding — which never starts here — would consume.
+fn png_header_only(width: u32, height: u32) -> Vec<u8> {
     let mut png_bytes = vec![137, 80, 78, 71, 13, 10, 26, 10];
-    let mut ihdr = vec![0, 0, 0, 13, 73, 72, 68, 82];
-    ihdr.extend_from_slice(&[0x80, 0, 0, 0, 0x80, 0, 0, 0, 8, 6, 0, 0, 0]);
-    let checksum = crc32(&ihdr[4..]);
-    png_bytes.extend_from_slice(&ihdr);
-    png_bytes.extend_from_slice(&checksum.to_be_bytes());
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    push_chunk(&mut png_bytes, b"IHDR", &ihdr);
+    // Empty zlib stream: header, final stored empty block, empty Adler-32.
+    push_chunk(
+        &mut png_bytes,
+        b"IDAT",
+        &[
+            0x78, 0x01, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x01,
+        ],
+    );
+    push_chunk(&mut png_bytes, b"IEND", &[]);
+    png_bytes
+}
+
+#[test]
+fn decode_policy_rejects_absurd_dimensions_with_reason() {
+    // IHDR claiming 2^31 x 2^31 pixels. The PNG layer's own overflow guard
+    // fires while parsing the header — before dimensions are reportable
+    // through any decoder API — so the rejection carries the documented
+    // zero-sized shape. What matters is structural: the failure surfaces
+    // during the header probe, the pixel decode never starts, no output
+    // buffer is requested, nothing is admitted, and no decode is counted.
+    let png_bytes = png_header_only(0x8000_0000, 0x8000_0000);
     let mut cache = ImageCache::new();
-    let error = cache
-        .load_bytes(&png_bytes)
-        .expect_err("hostile dimensions must fail");
-    assert!(
-        matches!(error, ImageError::InvalidDimensions | ImageError::Decode(_)),
-        "unexpected rejection: {error:?}"
+    assert_eq!(
+        cache.load_bytes(&png_bytes),
+        Err(ImageError::DecodeTooLarge {
+            width: 0,
+            height: 0
+        })
     );
     assert_eq!(cache.len(), 0);
     assert_eq!(cache.resident_bytes(), 0);
     assert_eq!(cache.diagnostics().image_decodes, 0);
     assert_eq!(cache.diagnostics().load_failures, 1);
+    assert_eq!(cache.diagnostics().evictions, 0);
+}
+
+#[test]
+fn decode_policy_rejects_excessive_output_bytes() {
+    // 16384 x 16384 passes the per-side dimension cap with plainly valid
+    // arithmetic (2^30 output bytes, no overflow anywhere), yet the RGBA8
+    // output would be 1 GiB against a 256 MiB policy: rejected by the
+    // output gate with the exact boundary attached, before decoding starts.
+    assert_eq!(
+        16384u64 * 16384 * 4,
+        4 * incular_image::MAX_DECODE_OUTPUT_BYTES
+    );
+    let png_bytes = png_header_only(16384, 16384);
+    let mut cache = ImageCache::new();
+    assert_eq!(
+        cache.load_bytes(&png_bytes),
+        Err(ImageError::DecodeTooLarge {
+            width: 16384,
+            height: 16384,
+        })
+    );
+    assert_eq!(cache.len(), 0);
+    assert_eq!(cache.diagnostics().image_decodes, 0);
+}
+
+#[test]
+fn decode_errors_stay_distinct_from_policy_rejections() {
+    // Malformed and truncated inputs are decoder failures, not policy
+    // rejections: the error taxonomy must tell them apart.
+    let mut truncated = png(4, 4, 71);
+    truncated.truncate(truncated.len() / 2);
+    let mut cache = ImageCache::new();
+    assert!(matches!(
+        cache.load_bytes([0u8, 1, 2, 3]).unwrap_err(),
+        ImageError::Decode(_)
+    ));
+    assert!(matches!(
+        cache.load_bytes(&truncated).unwrap_err(),
+        ImageError::Decode(_)
+    ));
+    assert!(matches!(
+        cache.load_bytes(Vec::new()).unwrap_err(),
+        ImageError::Decode(_)
+    ));
+    assert_eq!(cache.diagnostics().load_failures, 3);
+    assert_eq!(cache.diagnostics().image_decodes, 0);
+}
+
+#[test]
+fn grayscale_sources_convert_to_sized_rgba8() {
+    // A 4x4 luminance PNG decodes through the RGBA8 conversion to exactly
+    // 64 output bytes, and cache accounting follows the converted size.
+    let gray: Vec<u8> = (0..16u8).map(|i| i.wrapping_mul(17)).collect();
+    let mut encoded = Vec::new();
+    PngEncoder::new(&mut encoded)
+        .write_image(&gray, 4, 4, ExtendedColorType::L8)
+        .expect("encode gray test png");
+    let mut cache = ImageCache::new();
+    let image = cache.load_bytes(&encoded).unwrap();
+    assert_eq!((image.decoded().width(), image.decoded().height()), (4, 4));
+    assert_eq!(image.decoded().byte_len(), 64);
+    assert_eq!(cache.resident_bytes(), encoded.len() + 64);
+}
+
+#[test]
+fn valid_images_decode_despite_tiny_cache_budgets() {
+    // A 256x256 image (256 KiB decoded) fits the decode policy comfortably
+    // but exceeds a ~100-byte cache budget: it still loads successfully and
+    // is served fresh without admission — a cache budget never becomes a
+    // decode limit.
+    let big = png(256, 256, 81);
+    // 256 KiB of decoded pixels alone dwarfs the cache budget below, while
+    // the 4x4 entries (~150 bytes each) fit it comfortably.
+    let small_a = png(4, 4, 82);
+    let small_b = png(4, 4, 83);
+    let mut cache = ImageCache::with_limits(ImageCacheLimits::new(100, 100_000));
+    let a_first = cache.load_bytes(&small_a).unwrap();
+    let b_first = cache.load_bytes(&small_b).unwrap();
+    assert_eq!(cache.len(), 2);
+    let before = cache.diagnostics();
+    let big_image = cache.load_bytes(&big).unwrap();
+    assert_eq!(
+        (big_image.decoded().width(), big_image.decoded().height()),
+        (256, 256)
+    );
+    // Not admitted, nothing evicted, and the working set still hits.
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.diagnostics().evictions, before.evictions);
+    assert_eq!(cache.load_bytes(&small_a).unwrap(), a_first);
+    assert_eq!(cache.load_bytes(&small_b).unwrap(), b_first);
+    assert_eq!(cache.diagnostics().image_decodes, before.image_decodes + 1);
+}
+
+#[test]
+fn rejections_never_evict_the_working_set() {
+    let (a, b) = (png(4, 4, 91), png(4, 4, 92));
+    let hostile = png_header_only(0x8000_0000, 0x8000_0000);
+    let mut cache = ImageCache::new();
+    let a_first = cache.load_bytes(&a).unwrap();
+    let b_first = cache.load_bytes(&b).unwrap();
+    let before = cache.diagnostics();
+    assert!(cache.load_bytes([9u8, 9, 9]).is_err());
+    assert!(cache.load_bytes(&hostile).is_err());
+    // Both failures left the admitted set, its identities, and the
+    // eviction count exactly alone.
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.load_bytes(&a).unwrap(), a_first);
+    assert_eq!(cache.load_bytes(&b).unwrap(), b_first);
+    assert_eq!(cache.diagnostics().evictions, before.evictions);
+    assert_eq!(cache.diagnostics().load_failures, before.load_failures + 2);
 }
