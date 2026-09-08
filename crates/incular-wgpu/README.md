@@ -122,6 +122,11 @@ uploads the asset layer's already-decoded straight-alpha RGBA8 bytes with
 `Queue::write_texture`, and retains its view plus lazily created sampler bind
 groups. Later frames reuse that texture without decoding or upload. Entries
 unused for 600 submitted frames are evicted; all GPU objects remain here.
+Uploaded textures are additionally retained in the device-owned shared
+image cache (budgeted, LRU-evicted across windows), and each window reports
+per-frame use back to it in one batch while dropping locally superseded
+entries; idle windows release stale entries through host event-loop
+maintenance or on disposal.
 
 Image batches are only merged when adjacent commands use the same image,
 sampler, and rectangular clip, preserving rectangle/image/text painter order.
@@ -147,13 +152,16 @@ quadratic and cubic verbs, fill rules, caps, joins, and miter limits are passed
 to Lyon. The current edge treatment is Lyon tessellation without MSAA.
 
 Normalized gradient stops are cached as retained 256-sample `Rgba8Unorm` 1D
-lookup textures (implemented as `256×1` textures), keyed by immutable
-`GradientId` and evicted after 600 unused submitted frames. The lookup is
+lookup textures (implemented as `256×1` textures), keyed by stops identity
+plus surface format and evicted after 600 unused submitted frames. The lookup is
 premultiplied linear RGB; shaders unpremultiply for Incular's straight-alpha
 surface blend. It is shared by analytic RRects and cached path meshes, so a
 paint-only gradient change never retessellates geometry. The fixed lookup is a
 deterministic resampling policy for arbitrarily many normalized stops; every
-input stop contributes to the LUT.
+input stop contributes to the LUT. Like images, uploaded lookups are
+additionally retained in the device-owned shared gradient cache (budgeted,
+LRU-evicted across windows, generations distinguishing re-uploads), with the
+same per-frame use reporting and idle reclamation.
 
 ## Non-rectangular clips
 

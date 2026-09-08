@@ -64,8 +64,8 @@ pub use resources::{
     CachedTexture, GradientResourceKey, LocalImageRetention, ReclaimStaleTextures,
     RendererImageCache, RendererImageEntry, SHARED_GRADIENT_TEXEL_BYTES, SharedGpuContext,
     SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry, SharedImageMaintenance,
-    SharedTextureBudget, SharedTextureCache, SharedTextureCounters, SharedTextureEviction,
-    WindowGpuPresentation, WindowGpuState, shared_image_texture_bytes,
+    SharedTextureAcquisition, SharedTextureBudget, SharedTextureCache, SharedTextureCounters,
+    SharedTextureEviction, WindowGpuPresentation, WindowGpuState, shared_image_texture_bytes,
 };
 pub use surface::{
     SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation, WindowSurfaceTarget,
@@ -77,3 +77,4 @@ pub(crate) use diagnostics::{create_gpu_profiler, query_duration_us};
 pub(crate) use pipelines::*;
 pub(crate) use render_passes::*;
 pub(crate) use render_plan::*;
+pub(crate) use resources::SharedGpuGradient;

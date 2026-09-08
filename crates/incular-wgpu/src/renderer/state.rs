@@ -51,7 +51,7 @@ pub struct WgpuRenderer {
     pub(super) gpu_path_cache: HashMap<PathMeshKey, GpuPathMesh>,
     pub(super) gradient_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) gradient_sampler: wgpu::Sampler,
-    pub(super) gradient_cache: RendererImageCache<GradientResourceKey, GpuGradient>,
+    pub(super) gradient_cache: RendererImageCache<GradientResourceKey, Arc<SharedGpuGradient>>,
     pub(super) solid_gradient: GpuGradient,
     pub(super) atlas_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) atlas_sampler: wgpu::Sampler,

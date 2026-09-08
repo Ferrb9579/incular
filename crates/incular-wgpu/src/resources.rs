@@ -837,11 +837,44 @@ pub(crate) struct SharedGpuImage {
 /// policy entirely. `generation` names the admitted upload for local
 /// retention bookkeeping (registry identity for images, admission sequence
 /// for gradients); it is `None` exactly when `admitted` is false.
-pub(crate) struct SharedTextureAcquisition<R> {
+pub struct SharedTextureAcquisition<R> {
     pub(crate) resource: R,
     pub(crate) uploaded: bool,
     pub(crate) admitted: bool,
     pub(crate) generation: Option<u64>,
+}
+
+impl<R> SharedTextureAcquisition<R> {
+    /// Builds an acquisition, enforcing that a generation is present
+    /// exactly for admitted uploads. Bypassed uploads name no generation
+    /// because they were never admitted anywhere.
+    pub fn new(resource: R, uploaded: bool, admitted: bool, generation: Option<u64>) -> Self {
+        debug_assert_eq!(
+            admitted,
+            generation.is_some(),
+            "admitted acquisitions must name a generation",
+        );
+        Self {
+            resource,
+            uploaded,
+            admitted,
+            generation,
+        }
+    }
+
+    /// Splits an acquisition into the `(resource, retention)` pair the
+    /// renderer inserts locally. The shared handle moves over unchanged —
+    /// generic over `R`, this conversion cannot name (and therefore cannot
+    /// re-wrap or clone) any inner handle — so liveness checks observe
+    /// renderer ownership, and retention follows admission exactly.
+    pub fn into_local_parts(self) -> (R, LocalImageRetention) {
+        let retention = self
+            .generation
+            .map_or(LocalImageRetention::Bypassed, |generation| {
+                LocalImageRetention::Shared { generation }
+            });
+        (self.resource, retention)
+    }
 }
 
 /// Image-texture acquisition: admitted uploads additionally carry a
@@ -1138,12 +1171,12 @@ impl SharedGpuContext {
             if let Some(generation) = image_textures.generation(id) {
                 image_textures.touch(id, generation);
             }
-            return Ok(SharedImageAcquisition {
+            return Ok(SharedImageAcquisition::new(
                 resource,
-                uploaded: false,
-                admitted: true,
-                generation: image_textures.generation(id),
-            });
+                false,
+                true,
+                image_textures.generation(id),
+            ));
         }
         let decoded = image.decoded();
         let limit = self.inner.device.limits().max_texture_dimension_2d;
@@ -1236,12 +1269,9 @@ impl SharedGpuContext {
             image_textures.note_unadmitted_upload();
         }
         let generation = admitted.then(|| resource.identity.get());
-        Ok(SharedImageAcquisition {
-            resource,
-            uploaded: true,
-            admitted,
-            generation,
-        })
+        Ok(SharedImageAcquisition::new(
+            resource, true, admitted, generation,
+        ))
     }
     pub(crate) fn rasterize_glyph(
         &self,
@@ -1299,12 +1329,7 @@ impl SharedGpuContext {
             if let Some(generation) = generation {
                 gradient_textures.touch(key, generation);
             }
-            return SharedGradientAcquisition {
-                resource,
-                uploaded: false,
-                admitted: true,
-                generation,
-            };
+            return SharedGradientAcquisition::new(resource, false, true, generation);
         }
         // Lookup textures are fixed-size: every entry costs the same nominal
         // bytes, so the byte budget behaves as a scaled entry budget. The
@@ -1353,12 +1378,7 @@ impl SharedGpuContext {
         } else {
             gradient_textures.note_unadmitted_upload();
         }
-        SharedGradientAcquisition {
-            resource,
-            uploaded: true,
-            admitted,
-            generation,
-        }
+        SharedGradientAcquisition::new(resource, true, admitted, generation)
     }
     pub(crate) fn shared_glyph_texture(&self, page: u16) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");

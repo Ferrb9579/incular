@@ -151,25 +151,22 @@ impl WgpuRenderer {
             &self.gradient_bind_group_layout,
             &self.gradient_sampler,
         );
-        if acquisition.admitted {
+        let admitted = acquisition.admitted;
+        let uploaded = acquisition.uploaded;
+        if admitted {
             debug_assert!(
                 self.shared.gradient_textures_contains(&key),
                 "window gradient cache must reference a retained shared entry"
             );
         }
-        let retention = acquisition
-            .generation
-            .map_or(LocalImageRetention::Bypassed, |generation| {
-                LocalImageRetention::Shared { generation }
-            });
-        self.gradient_cache.insert(
-            key,
-            acquisition.resource.resource.clone(),
-            retention,
-            self.counters.frames,
-        );
+        // The shared `Arc` moves into local retention unchanged — never a
+        // re-wrapped inner handle — so liveness checks observe renderer
+        // ownership (see `into_local_parts`).
+        let (resource, retention) = acquisition.into_local_parts();
+        self.gradient_cache
+            .insert(key, resource, retention, self.counters.frames);
         self.counters.gradient_cache_misses += 1;
-        if acquisition.uploaded {
+        if uploaded {
             self.counters.gradient_resource_creations += 1;
             self.counters.gradient_resource_uploads += 1;
         }
@@ -182,7 +179,7 @@ impl WgpuRenderer {
                     gradient: id,
                     format: self.window_gpu.config.format,
                 })
-                .map(|entry| &entry.resource.bind_group)
+                .map(|entry| &entry.resource.resource.bind_group)
         })
         .unwrap_or(&self.solid_gradient.bind_group)
     }
@@ -208,24 +205,19 @@ impl WgpuRenderer {
                 "window image cache must reference the context-wide texture identity"
             );
         }
-        // Bypassed uploads have no shared generation to name: they are
-        // retained locally only, bounded by the age rule below.
-        let retention = acquisition
-            .generation
-            .map_or(LocalImageRetention::Bypassed, |generation| {
-                LocalImageRetention::Shared { generation }
-            });
+        let uploaded = acquisition.uploaded;
+        let (resource, retention) = acquisition.into_local_parts();
         self.image_cache.insert(
             id,
             GpuImage {
-                resource: acquisition.resource,
+                resource,
                 bind_groups: HashMap::new(),
             },
             retention,
             self.counters.frames,
         );
         self.counters.image_cache_misses += 1;
-        if acquisition.uploaded {
+        if uploaded {
             self.counters.image_texture_creations += 1;
             self.counters.image_texture_uploads += 1;
         }

@@ -758,8 +758,9 @@ code, "missing" means absent with no compensating path.
   mean distinct builds never alias, verified by regression), the fixed
   1 KiB nominal size, the per-family generation sequence (no registry),
   upload wiring, and per-family counters. Renderer-local gradient keys
-  widened to the full shared key, so a surface reconfiguration retires
-  old-format entries as stale instead of reusing them. Regressions
+  widened to the full shared key, so reconfigured lookups cannot reuse
+  old-format entries (retirement itself is bounded decay, not immediate —
+  see the correction slice below). Regressions
   (`shared_gradient_textures`, 8 tests, display-server free): no-alias
   descriptions, reuse, churn eviction, stale refusal, bypass bound, idle
   reclaim skipping bypassed entries, metadata reclamation, and
@@ -767,8 +768,25 @@ code, "missing" means absent with no compensating path.
   gradient-only evictions still visit image-holding clients and image
   reclamation is unregressed. Upload-path GPU coverage stays recorded as
   unverified, as for images.
+- W2 gradient ownership/accounting correction: renderer-local gradient
+  entries retain the shared `Arc` (as images already did) instead of
+  cloning the inner handle, so eviction liveness checks observe renderer
+  ownership; drawing borrows the bind group through the wrapper. The
+  acquisition-to-local conversion is now one shared generic,
+  `SharedTextureAcquisition::into_local_parts`, used by both `ensure_*`
+  paths — generic over the resource, it cannot name inner handles.
+  Reconfiguration traced: `config.format` is fixed at construction and
+  `resize` never touches the caches, so old-format entries were never at
+  risk of wrong-format use; nothing retires them immediately, and that is
+  now the documented contract (locally unreachable, hence age-evicted;
+  shared-untouched, hence LRU-evicted under pressure) rather than the
+  previously claimed eager retirement. Regressions prove outer-`Arc`
+  identity through the production conversion, end-to-end eviction
+  observation with real strong counts, and the decay (not immediate)
+  behavior. Same validation as above; upload-path GPU coverage still
+  recorded as unverified.
 - Remaining W2 work: shared eviction for glyph pages/entries/fonts,
-  pipelines, and identity maps; presented vs failed outcome separation;
+  pipelines, and identity maps; presented-vs-failed outcome separation;
   two-window GPU churn tests. Text font-byte budgets are not scheduled
   (unbounded map noted above; layouts already bounded by count).
 

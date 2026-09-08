@@ -9,14 +9,29 @@
 //! scaled entry budget; oversized/bypass behavior is exercised through tiny
 //! custom budgets rather than real uploads.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use incular_core::Color;
 use incular_rendering::{GradientStop, GradientStops};
 use incular_wgpu::{
     GradientResourceKey, LocalImageRetention, RendererImageCache, SHARED_GRADIENT_TEXEL_BYTES,
-    SharedTextureBudget, SharedTextureCache,
+    SharedTextureAcquisition, SharedTextureBudget, SharedTextureCache,
 };
+
+/// Mirrors `ensure_gradient`'s resolve step through the production
+/// conversion: acquisition → local parts → local insert. The test never
+/// touches the conversion internals; identity preservation below proves
+/// the outer handle moves over unchanged.
+fn resolve_gradient(
+    local: &mut RendererImageCache<GradientResourceKey, Arc<TestOuter>>,
+    key: GradientResourceKey,
+    acquisition: SharedTextureAcquisition<Arc<TestOuter>>,
+    frame: u64,
+) {
+    let (resource, retention) = acquisition.into_local_parts();
+    local.insert(key, resource, retention, frame);
+}
 
 /// One gradient description with `count` stops spread across 0..=1.
 fn stops(seed: u8, count: usize) -> GradientStops {
@@ -42,6 +57,19 @@ struct TestTexture;
 
 fn test_texture() -> Arc<TestTexture> {
     Arc::new(TestTexture)
+}
+
+/// Two-level stand-in mirroring `SharedGpuGradient { resource: GpuGradient }`:
+/// the shared wrapper owns an inner renderer-facing handle. A conversion
+/// that re-wrapped the inner handle would mint a new outer allocation even
+/// with identical content.
+#[derive(Clone, Debug)]
+struct TestInner;
+
+#[derive(Debug)]
+struct TestOuter {
+    #[allow(dead_code)]
+    inner: TestInner,
 }
 
 const DEAD: fn(GradientResourceKey) -> bool = |_| false;
@@ -264,4 +292,143 @@ fn cross_client_local_hits_protect_shared_entries() {
     }
     assert!(client_a.contains(&key(&work)));
     assert_eq!(shared.generation(key(&work)), Some(7));
+}
+
+#[test]
+fn acquisition_conversion_preserves_outer_arc_identity() {
+    // The production conversion moves the shared outer handle into local
+    // retention unchanged. `Arc::ptr_eq` distinguishes that from
+    // re-wrapping the inner handle, which would mint a new allocation even
+    // with identical content — the exact bug class this locks out.
+    let outer = Arc::new(TestOuter { inner: TestInner });
+    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, true, Some(11));
+    let (resource, retention) = acquisition.into_local_parts();
+    assert!(Arc::ptr_eq(&resource, &outer));
+    assert_eq!(retention, LocalImageRetention::Shared { generation: 11 });
+    // Bypassed acquisitions resolve to local-only retention with the same
+    // move semantics.
+    let acquisition = SharedTextureAcquisition::new(Arc::clone(&outer), true, false, None);
+    let (resource, retention) = acquisition.into_local_parts();
+    assert!(Arc::ptr_eq(&resource, &outer));
+    assert_eq!(retention, LocalImageRetention::Bypassed);
+}
+
+#[test]
+fn gradient_eviction_observes_renderer_ownership() {
+    // End-to-end through the production pieces: shared admission, the
+    // production resolve step, churn eviction with a real strong-count
+    // closure over the wiring-shaped map, and local pruning. The evicted
+    // entry must report live while the local entry holds the same `Arc`
+    // the shared map held.
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(1, u64::MAX));
+    let mut map: HashMap<GradientResourceKey, Arc<TestOuter>> = HashMap::new();
+    let mut local = RendererImageCache::new();
+    let held = stops(71, 2);
+    let held_key = key(&held);
+    let outer = Arc::new(TestOuter { inner: TestInner });
+    assert!(
+        shared
+            .admit(held_key, SHARED_GRADIENT_TEXEL_BYTES, 7, &DEAD)
+            .is_empty()
+    );
+    map.insert(held_key, Arc::clone(&outer));
+    // Same conversion `ensure_gradient` applies: the shared `Arc` moves
+    // into local retention, so the map and the local entry alias one
+    // allocation.
+    resolve_gradient(
+        &mut local,
+        held_key,
+        SharedTextureAcquisition::new(Arc::clone(&outer), false, true, Some(7)),
+        1,
+    );
+    assert!(Arc::ptr_eq(
+        &local.get(&held_key).expect("local entry").resource,
+        &map[&held_key],
+    ));
+    // Churn evicts with liveness observed exactly as the wiring observes
+    // it: map references beyond the map's own.
+    let next = stops(72, 2);
+    let evicted = shared.admit(key(&next), SHARED_GRADIENT_TEXEL_BYTES, 8, &|id| {
+        map.get(&id).is_some_and(|arc| Arc::strong_count(arc) > 1)
+    });
+    assert_eq!(evicted.len(), 1);
+    assert_eq!(evicted[0].id, held_key);
+    assert!(
+        evicted[0].live_elsewhere,
+        "the locally retained Arc must be observed"
+    );
+    // Wiring drops the map entry; the local entry keeps the texture alive
+    // until the production reclaim path releases it.
+    map.remove(&held_key);
+    let probe = Arc::downgrade(&outer);
+    assert!(probe.upgrade().is_some());
+    let dropped = local.reclaim_stale(&shared);
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].0, held_key);
+    drop(dropped);
+    drop(outer);
+    assert!(probe.upgrade().is_none());
+}
+
+#[test]
+fn superseded_format_entries_decay_without_immediate_retirement() {
+    // The same stops under two surface formats are distinct shared
+    // entries. Nothing retires the old format immediately on reconfigure:
+    // reconfigured lookups simply stop naming it. This test locks in that
+    // decay contract — locally unreachable entries age out, shared entries
+    // linger until LRU pressure — instead of claiming eager retirement.
+    let old_format = wgpu::TextureFormat::Rgba8Unorm;
+    let new_format = wgpu::TextureFormat::Bgra8Unorm;
+    let content = stops(81, 2);
+    let old_key = GradientResourceKey {
+        gradient: content.id(),
+        format: old_format,
+    };
+    let new_key = GradientResourceKey {
+        gradient: content.id(),
+        format: new_format,
+    };
+    let mut shared = SharedTextureCache::with_limits(SharedTextureBudget::new(10, u64::MAX));
+    let mut local = RendererImageCache::new();
+    shared.admit(old_key, SHARED_GRADIENT_TEXEL_BYTES, 7, &DEAD);
+    local.insert(
+        old_key,
+        Arc::new(TestOuter { inner: TestInner }),
+        LocalImageRetention::Shared { generation: 7 },
+        1,
+    );
+    // "Reconfigure": all subsequent resolves name the new format only.
+    shared.admit(new_key, SHARED_GRADIENT_TEXEL_BYTES, 8, &DEAD);
+    local.insert(
+        new_key,
+        Arc::new(TestOuter { inner: TestInner }),
+        LocalImageRetention::Shared { generation: 8 },
+        2,
+    );
+    assert!(local.record_use(new_key, 3));
+    // No immediate retirement happened on either side.
+    assert!(local.contains(&old_key));
+    assert_eq!(shared.generation(old_key), Some(7));
+    // The old-format local entry is unreachable now: with no further use
+    // recorded, the age bound releases it while the new-format entry stays.
+    assert_eq!(local.evict_unused(602, 600), 1);
+    assert!(!local.contains(&old_key));
+    assert!(local.contains(&new_key));
+    // The old-format shared entry lingers without pressure — and goes
+    // first once churn arrives, since nothing refreshes it.
+    assert_eq!(shared.generation(old_key), Some(7));
+    for index in 0..9u64 {
+        let churn = stops(82 + index as u8, 2);
+        shared.admit(
+            GradientResourceKey {
+                gradient: churn.id(),
+                format: new_format,
+            },
+            SHARED_GRADIENT_TEXEL_BYTES,
+            20 + index,
+            &DEAD,
+        );
+    }
+    assert_eq!(shared.generation(old_key), None);
+    assert_eq!(shared.generation(new_key), Some(8));
 }
