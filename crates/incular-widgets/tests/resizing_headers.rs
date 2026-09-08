@@ -1160,7 +1160,8 @@ fn controller_driven_text_change_revalidates_same_delegate() {
     // no descriptor rebuild and no new delegate. The content-revision check
     // in the layout preamble routes through the same enclosing-sliver
     // invalidation channel, so growth during overscroll lands authoritatively
-    // on the next completed layout; visual-only edits disturb nothing.
+    // on the next completed layout. Selection and caret revisions never enter
+    // that channel, so visual-only edits disturb nothing by construction.
     let edit = TextEditingController::with_text("Hi");
     let controller = ScrollController::new();
     let physics = ScrollPhysics::default().bouncing();
@@ -1264,4 +1265,212 @@ fn controller_driven_text_change_revalidates_same_delegate() {
     tree.layout(constraints).expect("recovered layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., shrunk)));
     assert_eq!(controller.content_extent(), 800. + shrunk);
+}
+
+#[test]
+fn nested_shrink_wrap_content_change_during_outer_overscroll() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{
+        SizedBox, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior,
+        internal::ShrinkWrappingViewport,
+    };
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Instant;
+
+    // An intrinsically sized inner viewport lives inside an outer natural
+    // header. Mutating inner content in place retains both delegates; the
+    // rebuild must invalidate the outer measurement through the
+    // shrink-wrapping boundary so the next layout revalidates unbounded.
+    // Initial content matches the lazy default so the test isolates
+    // propagation from first-frame estimate convergence.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let inner_height = Rc::new(Cell::new(48.));
+    let inner_revision = Rc::new(Cell::new(0_u64));
+    let inner_slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(
+        Widget::stateful_layout_builder(inner_revision.clone(), {
+            let inner_height = inner_height.clone();
+            move |_, _| Widget::from(SizedBox::new().height(inner_height.get()))
+        }),
+    ))];
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverNaturalHeader::new(Widget::from(ShrinkWrappingViewport::new(inner_slivers)))
+                .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+                .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 48.)));
+    assert_eq!(controller.content_extent(), 848.);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    // Grow beyond the old stretched total (48 + stretch) during overscroll.
+    inner_height.set(100.);
+    inner_revision.set(1);
+    tree.layout(constraints).expect("grown layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 900.);
+    // Both delegates and the retained header survived the in-place change.
+    assert_eq!(
+        tree.render_id(tree.children(root).expect("children")[0]),
+        Some(header)
+    );
+    // Fresh overscroll stretches the revalidated measurement exactly.
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 100. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("settled layout");
+    // Shrink during overscroll follows the same propagation path.
+    controller.apply_physics(physics, -40.);
+    assert!(-controller.offset() > 0.);
+    inner_height.set(30.);
+    inner_revision.set(2);
+    tree.layout(constraints).expect("shrunk layout");
+    assert_eq!(controller.offset(), 0.);
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 30.)));
+    assert_eq!(controller.content_extent(), 830.);
+    // Repeated settled layouts converge with no drift and no loops.
+    for _ in 0..3 {
+        tree.layout(constraints).expect("repeat layout");
+    }
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 30.)));
+    assert_eq!(controller.content_extent(), 830.);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    tree.layout(constraints).expect("final overscroll layout");
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 30. + stretch))
+    );
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 30.)));
+    assert_eq!(controller.content_extent(), 830.);
+}
+
+#[test]
+fn fixed_size_inner_viewport_activity_preserves_outer_measurement() {
+    use incular_core::Offset;
+    use incular_scroll::ScrollPhysics;
+    use incular_widgets::{SizedBox, SliverHeaderOverscrollBehavior, SliverHeaderScrollBehavior};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::time::Instant;
+
+    // A fixed-size inner viewport reports a stable size no matter what its
+    // content does, so inner scrolling and inner content changes must leave
+    // the outer header measurement and overscroll untouched.
+    let controller = ScrollController::new();
+    let physics = ScrollPhysics::default().bouncing();
+    let inner = ScrollController::new();
+    let inner_height = Rc::new(Cell::new(100.));
+    let inner_revision = Rc::new(Cell::new(0_u64));
+    let inner_slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 700.),
+            Color::WHITE,
+        ))),
+        Box::new(SliverToBoxAdapter::new(Widget::stateful_layout_builder(
+            inner_revision.clone(),
+            {
+                let inner_height = inner_height.clone();
+                move |_, _| Widget::from(SizedBox::new().height(inner_height.get()))
+            },
+        ))),
+    ];
+    let slivers: Vec<Box<dyn Sliver>> = vec![
+        Box::new(
+            SliverNaturalHeader::new({
+                let inner_viewport: Widget = CustomScrollView::new(inner_slivers)
+                    .controller(inner.clone())
+                    .into();
+                Widget::from(SizedBox::new().height(100.).child(inner_viewport))
+            })
+            .scroll_behavior(SliverHeaderScrollBehavior::Pinned)
+            .overscroll_behavior(SliverHeaderOverscrollBehavior::Stretch),
+        ),
+        Box::new(SliverToBoxAdapter::new(Widget::box_(
+            Size::new(200., 800.),
+            Color::BLACK,
+        ))),
+    ];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(controller.clone())
+                .physics(physics)
+                .into(),
+        )
+        .expect("mount");
+    let constraints = Constraints::tight(Size::new(200., 200.));
+    tree.layout(constraints).expect("layout");
+    let header = tree
+        .render_id(tree.children(root).expect("children")[0])
+        .expect("header");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
+    assert_eq!(controller.content_extent(), 900.);
+    assert_eq!(inner.content_extent(), 800.);
+    controller.apply_physics(physics, -40.);
+    let stretch = -controller.offset();
+    assert!(stretch > 0.);
+    // Scrolling the inner viewport is offset-only activity: the outer header
+    // keeps its stretched presentation and the outer overscroll survives.
+    assert!(inner.jump_to(300.));
+    tree.layout(constraints).expect("inner scroll layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    assert_eq!(inner.offset(), 300.);
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 100. + stretch))
+    );
+    assert_eq!(controller.content_extent(), 900.);
+    // Growing inner content changes the inner range but not the fixed outer
+    // size: invalidation stops at the fixed-size boundary.
+    inner_height.set(200.);
+    inner_revision.set(1);
+    tree.layout(constraints).expect("inner growth layout");
+    assert_eq!(inner.content_extent(), 900.);
+    assert_eq!(controller.offset(), -stretch);
+    assert_eq!(
+        tree.render_size(header),
+        Some(Size::new(200., 100. + stretch))
+    );
+    assert_eq!(tree.render_origin(header), Offset::ZERO);
+    assert_eq!(controller.content_extent(), 900.);
+    assert!(controller.jump_to(0.));
+    tree.layout(constraints).expect("recovered layout");
+    assert_eq!(tree.render_size(header), Some(Size::new(200., 100.)));
 }

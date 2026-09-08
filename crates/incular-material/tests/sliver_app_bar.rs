@@ -1535,12 +1535,14 @@ fn controller_driven_text_growth_uses_supported_behavior() {
     use incular_widgets::{EditableText, Semantics, TextEditingController};
 
     // An existing controller-driven widget (multiline editor) mutates
-    // intrinsic height with no descriptor rebuild and no new delegate: settled
-    // layouts learn through the ordinary measurement pass. Single-line edits
-    // that change no intrinsic height disturb nothing — not every text edit
-    // is a size change. Growth during overscroll keeps the live-measured
-    // bottom correct with the toolbar taking the remainder; the authoritative
-    // total lands at recovery with no drift.
+    // intrinsic height with no descriptor rebuild and no new delegate. A
+    // content revision invalidates the cached measurement, and the next
+    // layout remeasures unbounded: that is invalidation followed by
+    // remeasurement, which is distinct from a changed extent — when
+    // remeasurement confirms the same value, range and overscroll are
+    // preserved with no spurious settle. Genuine growth settles through
+    // Scroll's extent policy with the authoritative total presented before
+    // any manual recovery.
     let background = Color::rgba(41, 52, 63, 255);
     let edit = TextEditingController::with_text("Hi");
     let bottom = || -> Widget {
@@ -1593,13 +1595,15 @@ fn controller_driven_text_growth_uses_supported_behavior() {
         .expect("bottom");
     let natural = 40. + bottom_height;
     assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
-    // A single-line edit changes no intrinsic height: nothing invalidates.
+    // A single-line edit changes no intrinsic height: it invalidates and
+    // immediately revalidates to the same value, so range and content are
+    // undisturbed — not every text edit is a size change.
     edit.set_text("Hi!");
     tree.layout(constraints).expect("edited layout");
     assert_eq!(tree.render_size(header), Some(Size::new(200., natural)));
     assert_eq!(controller.content_extent(), 800. + natural);
-    // The same holds during overscroll: same-height content preserves the
-    // range and the activity with no remeasurement effects.
+    // The same holds during overscroll: same-height content revalidates to
+    // the same extent, preserving the range and the activity.
     controller.apply_physics(physics, -30.);
     let stretch = -controller.offset();
     assert!(stretch > 0.);

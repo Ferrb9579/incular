@@ -101,7 +101,11 @@ dependencies and layout-affecting render updates at their source, while
 paint-only updates structurally take no invalidation branch. Controller
 content revisions observed in the layout preamble join the same channel
 (caret/selection revisions stay visual-only), so growing multiline editors
-land authoritatively without manual recovery. Material maps
+land authoritatively without manual recovery. The ancestor walk notifies the
+nearest enclosing sliver viewport and continues outward through
+shrink-wrapping viewports — whose size derives from content — while
+fixed-size viewports stop propagation, so nested content changes revalidate
+outer owners without inner scrolling ever disturbing them. Material maps
 `stretch` into this policy through one Flex
 structure shared by measurement and presentation: the bottom is measured
 under real cross constraints and the toolbar fills the remainder, with no

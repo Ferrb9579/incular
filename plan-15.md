@@ -24,6 +24,25 @@ Evidence: [whole-codebase audit](docs/WHOLE_CODEBASE_AUDIT.md),
 
 ## Implementation progress
 
+- W1 nested-viewport invalidation: the enclosing-sliver invalidation walk now
+  continues outward through shrink-wrapping viewports, whose size derives
+  from content, so inner content changes revalidate outer natural-header
+  owners; fixed-size viewports stop propagation, so inner scrolling, inner
+  content growth that cannot resize the viewport, and paint-only updates
+  leave the outer measurement and overscroll untouched. Reproduction first
+  showed the outer header retaining its stale total while inner content grew
+  (plus an orthogonal shrink-wrap first-frame estimate lag when initial
+  content differs from the lazy default, which the regression isolates by
+  matching initial content to the default). Regressions cover nested growth
+  beyond the old stretched total and shrinkage with authoritative geometry
+  before manual recovery, render/delegate identity survival, drift-free
+  repeat stretch/recovery, and the fixed-size negative. The nested growth
+  case failed against the previous implementation; the fixed-size case
+  passes as a preservation lock. Formatting, workspace compilation, all
+  1,191 workspace tests, strict all-feature/all-target Clippy, all Material
+  all-feature tests and warning-denied Widgets/Material rustdoc passed. Live
+  native tests were not run. Snapping remains pending; W1 is not marked
+  complete.
 - W1 controller-driven invalidation: text content revisions observed in the
   layout preamble now route through the existing enclosing-sliver
   invalidation channel, so a multiline editor that grows mid-overscroll

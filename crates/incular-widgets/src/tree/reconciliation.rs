@@ -959,6 +959,14 @@ impl WidgetTree {
     /// changes (text-field content revisions observed in the layout
     /// preamble) enter through this same channel rather than a second walk.
     ///
+    /// A shrink-wrapping viewport sizes from its content, so a content
+    /// change below one may resize the viewport itself: after notifying the
+    /// inner sliver, the walk continues outward to enclosing measurement
+    /// owners. Fixed-size viewports (and plain scroll views) report stable
+    /// sizes, so propagation stops at their boundary — inner offset changes,
+    /// fixed-size viewport activity, and paint-only updates never reach this
+    /// walk in the first place.
+    ///
     /// Only genuine content changes call this: stateful-builder revision
     /// changes, descriptor replacements, inherited invalidations, and
     /// controller content revisions. Constraints-driven rematerializations
@@ -989,12 +997,19 @@ impl WidgetTree {
                 let Some(scoped) = sliver_ids.get(position).copied() else {
                     return;
                 };
+                let mut shrink_wrapping = false;
                 if let Some(render) = self.renders.get(render.0)
                     && let RenderKind::SliverViewport { config } = &render.object.kind
                 {
                     config.delegate.invalidate_sliver_child(scoped);
+                    shrink_wrapping = config.shrink_wrap;
                 }
-                return;
+                if !shrink_wrapping {
+                    return;
+                }
+                child_below = ancestor;
+                current = parent;
+                continue;
             }
             child_below = ancestor;
             current = parent;

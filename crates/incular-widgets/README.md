@@ -233,7 +233,12 @@ at their source, while paint-only updates take no invalidation branch by
 construction. Controller-driven edits join the same channel: the layout
 preamble compares text content revisions (caret and selection revisions
 stay visual-only), so a multiline editor that grows mid-overscroll lands
-authoritatively on the next completed layout with no manual recovery. Only genuine content-change sources invalidate —
+authoritatively on the next completed layout with no manual recovery.
+Invalidation walks past the rebuilt element to the nearest enclosing sliver
+viewport; when that viewport shrink-wraps, its size derives from content,
+so the walk continues outward to enclosing measurement owners. Fixed-size
+viewports report stable sizes, so inner offset changes and fixed-size
+viewport activity never propagate. Only genuine content-change sources invalidate —
 constraints-driven rematerializations from scrolling, stretch presentation,
 or measurement passes carry no content signal, so invalidation cannot
 recurse or loop. Replacing a viewport descriptor seeds
