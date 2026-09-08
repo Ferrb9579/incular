@@ -106,13 +106,18 @@ pub fn shared_image_texture_bytes(width: u32, height: u32) -> Option<u64> {
         .and_then(|pixels| pixels.checked_mul(4))
 }
 
-/// One retained entry: nominal bytes plus the last-use tick. Ticks come
-/// from the cache's own monotonic counter, so interleaved renderers share
-/// one recency order without any frame clock.
+/// One retained entry: nominal bytes, the last-use tick, and the texture
+/// generation (the context-local identity value) the entry was admitted
+/// with. Ticks come from the cache's own monotonic counter, so interleaved
+/// renderers share one recency order without any frame clock. The
+/// generation binds recency updates to one upload: a touch carrying a
+/// superseded generation refreshes nothing, so a stale local entry can
+/// never keep a different upload alive in the order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachedSharedImageTexture {
     pub bytes: u64,
     pub last_use: u64,
+    pub generation: u64,
 }
 
 /// One eviction: the dropped entry plus whether its texture stayed alive in
@@ -125,7 +130,9 @@ pub struct SharedImageTextureEviction {
 }
 
 /// Counters for the device-owned image-texture cache. Cumulative since
-/// construction except where noted; gauges are current values.
+/// construction except where noted; gauges are current values. Together
+/// they separate shared-cache retention (`shared_hits`, gauges below) from
+/// outstanding ownership elsewhere (`evicted_live`, `stale_touches`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SharedImageTextureCounters {
     /// Textures uploaded and admitted to the shared map.
@@ -138,8 +145,10 @@ pub struct SharedImageTextureCounters {
     pub evicted_bytes: u64,
     /// Dropped entries still referenced elsewhere at drop time.
     pub evicted_live: u64,
-    /// Uploads served without admission (over the budget by size).
+    /// Uploads served without admission (over budget by size).
     pub unadmitted_uploads: u64,
+    /// Touches refused because the caller named a superseded generation.
+    pub stale_touches: u64,
 }
 
 /// Device-owned admission/eviction/accounting for shared image textures.
@@ -222,9 +231,20 @@ impl SharedImageTextureCache {
         self.limits.max_entries > 0 && bytes <= self.limits.max_bytes
     }
 
-    /// Records a shared-map hit for `id`. Returns false for unknown ids.
-    pub fn touch(&mut self, id: ImageId) -> bool {
-        if !self.entries.contains_key(&id) {
+    /// Records a shared-map hit for `id` carrying the caller's `generation`.
+    /// Refreshes recency only when the generation matches the admitted
+    /// entry; a superseded generation counts a stale touch and refreshes
+    /// nothing, so a stale local entry can never keep a different upload
+    /// alive. Returns false for unknown ids (uncounted).
+    pub fn touch(&mut self, id: ImageId, generation: u64) -> bool {
+        let matched = self
+            .entries
+            .get(&id)
+            .is_some_and(|entry| entry.generation == generation);
+        if !matched {
+            if self.entries.contains_key(&id) {
+                self.counters.stale_touches += 1;
+            }
             return false;
         }
         self.tick = self.tick.saturating_add(1);
@@ -241,21 +261,30 @@ impl SharedImageTextureCache {
         true
     }
 
-    /// Admits `id` with nominal `bytes`, evicting least-recently-used
-    /// entries first while over budget. `is_live` observes external
-    /// references (renderer-held `Arc`s) so each eviction reports whether
-    /// its texture survives the drop. An already-present id is treated as
-    /// a touch; an over-budget entry is refused without effect, so the
-    /// shared map (whose keys always equal these entries) never holds what
-    /// the policy cannot account for.
+    /// Admitted generation for `id`, if the shared map retains an entry.
+    /// Renderer-local caches compare this against the generation recorded
+    /// at admission to detect superseded entries without refreshing them.
+    #[must_use]
+    pub fn generation(&self, id: ImageId) -> Option<u64> {
+        self.entries.get(&id).map(|entry| entry.generation)
+    }
+
+    /// Admits `id` with nominal `bytes` under `generation`, evicting
+    /// least-recently-used entries first while over budget. `is_live`
+    /// observes external references (renderer-held `Arc`s) so each eviction
+    /// reports whether its texture survives the drop. An already-present id
+    /// is treated as a generation-checked touch; an over-budget entry is
+    /// refused without effect, so the shared map (whose keys always equal
+    /// these entries) never holds what the policy cannot account for.
     pub fn admit(
         &mut self,
         id: ImageId,
         bytes: u64,
+        generation: u64,
         is_live: &dyn Fn(ImageId) -> bool,
     ) -> Vec<SharedImageTextureEviction> {
         if self.entries.contains_key(&id) {
-            self.touch(id);
+            self.touch(id, generation);
             return Vec::new();
         }
         if !self.fits(bytes) {
@@ -268,6 +297,7 @@ impl SharedImageTextureCache {
             CachedSharedImageTexture {
                 bytes,
                 last_use: tick,
+                generation,
             },
         );
         self.lru.push_back(id);
@@ -326,6 +356,183 @@ impl SharedImageTextureCache {
     }
 }
 
+/// One renderer-local entry: the retained resource plus the texture
+/// generation recorded when the shared owner admitted it. The generation is
+/// what lets later coordination tell "same upload, still current" from "a
+/// different upload that reused this identity".
+#[derive(Clone, Debug)]
+pub struct RendererImageEntry<R> {
+    pub resource: R,
+    pub generation: u64,
+}
+
+/// One window's local image-texture retention, coordinated with the shared
+/// owner. Generic over the retained resource so the coordination logic —
+/// frame-use batching, generation-checked refresh, stale pruning, age
+/// eviction — is the same code production renderers and headless tests run:
+/// production instantiates it with its GPU entry type, tests with plain
+/// reference-counted stand-ins.
+///
+/// A local entry is retention, not proof of use: only ids drained through
+/// [`Self::drain_frame_use`] count as used, and only
+/// [`Self::sync_with_shared`] refreshes shared recency — at most one shared
+/// lock per frame no matter how many draws referenced the images.
+#[derive(Clone, Debug, Default)]
+pub struct RendererImageCache<R> {
+    entries: HashMap<ImageId, (RendererImageEntry<R>, LocalImageUse)>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LocalImageUse {
+    last_used_frame: u64,
+    used_this_frame: bool,
+}
+
+impl<R> RendererImageCache<R> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[must_use]
+    pub fn contains(&self, id: &ImageId) -> bool {
+        self.entries.contains_key(id)
+    }
+
+    #[must_use]
+    pub fn get(&self, id: &ImageId) -> Option<&RendererImageEntry<R>> {
+        self.entries.get(id).map(|(entry, _)| entry)
+    }
+
+    #[must_use]
+    pub fn get_mut(&mut self, id: &ImageId) -> Option<&mut RendererImageEntry<R>> {
+        self.entries.get_mut(id).map(|(entry, _)| entry)
+    }
+
+    /// Records use of a locally retained entry for `frame`. Returns false
+    /// when absent. Takes no shared lock; use is flushed in batch by
+    /// [`Self::sync_with_shared`].
+    pub fn record_use(&mut self, id: ImageId, frame: u64) -> bool {
+        if let Some((_, state)) = self.entries.get_mut(&id) {
+            state.last_used_frame = frame;
+            state.used_this_frame = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Inserts (or replaces) a locally retained entry, recording use for
+    /// `frame`. `generation` must be the shared identity value current at
+    /// admission, so later syncs can prove the entry still names it.
+    pub fn insert(&mut self, id: ImageId, resource: R, generation: u64, frame: u64) {
+        self.entries.insert(
+            id,
+            (
+                RendererImageEntry {
+                    resource,
+                    generation,
+                },
+                LocalImageUse {
+                    last_used_frame: frame,
+                    used_this_frame: true,
+                },
+            ),
+        );
+    }
+
+    /// Takes this frame's used `(id, generation)` pairs, clearing use flags.
+    /// Deduplicated by construction: an id drawn many times appears once.
+    pub fn drain_frame_use(&mut self) -> Vec<(ImageId, u64)> {
+        let mut used = Vec::new();
+        for (id, (entry, state)) in self.entries.iter_mut() {
+            if state.used_this_frame {
+                state.used_this_frame = false;
+                used.push((*id, entry.generation));
+            }
+        }
+        used
+    }
+
+    /// Drops entries whose shared generation differs or is gone, returning
+    /// the dropped `(id, resource)` pairs for the caller to release.
+    /// Dropping is always safe: submitted GPU work outlives the handles by
+    /// the wgpu lifetime contract, and the next use re-resolves to the
+    /// current shared generation. Safe to call on an idle client that has
+    /// presented no frames: staleness needs no activity, only comparison.
+    pub fn prune_stale(
+        &mut self,
+        current_generation: &dyn Fn(ImageId) -> Option<u64>,
+    ) -> Vec<(ImageId, R)> {
+        let stale: Vec<ImageId> = self
+            .entries
+            .iter()
+            .filter(|(id, (entry, _))| current_generation(**id) != Some(entry.generation))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut dropped = Vec::with_capacity(stale.len());
+        for id in stale {
+            if let Some((entry, _)) = self.entries.remove(&id) {
+                dropped.push((id, entry.resource));
+            }
+        }
+        dropped
+    }
+
+    /// Drops entries unused for more than `max_unused_frames`, returning
+    /// how many went. This is the age half of local retention; generation
+    /// staleness is handled by [`Self::prune_stale`].
+    pub fn evict_unused(&mut self, frame: u64, max_unused_frames: u64) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|_, (_, state)| {
+            frame.saturating_sub(state.last_used_frame) <= max_unused_frames
+        });
+        before - self.entries.len()
+    }
+
+    /// Coordinates one frame with the shared owner: flushes this frame's
+    /// batched use as generation-checked touches, then drops locally stale
+    /// entries. Returns `(refreshed, pruned_ids)`. Holds no lock itself;
+    /// the caller passes the (already locked) shared policy once, so a
+    /// frame costs at most one shared acquisition no matter how many draws
+    /// ran.
+    ///
+    /// Coherence granularity is one frame: protection lands when the sync
+    /// runs, so a churn admission earlier in the same frame can still evict
+    /// an entry whose touch has not landed yet. That entry's owner
+    /// re-resolves on its next use (a shared hit on the replacement, or a
+    /// counted re-upload), so the system converges instead of sticking.
+    pub fn sync_with_shared(
+        &mut self,
+        shared: &mut SharedImageTextureCache,
+    ) -> (usize, Vec<ImageId>) {
+        let mut refreshed = 0;
+        for (id, generation) in self.drain_frame_use() {
+            if shared.touch(id, generation) {
+                refreshed += 1;
+            }
+        }
+        let pruned: Vec<ImageId> = self
+            .prune_stale(&|id| shared.generation(id))
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        (refreshed, pruned)
+    }
+}
+
 /// Read-only shared GPU ownership diagnostics. Counts describe one
 /// application/device, rather than any individual presentation surface.
 /// Image-texture counters come from the device-owned admission policy:
@@ -350,6 +557,8 @@ pub struct SharedGpuDiagnostics {
     pub shared_image_evicted_live: u64,
     /// Uploads served without shared admission (over budget by size).
     pub shared_image_unadmitted: u64,
+    /// Touches refused because the caller named a superseded generation.
+    pub shared_image_stale_touches: u64,
 }
 
 /// Per-window presentation state that is independent of the shared GPU
@@ -471,6 +680,16 @@ pub(crate) struct SharedGpuImage {
     pub(crate) view: wgpu::TextureView,
     pub(crate) width: u32,
     pub(crate) height: u32,
+}
+/// What one renderer acquisition of a shared texture established.
+/// `uploaded` reports a fresh GPU upload (versus shared reuse) while
+/// `admitted` reports shared-map retention: oversized-for-budget uploads
+/// return `uploaded: true, admitted: false` and bypass admission, registry
+/// identity, and the policy entirely.
+pub(crate) struct SharedImageAcquisition {
+    pub(crate) resource: Arc<SharedGpuImage>,
+    pub(crate) uploaded: bool,
+    pub(crate) admitted: bool,
 }
 pub(crate) struct SharedGpuGradient {
     pub(crate) resource: GpuGradient,
@@ -615,6 +834,7 @@ impl SharedGpuContext {
             shared_image_evictions: image_counters.evictions,
             shared_image_evicted_live: image_counters.evicted_live,
             shared_image_unadmitted: image_counters.unadmitted_uploads,
+            shared_image_stale_touches: image_counters.stale_touches,
         }
     }
     /// Context-local identity of the currently retained texture for
@@ -678,7 +898,7 @@ impl SharedGpuContext {
     pub(crate) fn image_resource(
         &self,
         image: &ImageHandle,
-    ) -> Result<(Arc<SharedGpuImage>, bool), RendererError> {
+    ) -> Result<SharedImageAcquisition, RendererError> {
         let id = image.id();
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         // Split field borrows up front: the liveness closure below observes
@@ -689,12 +909,20 @@ impl SharedGpuContext {
             registry,
             ..
         } = &mut *resources;
-        if let Some(resource) = images.get(&id) {
-            let resource = Arc::clone(resource);
+        let hit = images.get(&id).cloned();
+        if let Some(resource) = hit {
             // Cross-renderer reuse: one window's use refreshes the shared
-            // recency order, keeping another window's textures alive.
-            image_textures.touch(id);
-            return Ok((resource, false));
+            // recency order, keeping another window's textures alive. The
+            // generation comes from the retained entry itself, so a hit
+            // always names the current upload.
+            if let Some(generation) = image_textures.generation(id) {
+                image_textures.touch(id, generation);
+            }
+            return Ok(SharedImageAcquisition {
+                resource,
+                uploaded: false,
+                admitted: true,
+            });
         }
         let decoded = image.decoded();
         let limit = self.inner.device.limits().max_texture_dimension_2d;
@@ -772,7 +1000,8 @@ impl SharedGpuContext {
             // renderer, an active frame, or submitted work still references
             // the texture. Evictions are reported as entry drops, never as
             // texture freeings.
-            let evicted = image_textures.admit(id, bytes, &|candidate| {
+            let generation = resource.identity.get();
+            let evicted = image_textures.admit(id, bytes, generation, &|candidate| {
                 images
                     .get(&candidate)
                     .is_some_and(|held| Arc::strong_count(held) > 1)
@@ -785,7 +1014,11 @@ impl SharedGpuContext {
         } else {
             image_textures.note_unadmitted_upload();
         }
-        Ok((resource, true))
+        Ok(SharedImageAcquisition {
+            resource,
+            uploaded: true,
+            admitted,
+        })
     }
     pub(crate) fn rasterize_glyph(
         &self,

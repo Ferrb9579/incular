@@ -57,7 +57,10 @@ pub struct WgpuRenderer {
     pub(super) atlas_sampler: wgpu::Sampler,
     pub(super) image_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) image_samplers: HashMap<ImageSampling, wgpu::Sampler>,
-    pub(super) image_cache: HashMap<ImageId, GpuImage>,
+    /// This window's image retention, coordinated with the shared owner
+    /// through [`RendererImageCache`]: frame use is recorded locally
+    /// without shared locks and flushed in one batch per frame.
+    pub(super) image_cache: RendererImageCache<GpuImage>,
     pub(super) composite_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) composite_sampler: wgpu::Sampler,
     pub(super) blur_bind_group_layout: wgpu::BindGroupLayout,
@@ -297,7 +300,7 @@ impl WgpuRenderer {
             atlas_sampler,
             image_bind_group_layout,
             image_samplers,
-            image_cache: HashMap::new(),
+            image_cache: RendererImageCache::new(),
             composite_bind_group_layout,
             composite_sampler,
             blur_bind_group_layout,
@@ -443,7 +446,7 @@ impl WgpuRenderer {
             atlas_sampler: pipelines.atlas_sampler.clone(),
             image_bind_group_layout: pipelines.image_bind_group_layout.clone(),
             image_samplers: pipelines.image_samplers.clone(),
-            image_cache: HashMap::new(),
+            image_cache: RendererImageCache::new(),
             composite_bind_group_layout: pipelines.composite_bind_group_layout.clone(),
             composite_sampler: pipelines.composite_sampler.clone(),
             blur_bind_group_layout: pipelines.blur_bind_group_layout.clone(),

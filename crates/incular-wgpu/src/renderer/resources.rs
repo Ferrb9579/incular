@@ -162,41 +162,65 @@ impl WgpuRenderer {
     }
     pub(super) fn ensure_gpu_image(&mut self, image: &ImageHandle) -> Result<(), RendererError> {
         let id = image.id();
-        if let Some(resource) = self.image_cache.get_mut(&id) {
-            debug_assert_eq!(resource.resource.width, image.decoded().width());
-            debug_assert_eq!(resource.resource.height, image.decoded().height());
-            resource.last_used_frame = self.counters.frames;
+        if let Some(entry) = self.image_cache.get(&id) {
+            let gpu = &entry.resource;
+            debug_assert_eq!(gpu.resource.width, image.decoded().width());
+            debug_assert_eq!(gpu.resource.height, image.decoded().height());
+            self.image_cache.record_use(id, self.counters.frames);
             self.counters.image_cache_hits += 1;
             return Ok(());
         }
-        let (resource, uploaded) = self.shared.image_resource(image)?;
-        debug_assert_eq!(
-            self.shared.image_resource_identity(id),
-            Some(resource.identity),
-            "window image cache must reference the context-wide texture identity"
-        );
+        let acquisition = self.shared.image_resource(image)?;
+        // Only admitted textures carry a context-wide identity: bypassed
+        // (oversized-for-budget) uploads hold a fresh per-upload identity
+        // with no registry entry, so the identity check applies to them.
+        if acquisition.admitted {
+            debug_assert_eq!(
+                self.shared.image_resource_identity(id),
+                Some(acquisition.resource.identity),
+                "window image cache must reference the context-wide texture identity"
+            );
+        }
+        let generation = acquisition.resource.identity.get();
         self.image_cache.insert(
             id,
             GpuImage {
-                resource,
+                resource: acquisition.resource,
                 bind_groups: HashMap::new(),
-                last_used_frame: self.counters.frames,
             },
+            generation,
+            self.counters.frames,
         );
         self.counters.image_cache_misses += 1;
-        if uploaded {
+        if acquisition.uploaded {
             self.counters.image_texture_creations += 1;
             self.counters.image_texture_uploads += 1;
         }
         Ok(())
     }
+    /// Flushes this frame's image use into the shared owner in one batch
+    /// and drops locally stale entries. Runs once per frame after submit,
+    /// so per-draw image references cost no shared lock: use is recorded
+    /// locally during encoding and reported here, deduplicated by id.
+    /// Stale entries (shared-evicted, or superseded by a re-upload under a
+    /// new generation) are dropped with their bind groups; submitted work
+    /// stays valid through the wgpu lifetime contract, and the next use
+    /// re-resolves to the current shared generation.
+    pub(super) fn sync_shared_image_use(&mut self) {
+        let mut shared = self
+            .shared
+            .inner
+            .resources
+            .lock()
+            .expect("shared resource lock");
+        self.image_cache
+            .sync_with_shared(&mut shared.image_textures);
+    }
     pub(super) fn evict_unused_images(&mut self) {
-        let frame = self.counters.frames;
-        let before = self.image_cache.len();
-        self.image_cache.retain(|_, image| {
-            frame.saturating_sub(image.last_used_frame) <= IMAGE_CACHE_MAX_UNUSED_FRAMES
-        });
-        self.counters.image_texture_evictions += (before - self.image_cache.len()) as u64;
+        let dropped = self
+            .image_cache
+            .evict_unused(self.counters.frames, IMAGE_CACHE_MAX_UNUSED_FRAMES);
+        self.counters.image_texture_evictions += dropped as u64;
     }
     pub(super) fn evict_unused_path_meshes(&mut self) {
         let frame = self.counters.frames;
@@ -294,14 +318,14 @@ impl WgpuRenderer {
                 let already_bound = self
                     .image_cache
                     .get(image)
-                    .is_some_and(|resource| resource.bind_groups.contains_key(sampling));
+                    .is_some_and(|entry| entry.resource.bind_groups.contains_key(sampling));
                 if already_bound {
                     continue;
                 }
                 let Some(view) = self
                     .image_cache
                     .get(image)
-                    .map(|resource| &resource.resource.view)
+                    .map(|entry| &entry.resource.resource.view)
                 else {
                     continue;
                 };
@@ -322,8 +346,8 @@ impl WgpuRenderer {
                         },
                     ],
                 });
-                if let Some(resource) = self.image_cache.get_mut(image) {
-                    resource.bind_groups.insert(*sampling, bind_group);
+                if let Some(entry) = self.image_cache.get_mut(image) {
+                    entry.resource.bind_groups.insert(*sampling, bind_group);
                 }
             }
         }
@@ -333,7 +357,11 @@ impl WgpuRenderer {
         image: ImageId,
         sampling: ImageSampling,
     ) -> Option<&wgpu::BindGroup> {
-        self.image_cache.get(&image)?.bind_groups.get(&sampling)
+        self.image_cache
+            .get(&image)?
+            .resource
+            .bind_groups
+            .get(&sampling)
     }
     pub(super) fn upload_glyph(&mut self, entry: AtlasEntry, bitmap: &[u8]) {
         self.ensure_atlas_page(entry.page);

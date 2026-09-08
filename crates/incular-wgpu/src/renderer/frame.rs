@@ -696,6 +696,11 @@ impl WgpuRenderer {
         let submit_us = us_since(encode_started);
         let encode_us = submit_us;
         self.counters.frames += 1;
+        // Report this frame's image use to the shared owner (batched,
+        // generation-checked) and drop locally stale entries before the
+        // age-based eviction below. Submitted work stays valid through the
+        // wgpu lifetime contract.
+        self.sync_shared_image_use();
         self.evict_unused_images();
         self.evict_unused_path_meshes();
         self.evict_unused_gradients();

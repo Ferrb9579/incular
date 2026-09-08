@@ -430,7 +430,6 @@ pub(crate) struct GpuAtlasPage {
 pub(crate) struct GpuImage {
     pub(crate) resource: Arc<SharedGpuImage>,
     pub(crate) bind_groups: HashMap<ImageSampling, wgpu::BindGroup>,
-    pub(crate) last_used_frame: u64,
 }
 /// Resources that are immutable for a target format and can therefore be
 /// cloned by every surface using that format. A clone is another handle to the
