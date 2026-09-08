@@ -22,6 +22,42 @@ fn shrink_wrap_viewport_geometry(
 }
 
 impl WidgetTree {
+    /// Reconciles materialized sliver children against `sliver_layout`,
+    /// measures each under its constraints, applies offsets, and reports
+    /// whether any retained measurement changed. Shared by the convergence
+    /// loop below and the bounded nonconvergence fallback so both position
+    /// children from identical code.
+    fn measure_sliver_children(
+        &mut self,
+        id: RenderObjectId,
+        config: &crate::scrolling::SliverViewportConfig,
+        sliver_layout: &crate::scrolling::SliverViewportLayout,
+    ) -> Result<bool, TreeError> {
+        self.reconcile_sliver_children(id, config, sliver_layout)?;
+        let materialized = self
+            .render_live(id, "sliver viewport render must remain live")
+            .children
+            .clone();
+        let mut pass_changed = false;
+        for (child, layout) in materialized.into_iter().zip(&sliver_layout.children) {
+            self.layout_render(child, layout.constraints)?;
+            let measured = config.axis.main_extent(
+                self.render_live(child, "sliver child render must remain live")
+                    .size,
+            );
+            pass_changed |= config.delegate.set_child_extent(layout.id, measured);
+            let offset = config.axis.offset(layout.offset, layout.cross_offset);
+            let layer = {
+                let child = self.render_live_mut(child, "sliver child render must remain live");
+                child.offset = offset;
+                child.object.layers.root
+            };
+            self.compositor
+                .update_transform(layer, CoreTransform::translation(offset));
+        }
+        Ok(pass_changed)
+    }
+
     pub(super) fn layout_sliver_kind(
         &mut self,
         id: RenderObjectId,
@@ -107,34 +143,36 @@ impl WidgetTree {
                     config.physics,
                 );
 
+                let mut converged = false;
                 for _ in 0..3 {
                     let physical_before =
                         physical_scroll_offset(&config.controller, config.reverse);
                     let anchor_before = sliver_anchor(&sliver_layout, physical_before);
-                    self.reconcile_sliver_children(id, &config, &sliver_layout)?;
-                    let materialized = self
-                        .render_live(id, "sliver viewport render must remain live")
-                        .children
-                        .clone();
-                    let mut pass_changed = false;
-                    for (child, layout) in materialized.into_iter().zip(&sliver_layout.children) {
-                        self.layout_render(child, layout.constraints)?;
-                        let measured = config.axis.main_extent(
-                            self.render_live(child, "sliver child render must remain live")
-                                .size,
-                        );
-                        pass_changed |= config.delegate.set_child_extent(layout.id, measured);
-                        let offset = config.axis.offset(layout.offset, layout.cross_offset);
-                        let layer = {
-                            let child =
-                                self.render_live_mut(child, "sliver child render must remain live");
-                            child.offset = offset;
-                            child.object.layers.root
-                        };
-                        self.compositor
-                            .update_transform(layer, CoreTransform::translation(offset));
+                    let pass_changed = self.measure_sliver_children(id, &config, &sliver_layout)?;
+                    // Shrink-wrapping viewports derive size from content, so a
+                    // layout whose content no longer matches the size must
+                    // re-run with consistent constraints even when no child
+                    // measurement changed (viewport-dependent content can move
+                    // under a fixed child set). Child-measurement changes and
+                    // viewport/geometry changes are distinct reasons for
+                    // another pass; stability is established only when both
+                    // are quiet, all within this loop's existing bound.
+                    let mut geometry_synced = false;
+                    if config.shrink_wrap {
+                        let authoritative = sliver_layout.geometry.scroll_extent.max(0.);
+                        if (authoritative - sized_content).abs() > f32::EPSILON {
+                            sized_content = authoritative;
+                            (size, viewport_extent) = shrink_wrap_viewport_geometry(
+                                config.axis,
+                                authoritative,
+                                constraints,
+                                cross_extent,
+                            );
+                            geometry_synced = true;
+                        }
                     }
-                    if !pass_changed {
+                    if !pass_changed && !geometry_synced {
+                        converged = true;
                         break;
                     }
                     let mut next_layout = config
@@ -195,54 +233,30 @@ impl WidgetTree {
                         }
                     }
                     sliver_layout = next_layout;
-                    // Shrink-wrapping viewports derive size from content: when
-                    // measurement changed the authoritative extent, the size
-                    // computed above from provisional content is stale, so
-                    // recompute it here with the same calculation and re-run
-                    // layout with consistent constraints and metrics. Another
-                    // pass happens only on a genuine content change — the
-                    // following iteration breaks on unchanged measurements —
-                    // and stability is established when content, size,
-                    // viewport, and metrics all agree, all within this loop's
-                    // existing bound.
-                    if config.shrink_wrap {
-                        let authoritative = sliver_layout.geometry.scroll_extent.max(0.);
-                        if (authoritative - sized_content).abs() > f32::EPSILON {
-                            sized_content = authoritative;
-                            (size, viewport_extent) = shrink_wrap_viewport_geometry(
-                                config.axis,
-                                authoritative,
-                                constraints,
-                                cross_extent,
-                            );
-                            let physical =
-                                physical_scroll_offset(&config.controller, config.reverse);
-                            sliver_layout = config
-                                .delegate
-                                .perform_layout(make_constraints(physical, viewport_extent));
-                            config.controller.update_extents_with_physics(
-                                sliver_layout.geometry.scroll_extent,
-                                viewport_extent,
-                                config.physics,
-                            );
-                            // A content shrink can clamp the offset (notably
-                            // with a reversed origin), which would leave the
-                            // fresh geometry in a stale coordinate space.
-                            let physical_after =
-                                physical_scroll_offset(&config.controller, config.reverse);
-                            if physical_after != physical {
-                                sliver_layout = config.delegate.perform_layout(make_constraints(
-                                    physical_after,
-                                    viewport_extent,
-                                ));
-                                config.controller.update_extents_with_physics(
-                                    sliver_layout.geometry.scroll_extent,
-                                    viewport_extent,
-                                    config.physics,
-                                );
-                            }
-                        }
-                    }
+                }
+                // Bounded fallback: the loop above can only exhaust while
+                // content is still moving, which supported slivers never do
+                // (their content is a pure function of measurements that the
+                // equality guards stabilize). If it happens — only genuinely
+                // self-amplifying content, never ordinary estimate learning —
+                // reconcile and measure once more against the final geometry
+                // without performing again, then recompute size from the final
+                // authoritative content, so published size, metrics, scroll
+                // range, and child positioning all describe the same frame.
+                // Delegate state may hold newer measurements that a later
+                // dirty layout continues from; child coverage matches the last
+                // reconciled paint window and completes on the next dirty
+                // layout. No extra passes, frames, or loops are scheduled.
+                if config.shrink_wrap && !converged {
+                    let _ = self.measure_sliver_children(id, &config, &sliver_layout)?;
+                    let authoritative = sliver_layout.geometry.scroll_extent.max(0.);
+                    size = shrink_wrap_viewport_geometry(
+                        config.axis,
+                        authoritative,
+                        constraints,
+                        cross_extent,
+                    )
+                    .0;
                 }
                 if let Some(correction) = sliver_layout.geometry.scroll_offset_correction {
                     let physical = (physical_scroll_offset(&config.controller, config.reverse)

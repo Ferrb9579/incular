@@ -1349,6 +1349,125 @@ fn shrink_wrap_horizontal_and_reverse_lists() {
 }
 
 #[test]
+fn shrink_wrap_viewport_dependent_content_uses_bounded_fallback() {
+    use incular_core::Offset;
+    use incular_rendering::PaintCommand;
+    use incular_scroll::SliverGeometry;
+    use incular_widgets::internal::{
+        RenderSliver, ShrinkWrappingViewport, SliverChildId, SliverChildLayout,
+        SliverChildPlacement, SliverLayout,
+    };
+
+    struct ViewportTrackingSliver {
+        child: Widget,
+    }
+
+    impl Sliver for ViewportTrackingSliver {
+        fn build(&self, _controller: &ScrollController) -> Widget {
+            self.child.clone()
+        }
+
+        fn create_render_sliver(
+            &self,
+            _controller: &ScrollController,
+            _axis: Axis,
+            _reverse: bool,
+        ) -> Box<dyn RenderSliver> {
+            Box::new(ViewportTrackingRenderSliver {
+                child: self.child.clone(),
+            })
+        }
+    }
+
+    struct ViewportTrackingRenderSliver {
+        child: Widget,
+    }
+
+    /// Deterministic viewport-dependent content with a finite stable result:
+    /// content follows the paint window toward a cap while the fixed child
+    /// never reports a measurement change, so convergence advances purely on
+    /// geometry syncs and must terminate at the loop bound.
+    impl RenderSliver for ViewportTrackingRenderSliver {
+        fn perform_layout(&mut self, constraints: SliverConstraints) -> SliverLayout {
+            let content = (100. + constraints.remaining_paint_extent).min(1200.);
+            let geometry = SliverGeometry::from_scroll_extent(constraints, content);
+            SliverLayout {
+                geometry,
+                children: vec![SliverChildLayout {
+                    id: SliverChildId(0),
+                    widget: self.child.clone(),
+                    semantic_index: None,
+                    offset: 0.,
+                    cross_offset: 0.,
+                    constraints: Constraints::new(
+                        constraints.cross_axis_extent,
+                        constraints.cross_axis_extent,
+                        constraints.remaining_paint_extent,
+                        constraints.remaining_paint_extent,
+                    ),
+                    extent: constraints.remaining_paint_extent,
+                    placement: SliverChildPlacement::Flow,
+                }],
+                absorbed_overlap: 0.,
+            }
+        }
+    }
+
+    // The viewport grows 100 -> 200 -> 300 -> 400 across the bounded loop
+    // while measurements stay quiet throughout, so the loop exhausts with
+    // content still moving and the documented fallback engages: size,
+    // metrics, and scroll range agree at 500 without another pass.
+    let outer = ScrollController::new();
+    let slivers: Vec<Box<dyn Sliver>> = vec![Box::new(SliverToBoxAdapter::new(Widget::from(
+        ShrinkWrappingViewport::new(vec![Box::new(ViewportTrackingSliver {
+            child: Widget::box_(Size::new(200., 50.), Color::WHITE),
+        }) as Box<dyn Sliver>]),
+    )))];
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            CustomScrollView::new(slivers)
+                .controller(outer.clone())
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::new(0., 200., 0., 1000.))
+        .expect("layout");
+    assert_eq!(outer.content_extent(), 500.);
+    assert_eq!(outer.max_offset(), 0.);
+    assert_eq!(outer.offset(), 0.);
+    // SliverToBoxAdapter is element-transparent, so the outer viewport's
+    // child is the inner viewport element itself, sized 500 from the
+    // fallback's authoritative content.
+    let inner_viewport = tree.children(root).expect("outer child")[0];
+    let inner_render = tree.render_id(inner_viewport).expect("inner render");
+    assert_eq!(tree.render_size(inner_render), Some(Size::new(200., 500.)));
+    // The row was last constrained (not just positioned) under the final
+    // tight paint window, so it fills that window exactly; coverage of the
+    // rest of the published 500 window completes on the next dirty layout.
+    let row = tree.children(inner_viewport).expect("inner row")[0];
+    let row_render = tree.render_id(row).expect("row render");
+    assert_eq!(tree.render_size(row_render), Some(Size::new(200., 400.)));
+    assert_eq!(
+        tree.hit_test(Offset::new(100., 350.))
+            .map(|hit| tree.element_for_render(hit)),
+        Some(Some(row)),
+        "hit must identify the constrained row descendant"
+    );
+    assert_eq!(
+        tree.hit_test(Offset::new(100., 450.))
+            .map(|hit| tree.element_for_render(hit)),
+        Some(Some(inner_viewport)),
+        "hit beyond the last paint window must identify the viewport"
+    );
+    assert!(tree.paint().commands().iter().any(|command| matches!(
+        command,
+        PaintCommand::Rect { rect, color }
+            if rect.origin == Offset::ZERO && rect.size == Size::new(200., 400.) && *color == Color::WHITE
+    )));
+}
+
+#[test]
 fn nested_natural_header_with_mismatched_initial_content() {
     use incular_core::Offset;
     use incular_rendering::PaintCommand;
