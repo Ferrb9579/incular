@@ -1,28 +1,115 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "family": "Visibility",
   "scope": "Public Visibility/Offstage options and their retained consumers in incular-widgets. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
   "records": [
     {
       "symbol": "Visibility",
       "option": "visible",
       "default": true,
       "validation": "bool setter, no normalization",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree/widget/structure.rs::WidgetKind::Visibility",
-      "comparison": "crates/incular-widgets/src/render_object/update.rs::RenderObjectPayload::update_kind over RenderKind::Visibility { visible, maintain_size }; visible toggle additionally forces crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::update_existing_inner child-layer resync",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Visibility"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over visible and maintain_size drives layout, paint, semantics, and hit-test invalidation; a visible toggle additionally resyncs child layers.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
       "consumers": {
-        "layout": "crates/incular-widgets/src/tree/layout/behavior/containers.rs::layout_container_kind",
-        "paint": "crates/incular-widgets/src/tree/painting.rs::WidgetTree::paint_render_inner",
-        "hit_test": "crates/incular-widgets/src/tree/painting.rs::WidgetTree::collect_raw_hit_render",
-        "hit_test_exact": "crates/incular-widgets/src/tree/painting.rs::WidgetTree::hit_test_render",
-        "compositor": "crates/incular-widgets/src/render_object/layers.rs::RenderLayers::set_render_children",
-        "update": "crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::update_existing_inner"
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_render_inner"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "set_render_children"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior",
-        "crates/incular-widgets/tests/visibility.rs::hidden_ancestors_suppress_nested_popup_surfaces_and_pointer_hits",
-        "crates/incular-widgets/tests/visibility.rs::reapplying_identical_hidden_configuration_schedules_no_phases"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "hidden_ancestors_suppress_nested_popup_surfaces_and_pointer_hits"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "reapplying_identical_hidden_configuration_schedules_no_phases"
+        }
       ],
       "status": "implemented"
     },
@@ -31,14 +118,46 @@
       "option": "maintain_state",
       "default": false,
       "validation": "bool setter; every maintain_* flag independently implies retention, callers need not also set maintain_state",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "comparison": "conversion-time only: no retained field; retained children stay mounted through crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::compatible type and key match",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "comparison": {
+        "prose": "Conversion-time only with no retained field; retained children stay mounted through compatible type and key match.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "compatible"
+          }
+        ]
+      },
       "consumers": {
-        "reconciliation": "crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::compatible"
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "compatible"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        }
       ],
       "status": "implemented"
     },
@@ -47,16 +166,55 @@
       "option": "maintain_size",
       "default": false,
       "validation": "bool setter; independent of the other maintain_* flags",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree.rs::HiddenLayout",
-      "comparison": "crates/incular-widgets/src/render_object/update.rs::RenderObjectPayload::update_kind over RenderKind::Visibility maintain_size; layout invalidation only, no paint",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree.rs",
+        "kind": "enum",
+        "name": "HiddenLayout"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over maintain_size schedules layout invalidation only, never paint.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
       "consumers": {
-        "layout": "crates/incular-widgets/src/tree/layout/behavior/containers.rs::layout_container_kind",
-        "lowering": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs::lower_layout"
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior",
-        "crates/incular-widgets/tests/visibility.rs::changing_maintain_size_while_hidden_resizes_through_layout_only"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "changing_maintain_size_while_hidden_resizes_through_layout_only"
+        }
       ],
       "status": "implemented"
     },
@@ -65,17 +223,49 @@
       "option": "maintain_animation",
       "default": false,
       "validation": "bool setter; independent of the other maintain_* flags",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree.rs::HiddenVisibility",
-      "comparison": "no phase scheduling: RenderKind carries no animation policy; the compositor tick reads the live WidgetKind policy every frame, so option changes take effect without layout, paint, or composite invalidation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree.rs",
+        "kind": "struct",
+        "name": "HiddenVisibility"
+      },
+      "comparison": {
+        "prose": "No phase scheduling: RenderKind carries no animation policy; the compositor tick reads the live WidgetKind policy every frame, so option changes take effect without layout, paint, or composite invalidation.",
+        "refs": []
+      },
       "consumers": {
-        "compositor_tick": "crates/incular-widgets/src/tree/interaction.rs::WidgetTree::update_compositor"
+        "animation": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::hidden_animation_ticks_are_opt_in_and_resume_at_elapsed_time",
-        "crates/incular-widgets/tests/visibility.rs::outer_visibility_mutes_an_inner_animation_opt_in",
-        "crates/incular-widgets/tests/visibility.rs::offstage_measures_without_occupying_space_and_keeps_ticking",
-        "crates/incular-widgets/tests/visibility.rs::changing_maintain_animation_while_hidden_takes_effect_without_layout_or_paint"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "hidden_animation_ticks_are_opt_in_and_resume_at_elapsed_time"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "outer_visibility_mutes_an_inner_animation_opt_in"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "offstage_measures_without_occupying_space_and_keeps_ticking"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "changing_maintain_animation_while_hidden_takes_effect_without_layout_or_paint"
+        }
       ],
       "status": "implemented"
     },
@@ -84,15 +274,41 @@
       "option": "maintain_semantics",
       "default": false,
       "validation": "bool setter; independent of the other maintain_* flags",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree.rs::HiddenVisibility",
-      "comparison": "no phase scheduling: RenderKind carries no semantics policy; the semantics rebuild reads the live WidgetKind policy, so option changes take effect on the next update_semantics without layout or paint",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree.rs",
+        "kind": "struct",
+        "name": "HiddenVisibility"
+      },
+      "comparison": {
+        "prose": "No phase scheduling: RenderKind carries no semantics policy; the semantics rebuild reads the live WidgetKind policy, so option changes take effect on the next update_semantics without layout or paint.",
+        "refs": []
+      },
       "consumers": {
-        "semantics": "crates/incular-widgets/src/tree/semantics.rs::WidgetTree::collect_semantics_inner"
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior",
-        "crates/incular-widgets/tests/visibility.rs::changing_maintain_semantics_while_hidden_toggles_semantics_without_paint"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "changing_maintain_semantics_while_hidden_toggles_semantics_without_paint"
+        }
       ],
       "status": "implemented"
     },
@@ -101,14 +317,46 @@
       "option": "replacement",
       "default": "SizedBox::shrink when unset",
       "validation": "optional widget setter; only consulted when hidden with no maintain_* flag",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "comparison": "conversion-time only: hidden with no maintain_* flag mounts the replacement instead of Visibility, so the hidden child unmounts through the ordinary incompatible-type path",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "comparison": {
+        "prose": "Conversion-time only: hidden with no maintain_* flag mounts the replacement instead of Visibility, so the hidden child unmounts through the ordinary incompatible-type path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "compatible"
+          }
+        ]
+      },
       "consumers": {
-        "reconciliation": "crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::compatible"
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "compatible"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        }
       ],
       "status": "implemented"
     },
@@ -117,14 +365,45 @@
       "option": "child",
       "default": "required, no default",
       "validation": "required Into<Widget> conversion parameter",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Visibility> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree/widget/structure.rs::WidgetKind::Visibility",
-      "comparison": "child identity follows the ordinary crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::reconcile_children path; retained across visible toggles and option changes",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Visibility"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Visibility"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path; it is retained across visible toggles and option changes.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
       "consumers": {
-        "reconciliation": "crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::reconcile_children"
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+        }
       ],
       "status": "implemented"
     },
@@ -133,17 +412,66 @@
       "option": "offstage",
       "default": true,
       "validation": "bool setter, no normalization",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Offstage> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree/widget/structure.rs::WidgetKind::Visibility",
-      "comparison": "converts to visible=!offstage with maintain_state and maintain_animation; follows the same retained Visibility comparison and consumer paths",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Offstage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Visibility"
+      },
+      "comparison": {
+        "prose": "Converts to visible=!offstage with maintain_state and maintain_animation; follows the same retained Visibility comparison and consumer paths.",
+        "refs": []
+      },
       "consumers": {
-        "layout": "crates/incular-widgets/src/tree/layout/behavior/containers.rs::layout_container_kind",
-        "paint": "crates/incular-widgets/src/tree/painting.rs::WidgetTree::paint_render_inner",
-        "hit_test": "crates/incular-widgets/src/tree/painting.rs::WidgetTree::collect_raw_hit_render",
-        "compositor_tick": "crates/incular-widgets/src/tree/interaction.rs::WidgetTree::update_compositor"
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_render_inner"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          }
+        ],
+        "animation": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::offstage_measures_without_occupying_space_and_keeps_ticking"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "offstage_builder_matches_fluent_construction"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "offstage_measures_without_occupying_space_and_keeps_ticking"
+        }
       ],
       "status": "implemented"
     },
@@ -152,14 +480,42 @@
       "option": "child",
       "default": "required, no default",
       "validation": "required Into<Widget> conversion parameter",
-      "conversion": "crates/incular-widgets/src/layout/basic/visibility.rs::From<Offstage> for Widget",
-      "retained_owner": "crates/incular-widgets/src/tree/widget/structure.rs::WidgetKind::Visibility",
-      "comparison": "same retained child path as Visibility.child",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/visibility.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Offstage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Visibility"
+      },
+      "comparison": {
+        "prose": "Same retained child path as Visibility.child.",
+        "refs": []
+      },
       "consumers": {
-        "reconciliation": "crates/incular-widgets/src/tree/reconciliation.rs::WidgetTree::reconcile_children"
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
       },
       "regressions": [
-        "crates/incular-widgets/tests/visibility.rs::offstage_measures_without_occupying_space_and_keeps_ticking"
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "offstage_builder_matches_fluent_construction"
+        },
+        {
+          "path": "crates/incular-widgets/tests/visibility.rs",
+          "name": "offstage_measures_without_occupying_space_and_keeps_ticking"
+        }
       ],
       "status": "implemented"
     }

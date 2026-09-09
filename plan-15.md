@@ -1099,14 +1099,26 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
 - Ledger: `specs/visibility_properties.json` records all nine exported
   Visibility/Offstage options (visible, maintain_state/size/animation/
   semantics, replacement, child, offstage, Offstage child) with default,
-  validation, conversion, retained owner, comparison/update path,
-  per-phase consumers, named regressions, and disposition. References use
-  repository-relative paths with stable symbol names, never line numbers.
-  `tests/visibility_ledger.rs` machine-checks schema version, duplicate
-  entries, allowed dispositions, required evidence for implemented
-  records, resolution of every referenced path/symbol on disk, and that
-  every named regression is a real test function. Scope is the Visibility
-  family only; passing never claims whole-codebase completeness.
+  validation, structured conversion/owner/consumer references, prose
+  comparison plus its references, named regressions, and disposition.
+  References are explicit `{path, kind, owner, name}` shapes (methods,
+  structs, enums, variants, free functions, and `trait`/`target`/
+  `source` trait implementations); prose never carries a reference.
+  `tests/visibility_ledger.rs` resolves every reference by parsing Rust
+  syntax with `syn` (already a workspace dev-dependency; no new parser),
+  so comments and string literals can never satisfy a reference.
+  Mechanically checked: schema version, nonempty records and
+  allowed-phase list, duplicate entries, allowed dispositions and
+  consumer phases, required evidence for implemented records, resolution
+  of every reference, exact `#[test]` functions for regressions
+  (helpers and prefix matches fail; nested modules resolve), and family
+  completeness discovered from the public API in
+  `layout/basic/visibility.rs` itself — added or removed setters,
+  constructor inputs, and generated-builder coverage fail until the
+  ledger is updated, in both directions. Six negative fixture groups
+  prove each rejection. Human-reviewed and NOT mechanical: whether a
+  named test's assertions actually establish its property contract, and
+  scope beyond the Visibility family.
 - Reviewed policy: public configuration resolves in
   `From<Visibility>/From<Offstage>` (hidden with no maintain flag mounts
   the replacement and unmounts the child; any maintain flag retains).

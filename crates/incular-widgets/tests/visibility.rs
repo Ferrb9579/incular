@@ -157,6 +157,18 @@ fn outer_visibility_mutes_an_inner_animation_opt_in() {
 }
 
 #[test]
+fn offstage_builder_matches_fluent_construction() {
+    assert_eq!(
+        Offstage::builder().child(child()).build(),
+        Offstage::new(child())
+    );
+    assert_eq!(
+        Offstage::builder().child(child()).offstage(false).build(),
+        Offstage::new(child()).offstage(false)
+    );
+}
+
+#[test]
 fn offstage_measures_without_occupying_space_and_keeps_ticking() {
     let controller = ScaleController::new();
     let mut tree = WidgetTree::new();
