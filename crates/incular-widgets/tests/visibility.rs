@@ -190,6 +190,156 @@ fn offstage_measures_without_occupying_space_and_keeps_ticking() {
 }
 
 #[test]
+fn changing_maintain_animation_while_hidden_takes_effect_without_layout_or_paint() {
+    let controller = ScaleController::new();
+    let make = |animation: bool| -> Widget {
+        Visibility::new(ScaleTransition::new(controller.clone(), child()))
+            .visible(false)
+            .maintain_state(true)
+            .maintain_animation(animation)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(make(false)).unwrap();
+    tree.layout(Constraints::loose(Size::new(100., 100.)))
+        .unwrap();
+    let retained = tree.children(root).unwrap()[0];
+    let start = Instant::now();
+    controller.animate_to(3., Duration::from_secs(1), start);
+    tree.update_compositor(start).unwrap();
+    assert!(
+        !tree
+            .update_compositor(start + Duration::from_millis(500))
+            .unwrap()
+            .1
+    );
+    assert_eq!(controller.scale(), 1.);
+    let before = tree.diagnostics();
+    tree.update(root, make(true)).unwrap();
+    tree.layout(Constraints::loose(Size::new(100., 100.)))
+        .unwrap();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    assert!(
+        tree.update_compositor(start + Duration::from_millis(500))
+            .unwrap()
+            .1
+    );
+    assert_eq!(controller.scale(), 2.);
+    let after = tree.diagnostics();
+    assert_eq!(after.layouts, before.layouts);
+    assert_eq!(after.paints, before.paints);
+    assert!(tree.paint().is_empty());
+    assert!(tree.hit_test(Offset::new(5., 5.)).is_none());
+}
+
+#[test]
+fn changing_maintain_semantics_while_hidden_toggles_semantics_without_paint() {
+    let make = |semantics: bool| -> Widget {
+        Visibility::new(child())
+            .visible(false)
+            .maintain_state(true)
+            .maintain_semantics(semantics)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(make(false)).unwrap();
+    tree.layout(Constraints::loose(Size::new(100., 100.)))
+        .unwrap();
+    let retained = tree.children(root).unwrap()[0];
+    tree.update_semantics();
+    assert!(!tree.semantics_debug_dump().contains("retained child"));
+    let before = tree.diagnostics();
+    tree.update(root, make(true)).unwrap();
+    tree.layout(Constraints::loose(Size::new(100., 100.)))
+        .unwrap();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    tree.update_semantics();
+    assert!(tree.semantics_debug_dump().contains("retained child"));
+    let after = tree.diagnostics();
+    assert_eq!(after.layouts, before.layouts);
+    assert_eq!(after.paints, before.paints);
+    assert!(tree.paint().is_empty());
+    assert!(tree.hit_test(Offset::new(5., 5.)).is_none());
+    tree.update(root, make(false)).unwrap();
+    tree.layout(Constraints::loose(Size::new(100., 100.)))
+        .unwrap();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    tree.update_semantics();
+    assert!(!tree.semantics_debug_dump().contains("retained child"));
+}
+
+#[test]
+fn changing_maintain_size_while_hidden_resizes_through_layout_only() {
+    let make = |size: bool| -> Widget {
+        Visibility::new(child())
+            .visible(false)
+            .maintain_state(true)
+            .maintain_size(size)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(make(false)).unwrap();
+    let constraints = Constraints::loose(Size::new(100., 100.));
+    tree.layout(constraints).unwrap();
+    let retained = tree.children(root).unwrap()[0];
+    assert_eq!(
+        tree.render_size(tree.render_id(root).unwrap()),
+        Some(Size::ZERO)
+    );
+    let before = tree.diagnostics();
+    tree.update(root, make(true)).unwrap();
+    tree.layout(constraints).unwrap();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    assert_eq!(
+        tree.render_size(tree.render_id(root).unwrap()),
+        Some(Size::new(20., 30.))
+    );
+    assert_eq!(
+        tree.render_size(tree.render_id(retained).unwrap()),
+        Some(Size::new(20., 30.))
+    );
+    let after = tree.diagnostics();
+    assert!(after.layouts > before.layouts);
+    assert_eq!(after.paints, before.paints);
+    assert!(tree.paint().is_empty());
+    assert!(tree.hit_test(Offset::new(5., 5.)).is_none());
+    tree.update(root, make(false)).unwrap();
+    tree.layout(constraints).unwrap();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    assert_eq!(
+        tree.render_size(tree.render_id(root).unwrap()),
+        Some(Size::ZERO)
+    );
+}
+
+#[test]
+fn reapplying_identical_hidden_configuration_schedules_no_phases() {
+    let make = || -> Widget {
+        Visibility::new(child())
+            .visible(false)
+            .maintain_state(true)
+            .maintain_size(true)
+            .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(make()).unwrap();
+    let constraints = Constraints::loose(Size::new(100., 100.));
+    tree.layout(constraints).unwrap();
+    let retained = tree.children(root).unwrap()[0];
+    let _ = tree.paint();
+    let before = tree.diagnostics();
+    tree.update(root, make()).unwrap();
+    tree.layout(constraints).unwrap();
+    let _ = tree.paint();
+    assert_eq!(tree.children(root).unwrap()[0], retained);
+    let after = tree.diagnostics();
+    assert_eq!(after.layouts, before.layouts);
+    assert_eq!(after.paints, before.paints);
+    assert_eq!(after.composites, before.composites);
+    assert!(after.identical_child_bailouts > before.identical_child_bailouts);
+}
+
+#[test]
 fn hidden_ancestors_suppress_nested_popup_surfaces_and_pointer_hits() {
     let make = |visible| -> Widget {
         let nested = OverlayPortal::new(child())

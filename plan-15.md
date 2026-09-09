@@ -1094,6 +1094,52 @@ Exit: every exported option has a reviewed disposition and behavioral evidence;
 property changes schedule only necessary work; identity and deterministic
 performance contracts pass. No arbitrary file-size threshold is the acceptance test.
 
+## W3 — Retained property contracts (Visibility slice; W3 remains open)
+
+- Ledger: `specs/visibility_properties.json` records all nine exported
+  Visibility/Offstage options (visible, maintain_state/size/animation/
+  semantics, replacement, child, offstage, Offstage child) with default,
+  validation, conversion, retained owner, comparison/update path,
+  per-phase consumers, named regressions, and disposition. References use
+  repository-relative paths with stable symbol names, never line numbers.
+  `tests/visibility_ledger.rs` machine-checks schema version, duplicate
+  entries, allowed dispositions, required evidence for implemented
+  records, resolution of every referenced path/symbol on disk, and that
+  every named regression is a real test function. Scope is the Visibility
+  family only; passing never claims whole-codebase completeness.
+- Reviewed policy: public configuration resolves in
+  `From<Visibility>/From<Offstage>` (hidden with no maintain flag mounts
+  the replacement and unmounts the child; any maintain flag retains).
+  Retained owner is `WidgetKind::Visibility` with `HiddenVisibility`;
+  `maintain_state` is conversion-only with no retained field. One
+  comparison drives phases: `RenderKind::Visibility { visible,
+  maintain_size }` equality via `update_kind` (visible or size change
+  schedules layout/paint/semantics/hit-test; visible toggle additionally
+  resyncs child layers); animation/semantics policy is read live from
+  `WidgetKind` on every compositor tick and semantics rebuild, so those
+  option changes need no phase scheduling. Closed dispatch preserved; no
+  new cached booleans, property engine, or tree rewrite.
+- Transitions tested in `crates/incular-widgets/tests/visibility.rs`
+  (existing combinations, animation opt-in/resume, nesting mute,
+  offstage, popup suppression, plus four new): changing
+  maintain_animation or maintain_semantics while hidden takes effect on
+  the next tick/rebuild with zero layout/paint delta and preserved
+  identity; changing maintain_size while hidden resizes through layout
+  only (layouts delta, paints unchanged, reversible); reapplying an
+  identical hidden configuration schedules no layout/paint/composite
+  with `identical_child_bailouts` proving the no-work path. Hit testing
+  stays excluded and paint stays empty throughout.
+- Finding: no defect. The four new transition tests passed on the first
+  behavior run (the only failure was test scaffolding assuming a Padding
+  wrapper level); comparison and phase classification are not duplicated,
+  so no consolidation was manufactured. Fail-first evidence for the
+  validator: it failed on a boolean `default` before the schema check
+  accepted bools.
+- Remaining W3 families: editable text; transform/origin/alignment;
+  linked layers; effects; scrolling; interactive controls; then layout,
+  collections, images, navigation scopes, overlays, platform wrappers,
+  utilities. Same ledger shape applies per family.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
