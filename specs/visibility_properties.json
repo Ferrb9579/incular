@@ -13,6 +13,16 @@
     "lowering",
     "conversion"
   ],
+  "builder_parity": {
+    "Visibility": {
+      "path": "crates/incular-widgets/tests/visibility.rs",
+      "name": "every_preservation_combination_has_the_same_builder_and_fluent_behavior"
+    },
+    "Offstage": {
+      "path": "crates/incular-widgets/tests/visibility.rs",
+      "name": "offstage_builder_matches_fluent_construction"
+    }
+  },
   "records": [
     {
       "symbol": "Visibility",

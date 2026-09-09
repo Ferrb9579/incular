@@ -1107,18 +1107,25 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `tests/visibility_ledger.rs` resolves every reference by parsing Rust
   syntax with `syn` (already a workspace dev-dependency; no new parser),
   so comments and string literals can never satisfy a reference.
-  Mechanically checked: schema version, nonempty records and
-  allowed-phase list, duplicate entries, allowed dispositions and
-  consumer phases, required evidence for implemented records, resolution
-  of every reference, exact `#[test]` functions for regressions
-  (helpers and prefix matches fail; nested modules resolve), and family
-  completeness discovered from the public API in
-  `layout/basic/visibility.rs` itself — added or removed setters,
-  constructor inputs, and generated-builder coverage fail until the
-  ledger is updated, in both directions. Six negative fixture groups
-  prove each rejection. Human-reviewed and NOT mechanical: whether a
-  named test's assertions actually establish its property contract, and
-  scope beyond the Visibility family.
+  Mechanically checked: schema version, nonempty records, duplicate
+  entries, allowed dispositions, required evidence for implemented
+  records, resolution of every structured reference (including
+  trait/source-disambiguated `From` conversions), exact `#[test]`
+  functions for regressions (helpers and prefix matches fail; nested
+  modules resolve), consumer phases against a validator-fixed vocabulary
+  (invented phases fail even when also listed in the ledger), and family
+  completeness as one discovered set — constructor inputs plus fluent
+  setters plus generated builder setters from private fields (skipped
+  setters excluded, fluent duplicates merged; renaming `prefix`/`suffix`
+  and `strip_bool`/`transform` forms are rejected, per the installed
+  typed-builder 0.23.2 semantics) — failing added/removed options in
+  both directions. Generated-builder coverage is an explicit per-struct
+  `builder_parity` test reference, never a name heuristic. Nine
+  fixture groups prove each rejection, including builder-only fields,
+  skipped setters, and wrong-trait sources. Human-reviewed and NOT
+  mechanical: whether a named test's assertions actually establish its
+  property contract (including builder parity), and scope beyond the
+  Visibility family.
 - Reviewed policy: public configuration resolves in
   `From<Visibility>/From<Offstage>` (hidden with no maintain flag mounts
   the replacement and unmounts the child; any maintain flag retains).

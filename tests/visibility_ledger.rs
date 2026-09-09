@@ -6,9 +6,12 @@
 //! reference by parsing Rust syntax with `syn`, so comments and string
 //! literals can never satisfy a reference, and every claimed regression
 //! must be an exact `#[test]` function (helpers and prefix matches fail).
-//! Option completeness is discovered from the public API itself: an added
-//! or removed setter fails until the ledger is updated. The ledger covers
-//! only the Visibility family; passing here never claims whole-codebase
+//! Option completeness is discovered from the public API itself —
+//! constructor inputs plus fluent setters plus generated builder setters
+//! — so an added or removed option fails until the ledger is updated.
+//! Generated-builder coverage is an explicit `builder_parity` test
+//! reference per struct, not a name heuristic. The ledger covers only the
+//! Visibility family; passing here never claims whole-codebase
 //! completeness, and resolving a test name never proves its assertions
 //! establish a property contract — that remains human-reviewed.
 //!
@@ -31,22 +34,70 @@
 use serde_json::Value;
 use std::{collections::BTreeSet, fmt, fs, path::Path, path::PathBuf};
 
+/// Fixed consumer-phase vocabulary for the property-ledger schema. The
+/// ledger selects applicable phases per record but cannot invent new
+/// ones: unknown names fail even when listed in `allowed_phases`.
+const FIXED_PHASES: &[&str] = &[
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion",
+];
+
 /// One actionable validation failure. `validate_ledger` collects these
 /// instead of panicking so malformed fixtures report every problem.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LedgerError {
-    UnsupportedSchema { found: String },
+    UnsupportedSchema {
+        found: String,
+    },
     EmptyRecords,
     MissingAllowedPhases,
-    UnknownDisposition { record: String, status: String },
-    DuplicateOption { symbol: String, option: String },
-    MissingOption { symbol: String, option: String },
-    StaleOption { symbol: String, option: String },
-    MissingBuilderCoverage { symbol: String },
-    UnknownPhase { record: String, phase: String },
-    MissingEvidence { record: String, field: &'static str },
-    UnresolvedReference { reference: String, reason: String },
-    RegressionNotATest { reference: String, reason: String },
+    UnsupportedBuilderAttribute {
+        symbol: String,
+        field: String,
+        attribute: String,
+    },
+    UnknownDisposition {
+        record: String,
+        status: String,
+    },
+    DuplicateOption {
+        symbol: String,
+        option: String,
+    },
+    MissingOption {
+        symbol: String,
+        option: String,
+    },
+    StaleOption {
+        symbol: String,
+        option: String,
+    },
+    MissingBuilderCoverage {
+        symbol: String,
+    },
+    UnknownPhase {
+        record: String,
+        phase: String,
+    },
+    MissingEvidence {
+        record: String,
+        field: &'static str,
+    },
+    UnresolvedReference {
+        reference: String,
+        reason: String,
+    },
+    RegressionNotATest {
+        reference: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for LedgerError {
@@ -59,6 +110,17 @@ impl fmt::Display for LedgerError {
             Self::MissingAllowedPhases => {
                 write!(formatter, "ledger has no nonempty allowed_phases")
             }
+            Self::UnsupportedBuilderAttribute {
+                symbol,
+                field,
+                attribute,
+            } => write!(
+                formatter,
+                "{symbol}::{field}: unsupported builder attribute '{attribute}' \
+                 (supported: default/default_code/doc/deprecated setters into, \
+                 auto_into, strip_option, skip; renames via prefix/suffix and \
+                 strip_bool/transform need resolver support)"
+            ),
             Self::UnknownDisposition { record, status } => {
                 write!(formatter, "{record}: unknown disposition {status}")
             }
@@ -455,19 +517,136 @@ fn resolve_regression(
     }
 }
 
-/// Public options discovered from the source itself: every `pub fn` in the
-/// inherent impl of each target struct, minus constructors, plus each
-/// constructor's parameter names. The generated `builder()` API is covered
-/// separately: a struct deriving `TypedBuilder` must have a builder-named
-/// regression proving builder/fluent parity.
+/// How one struct field maps to generated builder API under
+/// typed-builder 0.23.2 (verified against the installed macro source):
+/// `setter(skip)` generates no setter; `into`/`auto_into`/`strip_option`
+/// keep the field-named setter; `prefix`/`suffix` rename it and
+/// `strip_bool`/`transform` change its shape, which this resolver does
+/// not emulate. Any other `setter(...)` or `builder(...)` form is
+/// rejected rather than silently assumed.
+enum BuilderField {
+    GeneratesSetter,
+    Skipped,
+}
+
+fn builder_field_status(field: &syn::Field) -> Result<BuilderField, String> {
+    let Some(name) = field.ident.as_ref().map(ToString::to_string) else {
+        return Err("tuple-struct fields have no setter name".to_owned());
+    };
+    let mut setter_seen = false;
+    let mut skipped = false;
+    for attribute in &field.attrs {
+        let syn::Meta::List(list) = &attribute.meta else {
+            continue;
+        };
+        if !list.path.is_ident("builder") {
+            continue;
+        }
+        let nested = list
+            .parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+            )
+            .map_err(|_| "unparseable #[builder(...)]".to_owned())?;
+        for meta in nested {
+            match meta {
+                syn::Meta::Path(path) => {
+                    let Some(ident) = path.get_ident().map(ToString::to_string) else {
+                        return Err("unsupported builder attribute form".to_owned());
+                    };
+                    match ident.as_str() {
+                        "default" | "default_code" | "doc" | "deprecated" | "default_where" => {}
+                        _ => return Err(ident),
+                    }
+                }
+                syn::Meta::NameValue(named) => {
+                    let Some(ident) = named.path.get_ident().map(ToString::to_string) else {
+                        return Err("unsupported builder attribute form".to_owned());
+                    };
+                    match ident.as_str() {
+                        "default" | "default_code" | "doc" | "deprecated" => {}
+                        _ => return Err(ident),
+                    }
+                }
+                syn::Meta::List(list) => {
+                    let Some(ident) = list.path.get_ident().map(ToString::to_string) else {
+                        return Err("unsupported builder attribute form".to_owned());
+                    };
+                    if ident != "setter" {
+                        return Err(ident);
+                    }
+                    setter_seen = true;
+                    let inner = list
+                        .parse_args_with(
+                            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                        )
+                        .map_err(|_| "unparseable setter(...)".to_owned())?;
+                    for item in inner {
+                        match item {
+                            syn::Meta::Path(path) => {
+                                let Some(ident) = path.get_ident().map(ToString::to_string) else {
+                                    return Err("unsupported setter(...) form".to_owned());
+                                };
+                                match ident.as_str() {
+                                    "into" | "auto_into" | "strip_option" | "doc"
+                                    | "deprecated" => {}
+                                    "skip" => skipped = true,
+                                    _ => return Err(format!("setter({ident})")),
+                                }
+                            }
+                            syn::Meta::NameValue(named) => {
+                                let Some(ident) = named.path.get_ident().map(ToString::to_string)
+                                else {
+                                    return Err("unsupported setter(...) form".to_owned());
+                                };
+                                match ident.as_str() {
+                                    "doc" | "deprecated" => {}
+                                    _ => return Err(format!("setter({ident} = ..)")),
+                                }
+                            }
+                            syn::Meta::List(_) => {
+                                return Err("unsupported setter(...) form".to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = (setter_seen, name);
+    if skipped {
+        Ok(BuilderField::Skipped)
+    } else {
+        Ok(BuilderField::GeneratesSetter)
+    }
+}
+
+/// Public options discovered from the source itself, as one set:
+/// constructor inputs plus fluent options plus generated builder options
+/// (private fields exposed through generated public builder setters;
+/// skipped setters excluded; fields also exposed fluently deduplicated).
+/// A struct deriving `TypedBuilder` must additionally name an explicit
+/// `builder_parity` regression, resolved like any other test reference —
+/// the validator checks the reference exists, while a reviewer judges
+/// whether its assertions prove parity.
 struct DiscoveredApi {
     options: BTreeSet<(String, String)>,
     builders: BTreeSet<String>,
 }
 
-fn discover_api(root: &Path, path: &str) -> Result<DiscoveredApi, String> {
-    let text = fs::read_to_string(root.join(path)).map_err(|_| format!("cannot read {path}"))?;
-    let syntax = syn::parse_file(&text).map_err(|_| format!("cannot parse {path}"))?;
+enum DiscoveryFailure {
+    Unreadable(String),
+    UnsupportedAttribute {
+        symbol: String,
+        field: String,
+        attribute: String,
+    },
+}
+
+fn discover_api(root: &Path, path: &str) -> Result<DiscoveredApi, DiscoveryFailure> {
+    let text = fs::read_to_string(root.join(path))
+        .map_err(|_| DiscoveryFailure::Unreadable(format!("cannot read {path}")))?;
+    let syntax = syn::parse_file(&text)
+        .map_err(|_| DiscoveryFailure::Unreadable(format!("cannot parse {path}")))?;
     let mut api = DiscoveredApi {
         options: BTreeSet::new(),
         builders: BTreeSet::new(),
@@ -482,6 +661,28 @@ fn discover_api(root: &Path, path: &str) -> Result<DiscoveredApi, String> {
         }
         if has_typed_builder_derive(item) {
             api.builders.insert(symbol.clone());
+            if let syn::Fields::Named(fields) = &item.fields {
+                for field in &fields.named {
+                    let field_name = field
+                        .ident
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    match builder_field_status(field) {
+                        Ok(BuilderField::GeneratesSetter) => {
+                            api.options.insert((symbol.clone(), field_name));
+                        }
+                        Ok(BuilderField::Skipped) => {}
+                        Err(attribute) => {
+                            return Err(DiscoveryFailure::UnsupportedAttribute {
+                                symbol: symbol.clone(),
+                                field: field_name,
+                                attribute,
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
     for item in &syntax.items {
@@ -540,12 +741,26 @@ pub fn validate_ledger(ledger: &Value, root: &Path) -> Result<(), Vec<LedgerErro
         errors.push(LedgerError::EmptyRecords);
         return Err(errors);
     }
-    let allowed: BTreeSet<&str> = ledger["allowed_phases"]
-        .as_array()
-        .map(|phases| phases.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    if allowed.is_empty() {
-        errors.push(LedgerError::MissingAllowedPhases);
+    // The phase vocabulary is fixed here, not in the ledger: the ledger
+    // selects applicable phases per record but cannot invent new ones.
+    // A name unknown to the fixed set fails even when also listed in the
+    // ledger's own `allowed_phases`.
+    let allowed: BTreeSet<&str> = FIXED_PHASES.iter().copied().collect();
+    match ledger["allowed_phases"].as_array() {
+        None => errors.push(LedgerError::MissingAllowedPhases),
+        Some(phases) => {
+            if phases.is_empty() {
+                errors.push(LedgerError::MissingAllowedPhases);
+            }
+            for phase in phases.iter().filter_map(Value::as_str) {
+                if !allowed.contains(phase) {
+                    errors.push(LedgerError::UnknownPhase {
+                        record: "(allowed_phases)".to_owned(),
+                        phase: phase.to_owned(),
+                    });
+                }
+            }
+        }
     }
     let mut index = SourceIndex::default();
     let mut seen = BTreeSet::new();
@@ -643,9 +858,20 @@ pub fn validate_ledger(ledger: &Value, root: &Path) -> Result<(), Vec<LedgerErro
         root,
         "crates/incular-widgets/src/layout/basic/visibility.rs",
     ) {
-        Err(reason) => errors.push(LedgerError::UnresolvedReference {
-            reference: "crates/incular-widgets/src/layout/basic/visibility.rs".to_owned(),
-            reason,
+        Err(DiscoveryFailure::Unreadable(reason)) => {
+            errors.push(LedgerError::UnresolvedReference {
+                reference: "crates/incular-widgets/src/layout/basic/visibility.rs".to_owned(),
+                reason,
+            });
+        }
+        Err(DiscoveryFailure::UnsupportedAttribute {
+            symbol,
+            field,
+            attribute,
+        }) => errors.push(LedgerError::UnsupportedBuilderAttribute {
+            symbol,
+            field,
+            attribute,
         }),
         Ok(api) => {
             let ledgered: BTreeSet<(String, String)> = records
@@ -673,25 +899,32 @@ pub fn validate_ledger(ledger: &Value, root: &Path) -> Result<(), Vec<LedgerErro
                     });
                 }
             }
+            // Generated-builder coverage is an explicit per-struct
+            // `builder_parity` regression reference, resolved through the
+            // same exact-test resolver as every other regression. The
+            // validator checks the reference exists; a reviewer judges
+            // whether its assertions prove parity. A builder-named test
+            // proves nothing by name alone.
+            let parity = ledger["builder_parity"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
             for symbol in &api.builders {
-                let covered = records
-                    .iter()
-                    .filter(|record| record["symbol"].as_str() == Some(symbol))
-                    .flat_map(|record| {
-                        record["regressions"]
-                            .as_array()
-                            .cloned()
-                            .unwrap_or_default()
-                    })
-                    .any(|regression| {
-                        regression["name"]
-                            .as_str()
-                            .is_some_and(|name| name.contains("builder"))
-                    });
-                if !covered {
-                    errors.push(LedgerError::MissingBuilderCoverage {
+                match parity.get(symbol) {
+                    None => errors.push(LedgerError::MissingBuilderCoverage {
                         symbol: symbol.clone(),
-                    });
+                    }),
+                    Some(regression) => {
+                        if let Err(reason) = resolve_regression(&mut index, root, regression) {
+                            errors.push(LedgerError::RegressionNotATest {
+                                reference: format!(
+                                    "builder_parity::{symbol}::{}",
+                                    regression["name"].as_str().unwrap_or("?")
+                                ),
+                                reason,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -750,6 +983,12 @@ fn fixture_ledger() -> Value {
         "family": "Fixture",
         "scope": "validator fixtures only",
         "allowed_phases": ["layout"],
+        "builder_parity": {
+            "Visibility": {
+                "path": "crates/fixture/tests.rs",
+                "name": "fixture_builder_parity"
+            }
+        },
         "records": [
             {
                 "symbol": "Visibility",
@@ -826,13 +1065,8 @@ fn fixture_sources(root: &Path) {
     // Completeness discovers options from this exact path, so fixtures
     // carry a miniature one whose public API matches the fixture ledger
     // exactly: `new(child)` plus the `visible` setter, with a generated
-    // builder covered by the builder-named regression.
-    std::fs::create_dir_all(root.join("crates/incular-widgets/src/layout/basic")).unwrap();
-    std::fs::write(
-        root.join("crates/incular-widgets/src/layout/basic/visibility.rs"),
-        "#[derive(Clone, TypedBuilder)]\npub struct Visibility {\n    visible: bool,\n    child: Widget,\n}\npub struct Widget;\nimpl Visibility {\n    pub fn new(child: impl Into<Widget>) -> Self {\n        let _ = child;\n        unimplemented!()\n    }\n    pub fn visible(mut self, visible: bool) -> Self {\n        let _ = visible;\n        unimplemented!()\n    }\n}\n",
-    )
-    .unwrap();
+    // builder covered by the explicit builder_parity reference.
+    write_visibility(root, MINIATURE_VISIBILITY);
     write_source(
         root,
         "convert.rs",
@@ -937,18 +1171,132 @@ fn validator_rejects_empty_records_and_missing_options() {
         "{errors:?}"
     );
 
-    // A derived builder without builder-named regression evidence fails.
+    // A derived builder without an explicit builder_parity reference
+    // fails, even when builder-named regressions exist elsewhere: names
+    // alone prove nothing.
     let mut ledger = fixture_ledger();
-    for record in ledger["records"].as_array_mut().unwrap() {
-        record["regressions"] = serde_json::json!([
-            {"path": "crates/fixture/tests.rs", "name": "fixture_renders"}
-        ]);
-    }
+    ledger.as_object_mut().unwrap().remove("builder_parity");
     let errors = errors_for(&ledger, &root);
     assert!(
         errors.contains(&LedgerError::MissingBuilderCoverage {
             symbol: "Visibility".to_owned(),
         }),
+        "{errors:?}"
+    );
+
+    // A builder_parity reference to a missing test fails like any other
+    // regression reference.
+    let mut ledger = fixture_ledger();
+    ledger["builder_parity"]["Visibility"]["name"] =
+        Value::String("no_such_parity_test".to_owned());
+    let errors = errors_for(&ledger, &root);
+    assert!(
+        errors.iter().any(|error| matches!(
+            error,
+            LedgerError::RegressionNotATest { reference, .. }
+            if reference.contains("builder_parity::Visibility")
+        )),
+        "{errors:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn write_visibility(root: &Path, text: &str) {
+    std::fs::create_dir_all(root.join("crates/incular-widgets/src/layout/basic")).unwrap();
+    std::fs::write(
+        root.join("crates/incular-widgets/src/layout/basic/visibility.rs"),
+        text,
+    )
+    .unwrap();
+}
+
+const MINIATURE_VISIBILITY: &str = "#[derive(Clone, TypedBuilder)]\npub struct Visibility {\n    visible: bool,\n    child: Widget,\n}\npub struct Widget;\nimpl Visibility {\n    pub fn new(child: impl Into<Widget>) -> Self {\n        let _ = child;\n        unimplemented!()\n    }\n    pub fn visible(mut self, visible: bool) -> Self {\n        let _ = visible;\n        unimplemented!()\n    }\n}\n";
+
+#[test]
+fn validator_discovers_builder_only_fields_and_honors_skipped_setters() {
+    // A builder-only field with no handwritten setter or constructor
+    // parameter is still public API: it must fail with MissingOption.
+    let root = fixture_root("builder-only");
+    fixture_sources(&root);
+    write_visibility(
+        &root,
+        &MINIATURE_VISIBILITY.replace(
+            "    child: Widget,\n",
+            "    child: Widget,\n    #[builder(default)]\n    extra: bool,\n",
+        ),
+    );
+    let errors = errors_for(&fixture_ledger(), &root);
+    assert!(
+        errors.contains(&LedgerError::MissingOption {
+            symbol: "Visibility".to_owned(),
+            option: "extra".to_owned(),
+        }),
+        "{errors:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    // A skipped setter generates no public API and needs no record.
+    let root = fixture_root("skipped-setter");
+    fixture_sources(&root);
+    write_visibility(
+        &root,
+        &MINIATURE_VISIBILITY.replace(
+            "    child: Widget,\n",
+            "    child: Widget,\n    #[builder(default, setter(skip))]\n    internal_cache: bool,\n",
+        ),
+    );
+    if let Err(errors) = validate_ledger(&fixture_ledger(), &root) {
+        panic!("skipped setters must not require ledger records: {errors:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn validator_rejects_renaming_builder_attributes_and_invented_phases() {
+    // A renaming setter cannot be mapped to a field name without macro
+    // expansion: reject loudly instead of assuming coverage.
+    let root = fixture_root("renamed-setter");
+    fixture_sources(&root);
+    write_visibility(
+        &root,
+        &MINIATURE_VISIBILITY.replace(
+            "    child: Widget,\n",
+            "    child: Widget,\n    #[builder(setter(prefix = \"with_\"))]\n    renamed: bool,\n",
+        ),
+    );
+    let errors = errors_for(&fixture_ledger(), &root);
+    assert!(
+        errors.iter().any(|error| matches!(
+            error,
+            LedgerError::UnsupportedBuilderAttribute { symbol, field, attribute }
+            if symbol == "Visibility" && field == "renamed" && attribute.contains("prefix")
+        )),
+        "{errors:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    // The phase vocabulary is fixed in the validator: an unknown phase
+    // fails even when also listed in the ledger's own allowed_phases.
+    let root = fixture_root("invented-phase");
+    fixture_sources(&root);
+    let mut ledger = fixture_ledger();
+    ledger["allowed_phases"] = serde_json::json!(["layout", "teleport"]);
+    ledger["records"][0]["consumers"] = serde_json::json!({
+        "teleport": [
+            {
+                "path": "crates/fixture/owner.rs",
+                "kind": "method",
+                "owner": "WidgetTree",
+                "name": "layout_fixture"
+            }
+        ]
+    });
+    let errors = errors_for(&ledger, &root);
+    assert!(
+        errors.iter().any(|error| matches!(
+            error,
+            LedgerError::UnknownPhase { phase, .. } if phase == "teleport"
+        )),
         "{errors:?}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -1097,12 +1445,8 @@ fn validator_rejects_prefix_only_test_matches_and_resolves_nested_modules() {
     ]);
     let nested_path = root.join("crates/fixture/nested.rs");
     assert!(nested_path.exists());
-    let errors = validate_ledger(&ledger, &root).expect_err("stale fixture record remains");
-    assert!(
-        !errors
-            .iter()
-            .any(|error| matches!(error, LedgerError::RegressionNotATest { .. })),
-        "nested test must resolve: {errors:?}"
-    );
+    if let Err(errors) = validate_ledger(&ledger, &root) {
+        panic!("nested test must resolve: {errors:?}");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
