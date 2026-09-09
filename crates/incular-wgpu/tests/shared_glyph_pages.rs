@@ -859,9 +859,13 @@ fn over_budget_working_sets_behave_deterministically() {
 }
 
 /// Requests a real GPU device without any window: adapter selection needs
-/// no surface, and page textures need no swapchain. Returns `None` with an
-/// actionable message where no adapter exists instead of failing blindly.
+/// no surface, and page textures need no swapchain. Without
+/// `INCULAR_WGPU_REQUIRE_GPU=1` an unavailable adapter skips gracefully
+/// (the repository's ordinary headless-test convention, not GPU
+/// validation); with it set, adapter acquisition failure fails loudly.
+/// Either way the actual adapter and backend are reported, never assumed.
 fn headless_page_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let required = std::env::var("INCULAR_WGPU_REQUIRE_GPU").as_deref() == Ok("1");
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = ["high-performance", "fallback"]
@@ -880,9 +884,18 @@ fn headless_page_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             .ok()
         });
     let Some(adapter) = adapter else {
-        eprintln!("protected tightening with real page textures: skipped, no GPU adapter");
+        let message = "protected tightening with real page textures: no GPU adapter available";
+        if required {
+            panic!("{message} with INCULAR_WGPU_REQUIRE_GPU=1");
+        }
+        eprintln!("{message}; skipped (not GPU validation)");
         return None;
     };
+    let info = adapter.get_info();
+    eprintln!(
+        "protected tightening with real page textures: adapter '{}' ({:?})",
+        info.name, info.backend
+    );
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("incular glyph residency test device"),
         ..Default::default()
@@ -894,6 +907,8 @@ fn headless_page_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// One real 1024px single-channel page texture: the same descriptor shape
 /// as production atlas pages (1024px `R8Unorm`), so ensure, replace,
 /// reclaim, and drop move genuine GPU objects rather than stand-ins.
+/// `COPY_SRC` is a test readback capability for submitted-work
+/// verification, not part of the production atlas usage.
 fn real_page_texture(device: &wgpu::Device) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("incular test glyph atlas page"),
@@ -906,22 +921,138 @@ fn real_page_texture(device: &wgpu::Device) -> wgpu::Texture {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::R8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
 }
 
+/// Uploads a self-describing pattern to the top rows of a page texture:
+/// full-width rows keep the copy pitch aligned, and byte (x, y) reads back
+/// as `x as u8`.
+fn upload_page_pattern(queue: &wgpu::Queue, texture: &wgpu::Texture) {
+    const ROWS: usize = 8;
+    let mut bytes = vec![0u8; 1024 * ROWS];
+    for y in 0..ROWS {
+        for x in 0..1024usize {
+            bytes[y * 1024 + x] = x as u8;
+        }
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(1024),
+            rows_per_image: Some(ROWS as u32),
+        },
+        wgpu::Extent3d {
+            width: 1024,
+            height: ROWS as u32,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// Encodes a 256-wide strip copy into a fresh readback buffer and
+/// submits it, returning both for a later wait. Width 256 keeps the
+/// readback pitch aligned. Submission holds the texture alive inside the
+/// queue independently of every test-side clone dropped afterwards.
+fn submit_page_copy(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+) -> (wgpu::Buffer, wgpu::SubmissionIndex) {
+    const WIDTH: u32 = 256;
+    const HEIGHT: u32 = 8;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("incular test page readback"),
+        size: u64::from(WIDTH * HEIGHT),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("incular test page copy"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(WIDTH),
+                rows_per_image: Some(HEIGHT),
+            },
+        },
+        wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+    );
+    let submission = queue.submit(Some(encoder.finish()));
+    (buffer, submission)
+}
+
+/// Waits for a copy submitted by [`submit_page_copy`] and returns its
+/// bytes, mirroring the repository's wgpu-30 completion convention
+/// (`map_async` plus `PollType::Wait` on the submission, both bounded).
+fn wait_page_readback(
+    device: &wgpu::Device,
+    buffer: &wgpu::Buffer,
+    submission: wgpu::SubmissionIndex,
+) -> Vec<u8> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(std::time::Duration::from_secs(5)),
+        })
+        .expect("readback wait must complete");
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("readback mapping must complete")
+        .expect("readback mapping must succeed");
+    let bytes = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped readback must be readable")
+        .to_vec();
+    buffer.unmap();
+    bytes
+}
+
 /// Protected tightening with real page textures, sequenced exactly as the
 /// submission boundary drives production: resolve (lowering pins pages),
-/// tighten with the active frame's pages protected (deferred), release
-/// protection (post-submit), then retire identities, prune shared texture
-/// slots, and reclaim local bindings. The desktop worker cannot reach
+/// tighten with the active frame's pages protected (deferred), submit
+/// work referencing a protected texture, release protection (post-submit),
+/// then retire identities, prune shared texture slots, and reclaim local
+/// bindings before waiting on the GPU. The desktop worker cannot reach
 /// this phase — frame pins exist only mid-submission and no test-only
 /// injection exists — so this backend coverage stands in for it, with
-/// real textures in every slot the production functions touch.
+/// real textures in every slot the production functions touch. It proves
+/// submitted commands stay valid after cache ownership drops; it does not
+/// prove physical memory reclamation, nor does it invoke the renderer's
+/// submission orchestration.
 #[test]
 fn protected_tightening_defers_through_release_with_real_page_textures() {
-    let Some((device, _queue)) = headless_page_device() else {
+    let Some((device, queue)) = headless_page_device() else {
         return;
     };
     let mut atlas = GlyphAtlas::with_max_pages(8);
@@ -983,6 +1114,33 @@ fn protected_tightening_defers_through_release_with_real_page_textures() {
     assert!(local.get(pages[0]).is_some());
     assert!(local.get(pages[1]).is_some());
 
+    // Save this page's own identity before retirement: generation safety
+    // concerns the (page, generation) pair, never generations across
+    // different indices.
+    let retired_page = placed[1].1.entry.page;
+    let retired_generation = placed[1].1.entry.generation;
+    let retired_key = placed[1].0;
+    assert_eq!(retired_page, pages[1]);
+
+    // Submitted work referencing the still-protected page: upload a known
+    // pattern and submit its copy now. The upload and the copy borrow the
+    // shared slot without cloning, so no temporary clone extends
+    // application ownership past the retirement below; the submitted
+    // commands hold the texture alive inside the queue on their own.
+    upload_page_pattern(
+        &queue,
+        slots[usize::from(retired_page)]
+            .as_ref()
+            .expect("protected shared slot live"),
+    );
+    let (readback, submission) = submit_page_copy(
+        &device,
+        &queue,
+        slots[usize::from(retired_page)]
+            .as_ref()
+            .expect("protected shared slot live"),
+    );
+
     // Submission boundary: pins clear, protection releases, and the
     // pending excess retires without another glyph lookup.
     atlas.release_frame_protection();
@@ -991,37 +1149,85 @@ fn protected_tightening_defers_through_release_with_real_page_textures() {
         atlas.page_generation(pages[0]),
         Some(placed[0].1.entry.generation)
     );
-    assert!(atlas.page_generation(pages[1]).is_none());
+    assert!(atlas.page_generation(retired_page).is_none());
     let pruned = retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision);
     assert_eq!(pruned, 1);
+    assert!(slots[usize::from(retired_page)].is_none());
     assert_eq!(registry.glyph_count(), 1);
     assert_eq!(local.reclaim(&|page| atlas.page_generation(page)), 1);
-    assert!(local.get(pages[1]).is_none());
+    assert!(local.get(retired_page).is_none());
     assert!(local.get(pages[0]).is_some());
 
-    // Re-expansion reuses the lowest vacant slot under a fresh
-    // generation: retired identities name epochs that no longer exist,
-    // so old references can never sample the new contents.
+    // The submitted copy completes with correct bytes after every
+    // test-side clone is gone: the shared slot pruned above, the local
+    // binding reclaimed above. This is cache-ownership release, not
+    // physical memory reclamation, and not the renderer's submission
+    // orchestration.
+    let bytes = wait_page_readback(&device, &readback, submission);
+    let mut expected = Vec::with_capacity(256 * 8);
+    for _ in 0..8usize {
+        for x in 0..256usize {
+            expected.push(x as u8);
+        }
+    }
+    assert_eq!(bytes, expected);
+
+    // Re-expansion reuses vacant slots under fresh generations. With
+    // four slots and one live page, exactly two fresh placements refill
+    // slots 0 then the retired slot itself — a bounded sequence from the
+    // known fixture size, not an open hunt.
     atlas.set_max_pages(8, &empty);
-    let (key, raster) = place(&mut atlas, &mut registry, &mut text, "A", 880., &empty);
-    assert_eq!(raster.entry.page, 0);
-    assert_eq!(raster.entry.generation, placed[0].1.entry.generation + 1);
-    assert_eq!(atlas.page_generation(0), Some(raster.entry.generation));
+    let (_, first) = place(&mut atlas, &mut registry, &mut text, "A", 880., &empty);
+    assert_eq!(first.entry.page, 0);
+    let (key, replacement) = place(&mut atlas, &mut registry, &mut text, "A", 900., &empty);
+    assert_eq!(replacement.entry.page, retired_page);
+    assert_ne!(replacement.entry.generation, retired_generation);
+    assert_eq!(
+        atlas.page_generation(retired_page),
+        Some(replacement.entry.generation),
+    );
+
+    // Registry coherence through the lookup API: the old key is absent
+    // (removal reports nothing to remove, inserting nothing), while the
+    // replacement key resolves idempotently.
+    assert!(!registry.remove_glyph(retired_key));
+    let identity = registry.glyph_identity(key);
+    assert_eq!(registry.glyph_identity(key), identity);
+
+    // The local table binds the replacement generation, and an
+    // old-generation binding cannot survive reclamation. The shared slot
+    // is recreated first, mirroring production's lazy shared-texture
+    // ensure on re-resolution.
+    slots[usize::from(retired_page)] = Some(real_page_texture(&device));
+    local.ensure(retired_page, replacement.entry.generation, || {
+        slots[usize::from(retired_page)]
+            .as_ref()
+            .expect("recreated shared slot live")
+            .clone()
+    });
+    assert_eq!(
+        local.generation(retired_page),
+        Some(replacement.entry.generation)
+    );
+    local.ensure(retired_page, retired_generation, || {
+        real_page_texture(&device)
+    });
+    assert_eq!(local.reclaim(&|page| atlas.page_generation(page)), 1);
+    assert!(local.get(retired_page).is_none());
+
     // The survivor's identity stays live through everything above,
-    // while both retired identities name epochs that no longer exist,
-    // so old references can never sample the reused contents.
+    // while the other retired identity names an epoch that no longer
+    // exists, so old references can never sample reused contents.
     assert_eq!(
         atlas.page_generation(pages[0]),
         Some(placed[0].1.entry.generation)
     );
-    for (old_key, old) in placed[1..].iter().map(|(key, raster)| (*key, raster.entry)) {
-        assert_ne!(old_key, key);
-        assert_ne!(
-            atlas.page_generation(old.page),
-            Some(old.generation),
-            "retired identity (page {}, gen {}) must not resolve",
-            old.page,
-            old.generation
-        );
-    }
+    let stale = placed[2].1.entry;
+    assert_ne!(
+        atlas.page_generation(stale.page),
+        Some(stale.generation),
+        "retired identity (page {}, gen {}) must not resolve",
+        stale.page,
+        stale.generation
+    );
 }

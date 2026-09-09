@@ -1011,8 +1011,21 @@ code, "missing" means absent with no compensating path.
   headless device, real 1024px `R8Unorm` textures through the production
   ensure/retire/prune/reclaim functions — tighten defers protected pages,
   submission release retires the pending excess, registry and shared
-  slots drain coherently, re-expansion reuses under bumped generations,
-  retired identities never resolve). It cannot run through actual GPU
+  slots drain coherently). Same-slot reuse is asserted on the retired
+  page's own identity (page, then generation, then
+  `page_generation` — never generations across indices): re-expansion
+  refills the exact retired slot under a bumped generation while the old
+  key stays absent from the registry and the replacement key resolves
+  idempotently; an old-generation local binding cannot survive
+  reclamation. Submitted work is proven, not assumed: a known pattern is
+  uploaded to the protected page, copied to a readback buffer, and
+  submitted before release; retirement and reclamation then drop every
+  test-side clone, and the copy still completes with correct bytes
+  (cache-ownership release only — not physical reclamation, not the
+  renderer's submission orchestration). The test requires
+  `INCULAR_WGPU_REQUIRE_GPU=1` for hardware validation (fails loudly
+  without an adapter, reporting adapter and backend) and otherwise keeps
+  the ordinary headless convention. It cannot run through actual GPU
   submission: frame pins exist only mid-frame and no test-only injection
   was added to hold them, so that final composition step stays cited
   from the submission boundary that runs it live every frame. One
@@ -1040,11 +1053,18 @@ code, "missing" means absent with no compensating path.
   reply results — completion without a frame request, close and shutdown
   settlement, late-completion silence with replacement isolation, and
   pending retention across repeated takes.
-- Remaining W2 work: none open — W2 acceptance is the live run above
-  plus the cited headless suites. Shared source-font-byte budgeting
-  stays separate and explicitly tracked (unbounded `font_handles` map
-  noted above — app-owned `Arc` retention, not cache ownership; layouts
-  already bounded by count).
+- Remaining W2 work: none open beyond one explicitly documented
+  boundary — W2 acceptance is the live run above plus the cited
+  headless/backend suites. The residual boundary: protected tightening
+  invoked through a literal frame submission is not directly covered,
+  because frame pins exist only mid-submission and holding them from
+  outside would require an inappropriate architectural change; the
+  backend test above sequences the identical production calls in the
+  identical order with real textures, and the submission boundary
+  itself runs live on every presented frame. Shared source-font-byte
+  budgeting stays separate and explicitly tracked (unbounded
+  `font_handles` map noted above — app-owned `Arc` retention, not cache
+  ownership; layouts already bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.
