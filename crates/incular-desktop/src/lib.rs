@@ -1207,10 +1207,15 @@ impl DesktopHost {
                         local_glyph_pages: counters.local_glyph_page_bindings,
                     }
                 });
-            // Windows without a native renderer yet keep their waiters;
-            // the query resolves on a later turn or times out boundedly.
-            // (A live runtime window always gains a renderer with the
-            // shared context, so this only covers creation races.)
+            // A live runtime window without a native renderer yet (native
+            // creation still in flight) keeps its waiters; the query
+            // resolves on a later turn once the renderer exists. Nothing
+            // is retained after terminal failure: renderer-creation
+            // failure and window close both remove the runtime window,
+            // and shutdown fails every waiter, so the runtime side fails
+            // those waiters (WindowNotFound/WindowClosed) on its existing
+            // close/shutdown paths instead of leaving them for another
+            // maintenance pass.
             if let Some(summary) = summary {
                 self.application.complete_gpu_resource_query(id, summary);
             }

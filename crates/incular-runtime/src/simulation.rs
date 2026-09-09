@@ -904,10 +904,14 @@ impl Application {
             .is_some_and(|waiters| !waiters.is_empty())
     }
 
-    /// Drains the windows with pending GPU-resource queries so the native
-    /// adapter can fulfill them from current state without presenting.
-    /// Waiters for windows that no longer exist fail immediately instead
-    /// of hanging the querier.
+    /// Returns the live windows with pending GPU-resource queries so the
+    /// native adapter can fulfill them from current state without
+    /// presenting. Live waiters stay queued until
+    /// [`Self::complete_gpu_resource_query`] drains them; waiters for
+    /// windows that no longer exist fail immediately instead of hanging
+    /// the querier. Window close and application shutdown settle pending
+    /// waiters through the shared close/shutdown cleanup, never through
+    /// this method.
     pub fn take_gpu_resource_queries(&mut self) -> Vec<WindowId> {
         let ids: Vec<WindowId> = self
             .simulation_gpu_resource_waiters
@@ -1004,6 +1008,14 @@ impl Application {
             }
         }
         if let Some(waiters) = self.simulation_capture_waiters.remove(&window_id) {
+            for reply in waiters {
+                let _ = reply.send(Err(error.clone()));
+            }
+        }
+        // Resource queries hold no frame debt: closing settles them here,
+        // through the same close/shutdown paths as every other waiter, so
+        // no maintenance pass is needed to release them.
+        if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
             for reply in waiters {
                 let _ = reply.send(Err(error.clone()));
             }

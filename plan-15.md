@@ -982,9 +982,17 @@ code, "missing" means absent with no compensating path.
   entries are necessarily gone); 12 oversize glyphs (scale-adaptive
   ~900px physical, inside raster limits, above the page threshold) cap
   live pages at 8 with retirements; idle A shows local bindings (0, 0,
-  1) — stale image/gradient bindings reclaimed by host maintenance with
-  no A presentation, while the still-valid glyph page binding is
-  precisely retained; A resumes pixel-identical with fresh bindings; A's
+  1) — stale image/gradient bindings reclaimed by host maintenance
+  while A rendered nothing further (the test issues no A frame or
+  render-requesting call between the reads; a presented-frames delta is
+  not asserted, so this is construction-plus-contract evidence, not a
+  counted non-presentation proof), while the still-valid glyph page
+  binding is precisely retained. That glyph binding explicitly proves
+  preservation of a live binding — page 0 stayed hot through shared
+  glyph hits, so it was never an eviction victim — not reclamation and
+  reacquisition of an evicted one; reclamation-then-reacquire for glyphs
+  is covered headlessly, where victim selection is directly observable.
+  A resumes pixel-identical with fresh image/gradient bindings; A's
   close completes observably (polled to WindowNotFound/Closed) before
   B's continued rendering is checked; then B closes and the loop exits.
   Pixel assertions (alignment-free region scans, opaque colors, stable
@@ -1001,6 +1009,22 @@ code, "missing" means absent with no compensating path.
   eviction arithmetic asserted; the worker closes both windows
   unconditionally via panic-caught teardown (a failing worker previously
   stranded open windows and hung the loop).
+- W2 query lifecycle completion: pending GPU-resource queries now settle
+  through the established close/shutdown cleanup (`fail_simulation_window`
+  fails them with `WindowClosed`, no maintenance pass required), so no
+  waiter outlives its window or a shutdown. A live runtime window without
+  a native renderer yet keeps its waiter for a later turn (native
+  creation in flight); terminal failure removes the runtime window, and
+  the drain fails those waiters promptly — nothing is retained
+  indefinitely. Late completion after closure is a no-op that cannot
+  report success or touch a replacement window (generational ids).
+  `take_gpu_resource_queries` documents that it returns live pending
+  windows rather than draining their waiters, and the desktop fulfill
+  path documents the pending-vs-terminal distinction it implements.
+  Evidence: five deterministic runtime simulation tests asserting actual
+  reply results — completion without a frame request, close and shutdown
+  settlement, late-completion silence with replacement isolation, and
+  pending retention across repeated takes.
 - Remaining W2 work: none open — W2 acceptance is the live run above
   plus the cited headless suites. Shared source-font-byte budgeting
   stays separate and explicitly tracked (unbounded `font_handles` map

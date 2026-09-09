@@ -1,6 +1,9 @@
 use incular_config::Constraints;
 use incular_core::{Code, Color, KeyState, KeyboardEvent, KeyboardKey, Modifiers, Offset, Size};
-use incular_runtime::{Application, Screenshot, Signal, Simulation, SimulationError};
+use incular_platform::WindowId;
+use incular_runtime::{
+    Application, GpuResourceSummary, Screenshot, Signal, Simulation, SimulationError,
+};
 use incular_widgets::internal::{ActionSurface, TextEditingController};
 use incular_widgets::{
     EditableText, FocusNode, GestureDetector, KeyboardListener, OverlayPortal, Positioned, Text,
@@ -8,7 +11,7 @@ use incular_widgets::{
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn drive<T, F>(application: &mut Application, simulation: Simulation, command: F) -> T
 where
@@ -229,4 +232,201 @@ fn screenshot_validation_rejects_invalid_pixel_buffers() {
         Screenshot::from_rgba8(0, 1, Vec::new()),
         Err(SimulationError::InvalidInput(_))
     ));
+}
+
+fn gpu_summary_fixture() -> GpuResourceSummary {
+    GpuResourceSummary {
+        shared_image_entries: 7,
+        shared_image_evictions: 3,
+        glyph_live_pages: 2,
+        glyphs_rasterized: 41,
+        local_image_entries: 1,
+        ..GpuResourceSummary::default()
+    }
+}
+
+/// Pumps simulation requests until `settled` reports done, then returns
+/// the worker result. Fails loudly instead of hanging the test. The
+/// worker handle stays owned here because settling closures only borrow
+/// it to poll completion.
+fn drive_query<F>(
+    application: &mut Application,
+    worker: std::thread::JoinHandle<Result<GpuResourceSummary, SimulationError>>,
+    mut settled: F,
+) -> Result<GpuResourceSummary, SimulationError>
+where
+    F: FnMut(&mut Application),
+{
+    let mut worker = Some(worker);
+    for _ in 0..2_000 {
+        application.process_simulation_requests();
+        settled(application);
+        if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+            return worker
+                .take()
+                .expect("finished worker")
+                .join()
+                .expect("simulation worker did not panic");
+        }
+        std::thread::park_timeout(Duration::from_millis(1));
+    }
+    panic!("simulation request was not serviced");
+}
+
+fn query_in_background(
+    simulation: Simulation,
+) -> std::thread::JoinHandle<Result<GpuResourceSummary, SimulationError>> {
+    std::thread::spawn(move || simulation.query_gpu_resources())
+}
+
+/// A resource query completes with the adapter's summary and never asks
+/// the window for a frame: observation stays free of presentation. A
+/// headless frame first consumes the launch invalidation so the flag
+/// below measures only what the query path itself requests.
+#[test]
+fn gpu_resource_query_completes_without_requesting_a_frame() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    application
+        .run_window_frame_at(
+            window,
+            Constraints::tight(Size::new(80., 60.)),
+            Instant::now(),
+        )
+        .expect("headless frame runs");
+    assert!(
+        !application.frame_requested(window),
+        "the headless frame must consume the launch invalidation"
+    );
+    let worker = query_in_background(application.simulation());
+    let expected = gpu_summary_fixture();
+    let result = drive_query(&mut application, worker, |application| {
+        for id in application.take_gpu_resource_queries() {
+            assert_eq!(id, window);
+            assert!(
+                !application.frame_requested(window),
+                "a resource query must not request a frame"
+            );
+            application.complete_gpu_resource_query(id, expected);
+        }
+    });
+    assert_eq!(result, Ok(expected));
+    assert!(!application.frame_requested(window));
+}
+
+/// A query pending when its window closes fails promptly with
+/// `WindowClosed`: no maintenance pass is needed to release it.
+#[test]
+fn gpu_resource_query_pending_when_window_closes() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    let worker = query_in_background(application.simulation());
+    let mut closed = false;
+    let result = drive_query(&mut application, worker, |application| {
+        if !closed && application.take_gpu_resource_queries().contains(&window) {
+            assert!(application.close_window(window));
+            closed = true;
+        }
+    });
+    assert!(closed, "the query must land before the close");
+    assert_eq!(result, Err(SimulationError::WindowClosed(window)));
+}
+
+/// A query pending across application shutdown fails with `WindowClosed`
+/// through the existing shutdown cleanup, with no desktop maintenance
+/// running at all.
+#[test]
+fn gpu_resource_query_pending_across_shutdown() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    let worker = query_in_background(application.simulation());
+    // Land the request first so the waiter genuinely exists pre-shutdown.
+    for _ in 0..2_000 {
+        application.process_simulation_requests();
+        if application.take_gpu_resource_queries().contains(&window) {
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(1));
+    }
+    application.shutdown();
+    let result = worker.join().expect("simulation worker did not panic");
+    assert_eq!(result, Err(SimulationError::WindowClosed(window)));
+}
+
+/// Late completion after closure reports nothing: the waiter is already
+/// gone, and the replacement window's own queries are unaffected —
+/// generational ids keep the two apart.
+#[test]
+fn late_gpu_resource_completion_after_closure_reports_nothing() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    let worker = query_in_background(application.simulation());
+    let mut observed_close = false;
+    let result = drive_query(&mut application, worker, |application| {
+        if !observed_close && application.take_gpu_resource_queries().contains(&window) {
+            assert!(application.close_window(window));
+            observed_close = true;
+        }
+    });
+    assert_eq!(result, Err(SimulationError::WindowClosed(window)));
+
+    // A completion arriving after the close finds no waiter: no success is
+    // reported and nothing panics.
+    application.complete_gpu_resource_query(window, gpu_summary_fixture());
+
+    // A replacement window (possibly the same slot, never the same id)
+    // queries and completes cleanly.
+    let replacement: WindowId = application
+        .open_window(Default::default(), Text::new("replacement").into())
+        .expect("replacement window")
+        .id();
+    assert_ne!(replacement, window);
+    let worker = query_in_background(application.simulation().for_window(replacement));
+    let expected = gpu_summary_fixture();
+    let result = drive_query(&mut application, worker, |application| {
+        for id in application.take_gpu_resource_queries() {
+            application.complete_gpu_resource_query(id, expected);
+        }
+    });
+    assert_eq!(result, Ok(expected));
+}
+
+/// A live window without fulfillment keeps its query pending across
+/// takes: pending (renderer still arriving) is distinct from terminal
+/// (close/shutdown fails the waiter), and repeated takes never drop or
+/// duplicate it.
+#[test]
+fn live_window_keeps_query_pending_across_takes() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    application
+        .run_window_frame_at(
+            window,
+            Constraints::tight(Size::new(80., 60.)),
+            Instant::now(),
+        )
+        .expect("headless frame runs");
+    let worker = query_in_background(application.simulation());
+    let expected = gpu_summary_fixture();
+    let mut takes = 0;
+    let result = drive_query(&mut application, worker, |application| {
+        let pending = application.take_gpu_resource_queries();
+        if pending.contains(&window) {
+            takes += 1;
+            assert!(
+                !application.frame_requested(window),
+                "repeated takes must not request frames either"
+            );
+            if takes >= 3 {
+                application.complete_gpu_resource_query(window, expected);
+            }
+        }
+    });
+    assert!(takes >= 3, "the waiter must survive repeated takes");
+    assert_eq!(result, Ok(expected));
 }
