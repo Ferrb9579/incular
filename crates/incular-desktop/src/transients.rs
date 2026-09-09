@@ -75,15 +75,15 @@ pub(super) struct NativeTransientState {
 }
 
 impl NativeTransientState {
-    /// Whether a paced retry is owed now, for the event loop's deadline
-    /// control. Same rules as normal windows.
-    pub(super) fn retry_due(&self, now: std::time::Instant) -> bool {
-        self.retry.retry_due(now)
-    }
-
-    /// Armed retry deadline, if any, for the event loop's wait control.
-    pub(super) fn retry_at(&self) -> Option<std::time::Instant> {
-        self.retry.retry_at()
+    /// Advances this transient's retry scheduling exactly like a normal
+    /// window's: returns whether the host must request a redraw now plus
+    /// the wake deadline to contribute, if any. Transients always poll as
+    /// runnable — their first render is what shows them.
+    pub(super) fn poll_retry(
+        &mut self,
+        now: std::time::Instant,
+    ) -> (bool, Option<std::time::Instant>) {
+        self.retry.poll(now, true)
     }
 
     /// Dispatches an owed paced retry redraw.

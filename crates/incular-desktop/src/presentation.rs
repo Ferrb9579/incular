@@ -20,6 +20,25 @@ fn retry_delay(consecutive_skips: u32) -> std::time::Duration {
     }
 }
 
+/// Mutually exclusive scheduling states for one window's presentation
+/// retries. There is deliberately no separate "armed" boolean: the state
+/// itself says whether a retry is owed, queued, or parked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RetryState {
+    /// Nothing owed; demand decides.
+    #[default]
+    Idle,
+    /// A retry is owed at the deadline.
+    Waiting { deadline: std::time::Instant },
+    /// A redraw was dispatched for the owed retry and the attempt has not
+    /// run yet. Holds no deadline: repeated maintenance must neither
+    /// re-dispatch nor wake the loop for it.
+    Dispatched,
+    /// Parked without a deadline (unconfigured, occluded). Only an
+    /// explicit recovery event leaves this state.
+    Dormant,
+}
+
 /// Host-owned pacing for presentation retries: one per window (normal and
 /// transient alike), driven by settled frame outcomes and explicit clock
 /// readings. The event loop owns deadlines and window lifetime; the
@@ -29,8 +48,7 @@ fn retry_delay(consecutive_skips: u32) -> std::time::Duration {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PresentationRetry {
     consecutive_skips: u32,
-    retry_at: Option<std::time::Instant>,
-    dormant: bool,
+    state: RetryState,
 }
 
 impl PresentationRetry {
@@ -39,12 +57,13 @@ impl PresentationRetry {
         Self::default()
     }
 
-    /// Settles one frame outcome at `now`. Presentation resets to idle;
-    /// retryable skips (timeouts, inline recoveries) arm a deadline —
-    /// immediate for the first, then backing off; dormant reasons
-    /// (unconfigured, occluded) park without deadlines until an explicit
-    /// recovery event. Skips never settle waiters: pending work stays
-    /// eligible for the armed attempt.
+    /// Settles one frame outcome at `now`: the attempt ran, so any queued
+    /// or waiting retry resolves. Presentation resets to idle; retryable
+    /// skips (timeouts, inline recoveries) arm a deadline — immediate for
+    /// the first, then backing off; dormant reasons (unconfigured,
+    /// occluded) park without deadlines until an explicit recovery event.
+    /// Skips never settle waiters: pending work stays eligible for the
+    /// armed attempt.
     pub fn note_outcome(&mut self, outcome: &FrameOutcome, now: std::time::Instant) {
         match outcome {
             FrameOutcome::Presented(_) => {
@@ -52,60 +71,96 @@ impl PresentationRetry {
             }
             FrameOutcome::Skipped(reason) => {
                 if reason.should_request_retry() {
-                    self.dormant = false;
                     self.consecutive_skips = self.consecutive_skips.saturating_add(1);
-                    self.retry_at = Some(now + retry_delay(self.consecutive_skips));
+                    self.state = RetryState::Waiting {
+                        deadline: now + retry_delay(self.consecutive_skips),
+                    };
                 } else {
                     self.consecutive_skips = 0;
-                    self.retry_at = None;
-                    self.dormant = true;
+                    self.state = RetryState::Dormant;
                 }
             }
         }
     }
 
     /// Recovery events that make attempts useful again — non-zero resize,
-    /// unocclusion: dormant or backed-off windows become immediately
-    /// eligible. New application demand deliberately does not reset: gated
-    /// demand waits for the armed deadline instead of bypassing it.
+    /// unocclusion: dormant, waiting, or dispatched windows become
+    /// immediately eligible. New application demand deliberately does not
+    /// reset: gated demand waits for the armed deadline instead of
+    /// bypassing it.
     pub fn note_recovered(&mut self) {
         *self = Self::new();
     }
 
-    /// Armed retry deadline, if any. `None` means idle (demand decides) or
-    /// dormant (recovery events decide).
+    /// Armed retry deadline, if any. `Some` exactly while a retry is
+    /// owed and undispatched; idle, dispatched, and dormant windows
+    /// report `None`.
     #[must_use]
     pub const fn retry_at(&self) -> Option<std::time::Instant> {
-        self.retry_at
+        match self.state {
+            RetryState::Waiting { deadline } => Some(deadline),
+            RetryState::Idle | RetryState::Dispatched | RetryState::Dormant => None,
+        }
     }
 
-    /// Whether an attempt may run now: idle always, armed deadlines once
-    /// due, never while dormant. Gates both demand scheduling and redraw
-    /// handling, so no path can recreate an unrestricted cycle.
+    /// Whether a requested attempt may run now: idle always, an owed retry
+    /// once due, a dispatched redraw already in flight, never while
+    /// dormant. Gates demand scheduling and redraw handling. Visibility is
+    /// enforced separately by the host's own checks plus [`Self::poll`];
+    /// this gate only answers for the retry lifecycle itself.
     #[must_use]
     pub fn attempt_due(&self, now: std::time::Instant) -> bool {
-        !self.dormant && self.retry_at.is_none_or(|deadline| now >= deadline)
+        match self.state {
+            RetryState::Idle | RetryState::Dispatched => true,
+            RetryState::Dormant => false,
+            RetryState::Waiting { deadline } => now >= deadline,
+        }
     }
 
-    /// Whether a paced retry is owed now: an armed deadline has passed.
-    /// Unlike [`Self::attempt_due`], idle windows report false — the host
-    /// dispatches redraws from this, so idle windows are never prodded.
-    #[must_use]
-    pub fn retry_due(&self, now: std::time::Instant) -> bool {
-        !self.dormant && self.retry_at.is_some_and(|deadline| now >= deadline)
+    /// Advances scheduling at `now` for a window the host reports as
+    /// runnable (visible and live). This is the one authoritative decision
+    /// for both retry dispatch and wake deadlines: it returns whether the
+    /// host must request a redraw now, plus the next wake deadline the
+    /// loop should wait on, if any.
+    ///
+    /// - `Idle` / `Dormant`: nothing owed — `(false, None)`. Dormant stays
+    ///   parked even past any clock reading; only [`Self::note_recovered`]
+    ///   wakes it.
+    /// - `Waiting`: hidden windows contribute neither a redraw nor a
+    ///   deadline — the owed retry and its backoff progress are preserved
+    ///   silently instead of waking the loop for nothing. Visible windows
+    ///   dispatch once due (transitioning to `Dispatched`, consuming the
+    ///   deadline) and otherwise contribute their deadline.
+    /// - `Dispatched`: the redraw is already queued — `(false, None)`,
+    ///   however often maintenance polls. If the window stops being
+    ///   runnable before the attempt runs, the retry falls back to
+    ///   `Waiting` due immediately, so restoring runnability dispatches
+    ///   one prompt attempt; the attempt's outcome then settles normally.
+    pub fn poll(
+        &mut self,
+        now: std::time::Instant,
+        runnable: bool,
+    ) -> (bool, Option<std::time::Instant>) {
+        match self.state {
+            RetryState::Idle | RetryState::Dormant => (false, None),
+            RetryState::Waiting { deadline } => {
+                if !runnable {
+                    (false, None)
+                } else if now >= deadline {
+                    self.state = RetryState::Dispatched;
+                    (true, None)
+                } else {
+                    (false, Some(deadline))
+                }
+            }
+            RetryState::Dispatched => {
+                if !runnable {
+                    self.state = RetryState::Waiting { deadline: now };
+                }
+                (false, None)
+            }
+        }
     }
-}
-
-/// Earliest armed deadline across live windows, normal and transient:
-/// pass each window's [`PresentationRetry::retry_at`]. `None` means no
-/// window owes a paced retry and the loop may wait indefinitely. Closing
-/// a window drops its policy with it, which simply stops contributing —
-/// pending retries cancel without further action.
-#[must_use]
-pub fn earliest_retry_after(
-    deadlines: impl IntoIterator<Item = Option<std::time::Instant>>,
-) -> Option<std::time::Instant> {
-    deadlines.into_iter().flatten().min()
 }
 
 pub(crate) fn present_window(

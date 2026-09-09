@@ -924,9 +924,18 @@ code, "missing" means absent with no compensating path.
   retries immediately, then backoff runs 16/32/64/128ms capped at 250ms;
   success and resize/unocclude recovery reset to idle, unconfigured and
   occluded outcomes park dormant without deadlines, and new demand waits
-  for the armed deadline instead of bypassing it. The event loop
+  for the armed deadline instead of bypassing it. Scheduling states are
+  explicit and mutually exclusive (idle, owed-by-deadline, dispatched,
+  dormant): one authoritative `poll(now, runnable)` produces both the
+  redraw dispatch and the wake-deadline contribution, so hidden or
+  minimized windows contribute neither a redraw nor an expired wakeup
+  while preserving the owed retry silently. Requesting a redraw consumes
+  the deadline into a queued-attempt state with no deadline of its own,
+  so delayed delivery never re-dispatches or re-wakes; if the window
+  stops being runnable first, the retry falls back to owed-immediately
+  and restores promptly. The event loop
   dispatches due retries, gates all demand/redraw paths on the same
-  component, and waits on the earliest armed deadline
+  component, and waits on the earliest contributed deadline
   (`ControlFlow::WaitUntil`, indefinite `Wait` when none); closing a
   window drops its policy and cancels its retry. Acquisition
   routes backend results through one neutral classifier
@@ -940,11 +949,14 @@ code, "missing" means absent with no compensating path.
   values stay separate from wgpu error types; the runtime is untouched.
   Evidence: `incular-wgpu/tests/frame_outcomes.rs` (injected backend
   results through the real classifier, retry mapping, outcome accessors),
-  `incular-desktop/tests/presentation_retry.rs` (8 tests driving the
-  production pacing component with a fake clock: exact backoff dispatch
-  times, reset on success, dormant parking with prompt recovery,
-  demand gating, earliest-deadline computation with window close, and
-  identical normal/transient pacing), and a runtime presented/skipped
+  `incular-desktop/tests/presentation_retry.rs` (7 tests driving the
+  production `poll` operation with a fake clock, asserting redraw
+  dispatches and wake deadlines together: hidden windows with expired
+  deadlines contribute neither, suppressed-then-restored dispatches fire
+  once promptly, delayed delivery never re-dispatches, close cancels
+  waiting and queued retries, visible backoff progresses and resets on
+  success, dormant parking recovers promptly, and normal/transient
+  windows share the scheduling contract), and a runtime presented/skipped
   accounting contract. Actual GPU presentation stays
   recorded as unverified. Same validation as above.
 - Remaining W2 work: two-window GPU churn tests. Shared

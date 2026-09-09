@@ -13,7 +13,7 @@ mod platform_menus;
 mod platform_services;
 mod pointer;
 mod presentation;
-pub use presentation::{PresentationRetry, earliest_retry_after};
+pub use presentation::PresentationRetry;
 mod window_host;
 pub mod winit_adapter;
 use input::{InputKind, WindowInputState};
@@ -2095,23 +2095,36 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
         self.process_pending_application_shell();
         self.start_pending_file_dialogs();
         let now = std::time::Instant::now();
-        // Dispatch paced retries whose deadlines passed. Visible normal
-        // windows only — occluded or minimized windows wait for their
-        // restore events instead; transients follow the same pacing
-        // without a visibility gate (their hosts are short-lived popups
-        // driven by the owner, and backoff still bounds them).
-        for state in self.windows.values() {
-            let visible = !state.environment.is_occluded()
+        // One authoritative scheduling pass: each window's poll decides
+        // both its redraw dispatch and its wake-deadline contribution, so
+        // the two can never disagree. Hidden or minimized normal windows
+        // contribute neither — an expired deadline never wakes the loop
+        // for a window that cannot attempt. Transients poll as always
+        // runnable: their first render is what shows them, and backoff
+        // still bounds repeated failures.
+        let mut wake_at: Option<std::time::Instant> = None;
+        let mut take_wake = |wake: Option<std::time::Instant>| {
+            wake_at = match (wake_at, wake) {
+                (Some(current), Some(next)) => Some(current.min(next)),
+                (current, next) => current.or(next),
+            };
+        };
+        for state in self.windows.values_mut() {
+            let runnable = !state.environment.is_occluded()
                 && state
                     .window
                     .is_minimized()
                     .is_none_or(|minimized| !minimized);
-            if visible && state.retry.retry_due(now) {
+            let (dispatch, wake) = state.retry.poll(now, runnable);
+            take_wake(wake);
+            if dispatch {
                 state.window.request_redraw();
             }
         }
-        for state in self.transient_windows.values() {
-            if state.retry_due(now) {
+        for state in self.transient_windows.values_mut() {
+            let (dispatch, wake) = state.poll_retry(now);
+            take_wake(wake);
+            if dispatch {
                 state.request_retry_redraw();
             }
         }
@@ -2119,20 +2132,11 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
             self.request_frame_if_needed(id);
         }
         self.reclaim_stale_shared_images();
-        // Pace the loop by the earliest armed retry deadline instead of
-        // polling: with no deadlines the loop waits indefinitely, and
-        // closed windows simply stop contributing.
-        let deadline = crate::presentation::earliest_retry_after(
-            self.windows
-                .values()
-                .map(|state| state.retry.retry_at())
-                .chain(
-                    self.transient_windows
-                        .values()
-                        .map(|state| state.retry_at()),
-                ),
-        );
-        match deadline {
+        // Pace the loop by the earliest contributed deadline instead of
+        // polling: with none the loop waits indefinitely, and closed
+        // windows simply stop contributing because their policies are
+        // dropped with them.
+        match wake_at {
             Some(deadline) => {
                 target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(deadline))
             }
