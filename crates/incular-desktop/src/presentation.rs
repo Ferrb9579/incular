@@ -1,8 +1,40 @@
 //! Per-window GPU submission and observable frame completion.
 use crate::{runtime_render_metrics, window_host::NativeWindowState};
 use incular_rendering::DisplayList;
-use incular_runtime::{Application, GpuSample, Screenshot};
-use incular_wgpu::RendererError;
+use incular_runtime::{Application, GpuSample, RenderFrameMetrics, Screenshot};
+use incular_wgpu::{FrameOutcome, RendererError};
+
+/// Settled host actions for one frame outcome: the real mapping
+/// `present_window` applies, factored out so headless tests inject every
+/// outcome through it. Presented frames record a presentation and settle
+/// pending simulator waiters; skips record no presentation, keep waiters
+/// eligible for a later attempt, and schedule a retry only when another
+/// attempt could present (recovered surfaces and timeouts — never
+/// unconfigured or occluded surfaces, which wait for resize/unocclude
+/// instead of spinning full-frame work).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameHostDispatch {
+    pub record_presented: bool,
+    pub request_retry: bool,
+    pub settle_waiters: bool,
+}
+
+/// Host dispatch for a settled frame outcome. See [`FrameHostDispatch`].
+#[must_use]
+pub fn dispatch_frame_outcome(outcome: &FrameOutcome) -> FrameHostDispatch {
+    match outcome {
+        FrameOutcome::Presented(_) => FrameHostDispatch {
+            record_presented: true,
+            request_retry: false,
+            settle_waiters: true,
+        },
+        FrameOutcome::Skipped(reason) => FrameHostDispatch {
+            record_presented: false,
+            request_retry: reason.should_request_retry(),
+            settle_waiters: false,
+        },
+    }
+}
 
 pub(crate) fn present_window(
     application: &mut Application,
@@ -13,8 +45,24 @@ pub(crate) fn present_window(
 ) {
     let id = state.id;
     match state.renderer.render(list, state.metrics.scale_factor) {
-        Ok(stats) => {
-            application.note_presented(id, stats.presented);
+        Ok(outcome) => {
+            let dispatch = dispatch_frame_outcome(&outcome);
+            application.note_presented(id, dispatch.record_presented);
+            let stats = match outcome {
+                FrameOutcome::Presented(stats) => stats,
+                FrameOutcome::Skipped(_) => {
+                    // Skipped attempts record no presentation and no frame
+                    // metrics beyond an empty sample; simulator waiters stay
+                    // pending for a later attempt, and only retryable
+                    // reasons schedule one.
+                    application.note_render_metrics(id, RenderFrameMetrics::default(), None);
+                    application.complete_simulation_frame(id, false, None);
+                    if dispatch.request_retry {
+                        state.window.request_redraw();
+                    }
+                    return;
+                }
+            };
             let gpu = state.renderer.gpu_frame_timings().map(|timing| GpuSample {
                 supported: true,
                 frame: timing.frame,
@@ -27,7 +75,7 @@ pub(crate) fn present_window(
                         .map_err(|error| error.to_string())
                 })
             });
-            application.complete_simulation_frame(id, stats.presented, capture);
+            application.complete_simulation_frame(id, true, capture);
             #[cfg(feature = "devtools")]
             {
                 let budget_us = state
@@ -84,9 +132,9 @@ pub(crate) fn present_window(
                     devtools.push_frame(incular_devtools_protocol::TargetEvent::DeepTrace(trace));
                 }
             }
-            if !stats.presented {
-                state.window.request_redraw();
-            }
+            // Presented frames never re-request: the next frame comes from
+            // normal application demand. Skipped attempts return early
+            // above with reason-gated retries.
         }
         Err(RendererError::OutOfMemory) => {
             eprintln!("Incular renderer stopped: out of GPU memory");

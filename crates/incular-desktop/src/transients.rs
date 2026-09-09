@@ -563,11 +563,17 @@ impl TransientContext<'_> {
             // below requests the canonical work-area placement frame.
             return Ok(false);
         }
-        let stats = match state
+        let presented = match state
             .renderer
             .render(&state.display_list, state.metrics.scale_factor)
         {
-            Ok(stats) => stats,
+            Ok(outcome) => {
+                let dispatch = crate::dispatch_frame_outcome(&outcome);
+                if !dispatch.record_presented && dispatch.request_retry {
+                    state.window.request_redraw();
+                }
+                dispatch.record_presented
+            }
             Err(RendererError::OutOfMemory) => {
                 eprintln!("Incular transient renderer stopped: out of GPU memory");
                 return Err(TransientFallbackReason::NativeHostUnavailable);
@@ -577,7 +583,7 @@ impl TransientContext<'_> {
                 return Err(TransientFallbackReason::NativeHostUnavailable);
             }
         };
-        if stats.presented && !state.visible {
+        if presented && !state.visible {
             if let Err(error) =
                 self.platform_services
                     .show_transient(system, &state.window, state.snapshot.role)
@@ -586,9 +592,6 @@ impl TransientContext<'_> {
                 return Err(TransientFallbackReason::NativeHostUnavailable);
             }
             state.visible = true;
-        }
-        if !stats.presented {
-            state.window.request_redraw();
         }
         Ok(true)
     }
@@ -620,8 +623,12 @@ impl TransientContext<'_> {
                     .renderer
                     .render(&state.display_list, state.metrics.scale_factor)
                 {
-                    Ok(stats) => {
-                        if stats.presented && !state.visible {
+                    Ok(outcome) => {
+                        let dispatch = crate::dispatch_frame_outcome(&outcome);
+                        if !dispatch.record_presented && dispatch.request_retry {
+                            state.window.request_redraw();
+                        }
+                        if dispatch.record_presented && !state.visible {
                             match self.platform_services.show_transient(
                                 system,
                                 &state.window,
@@ -637,9 +644,6 @@ impl TransientContext<'_> {
                                     ));
                                 }
                             }
-                        }
-                        if !stats.presented {
-                            state.window.request_redraw();
                         }
                     }
                     Err(RendererError::OutOfMemory) => {

@@ -910,11 +910,34 @@ code, "missing" means absent with no compensating path.
   states tick saturation explicitly, with exhaustion handling tracked
   under the existing identity/counter work rather than claimed unique
   indefinitely.
-- Remaining W2 work: presented-vs-failed outcome separation;
-  two-window GPU churn tests. Shared source-font-byte budgeting stays
-  separate and explicitly tracked (unbounded `font_handles` map noted
-  above — app-owned `Arc` retention, not cache ownership; layouts already
-  bounded by count).
+- W2 frame presentation outcomes: `render()` now returns a typed
+  `FrameOutcome::Presented(RenderStats) | Skipped(FrameSkipReason)` instead
+  of `Ok(RenderStats::default())` for non-presenting paths, so hosts never
+  infer success from counters or default statistics. Five skip reasons
+  (unconfigured surface, acquisition timeout, occlusion, inline
+  reconfiguration, inline recreation) drive host retry scheduling:
+  recovered surfaces and timeouts re-request, while unconfigured/occluded
+  surfaces wait for resize/unocclude (plus an explicit repaint on
+  `Occluded(false)`) instead of spinning full-frame work. Acquisition
+  routes backend results through one neutral classifier
+  (`SurfaceAcquisitionStatus::of`/`disposition`, wgpu 30 semantics:
+  suboptimal presents before reconfiguring, outdated/lost recover inline
+  with exactly one attempt per call, timeout/occlusion skip, validation
+  failures travel the new `RendererError::SurfaceValidation` error channel
+  rather than becoming empty successes). Skips keep simulator waiters
+  eligible and record no presentation; device/out-of-memory failures keep
+  the existing actionable host error paths. Renderer-neutral outcome
+  values stay separate from wgpu error types; the runtime is untouched.
+  Evidence: `incular-wgpu/tests/frame_outcomes.rs` (injected backend
+  results through the real classifier, retry mapping, outcome accessors),
+  `incular-desktop/tests/frame_outcome_dispatch.rs` (host dispatch per
+  outcome through the real `present_window` mapping), and a runtime
+  presented/skipped accounting contract. Actual GPU presentation stays
+  recorded as unverified. Same validation as above.
+- Remaining W2 work: two-window GPU churn tests. Shared
+  source-font-byte budgeting stays separate and explicitly tracked
+  (unbounded `font_handles` map noted above — app-owned `Arc` retention,
+  not cache ownership; layouts already bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.

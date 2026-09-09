@@ -378,3 +378,43 @@ fn ten_thousand_signal_writes_coalesce_into_one_rebuild() {
         "the dependent queue coalesces repeated writes"
     );
 }
+
+/// Contract: presentation accounting separates presented from skipped
+/// attempts. Skipped attempts (unconfigured surfaces, transient acquisition
+/// results, inline recoveries) must never inflate presented counts; both
+/// sides land in the per-window snapshot the host reads back.
+#[test]
+fn presentation_accounting_separates_presented_from_skipped() {
+    let mut app = Application::new(|_| Text::new("frame").into()).expect("app");
+    let window = primary(&app);
+    let presented_before = app
+        .performance_snapshot()
+        .windows
+        .iter()
+        .map(|window| window.presented_frames)
+        .sum::<u64>();
+    let skipped_before = app
+        .performance_snapshot()
+        .windows
+        .iter()
+        .map(|window| window.skipped_frames)
+        .sum::<u64>();
+
+    app.note_presented(window, true);
+    app.note_presented(window, false);
+    app.note_presented(window, false);
+
+    let snapshot = app.performance_snapshot();
+    let presented_after = snapshot
+        .windows
+        .iter()
+        .map(|window| window.presented_frames)
+        .sum::<u64>();
+    let skipped_after = snapshot
+        .windows
+        .iter()
+        .map(|window| window.skipped_frames)
+        .sum::<u64>();
+    assert_eq!(presented_after, presented_before + 1);
+    assert_eq!(skipped_after, skipped_before + 2);
+}

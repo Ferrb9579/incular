@@ -1,30 +1,65 @@
 use super::*;
 
+pub(super) enum SurfaceAcquisition {
+    Ready {
+        frame: wgpu::SurfaceTexture,
+        reconfigure_after_present: bool,
+    },
+    Deferred(FrameSkipReason),
+}
+
 impl WgpuRenderer {
-    pub(super) fn acquire_surface_texture(
-        &mut self,
-    ) -> Result<Option<(wgpu::SurfaceTexture, bool)>, RendererError> {
-        match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => Ok(Some((frame, false))),
-            // A suboptimal texture is still valid for this frame. WGPU
-            // explicitly forbids Surface::configure while a SurfaceTexture is
-            // outstanding, so defer reconfiguration until after presentation
-            // consumes this texture below.
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Ok(Some((frame, true))),
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.surface.configure(&self.device, &self.config);
-                Ok(None)
+    pub(super) fn acquire_surface_texture(&mut self) -> Result<SurfaceAcquisition, RendererError> {
+        let acquired = self.surface.get_current_texture();
+        // The status→disposition mapping has exactly one definition
+        // (`SurfaceAcquisitionStatus::disposition`, also driven by headless
+        // tests); this match only binds frame textures and performs the
+        // single permitted inline recovery per attempt.
+        let status = SurfaceAcquisitionStatus::of(&acquired);
+        match status.disposition() {
+            AcquisitionDisposition::Present {
+                reconfigure_after_present,
+            } => {
+                let frame = match acquired {
+                    wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                    // The classifier yields Present solely for the two
+                    // frame-carrying results above; anything else is an
+                    // internal mismatch. Fail loudly rather than present
+                    // emptiness as success.
+                    _ => return Err(RendererError::SurfaceAcquisitionMismatch),
+                };
+                Ok(SurfaceAcquisition::Ready {
+                    frame,
+                    reconfigure_after_present,
+                })
             }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.shared.create_surface(self.target.clone())?;
-                self.refresh_surface_alpha_plan()?;
-                self.surface.configure(&self.device, &self.config);
-                self.window_gpu.presentation.surface_lost();
-                Ok(None)
+            AcquisitionDisposition::Deferred(reason) => {
+                match status {
+                    // Outdated surfaces reconfigure inline; the deferred
+                    // attempt acquires fresh. Configuring while a
+                    // SurfaceTexture is outstanding would panic, but none
+                    // exists on this path.
+                    SurfaceAcquisitionStatus::Outdated => {
+                        self.surface.configure(&self.device, &self.config);
+                    }
+                    SurfaceAcquisitionStatus::Lost => {
+                        self.surface = self.shared.create_surface(self.target.clone())?;
+                        self.refresh_surface_alpha_plan()?;
+                        self.surface.configure(&self.device, &self.config);
+                        self.window_gpu.presentation.surface_lost();
+                    }
+                    SurfaceAcquisitionStatus::Ready
+                    | SurfaceAcquisitionStatus::ReadySuboptimal
+                    | SurfaceAcquisitionStatus::Timeout
+                    | SurfaceAcquisitionStatus::Occluded
+                    | SurfaceAcquisitionStatus::Validation => {}
+                }
+                Ok(SurfaceAcquisition::Deferred(reason))
             }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => Ok(None),
+            // A backend validation failure signals an error worth attending
+            // to: fail through the error channel, never as empty success.
+            AcquisitionDisposition::Failed => Err(RendererError::SurfaceValidation),
         }
     }
 
@@ -452,26 +487,30 @@ impl WgpuRenderer {
         &mut self,
         list: &DisplayList,
         scale_factor: f64,
-    ) -> Result<RenderStats, RendererError> {
-        let stats = self.render_composited(list, scale_factor)?;
-        if stats.presented {
-            self.window_gpu.presentation.record_present();
-        } else {
-            self.window_gpu.presentation.record_skipped();
+    ) -> Result<FrameOutcome, RendererError> {
+        let outcome = self.render_composited(list, scale_factor)?;
+        match &outcome {
+            FrameOutcome::Presented(stats) => {
+                debug_assert!(stats.presented);
+                self.window_gpu.presentation.record_present();
+            }
+            FrameOutcome::Skipped(_) => {
+                self.window_gpu.presentation.record_skipped();
+            }
         }
-        Ok(stats)
+        Ok(outcome)
     }
     pub(super) fn render_composited(
         &mut self,
         list: &DisplayList,
         scale_factor: f64,
-    ) -> Result<RenderStats, RendererError> {
+    ) -> Result<FrameOutcome, RendererError> {
         if !self.window_gpu.presentation.configured {
             // Still driven but presenting nothing (zero-size surface): no
             // frame advances, so age eviction cannot run — but stale shared
             // generations can still be released safely here.
             self.reclaim_stale_textures();
-            return Ok(RenderStats::default());
+            return Ok(FrameOutcome::Skipped(FrameSkipReason::UnconfiguredSurface));
         }
         // Profiling deltas: every counter touched between these snapshots is
         // attributable to this frame without touching individual call sites.
@@ -585,8 +624,14 @@ impl WgpuRenderer {
         let prepare_us = us_since(prepare_started);
         let encode_started = std::time::Instant::now();
         self.profiler_next_pass = self.gpu_timing_supported();
-        let Some((frame, reconfigure_after_present)) = self.acquire_surface_texture()? else {
-            return Ok(RenderStats::default());
+        let (frame, reconfigure_after_present) = match self.acquire_surface_texture()? {
+            SurfaceAcquisition::Ready {
+                frame,
+                reconfigure_after_present,
+            } => (frame, reconfigure_after_present),
+            SurfaceAcquisition::Deferred(reason) => {
+                return Ok(FrameOutcome::Skipped(reason));
+            }
         };
         let view = frame
             .texture
@@ -714,7 +759,7 @@ impl WgpuRenderer {
         self.evict_unused_gradients();
         self.evict_offscreen_cache();
         let after = self.counters;
-        Ok(RenderStats {
+        Ok(FrameOutcome::Presented(RenderStats {
             draw_calls,
             rectangle_instances: rectangles as u32,
             glyph_instances: glyphs as u32,
@@ -738,6 +783,6 @@ impl WgpuRenderer {
             submit_us,
             pipelines_created: (after.total_pipeline_creations()
                 - before.total_pipeline_creations()) as u32,
-        })
+        }))
     }
 }

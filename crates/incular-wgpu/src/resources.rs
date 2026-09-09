@@ -811,9 +811,10 @@ pub(crate) struct SharedGpuContextInner {
     /// - Keys are only surface-advertised `TextureFormat`s, written solely
     ///   by renderer initialization (`register_pipeline_resources`) and
     ///   read solely by renderer initialization (`pipeline_resources`) —
-    ///   never per frame, draw, or resource. One app on one adapter
-    ///   configures one format; additional entries each require a window
-    ///   on a differently formatted surface.
+    ///   never per frame, draw, or resource. Retention is bounded by the
+    ///   supported format-key space: entries only arise for formats the
+    ///   surface stack actually configures, not one per adapter, window,
+    ///   or frame.
     /// - Each entry holds the closed `pipeline_contracts()` registry (11
     ///   fixed classes + 11 Porter-Duff blends + 4 clip-mask directions =
     ///   26 contracts), each built exactly once per format.

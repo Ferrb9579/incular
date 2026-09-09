@@ -302,6 +302,16 @@ pub enum RendererError {
         label: String,
         reason: String,
     },
+    /// Surface acquisition reported a validation failure. Unlike transient
+    /// acquisition results this signals an error worth attending to, so it
+    /// travels the error channel instead of becoming an empty success.
+    SurfaceValidation,
+    /// A backend acquisition result disagreed with its neutral
+    /// classification when binding the frame texture. Defensive only: the
+    /// classifier is total over the backend variants, so this fires solely
+    /// on internal inconsistency. It fails loudly rather than presenting
+    /// emptiness as success.
+    SurfaceAcquisitionMismatch,
 }
 impl std::fmt::Display for RendererError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -347,7 +357,176 @@ impl std::fmt::Display for RendererError {
                 f,
                 "render pipeline '{label}' failed GPU validation: {reason}"
             ),
+            Self::SurfaceValidation => write!(
+                f,
+                "surface texture acquisition failed GPU validation; address the validation error and retry"
+            ),
+            Self::SurfaceAcquisitionMismatch => write!(
+                f,
+                "surface acquisition result disagreed with its classification; attend and retry"
+            ),
         }
     }
 }
 impl std::error::Error for RendererError {}
+
+/// Why a frame attempt produced no presentation. Renderer-neutral: hosts
+/// schedule retries and settle pending work from these reasons without
+/// touching `wgpu` types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameSkipReason {
+    /// The surface is not configured (zero-sized surface): nothing could
+    /// be acquired. The host waits for resize rather than spinning.
+    UnconfiguredSurface,
+    /// The backend timed out waiting for the next frame: transient
+    /// congestion, retry on the next scheduled attempt.
+    AcquisitionTimeout,
+    /// The window is occluded: nothing would be visible. The host waits
+    /// for unocclusion instead of spinning.
+    SurfaceOccluded,
+    /// The surface reported outdated configuration: the renderer already
+    /// reconfigured inline, so the next attempt acquires fresh.
+    SurfaceReconfigured,
+    /// The surface was lost: the renderer already recreated and
+    /// reconfigured it inline, so the next attempt acquires fresh.
+    SurfaceRecreated,
+}
+
+impl FrameSkipReason {
+    /// Whether the host should schedule another attempt. Unconfigured and
+    /// occluded surfaces wait for resize/unocclude events instead: retrying
+    /// immediately would spin full-frame work that cannot present.
+    /// Recovered surfaces and timeouts retry on the next scheduled frame;
+    /// each attempt performs at most one inline recovery, so retries are
+    /// host-paced, never an in-call loop.
+    #[must_use]
+    pub const fn should_request_retry(&self) -> bool {
+        match self {
+            Self::UnconfiguredSurface | Self::SurfaceOccluded => false,
+            Self::AcquisitionTimeout | Self::SurfaceReconfigured | Self::SurfaceRecreated => true,
+        }
+    }
+
+    /// Skips always keep pending simulator/capture work eligible for a
+    /// later attempt; only the error channel fails waiters.
+    #[must_use]
+    pub const fn retains_pending_work(&self) -> bool {
+        true
+    }
+}
+
+/// The settled result of one frame attempt: either submitted and presented
+/// with its statistics, or skipped with its reason. Hosts must not infer
+/// presentation from counters or default statistics — match this type.
+/// Failures keep traveling the existing `RendererError` channel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FrameOutcome {
+    Presented(RenderStats),
+    Skipped(FrameSkipReason),
+}
+
+impl FrameOutcome {
+    #[must_use]
+    pub const fn presented(&self) -> bool {
+        matches!(self, Self::Presented(_))
+    }
+
+    /// Statistics for a presented frame; `None` when skipped. There are no
+    /// statistics for attempts that never reached the surface.
+    #[must_use]
+    pub const fn stats(&self) -> Option<&RenderStats> {
+        match self {
+            Self::Presented(stats) => Some(stats),
+            Self::Skipped(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn skip_reason(&self) -> Option<FrameSkipReason> {
+        match self {
+            Self::Presented(_) => None,
+            Self::Skipped(reason) => Some(*reason),
+        }
+    }
+
+    /// Host retry scheduling for this outcome. Presented frames never
+    /// re-request; skips defer to their reason.
+    #[must_use]
+    pub const fn requests_retry(&self) -> bool {
+        match self {
+            Self::Presented(_) => false,
+            Self::Skipped(reason) => reason.should_request_retry(),
+        }
+    }
+}
+
+/// Renderer-neutral mirror of the installed `wgpu` (30.x) surface
+/// acquisition results, so decision code accepts injected backend results
+/// in headless tests. Production converts each `CurrentSurfaceTexture`
+/// at the acquire boundary (`SurfaceAcquisitionStatus::of`); the two
+/// frame-carrying results bind their texture in the renderer and are
+/// covered by actual GPU presentation, while the five texture-less
+/// results are constructible anywhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceAcquisitionStatus {
+    Ready,
+    ReadySuboptimal,
+    Timeout,
+    Occluded,
+    Outdated,
+    Lost,
+    Validation,
+}
+
+/// What one acquisition attempt settles to: present now (reconfiguring a
+/// suboptimal surface only after its frame presents, per `wgpu` rules),
+/// skip after inline recovery with another attempt pending, or fail.
+/// Exactly one inline recovery happens per attempt — recovery never loops
+/// inside a single render call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcquisitionDisposition {
+    Present { reconfigure_after_present: bool },
+    Deferred(FrameSkipReason),
+    Failed,
+}
+
+impl SurfaceAcquisitionStatus {
+    /// Total mapping from the backend result. Matches `wgpu` 30 semantics:
+    /// suboptimal textures stay usable for this frame; outdated surfaces
+    /// reconfigure inline; lost surfaces recreate inline; timeouts and
+    /// occlusion skip; validation failures fail. Update both arms if the
+    /// backend adds a variant — the compiler enforces it here.
+    #[must_use]
+    pub fn of(result: &wgpu::CurrentSurfaceTexture) -> Self {
+        match result {
+            wgpu::CurrentSurfaceTexture::Success(_) => Self::Ready,
+            wgpu::CurrentSurfaceTexture::Suboptimal(_) => Self::ReadySuboptimal,
+            wgpu::CurrentSurfaceTexture::Timeout => Self::Timeout,
+            wgpu::CurrentSurfaceTexture::Occluded => Self::Occluded,
+            wgpu::CurrentSurfaceTexture::Outdated => Self::Outdated,
+            wgpu::CurrentSurfaceTexture::Lost => Self::Lost,
+            wgpu::CurrentSurfaceTexture::Validation => Self::Validation,
+        }
+    }
+
+    /// The real decision code: production acquisition and headless tests
+    /// both run injected or observed statuses through this function.
+    #[must_use]
+    pub const fn disposition(&self) -> AcquisitionDisposition {
+        match self {
+            Self::Ready => AcquisitionDisposition::Present {
+                reconfigure_after_present: false,
+            },
+            Self::ReadySuboptimal => AcquisitionDisposition::Present {
+                reconfigure_after_present: true,
+            },
+            Self::Timeout => AcquisitionDisposition::Deferred(FrameSkipReason::AcquisitionTimeout),
+            Self::Occluded => AcquisitionDisposition::Deferred(FrameSkipReason::SurfaceOccluded),
+            Self::Outdated => {
+                AcquisitionDisposition::Deferred(FrameSkipReason::SurfaceReconfigured)
+            }
+            Self::Lost => AcquisitionDisposition::Deferred(FrameSkipReason::SurfaceRecreated),
+            Self::Validation => AcquisitionDisposition::Failed,
+        }
+    }
+}

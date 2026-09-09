@@ -13,6 +13,7 @@ mod platform_menus;
 mod platform_services;
 mod pointer;
 mod presentation;
+pub use presentation::{FrameHostDispatch, dispatch_frame_outcome};
 mod window_host;
 pub mod winit_adapter;
 use input::{InputKind, WindowInputState};
@@ -1995,6 +1996,12 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
                     .is_some_and(|state| state.environment.set_occluded(occluded))
                 {
                     self.publish_window_environment(native_id);
+                }
+                if !occluded && let Some(state) = self.windows.get(&native_id) {
+                    // Visibility restored: the host never schedules occluded
+                    // windows (skipped occlusion attempts request no retry),
+                    // so repaint explicitly instead of waiting for demand.
+                    state.window.request_redraw();
                 }
             }
             WindowEvent::HoveredFile(path) => {
