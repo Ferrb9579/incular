@@ -66,7 +66,7 @@ pub use resources::{
     SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry, SharedImageMaintenance,
     SharedTextureAcquisition, SharedTextureBudget, SharedTextureCache, SharedTextureCounters,
     SharedTextureEviction, WindowGpuPresentation, WindowGpuState, prune_vacant_glyph_page_slots,
-    shared_image_texture_bytes,
+    retire_glyph_page_resources, shared_image_texture_bytes,
 };
 pub use surface::{
     SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation, WindowSurfaceTarget,

@@ -1300,10 +1300,9 @@ impl SharedGpuContext {
             glyph,
             physical_size: request.physical_size,
         };
-        let raster =
-            resources
-                .glyph_atlas
-                .lookup_or_rasterize(run, glyph, scale, protected_pages)?;
+        let raster = resources
+            .glyph_atlas
+            .lookup_or_rasterize(run, glyph, scale, protected_pages);
         // Split field borrows up front: the prune closure below observes
         // the atlas while retirement mutates the texture slots.
         let SharedGpuResources {
@@ -1316,22 +1315,27 @@ impl SharedGpuContext {
         // Retire placement identities evicted while resolving above, then
         // (re-)register this key. Re-registration is idempotent, so the
         // stale-refresh path below neither leaks nor duplicates identities.
-        for retired in glyph_atlas.take_retired_keys() {
-            registry.remove_glyph(retired);
+        retire_glyph_page_resources(glyph_atlas, registry, glyph_pages, glyph_prune_revision);
+        if raster.is_some() {
+            registry.glyph_identity(key);
         }
-        // Release shared textures for pages retired vacant since the last
-        // prune. Only vacant pages prune, and pages go vacant solely
-        // through budget tightening or eviction turnover — never while
-        // frame-pinned — so no live placement, binding, or in-flight
-        // submission can reference a pruned texture beyond the wgpu
-        // lifetime contract. The advanced eviction revision notifies host
-        // maintenance to reclaim idle renderer bindings.
-        if *glyph_prune_revision != glyph_atlas.eviction_revision() {
-            *glyph_prune_revision = glyph_atlas.eviction_revision();
-            prune_vacant_glyph_page_slots(glyph_pages, &|page| glyph_atlas.page_generation(page));
-        }
-        registry.glyph_identity(key);
-        Some(raster)
+        raster
+    }
+
+    pub(crate) fn set_glyph_page_budget(
+        &self,
+        max_pages: usize,
+        protected: &std::collections::HashSet<u16>,
+    ) {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        resources.glyph_atlas.set_max_pages(max_pages, protected);
+        resources.retire_glyph_resources();
+    }
+
+    pub(crate) fn release_glyph_frame_protection(&self) {
+        let mut resources = self.inner.resources.lock().expect("shared resource lock");
+        resources.glyph_atlas.release_frame_protection();
+        resources.retire_glyph_resources();
     }
     pub(crate) fn glyph_counters(&self) -> GpuCounters {
         self.inner
@@ -1447,6 +1451,37 @@ pub fn prune_vacant_glyph_page_slots<T>(
         }
     }
     dropped
+}
+
+/// Applies atlas retirement to its associated identities and shared resources.
+/// Backend owners call this after budget changes, protection release, and
+/// resolves (including failed resolves). Live frame clones remain valid;
+/// vacant slots drop only the shared owner's references.
+pub fn retire_glyph_page_resources<T>(
+    atlas: &mut GlyphAtlas,
+    registry: &mut SharedGpuResourceRegistry,
+    slots: &mut [Option<T>],
+    last_revision: &mut u64,
+) -> usize {
+    for key in atlas.take_retired_keys() {
+        registry.remove_glyph(key);
+    }
+    if *last_revision == atlas.eviction_revision() {
+        return 0;
+    }
+    *last_revision = atlas.eviction_revision();
+    prune_vacant_glyph_page_slots(slots, &|page| atlas.page_generation(page))
+}
+
+impl SharedGpuResources {
+    fn retire_glyph_resources(&mut self) {
+        retire_glyph_page_resources(
+            &mut self.glyph_atlas,
+            &mut self.registry,
+            &mut self.glyph_pages,
+            &mut self.glyph_prune_revision,
+        );
+    }
 }
 
 impl SharedGpuContext {

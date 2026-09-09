@@ -708,6 +708,7 @@ impl WgpuRenderer {
         // Frame-pinned atlas pages protected this frame's emitted batches
         // from shared eviction; submission is done, so release the pins.
         self.frame_pinned_glyph_pages.clear();
+        self.shared.release_glyph_frame_protection();
         self.evict_unused_images();
         self.evict_unused_path_meshes();
         self.evict_unused_gradients();

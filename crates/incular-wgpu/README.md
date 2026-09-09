@@ -88,6 +88,16 @@ allocation.
 
 Text fallback does not change the atlas topology. Each font-specific logical run carries its own stable `FontId` (font bytes plus OpenType collection face index). Fontdue receives that collection index through `FontSettings`, so a shaped TTC/OTC face is rasterized as the same face. Mixed-script paragraphs safely share R8 atlas pages: warm Latin masks remain warm while a fallback run uploads only its own glyphs. Color glyph tables are a future non-R8 boundary and are not interpreted as alpha masks.
 
+Glyph page budgets count resident pages separately from stable slot indices.
+`WgpuRenderer::set_glyph_page_budget` retires unprotected excess immediately;
+frame-protected excess retires after submission, without another text lookup.
+Retirement releases shared textures and placement identities, and the host's
+eviction-revision maintenance releases stale bindings in idle windows. Vacant
+slots retain their generation history, so reuse cannot validate an old placement.
+A zero budget starts with no pages and admits no glyph resolves. Submitted work
+retains resources through WGPU's lifetime guarantees; font-object budgeting
+remains pending.
+
 Normal glyphs use retained 1024×1024 atlas pages. A bitmap allocation occupying
 at least one quarter of a normal page receives a dedicated oversize page, so a
 display glyph cannot fragment the UI-text pool. `GlyphAtlas::memory` reports

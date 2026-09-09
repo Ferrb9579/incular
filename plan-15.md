@@ -851,7 +851,22 @@ code, "missing" means absent with no compensating path.
   binding reclamation with identity continuity, and exact generation
   succession. Font-object budgeting stays explicitly pending. Same
   validation as above.
-- Remaining W2 work: shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
+- W2 glyph-budget submission closeout: builds on `5a72eb9` vacant-slot
+  residency. `WgpuRenderer::set_glyph_page_budget` applies the device policy
+  and drains retired identities/shared textures immediately; post-submit
+  protection release enforces pending excess without another text lookup.
+  Failed glyph resolves also drain retirement. Zero-budget construction
+  starts with no resident page and zero budget rejects new resolves.
+  Production retirement is shared with ownership tests using Arc payloads;
+  active clones survive shared/local release and old generations stay invalid
+  after re-expansion. GPU upload/draw behavior remains unverified here.
+  Font-object budgeting remains pending. Validation: `cargo fmt --all -- --check`,
+  `cargo check --workspace`, `cargo test-constrained`,
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo test -p incular-wgpu -p incular-desktop --all-features`, and
+  `RUSTDOCFLAGS="-D warnings" cargo doc -p incular-wgpu -p incular-desktop
+  --all-features --no-deps` all passed (12 glyph-page regressions).
+- Remaining W2 work: font-object budgeting; shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
   two-window GPU churn tests. Text font-byte budgets are not scheduled
   (unbounded map noted above; layouts already bounded by count).
 

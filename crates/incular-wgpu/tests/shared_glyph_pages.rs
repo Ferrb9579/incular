@@ -17,10 +17,91 @@ use incular_text::{TextAlign, TextEngine, TextLayout, TextStyle};
 use incular_wgpu::{
     GlyphAtlas, GlyphCacheKey, GlyphRasterRequest, RasterizedGlyph, ReclaimStaleTextures,
     RendererGlyphPages, SharedGpuResourceRegistry, SharedImageMaintenance,
-    prune_vacant_glyph_page_slots,
+    prune_vacant_glyph_page_slots, retire_glyph_page_resources,
 };
 
 type SharedAtlas = Rc<RefCell<GlyphAtlas>>;
+
+#[test]
+fn zero_budget_starts_without_residency() {
+    let mut atlas = GlyphAtlas::with_max_pages(0);
+    assert_eq!(atlas.live_page_count(), 0);
+    assert_eq!(atlas.memory().normal_bytes, 0);
+    assert_eq!(atlas.counters().glyph_atlas_pages, 0);
+    let mut text = TextEngine::new();
+    let layout = styled_layout(&mut text, "A", 24.);
+    let run = &layout.lines[0].runs[0];
+    assert!(
+        atlas
+            .lookup_or_rasterize(run, run.glyphs[0].id, 1., &HashSet::new())
+            .is_none()
+    );
+    assert_eq!(atlas.live_page_count(), 0);
+}
+
+#[test]
+fn submission_release_retires_shared_resources_without_another_lookup() {
+    let mut atlas = GlyphAtlas::with_max_pages(8);
+    let mut registry = SharedGpuResourceRegistry::default();
+    let mut text = TextEngine::new();
+    let placed = fill_pages(&mut atlas, &mut registry, &mut text, &[800., 820., 840.]);
+    let protected = placed.iter().map(|(_, raster)| raster.entry.page).collect();
+    let mut slots: Vec<Option<Arc<u32>>> = (0..atlas.page_count())
+        .map(|index| Some(Arc::new(index as u32)))
+        .collect();
+    let page = placed[0].1.entry.page;
+    let active = Arc::clone(slots[usize::from(page)].as_ref().unwrap());
+    let weak = Arc::downgrade(&active);
+    let mut local = RendererGlyphPages::new();
+    for (_, raster) in &placed {
+        let page = raster.entry.page;
+        local.ensure(page, raster.entry.generation, || {
+            Arc::clone(slots[usize::from(page)].as_ref().unwrap())
+        });
+    }
+    let mut revision = 0;
+    atlas.set_max_pages(0, &protected);
+    retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision);
+    assert_eq!(atlas.live_page_count(), 3);
+    assert_eq!(registry.glyph_count(), 3);
+
+    // This is the explicit submission boundary, not another glyph resolve.
+    atlas.release_frame_protection();
+    assert_eq!(
+        retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision),
+        3
+    );
+    assert_eq!(atlas.live_page_count(), 0);
+    assert_eq!(registry.glyph_count(), 0);
+    assert!(slots.iter().all(Option::is_none));
+    assert_eq!(local.reclaim(&|page| atlas.page_generation(page)), 3);
+    assert!(weak.upgrade().is_some());
+    drop(active);
+    assert!(weak.upgrade().is_none());
+    assert_eq!(
+        retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision),
+        0
+    );
+
+    atlas.set_max_pages(2, &HashSet::new());
+    let (_, fresh) = place(
+        &mut atlas,
+        &mut registry,
+        &mut text,
+        "A",
+        800.,
+        &HashSet::new(),
+    );
+    assert_eq!(atlas.live_page_count(), 1);
+    assert!(
+        atlas.page_generation(page).is_none()
+            || atlas.page_generation(page) != Some(placed[0].1.entry.generation)
+    );
+    assert_eq!(
+        atlas.page_generation(fresh.entry.page),
+        Some(fresh.entry.generation)
+    );
+}
 
 fn styled_layout(text: &mut TextEngine, value: &str, size: f32) -> Arc<TextLayout> {
     let style = TextStyle {

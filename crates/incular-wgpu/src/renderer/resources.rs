@@ -283,6 +283,15 @@ impl WgpuRenderer {
             .evict_unused(self.counters.frames, IMAGE_CACHE_MAX_UNUSED_FRAMES);
         self.counters.image_texture_evictions += dropped as u64;
     }
+
+    /// Sets the device-shared glyph page budget and retires unprotected
+    /// excess immediately. Current frame pages remain protected until submit;
+    /// pending excess is retired when that protection is released. Idle
+    /// windows release their stale bindings through host maintenance.
+    pub fn set_glyph_page_budget(&mut self, max_pages: usize) {
+        self.shared
+            .set_glyph_page_budget(max_pages, &self.frame_pinned_glyph_pages);
+    }
     pub(super) fn evict_unused_path_meshes(&mut self) {
         let frame = self.counters.frames;
         let before = self.gpu_path_cache.len();

@@ -213,9 +213,8 @@ pub struct GlyphAtlas {
     /// Device-owned page budget over *live* pages. Lowering the budget
     /// retires excess unprotected pages eagerly (see
     /// [`Self::set_max_pages`]); protected excess stays pending and
-    /// enforces against the next resolve's protection set, even on a cache
-    /// hit, so released protection sheds residency without waiting for an
-    /// unrelated future allocation. Every retirement funnels through the
+    /// enforces at explicit frame-protection release (and defensively on
+    /// resolve), without waiting for another allocation. Every retirement funnels through the
     /// drained placement/identity path instead of stranding identities.
     max_pages: usize,
     tick: u64,
@@ -243,11 +242,15 @@ impl GlyphAtlas {
     #[must_use]
     pub fn with_max_pages(max_pages: usize) -> Self {
         Self {
-            pages: vec![AtlasPage::normal()],
+            pages: if max_pages == 0 {
+                Vec::new()
+            } else {
+                vec![AtlasPage::normal()]
+            },
             entries: HashMap::new(),
             fonts: HashMap::new(),
             counters: GpuCounters {
-                glyph_atlas_pages: 1,
+                glyph_atlas_pages: u64::from(max_pages != 0),
                 ..GpuCounters::default()
             },
             max_pages,
@@ -260,7 +263,8 @@ impl GlyphAtlas {
     /// Replaces the page budget and immediately retires resident
     /// unprotected pages down to it, least-recently-used first. Protected
     /// pages may temporarily exceed the limit; the excess stays pending
-    /// and enforces on the next resolve once protection narrows. Retired
+    /// and enforces when [`Self::release_frame_protection`] is called after
+    /// submission, even if no further text is resolved. Retired
     /// slots go vacant in place — indices never compact — with a bumped
     /// generation, dropped placements (reported through
     /// [`Self::take_retired_keys`]), and an advanced
@@ -270,6 +274,14 @@ impl GlyphAtlas {
     pub fn set_max_pages(&mut self, max_pages: usize, protected: &std::collections::HashSet<u16>) {
         self.max_pages = max_pages;
         self.enforce_budget(protected);
+    }
+
+    /// Ends the caller's frame protection and retires pending excess pages.
+    /// Call after submission, even when no further text will be resolved.
+    /// Shared owners must drain retired identities and release vacant GPU
+    /// slots before publishing the resulting eviction revision.
+    pub fn release_frame_protection(&mut self) {
+        self.enforce_budget(&std::collections::HashSet::new());
     }
 
     #[must_use]
@@ -367,6 +379,10 @@ impl GlyphAtlas {
         // residency fits too.
         if self.pages.len() > self.max_pages {
             self.enforce_budget(protected);
+        }
+        if self.max_pages == 0 {
+            self.counters.glyph_pressure_skips += 1;
+            return None;
         }
         let request = GlyphRasterRequest::new(run.font_size, scale);
         if !request.supported {
