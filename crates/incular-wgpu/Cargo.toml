@@ -34,6 +34,9 @@ raw-window-handle = { workspace = true }
 trybuild = { workspace = true }
 incular-text = { workspace = true }
 criterion = { workspace = true }
+# Backend residency tests acquire a headless device for real page
+# textures; dev-dependencies are excluded from the reviewed boundary.
+pollster = { workspace = true }
 
 [[bench]]
 name = "path_tessellation"

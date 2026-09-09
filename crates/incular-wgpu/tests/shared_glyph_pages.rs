@@ -857,3 +857,171 @@ fn over_budget_working_sets_behave_deterministically() {
         second_counters.glyph_cache_hits
     );
 }
+
+/// Requests a real GPU device without any window: adapter selection needs
+/// no surface, and page textures need no swapchain. Returns `None` with an
+/// actionable message where no adapter exists instead of failing blindly.
+fn headless_page_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = ["high-performance", "fallback"]
+        .into_iter()
+        .find_map(|kind| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: if kind == "high-performance" {
+                    wgpu::PowerPreference::HighPerformance
+                } else {
+                    wgpu::PowerPreference::LowPower
+                },
+                force_fallback_adapter: kind == "fallback",
+                compatible_surface: None,
+                ..Default::default()
+            }))
+            .ok()
+        });
+    let Some(adapter) = adapter else {
+        eprintln!("protected tightening with real page textures: skipped, no GPU adapter");
+        return None;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("incular glyph residency test device"),
+        ..Default::default()
+    }))
+    .expect("headless test device must initialize");
+    Some((device, queue))
+}
+
+/// One real 1024px single-channel page texture: the same descriptor shape
+/// as production atlas pages (1024px `R8Unorm`), so ensure, replace,
+/// reclaim, and drop move genuine GPU objects rather than stand-ins.
+fn real_page_texture(device: &wgpu::Device) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("incular test glyph atlas page"),
+        size: wgpu::Extent3d {
+            width: 1024,
+            height: 1024,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Protected tightening with real page textures, sequenced exactly as the
+/// submission boundary drives production: resolve (lowering pins pages),
+/// tighten with the active frame's pages protected (deferred), release
+/// protection (post-submit), then retire identities, prune shared texture
+/// slots, and reclaim local bindings. The desktop worker cannot reach
+/// this phase — frame pins exist only mid-submission and no test-only
+/// injection exists — so this backend coverage stands in for it, with
+/// real textures in every slot the production functions touch.
+#[test]
+fn protected_tightening_defers_through_release_with_real_page_textures() {
+    let Some((device, _queue)) = headless_page_device() else {
+        return;
+    };
+    let mut atlas = GlyphAtlas::with_max_pages(8);
+    let mut registry = SharedGpuResourceRegistry::default();
+    let mut text = TextEngine::new();
+    let empty = HashSet::new();
+
+    // Three oversize keys land on slots 1..=3 beside the initial page.
+    let placed = fill_pages(&mut atlas, &mut registry, &mut text, &[800., 820., 840.]);
+    let pages: Vec<u16> = placed.iter().map(|(_, raster)| raster.entry.page).collect();
+    assert_eq!(pages, vec![1, 2, 3]);
+    assert_eq!(atlas.live_page_count(), 4);
+
+    // Shared texture slots and renderer-local bindings over real GPU
+    // textures, through the production generic functions.
+    let mut slots: Vec<Option<wgpu::Texture>> = vec![None];
+    slots.extend(pages.iter().map(|_| Some(real_page_texture(&device))));
+    let mut local = RendererGlyphPages::new();
+    for (_, raster) in &placed {
+        let texture = slots[usize::from(raster.entry.page)]
+            .as_ref()
+            .expect("shared slot live")
+            .clone();
+        local.ensure(raster.entry.page, raster.entry.generation, || texture);
+    }
+    let mut revision = 0u64;
+
+    // Refresh the first page so it is the most-recently-used survivor
+    // for every later least-recently-used choice below.
+    let touched = resolve(&mut atlas, &mut text, "A", 800., &empty);
+    assert_eq!(touched.entry, placed[0].1.entry);
+
+    // Tighten to one page while the first two placements are protected,
+    // as an active frame's pins would: only unprotected pages retire.
+    let protected: HashSet<u16> = [pages[0], pages[1]].into_iter().collect();
+    let revision_before = atlas.eviction_revision();
+    atlas.set_max_pages(1, &protected);
+    assert_eq!(atlas.live_page_count(), 2);
+    assert_eq!(atlas.eviction_revision(), revision_before + 2);
+    assert!(atlas.page_generation(0).is_none());
+    assert!(atlas.page_generation(pages[2]).is_none());
+    assert_eq!(
+        atlas.page_generation(pages[0]),
+        Some(placed[0].1.entry.generation)
+    );
+
+    // Retire through the production function: registry identities drop,
+    // real shared texture slots prune, and the revision gate moves.
+    let pruned = retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision);
+    assert_eq!(pruned, 1, "only the occupied retired slot prunes");
+    assert!(slots[usize::from(pages[2])].is_none());
+    assert!(slots[usize::from(pages[0])].is_some());
+    assert_eq!(registry.glyph_count(), 2);
+
+    // Host maintenance reclaims exactly the retired local binding; the
+    // protected bindings and their real textures survive untouched.
+    assert_eq!(local.reclaim(&|page| atlas.page_generation(page)), 1);
+    assert!(local.get(pages[2]).is_none());
+    assert!(local.get(pages[0]).is_some());
+    assert!(local.get(pages[1]).is_some());
+
+    // Submission boundary: pins clear, protection releases, and the
+    // pending excess retires without another glyph lookup.
+    atlas.release_frame_protection();
+    assert_eq!(atlas.live_page_count(), 1);
+    assert_eq!(
+        atlas.page_generation(pages[0]),
+        Some(placed[0].1.entry.generation)
+    );
+    assert!(atlas.page_generation(pages[1]).is_none());
+    let pruned = retire_glyph_page_resources(&mut atlas, &mut registry, &mut slots, &mut revision);
+    assert_eq!(pruned, 1);
+    assert_eq!(registry.glyph_count(), 1);
+    assert_eq!(local.reclaim(&|page| atlas.page_generation(page)), 1);
+    assert!(local.get(pages[1]).is_none());
+    assert!(local.get(pages[0]).is_some());
+
+    // Re-expansion reuses the lowest vacant slot under a fresh
+    // generation: retired identities name epochs that no longer exist,
+    // so old references can never sample the new contents.
+    atlas.set_max_pages(8, &empty);
+    let (key, raster) = place(&mut atlas, &mut registry, &mut text, "A", 880., &empty);
+    assert_eq!(raster.entry.page, 0);
+    assert_eq!(raster.entry.generation, placed[0].1.entry.generation + 1);
+    assert_eq!(atlas.page_generation(0), Some(raster.entry.generation));
+    // The survivor's identity stays live through everything above,
+    // while both retired identities name epochs that no longer exist,
+    // so old references can never sample the reused contents.
+    assert_eq!(
+        atlas.page_generation(pages[0]),
+        Some(placed[0].1.entry.generation)
+    );
+    for (old_key, old) in placed[1..].iter().map(|(key, raster)| (*key, raster.entry)) {
+        assert_ne!(old_key, key);
+        assert_ne!(
+            atlas.page_generation(old.page),
+            Some(old.generation),
+            "retired identity (page {}, gen {}) must not resolve",
+            old.page,
+            old.generation
+        );
+    }
+}

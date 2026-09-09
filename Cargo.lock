@@ -2308,6 +2308,7 @@ dependencies = [
  "incular-text",
  "kurbo",
  "lyon_tessellation",
+ "pollster",
  "raw-window-handle",
  "trybuild",
  "wgpu",

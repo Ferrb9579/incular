@@ -1,11 +1,14 @@
 //! Two-window GPU resource churn on real renderers sharing one GPU context.
 //!
 //! Window A renders fixed shared content (one image, one gradient, one
-//! text run) and then goes idle. Window B starts with the same shared
-//! handles, then churns per-epoch content — distinct images, gradients,
-//! and glyph sizes — without touching them, forcing real eviction on the
+//! text run) plus its own oversize glyph on a page nobody else refreshes,
+//! then goes idle. Window B starts with the same shared handles, then
+//! churns per-epoch content — distinct images, gradients, and glyph
+//! sizes — without touching A's entries, forcing real eviction on the
 //! device while host maintenance reclaims idle bindings. A then resumes
-//! and must present pixel-identical output; finally A closes (to observed
+//! and must present pixel-identical output with exactly one fresh
+//! rasterization (the evicted oversize glyph under a new generation;
+//! the shared glyphs must be cache hits); finally A closes (to observed
 //! completion) while B keeps rendering.
 //!
 //! What this proves on hardware, through production acquisition,
@@ -360,13 +363,22 @@ fn two_window_resource_churn() {
     let image_for_a = shared_image.clone();
     let gradient_for_a = shared_gradient.clone();
     let window_a = application
-        .open_window_with(window_options("Incular GPU churn window A"), move |_| {
-            incular_widgets::ColoredBox::new(
-                Color::BLACK,
-                Column::new(shared_rows(&image_for_a, &gradient_for_a)),
-            )
-            .into()
-        })
+        .open_window_with(
+            window_options("Incular GPU churn window A"),
+            move |context| {
+                // A owns an oversize page nobody else refreshes: oversize
+                // glyphs take a fresh page while the budget allows, so this
+                // 'A' lives apart from the shared page 0 that B's button and
+                // small texts keep touching. B's oversize churn must retire
+                // exactly this page first (least recently used).
+                let mut rows = shared_rows(&image_for_a, &gradient_for_a);
+                rows.push(pressure_text(
+                    'A',
+                    (900.0 / context.scale_factor().max(0.25)).clamp(100.0, 2000.0) as f32,
+                ));
+                incular_widgets::ColoredBox::new(Color::BLACK, Column::new(rows)).into()
+            },
+        )
         .expect("open churn window A");
     let image_for_b = shared_image.clone();
     let gradient_for_b = shared_gradient.clone();
@@ -469,17 +481,23 @@ fn two_window_resource_churn() {
                 );
                 // "Alpha" (5 distinct glyphs) shared by both windows plus
                 // B's "Churn" button label (5 more): exactly 10 shared
-                // rasterizations, never one per window.
+                // rasterizations, never one per window. A's oversize 'A'
+                // is a distinct size key, so it rasterizes once more on
+                // its own fresh page — established through diagnostics,
+                // not page-order assumptions: A holds two page bindings.
                 assert_eq!(
-                    before_b.glyphs_rasterized, 10,
+                    before_b.glyphs_rasterized, 11,
                     "shared glyphs must rasterize once for both windows, got {}",
                     before_b.glyphs_rasterized
                 );
-                assert!(
-                    before_a.local_image_entries >= 1
-                        && before_a.local_gradient_entries >= 1
-                        && before_a.local_glyph_pages >= 1,
-                    "window A must hold local bindings after presenting: {before_a:?}"
+                assert_eq!(
+                    (
+                        before_a.local_image_entries,
+                        before_a.local_gradient_entries,
+                        before_a.local_glyph_pages
+                    ),
+                    (1, 1, 2),
+                    "window A must hold its image, gradient, shared page, and own oversize page: {before_a:?}"
                 );
 
                 // Phase 2: A goes idle (no A frames, no A queries that
@@ -520,9 +538,11 @@ fn two_window_resource_churn() {
                     "gradient evictions must equal admissions past the budget"
                 );
 
-                // Phase 2b: glyph pressure. One oversize glyph per epoch
-                // takes its own page while the 8-page budget allows; 12
-                // epochs must retire exactly the 4 oldest pages.
+                // Phase 2b: glyph pressure. Twelve B oversize glyphs plus
+                // A's own oversize page make 13 placements against eight
+                // live pages; A's page — untouched since phase 1 while
+                // every B page refreshes on use — retires first as least
+                // recently used.
                 let rasterized_before = gpu_summary(&sim_b)?.glyphs_rasterized;
                 for _ in 1..=GLYPH_EPOCHS {
                     sim_b.click("Churn")?;
@@ -541,34 +561,36 @@ fn two_window_resource_churn() {
                     "glyph budget must stay capped at 8 live pages, got {}",
                     pressured.glyph_live_pages
                 );
-                // Twelve oversize placements against eight live pages;
+                // Thirteen oversize placements against eight live pages;
                 // at least all but a narrow-letter or coalesced epoch
                 // must retire. Exactness is font- and timing-sensitive,
                 // so the bound stays a floor.
                 assert!(
-                    pressured.glyph_page_evictions >= 3,
+                    pressured.glyph_page_evictions >= 4,
                     "oversize placements past the page budget must retire pages, got {}",
                     pressured.glyph_page_evictions
                 );
 
                 // Phase 3: production host maintenance must have removed
                 // A's stale local bindings already, with no A presentation
-                // since phase 1. This read itself renders nothing. The
-                // image and gradient bindings are stale (their shared
-                // entries churned away) and must be gone; the glyph page
-                // binding stays because page 0 — refreshed by every
-                // rendered glyph hit, including B's button — was never a
-                // least-recently-used victim, so reclaim correctly keeps
-                // the still-valid binding while dropping the stale ones.
+                // since phase 1. This read itself renders nothing.
                 let idle_a = gpu_summary(&sim_a)?;
+                // Stale image and gradient bindings are gone: their shared
+                // entries churned away.
                 assert_eq!(
-                    (
-                        idle_a.local_image_entries,
-                        idle_a.local_gradient_entries,
-                        idle_a.local_glyph_pages
-                    ),
-                    (0, 0, 1),
-                    "idle window A must show precise reclamation (stale dropped, live kept): {idle_a:?}"
+                    (idle_a.local_image_entries, idle_a.local_gradient_entries),
+                    (0, 0),
+                    "idle window A must have released stale image/gradient bindings: {idle_a:?}"
+                );
+                // Exactly one glyph binding survives: the shared page 0,
+                // refreshed by every rendered glyph hit (including B's
+                // button), was never a victim — while A's own oversize
+                // page retired as least recently used. Reclaim keeps the
+                // live binding and drops the stale one; the resume phase
+                // below proves which is which.
+                assert_eq!(
+                    idle_a.local_glyph_pages, 1,
+                    "idle window A must keep one live glyph binding: {idle_a:?}"
                 );
 
                 // Phase 4: A resumes and must present pixel-identical
@@ -585,11 +607,25 @@ fn two_window_resource_churn() {
                 let (pixels_a1, _) = assert_shared_content(&shot_a1, "window A resumed");
                 let resumed_identical = pixels_a0 == pixels_a1;
                 let reaquired = gpu_summary(&sim_a)?;
-                assert!(
-                    reaquired.local_image_entries >= 1
-                        && reaquired.local_gradient_entries >= 1
-                        && reaquired.local_glyph_pages >= 1,
-                    "resumed window A must hold fresh bindings: {reaquired:?}"
+                // Exactly one fresh rasterization: the evicted oversize
+                // glyph re-resolving under a new generation. The Alpha
+                // glyphs must be cache hits (delta 0 from them), proving
+                // the retained page-0 binding is the live one and the
+                // retired oversize identity never resolved to reused
+                // contents — that would have corrupted the screenshot.
+                assert_eq!(
+                    reaquired.glyphs_rasterized,
+                    pressured.glyphs_rasterized + 1,
+                    "resume must re-rasterize exactly the evicted oversize glyph: {reaquired:?}"
+                );
+                assert_eq!(
+                    (
+                        reaquired.local_image_entries,
+                        reaquired.local_gradient_entries,
+                        reaquired.local_glyph_pages
+                    ),
+                    (1, 1, 2),
+                    "resumed window A must hold fresh image, gradient, shared-page, and oversize bindings: {reaquired:?}"
                 );
                 eprintln!("churn: A resume identical={resumed_identical}");
 

@@ -976,32 +976,47 @@ code, "missing" means absent with no compensating path.
   Verified live on Windows (AMD Radeon 610M, wgpu 30 default backend
   selection), exit 0, per family: exactly 1 shared image and 1 shared
   gradient upload serve both windows with 10 shared glyph rasterizations
-  (reuse, not per-window duplication); 24 churn epochs admit 289
+  plus A's own oversize glyph (reuse, not per-window duplication; A
+  holds two page bindings); 24 churn epochs admit 289
   distinct images/gradients for exactly 33 evictions each with caches at
   the 256-entry budget (deterministic LRU arithmetic, so A's untouched
-  entries are necessarily gone); 12 oversize glyphs (scale-adaptive
-  ~900px physical, inside raster limits, above the page threshold) cap
-  live pages at 8 with retirements; idle A shows local bindings (0, 0,
-  1) — stale image/gradient bindings reclaimed by host maintenance
-  while A rendered nothing further (the test issues no A frame or
-  render-requesting call between the reads; a presented-frames delta is
-  not asserted, so this is construction-plus-contract evidence, not a
-  counted non-presentation proof), while the still-valid glyph page
-  binding is precisely retained. That glyph binding explicitly proves
-  preservation of a live binding — page 0 stayed hot through shared
-  glyph hits, so it was never an eviction victim — not reclamation and
-  reacquisition of an evicted one; reclamation-then-reacquire for glyphs
-  is covered headlessly, where victim selection is directly observable.
-  A resumes pixel-identical with fresh image/gradient bindings; A's
+  entries are necessarily gone); 12 B oversize glyphs plus A's own
+  oversize glyph (scale-adaptive ~900px physical, inside raster limits,
+  above the page threshold; A's 'A' lives on a fresh page nobody else
+  refreshes, established by the fresh-page-per-oversize policy plus the
+  two-binding local count, not page-order assumptions) make 13
+  placements for exactly 5 retirements with live pages capped at 8 —
+  A's page retires first as least recently used. Idle A shows local
+  bindings (0, 0, 1): stale image/gradient bindings reclaimed by host
+  maintenance while A rendered nothing further (the test issues no A
+  frame or render-requesting call between the reads; a presented-frames
+  delta is not asserted, so this is construction-plus-contract evidence,
+  not a counted non-presentation proof). The surviving glyph binding is
+  the shared page 0, which B's button and small-text hits kept hot —
+  that half of the reading proves preservation of a valid binding, held
+  as a separate assertion. The dropped half proves stale reclamation of
+  A's evicted oversize page. A resumes pixel-identical with exactly one
+  fresh rasterization (the evicted oversize glyph under a new
+  generation; the shared Alpha glyphs are cache hits, proving the
+  retained page-0 binding is the live one) and local bindings (1, 1, 2);
+  a stale page identity resolving to reused contents would corrupt the
+  screenshot or leave the binding missing, so both are covered. A's
   close completes observably (polled to WindowNotFound/Closed) before
   B's continued rendering is checked; then B closes and the loop exits.
   Pixel assertions (alignment-free region scans, opaque colors, stable
   interior samples) sit alongside — never instead of — the ownership
   reads. No physical GPU reclamation is claimed from handle counts.
-  Retained native acceptance gap: glyph-page tightening under protection
-  cannot be held from outside the submission path (frame pins exist only
-  mid-frame), so it stays cited from the headless protection/release
-  suite, not treated as live-equivalent. One `incular-image`
+  Protected tightening runs backend-covered with real GPU page textures
+  (`protected_tightening_defers_through_release_with_real_page_textures`:
+  headless device, real 1024px `R8Unorm` textures through the production
+  ensure/retire/prune/reclaim functions — tighten defers protected pages,
+  submission release retires the pending excess, registry and shared
+  slots drain coherently, re-expansion reuses under bumped generations,
+  retired identities never resolve). It cannot run through actual GPU
+  submission: frame pins exist only mid-frame and no test-only injection
+  was added to hold them, so that final composition step stays cited
+  from the submission boundary that runs it live every frame. One
+  `incular-image`
   dev-dependency was added for raw test handles (dev-deps are excluded
   from the reviewed boundary). Earlier-review corrections folded in:
   the shared gradient is one cloned identity (rebuilding per window
