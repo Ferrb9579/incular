@@ -350,10 +350,11 @@ impl WidgetTree {
             return show_when_unlinked.then_some(CoreTransform::IDENTITY);
         };
         let leader_size = link.leader_size().unwrap_or(Size::ZERO);
-        let target = leader_transform.transform_point(target_anchor.along_size(leader_size));
-        let leader_origin = leader_transform.transform_point(Offset::ZERO);
-        let offset_world = leader_transform.transform_point(*offset) - leader_origin;
-        let target_in_parent = base.inverse_transform_point(target + offset_world)?;
+        // Same leader-space projection as the compositor; only the frame
+        // differs (render parent here, layer world there).
+        let target =
+            resolve_follower_target(leader_transform, leader_size, *target_anchor, *offset);
+        let target_in_parent = base.inverse_transform_point(target)?;
         Some(CoreTransform::translation(
             target_in_parent - follower_anchor.along_size(node.size),
         ))

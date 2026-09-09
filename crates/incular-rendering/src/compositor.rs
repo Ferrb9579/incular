@@ -9,7 +9,10 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 /// Opaque retained compositor identity. It uses the core generational arena so
@@ -123,11 +126,42 @@ impl LayerAnchor {
     }
 }
 
+/// World-space point where a follower's anchor must land, resolved entirely
+/// in leader space. The compositor and the widget tree share this half of
+/// the projection; each side then inverts it into its own retained frame
+/// (layer world vs. render parent), which is why the callers still differ.
+#[must_use]
+pub fn resolve_follower_target(
+    leader_transform: Transform,
+    leader_size: Size,
+    target_anchor: LayerAnchor,
+    offset: Offset,
+) -> Offset {
+    let target_point = leader_transform.transform_point(target_anchor.along_size(leader_size));
+    let leader_origin = leader_transform.transform_point(Offset::ZERO);
+    target_point + (leader_transform.transform_point(offset) - leader_origin)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LeaderData {
+    owner: u64,
     transform: Transform,
     size: Size,
     generation: u64,
+}
+
+/// Process-wide publication identity minted per leader layer. A link may be
+/// shared across layer trees whose arena indices overlap, so a tree-local
+/// `LayerId` cannot name the publisher; the token travels inside the leader
+/// layer itself. Zero is never minted and means "no owner".
+static NEXT_LINK_PUBLISHER: AtomicU64 = AtomicU64::new(1);
+
+fn mint_link_publisher() -> u64 {
+    let mut id = NEXT_LINK_PUBLISHER.fetch_add(1, Ordering::Relaxed);
+    if id == 0 {
+        id = NEXT_LINK_PUBLISHER.fetch_add(1, Ordering::Relaxed);
+    }
+    id
 }
 
 /// Shared identity used to resolve a composited target and any number of
@@ -176,16 +210,27 @@ impl LayerLink {
             .as_ref()
             .map_or(0, |leader| leader.generation)
     }
-    fn clear_leader(&self) {
+    /// Releases the publication only when `owner` made it. Removing or
+    /// rebinding any other leader layer must not disturb the winner.
+    fn clear_if_owned_by(&self, owner: u64) {
+        let mut state = self.0.borrow_mut();
+        if state.is_some_and(|leader| leader.owner == owner) {
+            *state = None;
+        }
+    }
+    /// Unconditional frame reset. The resolution pass republishes every live
+    /// leader right after, so no reader observes the gap.
+    fn clear_publication(&self) {
         *self.0.borrow_mut() = None;
     }
-    fn set_leader(&self, transform: Transform, size: Size, generation: u64) {
-        // Flutter requires one target per link and the first target in paint
-        // order wins. Keeping that rule deterministic is preferable to
-        // allowing a later subtree to move an already painted follower.
+    fn publish(&self, owner: u64, transform: Transform, size: Size, generation: u64) {
+        // One target per link and the first target in paint order wins.
+        // Keeping that rule deterministic is preferable to allowing a later
+        // subtree to move an already published follower.
         let mut state = self.0.borrow_mut();
         if state.is_none() {
             *state = Some(LeaderData {
+                owner,
                 transform,
                 size,
                 generation,
@@ -249,6 +294,7 @@ pub enum LayerKind {
     Leader {
         link: LayerLink,
         size: Size,
+        publisher: u64,
     },
     Follower {
         link: LayerLink,
@@ -417,7 +463,11 @@ impl LayerTree {
         })
     }
     pub fn create_leader(&mut self, link: LayerLink, size: Size) -> LayerId {
-        self.insert(LayerKind::Leader { link, size })
+        self.insert(LayerKind::Leader {
+            link,
+            size,
+            publisher: mint_link_publisher(),
+        })
     }
     pub fn create_follower(
         &mut self,
@@ -452,12 +502,15 @@ impl LayerTree {
     }
     pub fn remove(&mut self, id: LayerId) {
         if let Some(layer) = self.layers.remove(id.0) {
-            // A removed leader must stop resolving: its shared link state
-            // would otherwise outlive it (flatten only clears leaders it
-            // still walks) and followers would track a ghost, blocking any
-            // replacement leader on the same link.
-            if let LayerKind::Leader { link, .. } = &layer.kind {
-                link.clear_leader();
+            // A removed leader stops resolving only when it owned the
+            // publication: its shared link state would otherwise outlive it
+            // and followers would track a ghost. A non-owner's removal must
+            // not disturb the winner.
+            if let LayerKind::Leader {
+                link, publisher, ..
+            } = &layer.kind
+            {
+                link.clear_if_owned_by(*publisher);
             }
             self.diagnostics.layers -= 1;
             if self.root == Some(id) {
@@ -768,6 +821,7 @@ impl LayerTree {
         let LayerKind::Leader {
             link: current_link,
             size: current_size,
+            publisher,
         } = &mut layer.kind
         else {
             return false;
@@ -775,7 +829,10 @@ impl LayerTree {
         if *current_link == link && *current_size == size {
             return false;
         }
-        current_link.clear_leader();
+        // The rebound layer releases only its own publication; a non-owner
+        // rebind must not clear the winner it never displaced.
+        let publisher = *publisher;
+        current_link.clear_if_owned_by(publisher);
         *current_link = link;
         *current_size = size;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
@@ -887,6 +944,11 @@ impl LayerTree {
         self.flattened_annotations.clear();
         if let Some(root) = self.root {
             self.clear_link_states(root);
+            // Leader publication runs as its own pass before any follower
+            // resolves, so flatten order cannot strand a follower behind
+            // its leader: paint, hit testing, and semantics all read the
+            // same post-publication state.
+            self.publish_leaders(root, Transform::IDENTITY);
             self.flatten_layer(root, Transform::IDENTITY, None, &mut out);
             self.collect_annotations(root, Transform::IDENTITY, None);
         }
@@ -1119,8 +1181,9 @@ impl LayerTree {
                     self.flatten_layer(child, world_transform, clip, out);
                 }
             }
-            LayerKind::Leader { link, size } => {
-                link.set_leader(world_transform, size, self.subtree_generation(id));
+            LayerKind::Leader { .. } => {
+                // Publication already ran in the dedicated pass above; the
+                // flatten walk only positions children here.
                 for child in layer.children {
                     self.flatten_layer(child, world_transform, clip, out);
                 }
@@ -1155,11 +1218,32 @@ impl LayerTree {
             return;
         };
         if let LayerKind::Leader { link, .. } = &layer.kind {
-            link.clear_leader();
+            link.clear_publication();
         }
         let children = layer.children.clone();
         for child in children {
             self.clear_link_states(child);
+        }
+    }
+    fn publish_leaders(&self, id: LayerId, world_transform: Transform) {
+        let Some(layer) = self.layers.get(id.0) else {
+            return;
+        };
+        if let LayerKind::Leader {
+            link,
+            size,
+            publisher,
+        } = &layer.kind
+        {
+            link.publish(*publisher, world_transform, *size, layer.generation);
+        }
+        let next = match &layer.kind {
+            LayerKind::Transform { transform } => world_transform.then(*transform),
+            _ => world_transform,
+        };
+        let children = layer.children.clone();
+        for child in children {
+            self.publish_leaders(child, next);
         }
     }
     // Keep the transform inputs explicit so this helper mirrors the retained
@@ -1179,10 +1263,8 @@ impl LayerTree {
             return show_when_unlinked.then_some(world_transform);
         };
         let leader_size = link.leader_size().unwrap_or(Size::ZERO);
-        let target_point = leader_transform.transform_point(target_anchor.along_size(leader_size));
-        let leader_origin = leader_transform.transform_point(Offset::ZERO);
-        let offset_point = leader_transform.transform_point(offset) - leader_origin;
-        let desired_anchor = target_point + offset_point;
+        let desired_anchor =
+            resolve_follower_target(leader_transform, leader_size, target_anchor, offset);
         let desired_local = world_transform.inverse_transform_point(desired_anchor)?;
         let local_delta = desired_local - follower_anchor.along_size(size);
         Some(world_transform.then(Transform::translation(local_delta)))
@@ -1358,7 +1440,7 @@ impl LayerTree {
                             ^ u64::from(size.width.to_bits()).rotate_left(9)
                             ^ u64::from(size.height.to_bits()).rotate_left(15);
                     }
-                    LayerKind::Leader { link, size } => {
+                    LayerKind::Leader { link, size, .. } => {
                         value = value.rotate_left(13)
                             ^ link.leader_generation()
                             ^ u64::from(size.width.to_bits()).rotate_left(9)
@@ -1604,7 +1686,7 @@ impl LayerTree {
                 "AnnotatedRegion(sized={sized}, size={size:?}, generation={})",
                 self.subtree_generation(id)
             ),
-            LayerKind::Leader { link, size } => format!(
+            LayerKind::Leader { link, size, .. } => format!(
                 "CompositedTransformTarget(size={size:?}, linked={}, generation={})",
                 link.is_linked(),
                 self.subtree_generation(id)

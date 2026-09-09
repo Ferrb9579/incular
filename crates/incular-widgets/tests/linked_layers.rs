@@ -618,34 +618,276 @@ fn identical_reapply_schedules_no_phases() {
 }
 
 #[test]
-fn follower_before_leader_sees_unlinked() {
-    // Paint order decides linkage: a follower flattened before any leader
-    // publication observes the unlinked state, even with a live leader
-    // later in the same tree.
+fn follower_before_leader_matches_paint_hit_and_semantics() {
+    // Leader publication runs before follower resolution, so a follower
+    // earlier in child order links exactly like one after the leader:
+    // paint, hit testing, and semantics must agree at the linked spot.
     let link = LayerLink::new();
     let mut tree = WidgetTree::new();
-    tree.mount(
+    let root = tree
+        .mount(
+            Column::new([
+                Widget::from(
+                    CompositedTransformFollower::new(
+                        link.clone(),
+                        action(Size::new(FOLLOWER.0, FOLLOWER.1), Color::WHITE, ActionId(1))
+                            .accessibility_label("linked child"),
+                    )
+                    .offset(Offset::new(55., 0.))
+                    .show_when_unlinked(false),
+                ),
+                leader_box(&link),
+            ])
+            .into(),
+        )
+        .unwrap();
+    let follower = tree.children(root).unwrap()[0];
+    let moved = tree.children(follower).unwrap()[0];
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    // Leader lays out second at (70,10); the (55,0) leader-space offset
+    // puts the follower's 20x10 box at (125,10), clear of the 60x30
+    // leader (which spans x 70..130) so hits can reach it.
+    let expected = Rect::from_origin_size(Offset::new(125., 10.), Size::new(20., 10.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint())
+            .iter()
+            .find(|rect| rect.size.width == 20. && rect.size.height == 10.)
+            .expect("linked follower rect"),
+        expected,
+        "early follower paint",
+    );
+    let hit = tree
+        .hit_test(Offset::new(140., 15.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("early follower semantics");
+    assert_rect_eq(semantic.bounds, expected, "early follower semantics");
+}
+
+#[test]
+fn removing_non_winner_leader_preserves_follower() {
+    // Two leaders on one link: the first in paint order wins. Unmounting
+    // the loser must not disturb the winner's publication.
+    let link = LayerLink::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Column::new([leader_box(&link), leader_box(&link), follower_button(&link)]).into())
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let expected = Rect::from_origin_size(Offset::new(75., 7.), Size::new(20., 10.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        expected,
+        "winner follower paint",
+    );
+    tree.update(
+        root,
+        Column::new([leader_box(&link), follower_button(&link)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let follower = tree.children(root).unwrap()[1];
+    let moved = tree.children(follower).unwrap()[0];
+    // No repaint yet: the winner's publication must still resolve hits.
+    let hit = tree
+        .hit_test(Offset::new(80., 10.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        expected,
+        "winner follower paint after loser removal",
+    );
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("winner semantics");
+    assert_rect_eq(semantic.bounds, expected, "winner semantics");
+}
+
+#[test]
+fn removing_winner_leader_elects_survivor() {
+    let link = LayerLink::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Column::new([leader_box(&link), leader_box(&link), follower_button(&link)]).into())
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let _ = tree.paint();
+    assert!(link.is_linked());
+    // Unmount the winning leader by swapping a plain box into its slot:
+    // same-type reconciliation would keep the winner's layer alive. The
+    // winner owned the publication, so the link invalidates immediately,
+    // before the next paint.
+    tree.update(
+        root,
         Column::new([
-            Widget::from(
-                CompositedTransformFollower::new(
-                    link.clone(),
-                    Widget::box_(Size::new(20., 10.), Color::WHITE),
-                )
-                .show_when_unlinked(false),
-            ),
+            Widget::box_(Size::new(60., 30.), Color::WHITE),
             leader_box(&link),
+            follower_button(&link),
         ])
         .into(),
     )
-    .unwrap();
+    .expect("update");
+    assert!(!link.is_linked(), "winner removal invalidates at once");
     tree.layout(Constraints::tight(Size::new(200., 200.)))
         .expect("layout");
-    assert!(painted_rects(&tree.paint()).iter().all(|rect| {
-        !(rect.size.width == 20.
-            && rect.size.height == 10.
-            && rect.origin.x == 75.
-            && rect.origin.y == 7.)
-    }));
+    let follower = tree.children(root).unwrap()[2];
+    let moved = tree.children(follower).unwrap()[0];
+    // The survivor still holds the link at (70,30): the follower tracks
+    // it in paint, hit testing, and semantics alike.
+    let expected = Rect::from_origin_size(Offset::new(75., 37.), Size::new(20., 10.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        expected,
+        "survivor follower paint",
+    );
+    let hit = tree
+        .hit_test(Offset::new(80., 40.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("survivor semantics");
+    assert_rect_eq(semantic.bounds, expected, "survivor semantics");
+}
+
+#[test]
+fn rebinding_leader_to_another_link_moves_only_that_leader() {
+    let link_a = LayerLink::new();
+    let link_b = LayerLink::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            Column::new([
+                leader_box(&link_a),
+                leader_box(&link_a),
+                follower_button(&link_a),
+            ])
+            .into(),
+        )
+        .unwrap();
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let _ = tree.paint();
+    // Rebind the losing leader to a fresh link: link A must keep
+    // resolving to the winner without a repaint.
+    tree.update(
+        root,
+        Column::new([
+            leader_box(&link_a),
+            leader_box(&link_b),
+            follower_button(&link_a),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let follower = tree.children(root).unwrap()[2];
+    let moved = tree.children(follower).unwrap()[0];
+    let hit = tree
+        .hit_test(Offset::new(80., 10.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    let _ = tree.paint();
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        Rect::from_origin_size(Offset::new(75., 7.), Size::new(20., 10.)),
+        "follower stays on the winner",
+    );
+    // The rebound leader publishes on its new link at its own spot.
+    assert!(link_b.is_linked());
+    assert_eq!(
+        link_b
+            .leader_transform()
+            .expect("rebound leader publishes")
+            .transform_point(Offset::ZERO),
+        Offset::new(70., 30.)
+    );
+    // Rebind the winner away too: it releases link A at once, and with no
+    // leader left on A the follower falls back to its layout placement.
+    tree.update(
+        root,
+        Column::new([
+            leader_box(&link_b),
+            leader_box(&link_b),
+            follower_button(&link_a),
+        ])
+        .into(),
+    )
+    .expect("update");
+    assert!(!link_a.is_linked(), "rebound winner releases its link");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let follower = tree.children(root).unwrap()[2];
+    let moved = tree.children(follower).unwrap()[0];
+    let expected = Rect::from_origin_size(Offset::new(90., 60.), Size::new(20., 10.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        expected,
+        "follower falls back to layout placement",
+    );
+    let hit = tree
+        .hit_test(Offset::new(95., 62.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("fallback semantics");
+    assert_rect_eq(semantic.bounds, expected, "fallback semantics");
+}
+
+#[test]
+fn distinct_links_with_identical_geometry_do_not_cross_talk() {
+    // Same sizes, same options, different links: the follower tracks its
+    // own link's leader, never the geometry twin.
+    let link_a = LayerLink::new();
+    let link_b = LayerLink::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            Column::new([
+                leader_box(&link_a),
+                leader_box(&link_b),
+                follower_button(&link_b),
+            ])
+            .into(),
+        )
+        .unwrap();
+    let follower = tree.children(root).unwrap()[2];
+    let moved = tree.children(follower).unwrap()[0];
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let expected = Rect::from_origin_size(Offset::new(75., 37.), Size::new(20., 10.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint()).last().expect("follower rect"),
+        expected,
+        "follower tracks its own link",
+    );
+    let hit = tree
+        .hit_test(Offset::new(80., 40.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("own-link semantics");
+    assert_rect_eq(semantic.bounds, expected, "own-link semantics");
 }
 
 #[test]

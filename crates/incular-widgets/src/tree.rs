@@ -29,7 +29,7 @@ use incular_rendering as incular_painting;
 use incular_rendering::{
     Annotation, BlendMode, Border, Brush, ColorFilter, CornerRadii, DisplayList, DropShadowEffect,
     FillRule, FilterQuality, GaussianBlur, ImageSampling, LayerAnchor, LayerLink, LayerTree,
-    PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma,
+    PaintCommand, Path, RRect, Stroke, normalize_opacity, normalize_sigma, resolve_follower_target,
 };
 use incular_scroll::{
     ScrollController, ScrollNotification, ScrollNotificationSubscription, ScrollPhysics,

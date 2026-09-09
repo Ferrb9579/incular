@@ -11,7 +11,7 @@ mod paths;
 
 pub use compositor::{
     Annotation, CompositorDiagnostics, FlattenedAnnotation, FlattenedPicture, LayerAnchor, LayerId,
-    LayerKind, LayerLink, LayerTree, normalize_opacity,
+    LayerKind, LayerLink, LayerTree, normalize_opacity, resolve_follower_target,
 };
 pub use display_list::{Canvas, DisplayList, ImageSampling, PaintCommand, SurfacePartitionId};
 pub use effects::{

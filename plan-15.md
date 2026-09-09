@@ -1220,19 +1220,20 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
 
 ## W3 — Linked-layer slice (same workstream, still open)
 
-- Reused the existing compositor formula instead of adding a second
-  one. `CompositedTransformFollower` resolution previously ran a
-  Widgets-local computation that agreed with the compositor on
-  translation/scale but returned the stale-leader translation for a
-  removed leader and the layout placement for an unlinked follower
-  whose `show_when_unlinked` is false. The Widgets path now reuses
-  narrow renderer-neutral geometry: `follower_resolved_transform`
-  asks the `LayerLink` (same shared owner as the compositor), returns
-  `None` for unresolved links, and the paint/hit/semantics paths fall
-  back to the pre-existing unlinked behavior. Identity gate added so
-  the same-link check cannot alias across links (`Arc::ptr_eq`),
-  closing a hole the old pointer comparison left open. No new math,
-  no second registry, no per-frame rebuilds.
+- Shared the leader data, not yet the formula. `CompositedTransformFollower`
+  resolution previously ran a Widgets-local computation that agreed
+  with the compositor on translation/scale but returned the
+  stale-leader translation for a removed leader and the layout
+  placement for an unlinked follower whose `show_when_unlinked` is
+  false. That commit made `follower_resolved_transform` ask the
+  `LayerLink` (same shared owner as the compositor), return `None`
+  for unresolved links, and fall back to the pre-existing unlinked
+  behavior. Correction to the earlier report: no renderer-neutral
+  geometry was shared then — the anchor/offset math stayed duplicated
+  between the compositor and the widget tree — and no identity gate
+  was added (`LayerLink` identity was and remains `Rc::ptr_eq` in its
+  own `PartialEq`). The shared formula and the ownership fix below
+  close those gaps. No second registry, no per-frame rebuilds.
 - Proved fail-first where the behavior allowed it: a temporary
   staged-vs-flattened probe (kept out of the final tree) confirmed the
   follower translation was computed from public attachment points;
@@ -1241,25 +1242,63 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   under scale, offset plus both anchors, layer-anchor setter parity,
   transformed ancestors, unlink/relink across links and leaders, both
   `show_when_unlinked` policies, two followers on one link, link
-  replacement, identical reapply scheduling, follower-before-leader
-  ordering, multiple-leader first-wins, and singular culling of paint,
-  hits, and semantics (15 tests in
-  `crates/incular-widgets/tests/linked_layers.rs`, unequal 60x30 /
-  20x10 fixtures). The unlinked-hidden pair and the relink test forced
-  two real fixes: hit testing now gates on follower visibility in both
-  hit entry points (previously a hidden follower stayed hittable),
-  semantics skips unlinked-hidden subtrees without clearing sibling
-  state (previously it dropped the whole parent's children), and
-  compositor `remove` now releases the leader's link (previously a
-  follower could track a ghost after unmount; pinned by
-  `removing_leader_layer_releases_its_link` in
-  `crates/incular-rendering/tests/rendering.rs`).
+  replacement, identical reapply scheduling, multiple-leader
+  first-wins, and singular culling of paint, hits, and semantics (15
+  tests in `crates/incular-widgets/tests/linked_layers.rs`, unequal
+  60x30 / 20x10 fixtures). Corrections to the earlier report: the
+  follower-before-leader test pinned paint culling only — hit testing
+  and semantics read post-flatten link state and disagreed with the
+  culled paint — and compositor `remove` released the link on *any*
+  leader's removal, including leaders that never published. Both are
+  demonstrated by the ownership regressions below failing on that
+  code. The unlinked-hidden pair and the relink test forced two real
+  fixes that stand: hit testing now gates on follower visibility in
+  both hit entry points (previously a hidden follower stayed
+  hittable), and semantics skips unlinked-hidden subtrees without
+  clearing sibling state (previously it dropped the whole parent's
+  children).
 - Ledger: `specs/linked_layers_properties.json` (10 records: two
   `CompositedTransformTarget` options, eight
   `CompositedTransformFollower` options) validated by
   `tests/linked_layers_ledger.rs` through the reused
   `tests/ledger/` validator (`MethodNames` discovery, observer
   getters excluded) plus a method-name fixture negative (2/2).
+
+## W3 — Linked-layer ownership (same workstream, still open)
+
+- Publications now have an owner. Each leader layer mints a
+  process-wide token at creation (`create_leader`; a tree-local arena
+  index cannot name the publisher because one link may be shared
+  across trees whose indices overlap) stored on
+  `LayerKind::Leader` and recorded in `LeaderData` by
+  `LayerLink::publish` (first in paint order still wins).
+  `remove` and `update_leader` release via
+  `clear_if_owned_by`: removing or rebinding a non-owner leaves the
+  winner untouched, while removing the winner (or rebinding it away)
+  invalidates at once and the next flatten's resolution pass elects a
+  survivor. The per-frame clear-then-publish framing is unchanged.
+- Paint order no longer strands followers. `flatten` runs a dedicated
+  leader-publication pass after the reset and before follower
+  resolution, so a follower earlier in child order links exactly like
+  one after the leader; paint, hit testing, and semantics all read
+  the same post-publication state by construction.
+- One shared formula half. `resolve_follower_target`
+  (incular-rendering, re-exported at the crate root) computes the
+  leader-space anchor point both the compositor's
+  `follower_transform` and the widget tree's
+  `follower_resolved_transform` invert into their own retained frame
+  (layer world vs. render parent); the inversion still differs
+  because the frames differ, and is documented as such.
+- Regressions, all fail-first on the previous code (6 compositor, 4
+  widget plus a rewritten ordering test, 19 widget tests total):
+  removing the non-winner preserves the winner with no new flatten;
+  removing the winner invalidates immediately and the survivor
+  publishes next flatten; rebinding the loser preserves the winner;
+  rebinding the winner releases the old link at once; distinct links
+  with identical geometry resolve independently; follower-before-
+  leader agrees across paint, hit testing, and semantics. The old
+  paint-only ordering test is replaced by the agreement test; the
+  ledger is unchanged (no public options added).
 
 ## W4 — Navigation transactions and smaller runtime owners
 

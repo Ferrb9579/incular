@@ -854,3 +854,139 @@ fn removing_leader_layer_releases_its_link() {
     let _ = tree.flatten();
     assert!(!link.is_linked());
 }
+
+/// Two leaders on one link under distinct translations. The first in paint
+/// order publishes; the tests below pin the ownership rule that removal
+/// or rebinding only releases a publication its own layer made.
+fn two_leader_tree() -> (LayerTree, LayerLink, LayerId, LayerId) {
+    let mut tree = LayerTree::new();
+    let link = LayerLink::new();
+    let shift_a = tree.create_transform(Transform::translation(Offset::new(10., 0.)));
+    let leader_a = tree.create_leader(link.clone(), Size::new(60., 30.));
+    tree.set_children(shift_a, vec![leader_a]);
+    let shift_b = tree.create_transform(Transform::translation(Offset::new(50., 0.)));
+    let leader_b = tree.create_leader(link.clone(), Size::new(60., 30.));
+    tree.set_children(shift_b, vec![leader_b]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift_a, shift_b]);
+    tree.set_root(root);
+    (tree, link, leader_a, leader_b)
+}
+
+fn leader_origin(link: &LayerLink) -> Offset {
+    link.leader_transform()
+        .expect("link must resolve")
+        .transform_point(Offset::ZERO)
+}
+
+#[test]
+fn removing_non_winner_leader_preserves_winner_publication() {
+    let (mut tree, link, _, leader_b) = two_leader_tree();
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    // The second leader never published, so removing it must not disturb
+    // the winner: the publication stays observable without a new flatten.
+    tree.remove(leader_b);
+    assert!(
+        link.is_linked(),
+        "non-owner removal must preserve the winner"
+    );
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+}
+
+#[test]
+fn removing_winner_leader_elects_survivor_on_next_flatten() {
+    let (mut tree, link, leader_a, _) = two_leader_tree();
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    // Only the winner's removal invalidates the publication, immediately.
+    tree.remove(leader_a);
+    assert!(!link.is_linked(), "winner removal must invalidate at once");
+    // The next resolution pass selects the surviving leader.
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(50., 0.));
+}
+
+#[test]
+fn rebinding_non_winner_leader_preserves_winner() {
+    let (mut tree, link, _, leader_b) = two_leader_tree();
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    let other = LayerLink::new();
+    assert!(tree.update_leader(leader_b, other.clone(), Size::new(60., 30.)));
+    // Rebinding a layer that never published must not clear the winner.
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    assert_eq!(leader_origin(&other), Offset::new(50., 0.));
+}
+
+#[test]
+fn rebinding_winner_leader_releases_old_link_for_survivor() {
+    let (mut tree, link, leader_a, _) = two_leader_tree();
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(10., 0.));
+    let other = LayerLink::new();
+    assert!(tree.update_leader(leader_a, other.clone(), Size::new(60., 30.)));
+    // The rebound winner owned the old publication, so it clears at once.
+    assert!(!link.is_linked(), "rebound winner must release its link");
+    let _ = tree.flatten();
+    assert_eq!(leader_origin(&link), Offset::new(50., 0.));
+    assert!(other.is_linked());
+}
+
+#[test]
+fn distinct_links_with_identical_geometry_resolve_independently() {
+    let mut tree = LayerTree::new();
+    let link_a = LayerLink::new();
+    let link_b = LayerLink::new();
+    let leader_a = tree.create_leader(link_a.clone(), Size::new(60., 30.));
+    let leader_b = tree.create_leader(link_b.clone(), Size::new(60., 30.));
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![leader_a, leader_b]);
+    tree.set_root(root);
+    let _ = tree.flatten();
+    assert_eq!(
+        link_a.leader_transform(),
+        link_b.leader_transform(),
+        "identical geometry publishes identical placements"
+    );
+    tree.remove(leader_a);
+    assert!(!link_a.is_linked());
+    assert!(link_b.is_linked(), "sibling link must be unaffected");
+}
+
+#[test]
+fn follower_before_leader_resolves_like_leader_before_follower() {
+    // Leader publication runs as its own pass before follower resolution,
+    // so flatten order no longer decides whether a follower links.
+    let mut tree = LayerTree::new();
+    let link = LayerLink::new();
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(20., 10.)),
+    );
+    let follower = tree.create_follower(
+        link.clone(),
+        false,
+        Offset::ZERO,
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(20., 10.),
+    );
+    tree.set_children(follower, vec![picture]);
+    let shift = tree.create_transform(Transform::translation(Offset::new(70., 10.)));
+    let leader = tree.create_leader(link.clone(), Size::new(60., 30.));
+    tree.set_children(shift, vec![leader]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![follower, shift]);
+    tree.set_root(root);
+    let _ = tree.flatten();
+    assert_eq!(tree.flattened_pictures().len(), 1);
+    assert_eq!(
+        tree.flattened_pictures()[0].world_bounds,
+        Rect::from_origin_size(Offset::new(70., 10.), Size::new(20., 10.))
+    );
+}
