@@ -20,9 +20,9 @@ use crate::global_shortcuts::{
     PendingGlobalShortcutRequest, QueuedGlobalShortcutRequest, drain_queued,
 };
 use crate::profiling::{
-    AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameWork, GpuSample,
-    PerformanceHub, PerformanceProfiler, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics,
-    TextCacheSnapshot, WidgetWorkSnapshot, WindowPerformance,
+    AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameWork,
+    GpuResourceSummary, GpuSample, PerformanceHub, PerformanceProfiler, PerformanceSnapshot,
+    ProfilerMode, RenderFrameMetrics, TextCacheSnapshot, WidgetWorkSnapshot, WindowPerformance,
 };
 use crate::request_registry::{CompletionRejection, RequestPhase, RequestRegistry};
 use crate::restoration::{self, RestorationConfig, RestorationDiagnostics};
@@ -113,6 +113,8 @@ pub struct Application {
         HashMap<WindowId, Vec<mpsc::SyncSender<Result<(), SimulationError>>>>,
     pub(crate) simulation_capture_waiters:
         HashMap<WindowId, Vec<mpsc::SyncSender<Result<Screenshot, SimulationError>>>>,
+    pub(crate) simulation_gpu_resource_waiters:
+        HashMap<WindowId, Vec<mpsc::SyncSender<Result<GpuResourceSummary, SimulationError>>>>,
     pub(crate) native_commands: Rc<RefCell<VecDeque<NativeWindowCommand>>>,
     pub(crate) primary_window: WindowId,
     pub(crate) last_window_policy: LastWindowPolicy,
@@ -290,6 +292,7 @@ impl Application {
             simulation_bridge,
             simulation_frame_waiters: HashMap::new(),
             simulation_capture_waiters: HashMap::new(),
+            simulation_gpu_resource_waiters: HashMap::new(),
             native_commands,
             primary_window,
             last_window_policy: LastWindowPolicy::ExitOnLastWindow,

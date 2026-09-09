@@ -1167,6 +1167,56 @@ impl DesktopHost {
         );
     }
 
+    /// Fulfills pending GPU-resource queries from current state without
+    /// presenting any frame. Runs on the maintenance path (after
+    /// reclamation above), so observed local bindings already reflect the
+    /// latest host maintenance. Windows without a native renderer fail
+    /// their waiters instead of hanging them.
+    fn fulfill_gpu_resource_queries(&mut self) {
+        for id in self.application.take_gpu_resource_queries() {
+            let summary = self
+                .native_ids
+                .get(&id)
+                .copied()
+                .and_then(|native_id| self.windows.get(&native_id))
+                .map(|state| {
+                    let counters = state.renderer.counters();
+                    let shared = self.shared_gpu.as_ref().map(|shared| shared.diagnostics());
+                    incular_runtime::GpuResourceSummary {
+                        shared_image_entries: shared
+                            .map(|diagnostics| diagnostics.shared_image_resources as u64)
+                            .unwrap_or_default(),
+                        shared_image_evictions: shared
+                            .map(|diagnostics| diagnostics.shared_image_evictions)
+                            .unwrap_or_default(),
+                        shared_gradient_entries: shared
+                            .map(|diagnostics| diagnostics.shared_gradient_resources as u64)
+                            .unwrap_or_default(),
+                        shared_gradient_evictions: shared
+                            .map(|diagnostics| diagnostics.shared_gradient_evictions)
+                            .unwrap_or_default(),
+                        glyph_live_pages: shared
+                            .map(|diagnostics| diagnostics.glyph_atlas_pages as u64)
+                            .unwrap_or_default(),
+                        glyph_page_evictions: shared
+                            .map(|diagnostics| diagnostics.glyph_page_evictions)
+                            .unwrap_or_default(),
+                        glyphs_rasterized: counters.glyphs_rasterized,
+                        local_image_entries: counters.local_image_entries,
+                        local_gradient_entries: counters.local_gradient_entries,
+                        local_glyph_pages: counters.local_glyph_page_bindings,
+                    }
+                });
+            // Windows without a native renderer yet keep their waiters;
+            // the query resolves on a later turn or times out boundedly.
+            // (A live runtime window always gains a renderer with the
+            // shared context, so this only covers creation races.)
+            if let Some(summary) = summary {
+                self.application.complete_gpu_resource_query(id, summary);
+            }
+        }
+    }
+
     fn redraw_window(&mut self, target: &ActiveEventLoop, id: IncularWindowId) {
         #[cfg(feature = "devtools")]
         self.devtools_state.drain(&mut self.application);
@@ -2132,6 +2182,7 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
             self.request_frame_if_needed(id);
         }
         self.reclaim_stale_shared_images();
+        self.fulfill_gpu_resource_queries();
         // Pace the loop by the earliest contributed deadline instead of
         // polling: with none the loop waits indefinitely, and closed
         // windows simply stop contributing because their policies are

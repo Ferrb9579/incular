@@ -105,9 +105,9 @@ pub use global_shortcuts::{
 pub use incular_accessibility::AccessibilityDiagnostics;
 pub use profiling::{
     AccessibilitySnapshot, BudgetStatistics, FrameHistory, FrameRecord, FrameStatistics,
-    FrameTimings, FrameWork, GpuSample, PerformanceHub, PerformanceProfiler, PerformanceSnapshot,
-    ProfilerMode, RenderFrameMetrics, SchedulerCounters, TextCacheSnapshot, WidgetWorkSnapshot,
-    WindowPerformance,
+    FrameTimings, FrameWork, GpuResourceSummary, GpuSample, PerformanceHub, PerformanceProfiler,
+    PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, SchedulerCounters, TextCacheSnapshot,
+    WidgetWorkSnapshot, WindowPerformance,
 };
 pub use reactive::{Action, ActionDispatchError, ActionError, ActionState, Effect, Memo};
 pub use restoration::{

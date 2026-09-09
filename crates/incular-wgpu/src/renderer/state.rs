@@ -496,6 +496,9 @@ impl WgpuRenderer {
     }
     pub(super) fn counters_snapshot(&self) -> GpuCounters {
         let mut counters = self.counters;
+        counters.local_image_entries = self.image_cache.len() as u64;
+        counters.local_gradient_entries = self.gradient_cache.len() as u64;
+        counters.local_glyph_page_bindings = self.atlas_pages.len() as u64;
         let atlas = self.shared.glyph_counters();
         counters.glyph_cache_hits = atlas.glyph_cache_hits;
         counters.glyph_cache_misses = atlas.glyph_cache_misses;

@@ -66,6 +66,16 @@ pub struct GpuCounters {
     pub image_texture_uploads: u64,
     pub image_texture_creations: u64,
     pub image_texture_evictions: u64,
+    /// Image bindings currently retained by this renderer. Dropped by host
+    /// maintenance once the shared owner evicts them; a live count of zero
+    /// after churn proves reclamation without requiring a redraw.
+    pub local_image_entries: u64,
+    /// Gradient bindings currently retained by this renderer, same
+    /// lifecycle as [`Self::local_image_entries`].
+    pub local_gradient_entries: u64,
+    /// Glyph atlas page bindings currently retained by this renderer,
+    /// validated against shared page generations on reclaim.
+    pub local_glyph_page_bindings: u64,
     pub image_draw_calls: u64,
     pub rounded_rect_instances: u64,
     pub gradient_instances: u64,

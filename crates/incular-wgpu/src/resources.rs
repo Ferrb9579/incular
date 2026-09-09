@@ -706,6 +706,10 @@ pub struct SharedGpuDiagnostics {
     pub shared_gradient_unadmitted: u64,
     /// Gradient touches refused on superseded generations.
     pub shared_gradient_stale_touches: u64,
+    /// Glyph atlas pages retired by eviction or tightening (cumulative).
+    /// Residency itself is `glyph_atlas_pages` above; this counter proves
+    /// turnover happened.
+    pub glyph_page_evictions: u64,
 }
 
 /// Per-window presentation state that is independent of the shared GPU
@@ -1090,6 +1094,7 @@ impl SharedGpuContext {
             shared_gradient_evicted_live: gradient_counters.evicted_live,
             shared_gradient_unadmitted: gradient_counters.unadmitted_uploads,
             shared_gradient_stale_touches: gradient_counters.stale_touches,
+            glyph_page_evictions: resources.glyph_atlas.counters().glyph_page_evictions,
         }
     }
     /// Context-local identity of the currently retained texture for

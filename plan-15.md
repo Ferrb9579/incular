@@ -960,35 +960,47 @@ code, "missing" means absent with no compensating path.
   accounting contract. Actual GPU presentation stays
   recorded as unverified. Same validation as above.
 - W2 two-window GPU churn (live, opt-in): `incular-desktop/tests/
-  two_window_resource_churn.rs` (harness=false, runs only under
-  `INCULAR_DESKTOP_LIVE_TESTS=1`, fails on any init/presentation error,
-  bounded 180s worker completion) drives two real windows sharing one
-  GPU context through production acquisition, retirement, host
-  maintenance, and presentation paths. Window A renders fixed shared
-  content (image, gradient, text) then idles; window B starts with the
-  same shared handles, then churns 12 epochs of 24 distinct images +
-  24 distinct gradients + new text sizes without touching them — 288
-  admissions per family past the default 256-entry shared budgets, so
-  A's entries evict cold while idle maintenance reclaims. A resumes
-  pixel-identical (proving eviction, reclamation, and re-resolution
-  stayed correct on the device; stale images, gradients, or atlas
-  contents would corrupt the screenshots, asserted via alignment-free
-  region scans with opaque colors and stable interior samples); A closes
-  while B keeps rendering, then B closes and the loop exits. Verified
-  live on Windows (AMD Radeon 610M, wgpu 30 default backend selection):
-  all 12 epochs presented, resume identical, survivor sane, exit 0.
-  Residency counts, registry identities, and page-budget
-  tightening/protection/release stay asserted headlessly against the
-  production policy components (existing image/gradient/glyph suites —
-  the live worker cannot reach them by design, and no duplicate cache
-  simulation was substituted); no physical GPU reclamation is claimed
-  from handle counts. One `incular-image` dev-dependency was added for
-  raw test handles (dev-deps are excluded from the reviewed boundary).
-  Test-only scaffolding found while running: the worker now closes both
-  windows unconditionally via panic-caught teardown (a failing worker
-  previously stranded open windows and hung the loop), and the fixed
-  shared image is actually red (an all-white fixture silently passed
-  nowhere — it failed loudly once asserted).
+  two_window_resource_churn.rs` (harness=false, runs only when
+  `INCULAR_DESKTOP_LIVE_TESTS` is exactly `1`, fails on any
+  init/presentation error, 480s watchdog exits nonzero while the native
+  loop runs plus the pre-existing 180s completion bound) drives two real
+  windows sharing one GPU context through production acquisition,
+  retirement, host maintenance, and presentation paths. Window A renders
+  fixed shared content (one image handle, one gradient built once and
+  cloned into both windows, one text run) then idles; window B starts
+  with the same shared handles, then churns without touching them.
+  Observability is a narrow `GpuResourceSummary` DTO (plain integers in
+  `incular-runtime`, no WGPU types) served per window from the existing
+  shared diagnostics plus new local-binding counters, fulfilled on the
+  host maintenance path through a simulation query that never presents.
+  Verified live on Windows (AMD Radeon 610M, wgpu 30 default backend
+  selection), exit 0, per family: exactly 1 shared image and 1 shared
+  gradient upload serve both windows with 10 shared glyph rasterizations
+  (reuse, not per-window duplication); 24 churn epochs admit 289
+  distinct images/gradients for exactly 33 evictions each with caches at
+  the 256-entry budget (deterministic LRU arithmetic, so A's untouched
+  entries are necessarily gone); 12 oversize glyphs (scale-adaptive
+  ~900px physical, inside raster limits, above the page threshold) cap
+  live pages at 8 with retirements; idle A shows local bindings (0, 0,
+  1) — stale image/gradient bindings reclaimed by host maintenance with
+  no A presentation, while the still-valid glyph page binding is
+  precisely retained; A resumes pixel-identical with fresh bindings; A's
+  close completes observably (polled to WindowNotFound/Closed) before
+  B's continued rendering is checked; then B closes and the loop exits.
+  Pixel assertions (alignment-free region scans, opaque colors, stable
+  interior samples) sit alongside — never instead of — the ownership
+  reads. No physical GPU reclamation is claimed from handle counts.
+  Retained native acceptance gap: glyph-page tightening under protection
+  cannot be held from outside the submission path (frame pins exist only
+  mid-frame), so it stays cited from the headless protection/release
+  suite, not treated as live-equivalent. One `incular-image`
+  dev-dependency was added for raw test handles (dev-deps are excluded
+  from the reviewed boundary). Earlier-review corrections folded in:
+  the shared gradient is one cloned identity (rebuilding per window
+  never shared it); churn counts are 12+12 per epoch with exact
+  eviction arithmetic asserted; the worker closes both windows
+  unconditionally via panic-caught teardown (a failing worker previously
+  stranded open windows and hung the loop).
 - Remaining W2 work: none open — W2 acceptance is the live run above
   plus the cited headless suites. Shared source-font-byte budgeting
   stays separate and explicitly tracked (unbounded `font_handles` map

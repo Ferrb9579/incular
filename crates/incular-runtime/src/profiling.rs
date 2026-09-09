@@ -325,6 +325,38 @@ pub struct RenderFrameMetrics {
     pub submit_us: u32,
 }
 
+/// Shared and per-window GPU residency snapshot reported by the adapter
+/// without rendering. Plain integers only — like [`RenderFrameMetrics`],
+/// platform adapters convert backend-specific statistics into this compact
+/// snapshot so the runtime never depends on a particular GPU backend.
+/// Shared counts describe the device-owned caches; `local_*` counts
+/// describe the queried window's retained bindings. Cumulative rasterized
+/// and eviction counters sit alongside current residency so tests and
+/// hosts can separate what is retained now from what has happened.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct GpuResourceSummary {
+    /// Shared image textures currently retained.
+    pub shared_image_entries: u64,
+    /// Shared image entries dropped by budget eviction (cumulative).
+    pub shared_image_evictions: u64,
+    /// Shared gradient textures currently retained.
+    pub shared_gradient_entries: u64,
+    /// Shared gradient entries dropped by budget eviction (cumulative).
+    pub shared_gradient_evictions: u64,
+    /// Live glyph atlas pages.
+    pub glyph_live_pages: u64,
+    /// Glyph atlas pages retired by eviction or tightening (cumulative).
+    pub glyph_page_evictions: u64,
+    /// Glyph bitmaps rasterized across all windows (cumulative, shared).
+    pub glyphs_rasterized: u64,
+    /// Image bindings retained by the queried window.
+    pub local_image_entries: u64,
+    /// Gradient bindings retained by the queried window.
+    pub local_gradient_entries: u64,
+    /// Glyph page bindings retained by the queried window.
+    pub local_glyph_pages: u64,
+}
+
 /// Optional non-blocking GPU timing sample forwarded by the adapter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct GpuSample {

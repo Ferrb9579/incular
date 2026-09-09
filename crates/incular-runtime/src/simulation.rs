@@ -5,7 +5,9 @@
 //! after resolving semantic labels to retained layout bounds. No OS cursor,
 //! keyboard device, focus, or desktop screenshot API is involved.
 
-use super::{Application, Constraints, InputEvent, WindowHandle, WindowId};
+use super::{
+    Application, Constraints, InputEvent, WindowHandle, WindowId, profiling::GpuResourceSummary,
+};
 use incular_core::{
     Code, KeyState, KeyboardEvent, KeyboardKey, Location, Modifiers, NamedKey, Offset,
     PointerPhase, Rect,
@@ -154,6 +156,10 @@ pub(crate) enum SimulationRequest {
     Capture {
         window_id: WindowId,
         reply: Reply<Screenshot>,
+    },
+    GpuResources {
+        window_id: WindowId,
+        reply: Reply<GpuResourceSummary>,
     },
 }
 
@@ -307,6 +313,16 @@ impl Simulation {
     /// Requests and returns the next rendered frame for this window.
     pub fn capture(&self) -> Result<Screenshot, SimulationError> {
         self.request(|reply| SimulationRequest::Capture {
+            window_id: self.window_id,
+            reply,
+        })
+    }
+
+    /// Reads the current GPU residency snapshot for this window's device
+    /// without presenting a frame. Resolves once the native adapter's
+    /// maintenance path fulfills it from current state.
+    pub fn query_gpu_resources(&self) -> Result<GpuResourceSummary, SimulationError> {
+        self.request(|reply| SimulationRequest::GpuResources {
             window_id: self.window_id,
             reply,
         })
@@ -723,6 +739,19 @@ impl Application {
                     let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
                 }
             }
+            SimulationRequest::GpuResources { window_id, reply } => {
+                // Deliberately no frame request: resource observation must
+                // not present. The native adapter fulfills pending queries
+                // from current state on its maintenance path.
+                if self.contains_window(window_id) {
+                    self.simulation_gpu_resource_waiters
+                        .entry(window_id)
+                        .or_default()
+                        .push(reply);
+                } else {
+                    let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
+                }
+            }
         }
     }
 
@@ -873,6 +902,43 @@ impl Application {
         self.simulation_capture_waiters
             .get(&window_id)
             .is_some_and(|waiters| !waiters.is_empty())
+    }
+
+    /// Drains the windows with pending GPU-resource queries so the native
+    /// adapter can fulfill them from current state without presenting.
+    /// Waiters for windows that no longer exist fail immediately instead
+    /// of hanging the querier.
+    pub fn take_gpu_resource_queries(&mut self) -> Vec<WindowId> {
+        let ids: Vec<WindowId> = self
+            .simulation_gpu_resource_waiters
+            .keys()
+            .copied()
+            .collect();
+        let mut live = Vec::new();
+        for window_id in ids {
+            if self.contains_window(window_id) {
+                live.push(window_id);
+            } else if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
+                for reply in waiters {
+                    let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
+                }
+            }
+        }
+        live
+    }
+
+    /// Completes pending GPU-resource waiters after the native adapter has
+    /// snapshotted current residency. Never renders.
+    pub fn complete_gpu_resource_query(
+        &mut self,
+        window_id: WindowId,
+        summary: GpuResourceSummary,
+    ) {
+        if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
+            for reply in waiters {
+                let _ = reply.send(Ok(summary));
+            }
+        }
     }
 
     /// Reports whether a simulator is waiting for the next presented frame.
