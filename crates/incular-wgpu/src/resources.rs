@@ -804,6 +804,32 @@ pub(crate) struct SharedGpuContextInner {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) device_generation: u64,
+    /// Shared pipeline sets by surface format: one entry per configured
+    /// format, created once on first renderer init and never evicted.
+    /// Retention is bounded by construction, so there is deliberately no
+    /// budget or eviction machinery here:
+    /// - Keys are only surface-advertised `TextureFormat`s, written solely
+    ///   by renderer initialization (`register_pipeline_resources`) and
+    ///   read solely by renderer initialization (`pipeline_resources`) —
+    ///   never per frame, draw, or resource. One app on one adapter
+    ///   configures one format; additional entries each require a window
+    ///   on a differently formatted surface.
+    /// - Each entry holds the closed `pipeline_contracts()` registry (11
+    ///   fixed classes + 11 Porter-Duff blends + 4 clip-mask directions =
+    ///   26 contracts), each built exactly once per format.
+    /// - Renderers clone the wgpu handles (internally reference-counted
+    ///   handles to the same GPU objects, never duplicate allocations),
+    ///   so dropping shared-cache ownership cannot invalidate an active
+    ///   renderer or submitted work; dropping every renderer and the
+    ///   context releases everything. No removal path exists.
+    /// - Racing first initializations for one format may each build a set,
+    ///   but registration keeps the first (`or_insert_with`) and drops the
+    ///   loser unretained: duplicate retention is impossible, at most
+    ///   transient duplicate creation work.
+    ///
+    /// Pipeline memory is driver-opaque: diagnostics report entry counts
+    /// (`pipeline_variants`, `pipeline_count`) and tracked ownership,
+    /// never invented GPU-byte estimates.
     pub(crate) pipelines: Mutex<HashMap<wgpu::TextureFormat, Arc<SharedPipelineResources>>>,
     pub(crate) resources: Mutex<SharedGpuResources>,
     /// Bytes written for retained device-level textures (images, gradient
@@ -1141,6 +1167,10 @@ impl SharedGpuContext {
             .create_surface(&self.inner.instance)
             .map_err(RendererError::Surface)
     }
+    /// Clones the retained pipeline set for `format`, if a renderer has
+    /// already created and registered it. Shared reuse path: every later
+    /// window on the same format binds these objects instead of building
+    /// its own set.
     pub(crate) fn pipeline_resources(
         &self,
         format: wgpu::TextureFormat,
@@ -1152,6 +1182,11 @@ impl SharedGpuContext {
             .get(&format)
             .cloned()
     }
+    /// Retains one pipeline set per surface format, keeping the first set
+    /// when racing initializations build two (the loser drops unretained).
+    /// Entries are never removed: the format key space is bounded by
+    /// configured surfaces (see the `pipelines` field), so no eviction
+    /// budget applies.
     pub(crate) fn register_pipeline_resources(
         &self,
         format: wgpu::TextureFormat,

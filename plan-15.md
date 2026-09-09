@@ -601,7 +601,7 @@ code, "missing" means absent with no compensating path.
 | GPU gradients | `SharedGpuResources::{gradients, gradient_textures}` + per-renderer `gradient_cache`, same files | Full `(stops identity, surface format)` key → one `Arc<SharedGpuGradient>`; stops identities mint per construction (clones share, distinct builds never alias); no registry | **Now:** same generic `SharedTextureCache`/`RendererImageCache` machinery (fixed 1 KiB nominal bytes, per-family generation sequence, bypass + age bound, combined-revision dispatch) | Same `Arc` graph as images; per-family counters; oversized path defined though unreachable at real sizes |
 | GPU gradients | `SharedGpuResources::gradients` | `(GradientId, TextureFormat)` key | **Missing:** same as GPU images | Same as GPU images |
 | GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts (hash of bytes + face index; faces never alias), resident/vacant page slots | **Now:** eager page-budget tightening with vacant-slot reuse under bumped generations (default 8 live pages) plus parsed-font entry LRU (default 8, `set_max_fonts`, zero parses transiently); oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards | Slots never compact; per-page generations gate bindings; counters: page evictions/pressure skips/stale refreshes, `live_page_count` vs slot capacity vs cumulative allocations, `font_parser_cache_hits/misses/evictions` + `font_count()`; `memory()` counts resident pages only |
-| GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Format / `ImageId`→`SharedGpuResourceId` | **Missing:** unbounded, no eviction | Registry length counter only |
+| GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Surface `TextureFormat` / `ImageId`→`SharedGpuResourceId` | **Pipelines bounded by construction:** one entry per configured surface format (single registration site at renderer init, format-keyed lookup, no removal path), each holding the closed 26-contract registry built exactly once; racing duplicate creations drop unretained via `or_insert_with`. No budget or eviction machinery — the key space cannot churn. Identity maps track their owning caches (image registry mirrors the bounded image cache; glyph registry drains through retired placement keys). Entry counts in diagnostics; pipeline memory is driver-opaque, no byte estimates | Registry length counter only |
 | Offscreen/effect textures, path meshes | Renderer passes (`crates/incular-wgpu/src/renderer/`) | Per-frame transient allocations | **Guarantee:** frame-scoped; no cross-frame retention to budget | Upload-byte counters only |
 
 - W2 CPU image-cache slice: requests byte payloads through
@@ -891,7 +891,26 @@ code, "missing" means absent with no compensating path.
   recency ordering, churn + tightening enforcement, hit survival across
   font eviction with re-parse of new glyphs, zero-limit rendering, and
   registry/handle stability. Same validation as above.
-- Remaining W2 work: shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
+- W2 shared pipeline retention: inspection proves the map bounded, so no
+  eviction machinery was added. `SharedGpuContextInner::pipelines` admits
+  one entry per surface format through the single renderer-init
+  registration site, each entry building the closed `pipeline_contracts()`
+  registry (11 fixed classes + 11 Porter-Duff blends + 4 clip-mask
+  directions = 26 contracts) exactly once; acquisition clones shared
+  reuse (`pipeline_resources`) instead of rebuilding, racing duplicates
+  drop unretained, renderers hold internally-refcounted wgpu handles so
+  dropping shared ownership cannot invalidate active renderers or
+  submitted work, and disposal follows context/renderer drop with no
+  removal path to exercise. The bound and its evidence are documented on
+  the map field and both accessors; pipeline creation/binding itself
+  requires a GPU device and stays recorded as unverified native behavior
+  (no standalone cache simulation was substituted). Companion cleanup in
+  the same commit: the `GlyphAtlas` declaration doc was restored to the
+  atlas (it had attached to `ParsedFont`), and the font-recency claim now
+  states tick saturation explicitly, with exhaustion handling tracked
+  under the existing identity/counter work rather than claimed unique
+  indefinitely.
+- Remaining W2 work: presented-vs-failed outcome separation;
   two-window GPU churn tests. Shared source-font-byte budgeting stays
   separate and explicitly tracked (unbounded `font_handles` map noted
   above — app-owned `Arc` retention, not cache ownership; layouts already

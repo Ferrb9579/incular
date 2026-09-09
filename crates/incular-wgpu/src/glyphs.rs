@@ -198,11 +198,6 @@ pub struct GlyphAtlasMemory {
     pub oversize_content_area: u64,
     pub oversize_allocated_area: u64,
 }
-/// CPU metadata for retained atlas pages. `WgpuRenderer` maps each live page
-/// index lazily to one persistent `R8Unorm` texture. Placements name their
-/// page-content generation and are validated on resolve: evicted pages are
-/// reused under a bumped generation, and stale placements re-rasterize
-/// instead of sampling whatever replaced them.
 /// One retained parsed rasterizer object with its recency stamp. The
 /// parsed `Font` is a CPU-only rasterizer built from application-owned
 /// source bytes; the atlas never retains those bytes. Dropping the entry
@@ -213,6 +208,11 @@ struct ParsedFont {
     last_use: u64,
 }
 
+/// CPU metadata for retained atlas pages. `WgpuRenderer` maps each live page
+/// index lazily to one persistent `R8Unorm` texture. Placements name their
+/// page-content generation and are validated on resolve: evicted pages are
+/// reused under a bumped generation, and stale placements re-rasterize
+/// instead of sampling whatever replaced them.
 pub struct GlyphAtlas {
     pages: Vec<AtlasPage>,
     entries: HashMap<GlyphCacheKey, AtlasEntry>,
@@ -303,10 +303,15 @@ impl GlyphAtlas {
     }
 
     /// Evicts least-recently-used parsed fonts beyond the entry limit.
-    /// Recency stamps are assigned from a strictly increasing tick, so the
-    /// minimum is unique and victim selection is deterministic regardless
-    /// of map iteration order. Eviction metadata is the per-entry stamp
-    /// plus the `font_parser_evictions` counter — no unbounded log.
+    /// Recency stamps come from a saturating tick: every insert and touch
+    /// bumps it first, so stamps are distinct in practice and the minimum
+    /// selects deterministically regardless of map iteration order. The
+    /// tick saturates rather than wraps, so distinctness is not guaranteed
+    /// indefinitely — tick/counter exhaustion handling belongs to the
+    /// existing identity/counter work, not to this eviction path, which
+    /// stays correct under ties (any least-recently-used victim satisfies
+    /// the entry limit). Eviction metadata is the per-entry stamp plus the
+    /// `font_parser_evictions` counter — no unbounded log.
     fn evict_fonts(&mut self) {
         while self.fonts.len() > self.max_fonts {
             let victim = self
