@@ -5,6 +5,11 @@ use typed_builder::TypedBuilder;
 use crate::Widget;
 
 /// Rotates its child by an integral number of quarter turns (90 degrees each).
+///
+/// Layout measures the child normally: allocated dimensions never swap,
+/// including odd quarter turns. The rotation applies at the compositor
+/// about the child's center, observed by paint, hit testing, and
+/// semantics — exactly like an equivalent presentation transform.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct RotatedBox {
     quarter_turns: i32,

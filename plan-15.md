@@ -1164,20 +1164,31 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `RenderKind::Transform` now retain `fraction: Option<Offset>` and
   `transform_hit_tests: bool` on the existing owner (absolute
   constructors record `None`/`true`). One shared resolver,
-  `resolve_transform` next to `transform_around`, settles fraction
-  against the measured child size (never the stretched node size) for
-  the compositor tick, hit testing, and semantics alike; the
-  child-size lookup is shared as `transform_child_size`. Flag-false
-  transforms fall through to the ordinary untransformed hit path while
-  painting and semantics follow the visual transform, matching the
-  setter contract. Comparison is unchanged RenderKind equality
-  (transform changes stay compositor/semantics/hit-test-only, never
-  layout); no new formula, no duplicated phase logic.
-- `RotatedBox` is layout-neutral by construction (it converts to a
-  center-pivot rotation transform): recorded honestly with a regression
-  proving 40x20 layout with 20x40 rotated geometry, not changed to match
-  another framework. Singular/non-finite policy is documented as-is
-  (inverse fails, hits miss, cached paint/semantics persist).
+  `resolve_transform`, takes both size inputs explicitly — fraction
+  against the measured child size, ordinary pivot against the bounds
+  (node) size — for the compositor tick, hit testing, and semantics
+  alike, with the child-size lookup shared as `transform_child_size`;
+  no call site selects an ambiguous size, so the paths cannot diverge
+  again. Flag-false transforms fall through to the ordinary
+  untransformed hit path while painting and semantics follow the visual
+  transform, matching the setter contract. Comparison is unchanged
+  RenderKind equality (transform changes stay
+  compositor/semantics/hit-test-only, never layout); no new formula, no
+  duplicated phase logic. Correction follow-up: the first version
+  resolved the ordinary pivot against the child size too; the new
+  tight-100x80/40x20 regression failed on that code at the first
+  node-basis assertion (expected -50, got -20) and passes with the
+  explicit two-input resolver.
+- `RotatedBox` contract decision, from specs, rustdoc, and history: the
+  rustdoc promises rotation only, no layout behavior; the implementation
+  has delegated to a layout-neutral rotation since introduction
+  (`da509e1`), with no architecture decision or spec entry promising
+  dimension swapping. Layout-neutral is therefore the intentional
+  supported contract, now stated explicitly in the public rustdoc
+  (allocated dimensions never swap, including odd quarter turns).
+  Regression coverage unchanged; no implementation change, kept separate
+  from the fractional fix. Singular/non-finite policy is documented
+  as-is (inverse fails, hits miss, cached paint/semantics persist).
 - Geometry contract in
   `crates/incular-widgets/tests/transform_geometry.rs` (10 tests):
   translation/scale/rotation updates with counter deltas proving the
@@ -1185,11 +1196,14 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   across a translation update), nonzero origin pivots, fractional
   scaling on non-square children, the hit-test flag both ways,
   quarter-turn asymmetric rotation, identical reapply scheduling
-  nothing, and builder parity for both builders. Asymmetric 40x20
+  nothing, the tight-constraints basis split (scale/rotation node-basis
+  pivots, explicit-origin control, child-basis fraction — with
+  hand-derived coordinates, hits, semantics, identity, and counter
+  deltas), and builder parity for both builders. Asymmetric 40x20
   fixtures throughout; fail-first evidence for the fraction, the flag,
-  and a wrong rotation-direction expectation (corrected to the
-  implementation's consistent convention, which the passing rotation
-  tests pin).
+  the basis split on the single-size resolver, and two corrected
+  hand-arithmetic mistakes of mine (both caught by running, never
+  described as production findings).
 - Ledger: `specs/transform_properties.json` (13 records: eight
   constructor parameters for `Transform`, three
   `FractionalTranslation` options, two `RotatedBox` options) with

@@ -950,14 +950,14 @@ impl WidgetTree {
                     ..
                 } => {
                     if let Some(content) = layers.content() {
-                        let size = {
+                        let (bounds_size, child_size) = {
                             let node =
                                 self.render_live(_render, "retained render must remain live");
-                            self.transform_child_size(node)
+                            (node.size, self.transform_child_size(node))
                         };
                         if self.compositor.update_transform(
                             content,
-                            resolve_transform(transform, origin, fraction, size),
+                            resolve_transform(transform, origin, fraction, bounds_size, child_size),
                         ) {
                             changed = true;
                             self.diagnostics.compositor_only_updates += 1;

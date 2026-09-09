@@ -49,6 +49,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -100,6 +105,10 @@
         {
           "path": "crates/incular-widgets/tests/transform_geometry.rs",
           "name": "rotation_quarter_turn_about_default_center"
+        },
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "tight_constraints_keep_node_size_pivot_with_child_size_fractions"
         }
       ],
       "status": "implemented"
@@ -183,6 +192,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -245,6 +259,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -277,7 +296,11 @@
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/transform_geometry.rs",
-          "name": "scale_about_default_center_moves_geometry"
+          "name": "fractional_translation_scales_by_child_size"
+        },
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "tight_constraints_keep_node_size_pivot_with_child_size_fractions"
         }
       ],
       "status": "implemented"
@@ -307,6 +330,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -369,6 +397,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -423,6 +456,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -477,6 +515,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -510,6 +553,10 @@
         {
           "path": "crates/incular-widgets/tests/transform_geometry.rs",
           "name": "nonzero_origin_changes_the_pivot"
+        },
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "tight_constraints_keep_node_size_pivot_with_child_size_fractions"
         }
       ],
       "status": "implemented"
@@ -540,6 +587,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -610,6 +662,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },
@@ -718,6 +775,11 @@
             "kind": "method",
             "owner": "RenderObjectPayload",
             "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "resolve_transform"
           }
         ]
       },

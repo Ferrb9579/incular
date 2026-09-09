@@ -263,6 +263,7 @@ impl WidgetTree {
                 *transform,
                 *origin,
                 *fraction,
+                node.size,
                 self.transform_child_size(node),
             )),
             RenderKind::Scale { controller, origin } => Some(transform_around(
