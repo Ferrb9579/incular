@@ -511,6 +511,7 @@ impl WgpuRenderer {
         counters.oversize_glyph_rasters = atlas.oversize_glyph_rasters;
         counters.font_parser_cache_hits = atlas.font_parser_cache_hits;
         counters.font_parser_cache_misses = atlas.font_parser_cache_misses;
+        counters.font_parser_evictions = atlas.font_parser_evictions;
         counters.rasterizer_errors = atlas.rasterizer_errors;
         counters.raster_time_total = atlas.raster_time_total;
         counters.oversize_cache_hits = atlas.oversize_cache_hits;

@@ -203,12 +203,32 @@ pub struct GlyphAtlasMemory {
 /// page-content generation and are validated on resolve: evicted pages are
 /// reused under a bumped generation, and stale placements re-rasterize
 /// instead of sampling whatever replaced them.
+/// One retained parsed rasterizer object with its recency stamp. The
+/// parsed `Font` is a CPU-only rasterizer built from application-owned
+/// source bytes; the atlas never retains those bytes. Dropping the entry
+/// releases cache ownership only — placements, pages, handles, and
+/// submitted work are unaffected, and the next miss re-parses.
+struct ParsedFont {
+    font: Font,
+    last_use: u64,
+}
+
 pub struct GlyphAtlas {
     pages: Vec<AtlasPage>,
     entries: HashMap<GlyphCacheKey, AtlasEntry>,
-    /// Parsed once per stable font identity, then reused for every uncached
-    /// glyph bitmap. `FontSettings::collection_index` preserves TTC/OTC faces.
-    fonts: HashMap<FontId, Font>,
+    /// Parsed rasterizer objects by stable font identity
+    /// (`FontSettings::collection_index` preserves TTC/OTC faces, and the
+    /// `FontId` itself hashes the face index, so faces never alias).
+    /// Bounded by [`Self::max_fonts`] least-recently-used entries: every
+    /// resolve — hit or miss, across all renderer clients sharing this
+    /// atlas — refreshes the requested font's recency, but a hit never
+    /// parses merely to serve an already-cached glyph. The bound counts
+    /// entries, not bytes (see `DEFAULT_MAX_PARSED_FONTS`).
+    fonts: HashMap<FontId, ParsedFont>,
+    /// Device-owned retention limit for parsed rasterizer fonts. A zero
+    /// limit parses transiently for the current request without retaining,
+    /// so supported text still renders while every miss re-parses.
+    max_fonts: usize,
     counters: GpuCounters,
     /// Device-owned page budget over *live* pages. Lowering the budget
     /// retires excess unprotected pages eagerly (see
@@ -254,10 +274,64 @@ impl GlyphAtlas {
                 ..GpuCounters::default()
             },
             max_pages,
+            max_fonts: DEFAULT_MAX_PARSED_FONTS,
             tick: 0,
             eviction_revision: 0,
             retired_keys: Vec::new(),
         }
+    }
+
+    /// Replaces the parsed-font retention limit and immediately evicts
+    /// least-recently-used excess. Eviction drops parsed objects only;
+    /// placements, pages, source handles, and submitted work are untouched.
+    /// A zero limit retains nothing and parses transiently per request.
+    pub fn set_max_fonts(&mut self, max_fonts: usize) {
+        self.max_fonts = max_fonts;
+        self.evict_fonts();
+    }
+
+    /// Retained parsed-font count against the [`Self::set_max_fonts`]
+    /// entry limit. Test and diagnostics surface for retention assertions.
+    #[must_use]
+    pub fn font_count(&self) -> usize {
+        self.fonts.len()
+    }
+
+    #[must_use]
+    pub const fn max_fonts(&self) -> usize {
+        self.max_fonts
+    }
+
+    /// Evicts least-recently-used parsed fonts beyond the entry limit.
+    /// Recency stamps are assigned from a strictly increasing tick, so the
+    /// minimum is unique and victim selection is deterministic regardless
+    /// of map iteration order. Eviction metadata is the per-entry stamp
+    /// plus the `font_parser_evictions` counter — no unbounded log.
+    fn evict_fonts(&mut self) {
+        while self.fonts.len() > self.max_fonts {
+            let victim = self
+                .fonts
+                .iter()
+                .min_by(|a, b| a.1.last_use.cmp(&b.1.last_use))
+                .map(|(id, _)| *id);
+            let Some(victim) = victim else {
+                break;
+            };
+            self.fonts.remove(&victim);
+            self.counters.font_parser_evictions += 1;
+        }
+    }
+
+    /// Parses the run's font from application-owned source bytes without
+    /// retaining anything. Collection faces resolve through the run's face
+    /// index, matching the `FontId` identity, and parse failures (including
+    /// out-of-range faces) yield `None` with existing error behavior.
+    fn parse_font(run: &GlyphRun) -> Option<Font> {
+        let settings = FontSettings {
+            collection_index: run.font.face_index(),
+            ..FontSettings::default()
+        };
+        Font::from_bytes(run.font.bytes().as_ref(), settings).ok()
     }
 
     /// Replaces the page budget and immediately retires resident
@@ -409,6 +483,13 @@ impl GlyphAtlas {
                 if let Some(page) = self.pages.get_mut(usize::from(entry.page)) {
                     page.last_use = tick;
                 }
+                // Retention recency without parsing: an already-cached
+                // glyph never parses its font merely to be served. If the
+                // font is still retained its recency refreshes; if it was
+                // evicted earlier, nothing happens and the hit still serves.
+                if let Some(parsed) = self.fonts.get_mut(&key.font) {
+                    parsed.last_use = tick;
+                }
                 self.counters.glyph_cache_hits += 1;
                 if entry.atlas_class == GlyphAtlasClass::Oversize {
                     self.counters.oversize_cache_hits += 1;
@@ -422,20 +503,47 @@ impl GlyphAtlas {
             self.counters.glyph_stale_refreshes += 1;
         }
         self.counters.glyph_cache_misses += 1;
-        let font = match self.fonts.entry(key.font) {
-            Entry::Occupied(entry) => {
-                self.counters.font_parser_cache_hits += 1;
-                entry.into_mut()
+        // A zero retention limit parses transiently for this request
+        // without retaining, so supported text renders while every miss
+        // re-parses. Failed parses keep existing behavior: `None` with no
+        // retention counters beyond the miss above.
+        let unretained: Option<Font>;
+        let font = if self.max_fonts == 0 {
+            let parsed = Self::parse_font(run)?;
+            self.counters.font_parser_cache_misses += 1;
+            unretained = Some(parsed);
+            unretained.as_ref().expect("parsed font just stored")
+        } else {
+            let inserted = match self.fonts.entry(key.font) {
+                Entry::Occupied(slot) => {
+                    self.counters.font_parser_cache_hits += 1;
+                    self.tick = self.tick.saturating_add(1);
+                    let tick = self.tick;
+                    slot.into_mut().last_use = tick;
+                    false
+                }
+                Entry::Vacant(slot) => {
+                    let parsed = Self::parse_font(run)?;
+                    self.counters.font_parser_cache_misses += 1;
+                    self.tick = self.tick.saturating_add(1);
+                    let tick = self.tick;
+                    slot.insert(ParsedFont {
+                        font: parsed,
+                        last_use: tick,
+                    });
+                    true
+                }
+            };
+            if inserted {
+                // The fresh entry holds the newest stamp, so it can never
+                // be its own eviction victim below.
+                self.evict_fonts();
             }
-            Entry::Vacant(entry) => {
-                let settings = FontSettings {
-                    collection_index: run.font.face_index(),
-                    ..FontSettings::default()
-                };
-                let parsed = Font::from_bytes(run.font.bytes().as_ref(), settings).ok()?;
-                self.counters.font_parser_cache_misses += 1;
-                entry.insert(parsed)
-            }
+            &self
+                .fonts
+                .get(&key.font)
+                .expect("parsed font just ensured")
+                .font
         };
         let started = Instant::now();
         let (metrics, bitmap) = font.rasterize_indexed(key.glyph, f32::from(key.physical_size));

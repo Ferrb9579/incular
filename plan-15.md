@@ -600,7 +600,7 @@ code, "missing" means absent with no compensating path.
 | GPU images | `incular-wgpu` `SharedGpuResources::{images, image_textures}` + per-renderer `image_cache` (`crates/incular-wgpu/src/resources.rs`, `renderer/resources.rs`, `pipelines.rs`) | Content `ImageId` → one `Arc<SharedGpuImage>`; context-local `SharedGpuResourceId` while retained | **Now:** `SharedTextureBudget` (default 256 entries / 256 MiB nominal texel bytes), cross-renderer LRU, oldest-first eviction at shared-device ownership, oversized served without admission, generation-checked touches, host dispatch on combined revision; per-renderer 600-unused-frame eviction retained | Shared `Arc` (map + renderer maps + frame locals); evictions report entry drops + still-referenced counts, never freed bytes; `texture_upload_bytes` stays cumulative traffic, residency is the policy gauge |
 | GPU gradients | `SharedGpuResources::{gradients, gradient_textures}` + per-renderer `gradient_cache`, same files | Full `(stops identity, surface format)` key → one `Arc<SharedGpuGradient>`; stops identities mint per construction (clones share, distinct builds never alias); no registry | **Now:** same generic `SharedTextureCache`/`RendererImageCache` machinery (fixed 1 KiB nominal bytes, per-family generation sequence, bypass + age bound, combined-revision dispatch) | Same `Arc` graph as images; per-family counters; oversized path defined though unreachable at real sizes |
 | GPU gradients | `SharedGpuResources::gradients` | `(GradientId, TextureFormat)` key | **Missing:** same as GPU images | Same as GPU images |
-| GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts, append-only pages | **Partial:** oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards; pages/entries/fonts unbounded, no clear/trim | Entries never move/compact; page/memory counters (`GlyphAtlasMemory`) |
+| GPU glyph pages/entries/fonts | `GlyphAtlas` (`crates/incular-wgpu/src/glyphs.rs`) | `GlyphCacheKey` entries, `FontId` fonts (hash of bytes + face index; faces never alias), resident/vacant page slots | **Now:** eager page-budget tightening with vacant-slot reuse under bumped generations (default 8 live pages) plus parsed-font entry LRU (default 8, `set_max_fonts`, zero parses transiently); oversize-page split, `MAX_GLYPH_BITMAP_BYTES` (8 MiB) + `MAX_GLYPH_RASTER_PPEM` (1024) raster guards | Slots never compact; per-page generations gate bindings; counters: page evictions/pressure skips/stale refreshes, `live_page_count` vs slot capacity vs cumulative allocations, `font_parser_cache_hits/misses/evictions` + `font_count()`; `memory()` counts resident pages only |
 | GPU pipelines/identity maps | `SharedGpuContextInner::pipelines`, `SharedGpuResourceRegistry` | Format / `ImageId`→`SharedGpuResourceId` | **Missing:** unbounded, no eviction | Registry length counter only |
 | Offscreen/effect textures, path meshes | Renderer passes (`crates/incular-wgpu/src/renderer/`) | Per-frame transient allocations | **Guarantee:** frame-scoped; no cross-frame retention to budget | Upload-byte counters only |
 
@@ -860,15 +860,42 @@ code, "missing" means absent with no compensating path.
   Production retirement is shared with ownership tests using Arc payloads;
   active clones survive shared/local release and old generations stay invalid
   after re-expansion. GPU upload/draw behavior remains unverified here.
-  Font-object budgeting remains pending. Validation: `cargo fmt --all -- --check`,
+  Validation: `cargo fmt --all -- --check`,
   `cargo check --workspace`, `cargo test-constrained`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
   `cargo test -p incular-wgpu -p incular-desktop --all-features`, and
   `RUSTDOCFLAGS="-D warnings" cargo doc -p incular-wgpu -p incular-desktop
   --all-features --no-deps` all passed (12 glyph-page regressions).
-- Remaining W2 work: font-object budgeting; shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
-  two-window GPU churn tests. Text font-byte budgets are not scheduled
-  (unbounded map noted above; layouts already bounded by count).
+- W2 parsed-font retention slice: `GlyphAtlas.fonts` is now a bounded
+  least-recently-used map (`ParsedFont { font, last_use }`, default
+  `DEFAULT_MAX_PARSED_FONTS = 8` entries) keyed by the existing stable
+  `FontId`, owned by the shared rasterization layer — no per-window font
+  caches, no application-asset eviction (source bytes stay app-owned
+  `Arc`s the atlas only borrows during a parse). Guarantee: every resolve
+  (hit or miss, across sharing renderer clients) refreshes the requested
+  font's recency, but atlas hits never parse merely to serve a cached
+  glyph; eviction drops parsed objects only — placements, pages, handles,
+  registry identities, and submitted work are untouched, and the next miss
+  re-parses from retained source bytes with existing error/size behavior.
+  Zero limit parses transiently per request instead of skipping text.
+  Limitation (documented at the constant): the bound counts entries, not
+  bytes — fontdue exposes no reliable parsed-object memory measure, and
+  source-file length is not used as a proxy. Eviction metadata is the
+  per-entry stamp plus `font_parser_evictions`; recency stamps come from a
+  strictly increasing tick so victim selection is deterministic. Evidence:
+  `crates/incular-wgpu/tests/parsed_font_retention.rs` (6 tests on
+  production `lookup_or_rasterize` with minted identities over real shaped
+  bytes, asserting parse/hit/eviction counters and `font_count()`):
+  reuse, font/face non-aliasing (including an out-of-range face that
+  resolves to `None` without hitting another font's entry), cross-client
+  recency ordering, churn + tightening enforcement, hit survival across
+  font eviction with re-parse of new glyphs, zero-limit rendering, and
+  registry/handle stability. Same validation as above.
+- Remaining W2 work: shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
+  two-window GPU churn tests. Shared source-font-byte budgeting stays
+  separate and explicitly tracked (unbounded `font_handles` map noted
+  above — app-owned `Arc` retention, not cache ownership; layouts already
+  bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.

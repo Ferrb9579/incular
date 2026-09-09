@@ -39,6 +39,10 @@ pub struct GpuCounters {
     /// Parsed Fontdue objects created on a `FontId` cache miss.
     pub font_parser_cache_misses: u64,
     pub font_parser_cache_hits: u64,
+    /// Retained parsed fonts dropped by entry-limit eviction. Placements,
+    /// pages, source handles, and submitted work are unaffected; the next
+    /// miss re-parses.
+    pub font_parser_evictions: u64,
     pub rasterizer_errors: u64,
     /// Aggregate cold raster time; cache hits do not contribute.
     pub raster_time_total: Duration,
