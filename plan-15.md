@@ -1154,10 +1154,55 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   so no consolidation was manufactured. Fail-first evidence for the
   validator: it failed on a boolean `default` before the schema check
   accepted bools.
-- Remaining W3 families: editable text; transform/origin/alignment;
-  linked layers; effects; scrolling; interactive controls; then layout,
-  collections, images, navigation scopes, overlays, platform wrappers,
-  utilities. Same ledger shape applies per family.
+
+## W3 — Transform slice (same workstream, still open)
+
+- Fixed two demonstrated divergences, both fail-first. `From<
+  FractionalTranslation>` passed the fraction straight through as pixels
+  (0.5 fraction on a 40x20 child painted at (0.5, 0.5)) and dropped
+  `transform_hit_tests`: `WidgetKind::Transform` and
+  `RenderKind::Transform` now retain `fraction: Option<Offset>` and
+  `transform_hit_tests: bool` on the existing owner (absolute
+  constructors record `None`/`true`). One shared resolver,
+  `resolve_transform` next to `transform_around`, settles fraction
+  against the measured child size (never the stretched node size) for
+  the compositor tick, hit testing, and semantics alike; the
+  child-size lookup is shared as `transform_child_size`. Flag-false
+  transforms fall through to the ordinary untransformed hit path while
+  painting and semantics follow the visual transform, matching the
+  setter contract. Comparison is unchanged RenderKind equality
+  (transform changes stay compositor/semantics/hit-test-only, never
+  layout); no new formula, no duplicated phase logic.
+- `RotatedBox` is layout-neutral by construction (it converts to a
+  center-pivot rotation transform): recorded honestly with a regression
+  proving 40x20 layout with 20x40 rotated geometry, not changed to match
+  another framework. Singular/non-finite policy is documented as-is
+  (inverse fails, hits miss, cached paint/semantics persist).
+- Geometry contract in
+  `crates/incular-widgets/tests/transform_geometry.rs` (10 tests):
+  translation/scale/rotation updates with counter deltas proving the
+  compositor-only contract (including byte-identical cached pictures
+  across a translation update), nonzero origin pivots, fractional
+  scaling on non-square children, the hit-test flag both ways,
+  quarter-turn asymmetric rotation, identical reapply scheduling
+  nothing, and builder parity for both builders. Asymmetric 40x20
+  fixtures throughout; fail-first evidence for the fraction, the flag,
+  and a wrong rotation-direction expectation (corrected to the
+  implementation's consistent convention, which the passing rotation
+  tests pin).
+- Ledger: `specs/transform_properties.json` (13 records: eight
+  constructor parameters for `Transform`, three
+  `FractionalTranslation` options, two `RotatedBox` options) with
+  `builder_parity` for both builders. The validator moved to
+  `tests/ledger/` without copying: `FamilySpec`/`StructSpec` parameterize
+  source paths and per-struct discovery (`MethodNames` vs
+  `ConstructorParams`, both restricted to `pub Self`-returning methods so
+  getters are never options). Existing visibility negatives preserved
+  (9/9); transform adds constructor-parameter coverage plus a
+  getter-exclusion fixture (2/2).
+- Remaining W3 families: editable text; linked layers; effects;
+  scrolling; interactive controls; then layout, collections, images,
+  navigation scopes, overlays, platform wrappers, utilities.
 
 ## W4 — Navigation transactions and smaller runtime owners
 

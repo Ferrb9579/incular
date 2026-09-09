@@ -121,10 +121,16 @@ impl WidgetTree {
                 ..RawHitResult::default()
             };
         }
+        // A transform that opts out of hit-test conversion falls through
+        // to the ordinary untransformed path below: hits land where the
+        // child lays out, not where it paints. Painting and semantics
+        // always follow the visual transform.
         if matches!(
             node.object.kind,
-            RenderKind::Transform { .. }
-                | RenderKind::Scale { .. }
+            RenderKind::Transform {
+                transform_hit_tests: true,
+                ..
+            } | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
                 | RenderKind::FittedBox { .. }
         ) {
@@ -562,8 +568,10 @@ impl WidgetTree {
         }
         if matches!(
             node.object.kind,
-            RenderKind::Transform { .. }
-                | RenderKind::Scale { .. }
+            RenderKind::Transform {
+                transform_hit_tests: true,
+                ..
+            } | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
                 | RenderKind::FittedBox { .. }
         ) {

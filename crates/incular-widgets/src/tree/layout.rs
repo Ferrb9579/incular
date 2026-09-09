@@ -4,7 +4,9 @@ use super::*;
 
 mod behavior;
 
-use super::rendering::{fitted_transform, transform_around, transform_around_alignment};
+use super::rendering::{
+    fitted_transform, resolve_transform, transform_around, transform_around_alignment,
+};
 use super::text::text_field_display;
 
 impl WidgetTree {
@@ -252,9 +254,17 @@ impl WidgetTree {
     pub fn content_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
         let node = self.renders.get(id.0)?;
         match &node.object.kind {
-            RenderKind::Transform { transform, origin } => {
-                Some(transform_around(*transform, *origin, node.size))
-            }
+            RenderKind::Transform {
+                transform,
+                origin,
+                fraction,
+                ..
+            } => Some(resolve_transform(
+                *transform,
+                *origin,
+                *fraction,
+                self.transform_child_size(node),
+            )),
             RenderKind::Scale { controller, origin } => Some(transform_around(
                 CoreTransform::scale(controller.scale()),
                 *origin,
@@ -278,6 +288,17 @@ impl WidgetTree {
             _ => None,
         }
     }
+    /// Measured child size for fraction resolution: the fraction is
+    /// documented against the child's size, which differs from the
+    /// transform node's own size under tight constraints. Shared by the
+    /// hit-test/semantics projection and the compositor tick.
+    pub(super) fn transform_child_size(&self, node: &RenderNode) -> Size {
+        node.children
+            .first()
+            .and_then(|child| self.renders.get(child.0))
+            .map_or(node.size, |child| child.size)
+    }
+
     pub(super) fn child_content_transform(&self, id: RenderObjectId) -> CoreTransform {
         let node = self.render_live(id, "child transform render must remain live");
         match &node.object.kind {

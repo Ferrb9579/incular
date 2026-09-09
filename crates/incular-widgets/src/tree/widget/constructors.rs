@@ -866,6 +866,8 @@ impl Widget {
             kind: WidgetKind::Transform {
                 transform,
                 origin: None,
+                fraction: None,
+                transform_hit_tests: true,
                 child,
             },
             semantics: SemanticProperties::default(),
@@ -878,6 +880,29 @@ impl Widget {
             kind: WidgetKind::Transform {
                 transform,
                 origin: Some(finite_offset(origin)),
+                fraction: None,
+                transform_hit_tests: true,
+                child,
+            },
+            semantics: SemanticProperties::default(),
+        })
+    }
+    /// Applies a child-size fractional translation after layout, retaining
+    /// the fraction and hit-test policy instead of freezing pixels at
+    /// conversion time, when the child size is not yet known.
+    #[must_use]
+    pub(crate) fn fractional_translation(
+        fraction: Offset,
+        transform_hit_tests: bool,
+        child: Self,
+    ) -> Self {
+        Self::from_node(WidgetNode {
+            key: None,
+            kind: WidgetKind::Transform {
+                transform: CoreTransform::IDENTITY,
+                origin: None,
+                fraction: Some(fraction),
+                transform_hit_tests,
                 child,
             },
             semantics: SemanticProperties::default(),

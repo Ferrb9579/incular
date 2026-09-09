@@ -482,6 +482,15 @@ pub(crate) enum WidgetKind {
     Transform {
         transform: CoreTransform,
         origin: Option<Offset>,
+        /// Fractional child-size translation resolved at use time against
+        /// the measured size. `None` for absolute transforms; `Some` only
+        /// from `FractionalTranslation`, whose fraction cannot resolve
+        /// until layout measures the child.
+        fraction: Option<Offset>,
+        /// Whether pointer hits follow the transform. False only from
+        /// `FractionalTranslation::transform_hit_tests(false)`; painting
+        /// and semantics always follow the visual transform.
+        transform_hit_tests: bool,
         child: Widget,
     },
     Scale {

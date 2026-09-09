@@ -1,6 +1,8 @@
 //! Gesture, button, compositor, scrolling, and scrollbar interaction.
 
-use super::rendering::{fitted_transform, transform_around, transform_around_alignment};
+use super::rendering::{
+    fitted_transform, resolve_transform, transform_around, transform_around_alignment,
+};
 use super::*;
 
 impl WidgetTree {
@@ -941,15 +943,22 @@ impl WidgetTree {
                         self.diagnostics.compositor_only_updates += 1;
                     }
                 }
-                RenderKind::Transform { transform, origin } => {
+                RenderKind::Transform {
+                    transform,
+                    origin,
+                    fraction,
+                    ..
+                } => {
                     if let Some(content) = layers.content() {
-                        let size = self
-                            .render_live(_render, "retained render must remain live")
-                            .size;
-                        if self
-                            .compositor
-                            .update_transform(content, transform_around(transform, origin, size))
-                        {
+                        let size = {
+                            let node =
+                                self.render_live(_render, "retained render must remain live");
+                            self.transform_child_size(node)
+                        };
+                        if self.compositor.update_transform(
+                            content,
+                            resolve_transform(transform, origin, fraction, size),
+                        ) {
                             changed = true;
                             self.diagnostics.compositor_only_updates += 1;
                         }

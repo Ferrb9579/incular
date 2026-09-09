@@ -58,6 +58,6 @@ impl FractionalTranslation {
 
 impl From<FractionalTranslation> for Widget {
     fn from(value: FractionalTranslation) -> Self {
-        crate::Transform::translation(value.translation, value.child).into()
+        Widget::fractional_translation(value.translation, value.transform_hit_tests, value.child)
     }
 }

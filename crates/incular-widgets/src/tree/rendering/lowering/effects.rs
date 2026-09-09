@@ -6,10 +6,16 @@ pub(super) fn lower_effects(widget: &Widget) -> RenderKind {
             controller: controller.clone(),
         },
         WidgetKind::Transform {
-            transform, origin, ..
+            transform,
+            origin,
+            fraction,
+            transform_hit_tests,
+            ..
         } => RenderKind::Transform {
             transform: *transform,
             origin: *origin,
+            fraction: *fraction,
+            transform_hit_tests: *transform_hit_tests,
         },
         WidgetKind::Scale {
             controller, origin, ..

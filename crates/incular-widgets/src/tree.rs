@@ -634,6 +634,8 @@ pub enum RenderKind {
     Transform {
         transform: CoreTransform,
         origin: Option<Offset>,
+        fraction: Option<Offset>,
+        transform_hit_tests: bool,
     },
     Scale {
         controller: ScaleController,

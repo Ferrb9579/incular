@@ -198,6 +198,27 @@ pub(super) fn transform_around(
         )))
 }
 
+/// Resolves a retained transform against the measured size: an optional
+/// child-size fraction becomes an absolute translation applied after the
+/// absolute transform, then the whole thing pivots around the origin.
+/// Every projection (compositor, hit testing, semantics) resolves through
+/// this one function so the three can never disagree.
+pub(super) fn resolve_transform(
+    transform: CoreTransform,
+    origin: Option<Offset>,
+    fraction: Option<Offset>,
+    size: Size,
+) -> CoreTransform {
+    let absolute = match fraction {
+        Some(fraction) => transform.then(CoreTransform::translation(Offset::new(
+            fraction.x * size.width,
+            fraction.y * size.height,
+        ))),
+        None => transform,
+    };
+    transform_around(absolute, origin, size)
+}
+
 pub(super) fn transform_around_alignment(
     transform: CoreTransform,
     origin: Option<Offset>,

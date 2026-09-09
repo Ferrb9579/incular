@@ -422,11 +422,17 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Translate { .. } => f.debug_struct("Translate").finish(),
             Self::Transform {
-                transform, origin, ..
+                transform,
+                origin,
+                fraction,
+                transform_hit_tests,
+                ..
             } => f
                 .debug_struct("Transform")
                 .field("transform", transform)
                 .field("origin", origin)
+                .field("fraction", fraction)
+                .field("transform_hit_tests", transform_hit_tests)
                 .finish(),
             Self::Scale {
                 controller, origin, ..
@@ -1060,14 +1066,18 @@ impl PartialEq for WidgetKind {
                 Self::Transform {
                     transform: a,
                     origin: b,
-                    child: c,
+                    fraction: c,
+                    transform_hit_tests: d,
+                    child: e,
                 },
                 Self::Transform {
-                    transform: d,
-                    origin: e,
-                    child: f,
+                    transform: f,
+                    origin: g,
+                    fraction: h,
+                    transform_hit_tests: i,
+                    child: j,
                 },
-            ) => a == d && b == e && c == f,
+            ) => a == f && b == g && c == h && d == i && e == j,
             (
                 Self::Scale {
                     controller: a,

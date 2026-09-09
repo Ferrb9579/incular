@@ -1,0 +1,822 @@
+{
+  "schema_version": 2,
+  "family": "Transform",
+  "scope": "Retained transform constructors (Transform), FractionalTranslation, and RotatedBox in incular-widgets. Animation wrappers (ScaleTransition, RotationTransition) and linked layers stay in later slices. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "FractionalTranslation": {
+      "path": "crates/incular-widgets/tests/transform_geometry.rs",
+      "name": "fractional_translation_builder_matches_fluent_construction"
+    },
+    "RotatedBox": {
+      "path": "crates/incular-widgets/tests/transform_geometry.rs",
+      "name": "rotated_box_builder_matches_fluent_construction"
+    }
+  },
+  "records": [
+    {
+      "symbol": "Transform",
+      "option": "transform",
+      "default": "required (new)",
+      "validation": "arbitrary CoreTransform; singular or non-finite values are existing policy (inverse fails, hits miss, paint and semantics keep cached values), not normalized",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "new"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "RenderKind equality drives compositor, semantics, and hit-test invalidation without layout; a changed transform never relayouts or repaints.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "translation_update_is_compositor_only"
+        },
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "rotation_quarter_turn_about_default_center"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter on every constructor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "new"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path; it is retained across transform updates.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "translation_update_is_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "offset",
+      "default": "required (translation constructor)",
+      "validation": "arbitrary Offset in logical pixels",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "translation"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Folds into the absolute retained transform at construction; updates follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "translation_update_is_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "scale",
+      "default": "required (scale constructor)",
+      "validation": "arbitrary f32 factor, uniform on both axes",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "scale"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Folds into the absolute retained transform at construction; updates follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "scale_about_default_center_moves_geometry"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "radians",
+      "default": "required (rotation constructor)",
+      "validation": "arbitrary f32 radians, clockwise in screen coordinates",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "rotation"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Folds into the absolute retained transform at construction; updates follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "rotation_quarter_turn_about_default_center"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "x",
+      "default": "required (skew constructor, x axis)",
+      "validation": "arbitrary f32 skew factor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "skew"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Folds into the absolute retained transform at construction; updates follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "translation_update_is_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "y",
+      "default": "required (skew constructor, y axis)",
+      "validation": "arbitrary f32 skew factor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "skew"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Folds into the absolute retained transform at construction; updates follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "translation_update_is_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Transform",
+      "option": "origin",
+      "default": "child center",
+      "validation": "finite_offset normalization on the fluent setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "method",
+        "owner": "Transform",
+        "name": "origin"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Retained as the pivot alongside the absolute transform; pivot changes follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "nonzero_origin_changes_the_pivot"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FractionalTranslation",
+      "option": "translation",
+      "default": "required, no default",
+      "validation": "fraction of the measured child size per axis; no normalization, non-finite values follow the singular-transform miss policy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionalTranslation"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Retained as a size fraction, resolved against the measured child size at use time; fraction changes follow the Transform phase contract without layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ],
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/effects.rs",
+            "kind": "function",
+            "name": "lower_effects"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "fractional_translation_scales_by_child_size"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FractionalTranslation",
+      "option": "transform_hit_tests",
+      "default": true,
+      "validation": "bool fluent setter; false tests hits in layout space while painting and semantics follow the visual transform",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionalTranslation"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Retained as hit-test policy on the transform; flag changes follow the Transform phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "fractional_translation_hit_tests_flag_selects_coordinate_space"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FractionalTranslation",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionalTranslation"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "fractional_translation_scales_by_child_size"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RotatedBox",
+      "option": "quarter_turns",
+      "default": "required, no default",
+      "validation": "integral i32 quarter turns; no normalization, any integer rotates",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RotatedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Layout-neutral by construction: converts to a center-pivot rotation transform, so layout measures the child normally and only the compositor, hit testing, and semantics observe the rotation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "rotated_box_keeps_layout_size_and_rotates_geometry"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RotatedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/transforms.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RotatedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Transform"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/transform_geometry.rs",
+          "name": "rotated_box_keeps_layout_size_and_rotates_geometry"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}
