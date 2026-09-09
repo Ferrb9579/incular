@@ -22,7 +22,7 @@ RUST_TEST_THREADS = "1"
 # Bound compilation/linking; RUST_TEST_THREADS above bounds test execution.
 # Keeping harness arguments out of the alias lets callers append Cargo options
 # such as --all-features without accidentally passing them to libtest.
-test-constrained = "test --workspace --jobs 4"
+test-constrained = "test --workspace --jobs 16"
 # Escape hatch for unusually memory-heavy compiler or linker regressions. This
 # retains the normal full-debug test profile while allowing only one rustc.
 test-sequential = "test --workspace --jobs 1"
