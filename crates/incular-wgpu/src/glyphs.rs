@@ -158,8 +158,13 @@ struct AtlasPage {
     class: GlyphAtlasClass,
     content_area: u32,
     allocated_area: u32,
-    /// Content epoch of this slot. Bumped on every eviction-driven reuse;
-    /// placements name the epoch they were allocated into.
+    /// Whether this slot currently holds live content. Budget tightening
+    /// retires slots in place — index-stable but vacant — instead of
+    /// compacting indices beneath retained references.
+    resident: bool,
+    /// Content epoch of this slot. Bumped whenever the slot's content is
+    /// retired (eviction reuse or budget tightening); placements name the
+    /// epoch they were allocated into.
     generation: u64,
     /// Atlas tick of the most recent resolve that hit or placed into this
     /// page. Drives least-recently-used victim selection; shared across
@@ -170,12 +175,14 @@ impl AtlasPage {
     fn normal() -> Self {
         Self {
             class: GlyphAtlasClass::Normal,
+            resident: true,
             ..Self::default()
         }
     }
     fn oversize() -> Self {
         Self {
             class: GlyphAtlasClass::Oversize,
+            resident: true,
             ..Self::default()
         }
     }
@@ -203,10 +210,13 @@ pub struct GlyphAtlas {
     /// glyph bitmap. `FontSettings::collection_index` preserves TTC/OTC faces.
     fonts: HashMap<FontId, Font>,
     counters: GpuCounters,
-    /// Device-owned page budget. Enforcement is lazy: lowering the budget
-    /// constrains future placements, and the next allocation evicts down to
-    /// it. This keeps every retirement funneled through the drained
-    /// placement/identity path instead of stranding identities.
+    /// Device-owned page budget over *live* pages. Lowering the budget
+    /// retires excess unprotected pages eagerly (see
+    /// [`Self::set_max_pages`]); protected excess stays pending and
+    /// enforces against the next resolve's protection set, even on a cache
+    /// hit, so released protection sheds residency without waiting for an
+    /// unrelated future allocation. Every retirement funnels through the
+    /// drained placement/identity path instead of stranding identities.
     max_pages: usize,
     tick: u64,
     eviction_revision: u64,
@@ -228,7 +238,7 @@ impl GlyphAtlas {
     }
 
     /// Builds an atlas with an explicit page budget, for tests and hosts
-    /// that tune residency. See [`Self::set_max_pages`] for the lazy
+    /// that tune residency. See [`Self::set_max_pages`] for the eager
     /// enforcement contract.
     #[must_use]
     pub fn with_max_pages(max_pages: usize) -> Self {
@@ -247,11 +257,19 @@ impl GlyphAtlas {
         }
     }
 
-    /// Replaces the page budget. Enforcement is lazy by design (see the
-    /// field documentation): the next placement evicts down to the new
-    /// budget; lowering further without placements changes nothing yet.
-    pub fn set_max_pages(&mut self, max_pages: usize) {
+    /// Replaces the page budget and immediately retires resident
+    /// unprotected pages down to it, least-recently-used first. Protected
+    /// pages may temporarily exceed the limit; the excess stays pending
+    /// and enforces on the next resolve once protection narrows. Retired
+    /// slots go vacant in place — indices never compact — with a bumped
+    /// generation, dropped placements (reported through
+    /// [`Self::take_retired_keys`]), and an advanced
+    /// [`Self::eviction_revision`] so host maintenance reclaims idle
+    /// renderer bindings. A zero budget retires everything unprotected
+    /// and admits no new placements.
+    pub fn set_max_pages(&mut self, max_pages: usize, protected: &std::collections::HashSet<u16>) {
         self.max_pages = max_pages;
+        self.enforce_budget(protected);
     }
 
     #[must_use]
@@ -259,13 +277,15 @@ impl GlyphAtlas {
         self.max_pages
     }
 
-    /// Live content generation of `page`, if the slot exists. Renderer page
-    /// tables and host reclamation compare against this; `None` means the
-    /// slot was never allocated.
+    /// Live content generation of `page`, if the slot is resident.
+    /// Renderer page tables and host reclamation compare against this;
+    /// `None` means the slot was never allocated or was retired vacant by
+    /// budget tightening, so no old identity can resolve to new contents.
     #[must_use]
     pub fn page_generation(&self, page: u16) -> Option<u64> {
         self.pages
             .get(usize::from(page))
+            .filter(|slot| slot.resident)
             .map(|slot| slot.generation)
     }
 
@@ -276,30 +296,46 @@ impl GlyphAtlas {
         self.eviction_revision
     }
 
-    /// Drains placement keys retired by eviction since the last drain, for
-    /// registry-identity cleanup by the owning resolve path.
-    pub(crate) fn take_retired_keys(&mut self) -> Vec<GlyphCacheKey> {
+    /// Drains placement keys retired by eviction or budget tightening
+    /// since the last drain, for registry-identity cleanup by the owning
+    /// resolve path. Exposed so hosts and ownership tests drive the same
+    /// production drain the shared context uses.
+    #[must_use]
+    pub fn take_retired_keys(&mut self) -> Vec<GlyphCacheKey> {
         std::mem::take(&mut self.retired_keys)
     }
     #[must_use]
     pub const fn counters(&self) -> GpuCounters {
         self.counters
     }
-    /// Live atlas pages against the [`Self::with_max_pages`] budget.
-    /// Test and diagnostics surface for residency assertions.
+    /// Allocated page slots, resident or vacant. Slot capacity, not live
+    /// residency: indices stay stable across tightening, so this only
+    /// grows. Compare [`Self::live_page_count`] for budget accounting.
     #[must_use]
     pub const fn page_count(&self) -> usize {
         self.pages.len()
+    }
+
+    /// Live (resident) pages against the [`Self::with_max_pages`] budget.
+    /// Tightening retires slots to vacant without compacting, so this —
+    /// not [`Self::page_count`] and not the cumulative
+    /// `glyph_atlas_pages` counter — is the residency measure.
+    #[must_use]
+    pub fn live_page_count(&self) -> usize {
+        self.pages.iter().filter(|page| page.resident).count()
     }
     #[must_use]
     pub fn entry(&self, key: GlyphCacheKey) -> Option<AtlasEntry> {
         self.entries.get(&key).copied()
     }
+    /// Live-residency accounting: vacant slots hold no content and back no
+    /// texture, so only resident pages count toward pages, bytes, and
+    /// areas. Slot capacity is [`Self::page_count`].
     #[must_use]
     pub fn memory(&self) -> GlyphAtlasMemory {
         let mut memory = GlyphAtlasMemory::default();
         let page_bytes = usize::from(ATLAS_PAGE_SIZE).pow(2);
-        for page in &self.pages {
+        for page in self.pages.iter().filter(|page| page.resident) {
             match page.class {
                 GlyphAtlasClass::Normal => {
                     memory.normal_pages += 1;
@@ -324,6 +360,14 @@ impl GlyphAtlas {
         scale: f64,
         protected: &std::collections::HashSet<u16>,
     ) -> Option<RasterizedGlyph> {
+        // Pending tightening enforces against this resolve's protection
+        // set first — even on a cache hit — so released protection sheds
+        // excess residency without waiting for an unrelated allocation.
+        // Skipped while slot capacity fits the budget, which implies live
+        // residency fits too.
+        if self.pages.len() > self.max_pages {
+            self.enforce_budget(protected);
+        }
         let request = GlyphRasterRequest::new(run.font_size, scale);
         if !request.supported {
             self.counters.glyphs_skipped += 1;
@@ -342,7 +386,7 @@ impl GlyphAtlas {
             let live = self
                 .pages
                 .get(usize::from(entry.page))
-                .is_some_and(|page| page.generation == entry.generation);
+                .is_some_and(|page| page.resident && page.generation == entry.generation);
             if live {
                 self.tick = self.tick.saturating_add(1);
                 let tick = self.tick;
@@ -547,7 +591,7 @@ impl GlyphAtlas {
         let page_index = self
             .pages
             .iter()
-            .rposition(|page| page.class == GlyphAtlasClass::Normal)?;
+            .rposition(|page| page.resident && page.class == GlyphAtlasClass::Normal)?;
         let page = &mut self.pages[page_index];
         if page.next_x + stored_width > ATLAS_PAGE_SIZE {
             page.next_x = 0;
@@ -575,29 +619,108 @@ impl GlyphAtlas {
         Some(entry)
     }
 
-    /// Finds a page slot for one placement: a fresh slot while under
-    /// budget, otherwise an evicted victim reused in place. Returns `None`
-    /// — a counted pressure skip, never a loop — when the budget admits no
-    /// pages at all or every page is protected by the current frame.
+    /// Finds a page slot for one placement: a vacant slot reused first
+    /// while live residency is under budget, a fresh slot while slot
+    /// capacity is under budget, otherwise an evicted victim reused in
+    /// place. Reuse keeps the generation bumped at retirement and the
+    /// cursor reset there, so no retired identity can name the new
+    /// content. Returns `None` — a counted pressure skip, never a loop —
+    /// when the budget admits no pages at all or every live page is
+    /// protected by the current frame.
     fn fresh_or_evict(
         &mut self,
         oversize: bool,
         protected: &std::collections::HashSet<u16>,
     ) -> Option<usize> {
-        if self.pages.len() < self.max_pages {
-            self.pages.push(if oversize {
-                AtlasPage::oversize()
-            } else {
-                AtlasPage::normal()
-            });
-            self.counters.glyph_atlas_pages += 1;
-            return Some(self.pages.len() - 1);
+        if self.live_page_count() < self.max_pages {
+            if let Some(vacant) = self.pages.iter().position(|page| !page.resident) {
+                if let Some(page) = self.pages.get_mut(vacant) {
+                    page.resident = true;
+                }
+                return Some(vacant);
+            }
+            if self.pages.len() < self.max_pages {
+                self.pages.push(if oversize {
+                    AtlasPage::oversize()
+                } else {
+                    AtlasPage::normal()
+                });
+                self.counters.glyph_atlas_pages += 1;
+                return Some(self.pages.len() - 1);
+            }
         }
         let victim = self.evict_victim(protected);
         if victim.is_none() {
             self.counters.glyph_pressure_skips += 1;
         }
         victim
+    }
+
+    /// Retires resident unprotected pages while live residency exceeds the
+    /// budget, least-recently-used first. Retired slots go vacant in place
+    /// (see [`Self::retire_page`]); fully protected excess stays pending
+    /// for a later call with a narrower protection set.
+    fn enforce_budget(&mut self, protected: &std::collections::HashSet<u16>) {
+        while self.live_page_count() > self.max_pages {
+            let victim = self
+                .pages
+                .iter()
+                .enumerate()
+                .filter(|(index, page)| {
+                    page.resident
+                        && match u16::try_from(*index) {
+                            // Slots beyond u16 can never be named by a
+                            // placement, so they are always eligible.
+                            Err(_) => true,
+                            Ok(slot) => !protected.contains(&slot),
+                        }
+                })
+                .min_by(|a, b| a.1.last_use.cmp(&b.1.last_use).then_with(|| a.0.cmp(&b.0)))
+                .map(|(index, _)| index);
+            let Some(victim) = victim else {
+                break;
+            };
+            self.retire_page(victim);
+        }
+    }
+
+    /// Drops one slot's placements for the retired-keys drain, reporting
+    /// each eviction through the revision and counter that drive host
+    /// maintenance. Shared by in-place eviction reuse and vacancy
+    /// retirement; the caller sets the slot's resulting state.
+    fn drop_page_placements(&mut self, index: usize) {
+        let mut retired = Vec::new();
+        self.entries.retain(|key, entry| {
+            if usize::from(entry.page) == index {
+                retired.push(*key);
+                false
+            } else {
+                true
+            }
+        });
+        self.retired_keys.extend(retired);
+        self.eviction_revision = self.eviction_revision.saturating_add(1);
+        self.counters.glyph_page_evictions += 1;
+    }
+
+    /// Retires one slot to vacant: placements drop for the
+    /// registry-identity drain, the generation bumps so retired identities
+    /// can never name a future reuse of this index, the allocator cursor
+    /// resets, and the slot leaves live residency without compacting.
+    /// Submitted work stays valid through the wgpu lifetime contract;
+    /// renderer bindings re-resolve or reclaim through host maintenance.
+    fn retire_page(&mut self, index: usize) {
+        self.drop_page_placements(index);
+        if let Some(page) = self.pages.get_mut(index) {
+            page.generation = page.generation.saturating_add(1);
+            page.resident = false;
+            page.class = GlyphAtlasClass::Normal;
+            page.next_x = 0;
+            page.next_y = 0;
+            page.row_height = 0;
+            page.content_area = 0;
+            page.allocated_area = 0;
+        }
     }
 
     /// Retires the least-recently-used unprotected page: drops its
@@ -611,23 +734,18 @@ impl GlyphAtlas {
             .pages
             .iter()
             .enumerate()
-            .filter(|(index, _)| match u16::try_from(*index) {
-                // Slots beyond u16 can never be named by a placement, so
-                // they are always eligible.
-                Err(_) => true,
-                Ok(page) => !protected.contains(&page),
+            .filter(|(index, page)| {
+                page.resident
+                    && match u16::try_from(*index) {
+                        // Slots beyond u16 can never be named by a placement, so
+                        // they are always eligible.
+                        Err(_) => true,
+                        Ok(slot) => !protected.contains(&slot),
+                    }
             })
             .min_by(|a, b| a.1.last_use.cmp(&b.1.last_use).then_with(|| a.0.cmp(&b.0)))
             .map(|(index, _)| index)?;
-        let mut retired = Vec::new();
-        self.entries.retain(|key, entry| {
-            if usize::from(entry.page) == victim {
-                retired.push(*key);
-                false
-            } else {
-                true
-            }
-        });
+        self.drop_page_placements(victim);
         if let Some(page) = self.pages.get_mut(victim) {
             page.generation = page.generation.saturating_add(1);
             page.next_x = 0;
@@ -636,9 +754,6 @@ impl GlyphAtlas {
             page.content_area = 0;
             page.allocated_area = 0;
         }
-        self.retired_keys.extend(retired);
-        self.eviction_revision = self.eviction_revision.saturating_add(1);
-        self.counters.glyph_page_evictions += 1;
         Some(victim)
     }
 }

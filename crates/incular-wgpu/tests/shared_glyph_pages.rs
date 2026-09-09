@@ -15,7 +15,9 @@ use std::sync::Arc;
 use incular_rendering::GlyphRun;
 use incular_text::{TextAlign, TextEngine, TextLayout, TextStyle};
 use incular_wgpu::{
-    GlyphAtlas, RasterizedGlyph, ReclaimStaleTextures, RendererGlyphPages, SharedImageMaintenance,
+    GlyphAtlas, GlyphCacheKey, GlyphRasterRequest, RasterizedGlyph, ReclaimStaleTextures,
+    RendererGlyphPages, SharedGpuResourceRegistry, SharedImageMaintenance,
+    prune_vacant_glyph_page_slots,
 };
 
 type SharedAtlas = Rc<RefCell<GlyphAtlas>>;
@@ -251,14 +253,15 @@ fn page_reuse_cannot_display_a_different_glyph_through_an_old_identity() {
 
 /// Fake renderer client: production page table plus a shared-atlas
 /// handle, reclaimed through the same host dispatch as real renderers.
-/// Only the page textures (`u32`) are stand-ins.
-struct FakeGlyphClient {
-    pages: RendererGlyphPages<u32>,
+/// Only the page textures (`u32`, or `Arc<u32>` where shared ownership
+/// is under test) are stand-ins.
+struct FakeGlyphClient<T> {
+    pages: RendererGlyphPages<T>,
     atlas: SharedAtlas,
     reclaim_calls: usize,
 }
 
-impl ReclaimStaleTextures for FakeGlyphClient {
+impl<T> ReclaimStaleTextures for FakeGlyphClient<T> {
     fn reclaim_stale_textures(&mut self) -> usize {
         self.reclaim_calls += 1;
         let atlas = self.atlas.borrow();
@@ -365,6 +368,380 @@ fn active_references_remain_valid_and_pinned_pressure_skips_cleanly() {
     );
     assert_eq!(atlas.counters().glyph_pressure_skips, skips + 1);
     assert_eq!(atlas.counters().glyph_page_evictions, 0);
+}
+
+/// Resolve mirroring the shared context's registry discipline: drain
+/// retired placement identities, then (re-)register the resolved key.
+/// Lets tests observe registry metadata alongside atlas residency.
+fn place(
+    atlas: &mut GlyphAtlas,
+    registry: &mut SharedGpuResourceRegistry,
+    text: &mut TextEngine,
+    value: &str,
+    size: f32,
+    protected: &HashSet<u16>,
+) -> (GlyphCacheKey, RasterizedGlyph) {
+    let layout = styled_layout(text, value, size);
+    let run: &GlyphRun = &layout.lines[0].runs[0];
+    let key = GlyphCacheKey {
+        font: run.font.id(),
+        glyph: run.glyphs[0].id,
+        physical_size: GlyphRasterRequest::new(run.font_size, 1.0).physical_size,
+    };
+    let raster = atlas
+        .lookup_or_rasterize(run, run.glyphs[0].id, 1.0, protected)
+        .expect("supported raster size");
+    for retired in atlas.take_retired_keys() {
+        registry.remove_glyph(retired);
+    }
+    registry.glyph_identity(key);
+    (key, raster)
+}
+
+/// One fresh page per oversize key while under budget: oversize glyphs
+/// bypass shelf sharing, so each resolve grows live residency by exactly
+/// one page. Returns keys with their placements in resolve order.
+fn fill_pages(
+    atlas: &mut GlyphAtlas,
+    registry: &mut SharedGpuResourceRegistry,
+    text: &mut TextEngine,
+    sizes: &[f32],
+) -> Vec<(GlyphCacheKey, RasterizedGlyph)> {
+    let empty = HashSet::new();
+    let mut placed = Vec::new();
+    for &size in sizes {
+        let (key, raster) = place(atlas, registry, text, "A", size, &empty);
+        let page = raster.entry.page;
+        assert!(
+            placed
+                .iter()
+                .all(|(_, prior): &(_, RasterizedGlyph)| prior.entry.page != page),
+            "oversize key {size} must take a fresh page"
+        );
+        placed.push((key, raster));
+    }
+    placed
+}
+
+/// Lowering the budget retires excess unprotected pages eagerly — live
+/// count drops at the call, slots stay index-stable, placements and
+/// registry identities drain, shared texture slots prune through the
+/// production path, and host maintenance reclaims idle bindings.
+#[test]
+fn lowering_budget_to_two_retires_excess_pages_eagerly() {
+    let shared: SharedAtlas = Rc::new(RefCell::new(GlyphAtlas::with_max_pages(8)));
+    let mut registry = SharedGpuResourceRegistry::default();
+    let mut text = TextEngine::new();
+    let empty = HashSet::new();
+
+    // Four oversize keys land on slots 1..=4; slot 0 is the atlas's
+    // initial (empty) page, least-recently-used by construction.
+    let placed = fill_pages(
+        &mut shared.borrow_mut(),
+        &mut registry,
+        &mut text,
+        &[800., 820., 840., 860.],
+    );
+    let pages: Vec<u16> = placed.iter().map(|(_, raster)| raster.entry.page).collect();
+    assert_eq!(pages, vec![1, 2, 3, 4]);
+    assert_eq!(shared.borrow().live_page_count(), 5);
+    assert_eq!(shared.borrow().page_count(), 5);
+    assert_eq!(registry.glyph_count(), 4);
+
+    // Shared texture slots and renderer bindings over production tables;
+    // `Arc` stand-ins make shared ownership observable by reference count.
+    // Slot 0 never uploaded (empty page), like production.
+    let mut shared_slots: Vec<Option<Arc<u32>>> = vec![None];
+    shared_slots.extend(pages.iter().map(|page| Some(Arc::new(u32::from(*page)))));
+    let mut client = FakeGlyphClient {
+        pages: RendererGlyphPages::new(),
+        atlas: Rc::clone(&shared),
+        reclaim_calls: 0,
+    };
+    for (_, raster) in &placed {
+        let owned = shared_slots[usize::from(raster.entry.page)]
+            .as_ref()
+            .expect("shared slot live")
+            .clone();
+        client
+            .pages
+            .ensure(raster.entry.page, raster.entry.generation, || owned);
+    }
+    let live_binding = client.pages.get(pages[2]).cloned().expect("bound");
+
+    // Least-recently-used first: the empty initial slot plus the two
+    // earliest resolves retire; each retired page advances the revision.
+    let revision_before = shared.borrow().eviction_revision();
+    shared.borrow_mut().set_max_pages(2, &empty);
+    {
+        let atlas = shared.borrow();
+        assert_eq!(atlas.live_page_count(), 2);
+        assert_eq!(atlas.page_count(), 5, "slots must not compact");
+        assert_eq!(atlas.eviction_revision(), revision_before + 3);
+        assert_eq!(atlas.page_generation(0), None);
+        assert_eq!(atlas.page_generation(pages[0]), None);
+        assert_eq!(atlas.page_generation(pages[1]), None);
+        assert_eq!(
+            atlas.page_generation(pages[2]),
+            Some(placed[2].1.entry.generation)
+        );
+        assert_eq!(
+            atlas.page_generation(pages[3]),
+            Some(placed[3].1.entry.generation)
+        );
+        assert!(atlas.memory().normal_pages <= 2);
+    }
+    let retired = shared.borrow_mut().take_retired_keys();
+    assert_eq!(retired.len(), 2);
+    assert!(retired.contains(&placed[0].0));
+    assert!(retired.contains(&placed[1].0));
+    for key in retired {
+        assert!(registry.remove_glyph(key));
+    }
+    assert_eq!(registry.glyph_count(), 2);
+    assert!(!debug_present(&shared.borrow(), &mut text, "A", 800.));
+    assert!(!debug_present(&shared.borrow(), &mut text, "A", 820.));
+    assert!(debug_present(&shared.borrow(), &mut text, "A", 840.));
+
+    // Production shared-texture retirement with stand-in resources:
+    // exactly the two vacant slots prune.
+    let pruned = prune_vacant_glyph_page_slots(&mut shared_slots, &|page| {
+        shared.borrow().page_generation(page)
+    });
+    assert_eq!(pruned, 2);
+    assert_eq!(shared_slots[usize::from(pages[0])], None);
+    assert_eq!(shared_slots[usize::from(pages[1])], None);
+    assert!(shared_slots[usize::from(pages[2])].is_some());
+
+    // Host maintenance reclaims exactly the two stale bindings; live
+    // bindings keep their identity.
+    let mut host = SharedImageMaintenance::new();
+    let released = host.maintain(
+        shared.borrow().eviction_revision(),
+        [&mut client as &mut dyn ReclaimStaleTextures],
+    );
+    assert_eq!(released, 2);
+    assert_eq!(client.pages.get(pages[0]), None);
+    assert_eq!(client.pages.get(pages[1]), None);
+    assert!(Arc::ptr_eq(
+        &client.pages.get(pages[2]).expect("live binding").clone(),
+        &live_binding
+    ));
+
+    // Retired identities resolve to nothing: `None`, never new contents.
+    assert_eq!(shared.borrow().page_generation(pages[0]), None);
+
+    // Re-expansion reuses the lowest vacant slot — the initial slot 0 —
+    // under a fresh generation exactly one epoch past its retired (empty)
+    // epoch, which coincides with the placed keys' initial epoch here.
+    shared.borrow_mut().set_max_pages(8, &empty);
+    let (new_key, new_raster) = place(
+        &mut shared.borrow_mut(),
+        &mut registry,
+        &mut text,
+        "A",
+        880.,
+        &empty,
+    );
+    assert_eq!(new_raster.entry.page, 0);
+    assert_eq!(
+        new_raster.entry.generation,
+        placed[0].1.entry.generation + 1
+    );
+    assert_eq!(
+        shared.borrow().page_generation(0),
+        Some(new_raster.entry.generation)
+    );
+    assert_eq!(shared.borrow().live_page_count(), 3);
+    // And the retired key re-resolves as a miss with a fresh bitmap,
+    // never by trusting its old coordinates.
+    let misses = shared.borrow().counters().glyph_cache_misses;
+    let relayout = styled_layout(&mut text, "A", 800.);
+    let rerun: &GlyphRun = &relayout.lines[0].runs[0];
+    let refreshed = shared
+        .borrow_mut()
+        .lookup_or_rasterize(rerun, rerun.glyphs[0].id, 1.0, &empty)
+        .expect("supported raster size");
+    assert!(refreshed.bitmap.is_some());
+    assert_ne!(
+        (refreshed.entry.page, refreshed.entry.generation),
+        (placed[0].1.entry.page, placed[0].1.entry.generation)
+    );
+    assert_eq!(shared.borrow().counters().glyph_cache_misses, misses + 1);
+    let _ = new_key;
+}
+
+/// A zero budget retires every unprotected page and admits no new
+/// placements through the remaining (vacant) slots.
+#[test]
+fn zero_budget_retires_everything_and_admits_nothing() {
+    let mut atlas = GlyphAtlas::with_max_pages(4);
+    let mut registry = SharedGpuResourceRegistry::default();
+    let mut text = TextEngine::new();
+    let empty = HashSet::new();
+
+    // Two oversize keys land on slots 1 and 2 beside the initial page.
+    let placed = fill_pages(&mut atlas, &mut registry, &mut text, &[800., 820.]);
+    assert_eq!(atlas.live_page_count(), 3);
+    let first_gen = placed[0].1.entry.generation;
+
+    atlas.set_max_pages(0, &empty);
+    assert_eq!(atlas.live_page_count(), 0);
+    assert_eq!(atlas.page_count(), 3, "slots must not compact");
+    assert!(atlas.page_generation(placed[0].1.entry.page).is_none());
+    assert!(atlas.page_generation(placed[1].1.entry.page).is_none());
+    assert!(!debug_present(&atlas, &mut text, "A", 800.));
+    let retired = atlas.take_retired_keys();
+    assert_eq!(retired.len(), 2);
+    for key in retired {
+        assert!(registry.remove_glyph(key));
+    }
+    assert_eq!(registry.glyph_count(), 0);
+
+    // New placements are refused without growing slots or evicting: one
+    // counted skip, an immediate `None`.
+    let skips = atlas.counters().glyph_pressure_skips;
+    let evictions = atlas.counters().glyph_page_evictions;
+    let layout = styled_layout(&mut text, "A", 840.);
+    let run: &GlyphRun = &layout.lines[0].runs[0];
+    assert!(
+        atlas
+            .lookup_or_rasterize(run, run.glyphs[0].id, 1.0, &empty)
+            .is_none()
+    );
+    assert_eq!(atlas.counters().glyph_pressure_skips, skips + 1);
+    assert_eq!(atlas.counters().glyph_page_evictions, evictions);
+    assert_eq!(atlas.live_page_count(), 0);
+    assert_eq!(atlas.page_count(), 3);
+
+    // Re-expansion admits again on the lowest vacant slot (the initial
+    // slot 0) with a fresh generation, never a retired epoch.
+    atlas.set_max_pages(2, &empty);
+    let (_, raster) = place(&mut atlas, &mut registry, &mut text, "A", 840., &empty);
+    assert_eq!(raster.entry.page, 0);
+    assert_eq!(raster.entry.generation, first_gen + 1);
+    assert_eq!(atlas.live_page_count(), 1);
+}
+
+/// Protected pages temporarily exceed a lowered budget; once protection
+/// ends, even a cache hit — no fresh allocation — releases the pending
+/// excess.
+#[test]
+fn protected_pages_defer_tightening_until_protection_ends() {
+    let shared: SharedAtlas = Rc::new(RefCell::new(GlyphAtlas::with_max_pages(8)));
+    let mut registry = SharedGpuResourceRegistry::default();
+    let mut text = TextEngine::new();
+    let empty = HashSet::new();
+
+    // Three oversize keys land on slots 1..=3 beside the initial page.
+    let placed = fill_pages(
+        &mut shared.borrow_mut(),
+        &mut registry,
+        &mut text,
+        &[800., 820., 840.],
+    );
+    let pages: Vec<u16> = placed.iter().map(|(_, raster)| raster.entry.page).collect();
+    assert_eq!(pages, vec![1, 2, 3]);
+    assert_eq!(shared.borrow().live_page_count(), 4);
+
+    let mut client: FakeGlyphClient<u32> = FakeGlyphClient {
+        pages: RendererGlyphPages::new(),
+        atlas: Rc::clone(&shared),
+        reclaim_calls: 0,
+    };
+    for (_, raster) in &placed {
+        let page = raster.entry.page;
+        client
+            .pages
+            .ensure(page, raster.entry.generation, || page.into());
+    }
+
+    // Refresh the first page so it is the most-recently-used survivor.
+    let touched = resolve(&mut shared.borrow_mut(), &mut text, "A", 800., &empty);
+    assert_eq!(touched.entry, placed[0].1.entry);
+
+    // Budget one with two pages protected: the empty initial slot and
+    // the unprotected page retire; the protected excess stays pending
+    // instead of touching protection.
+    let protected: HashSet<u16> = [pages[0], pages[1]].into_iter().collect();
+    let revision_before = shared.borrow().eviction_revision();
+    shared.borrow_mut().set_max_pages(1, &protected);
+    assert_eq!(shared.borrow().live_page_count(), 2);
+    assert_eq!(shared.borrow().eviction_revision(), revision_before + 2);
+    assert!(shared.borrow().page_generation(pages[2]).is_none());
+    assert!(debug_present(&shared.borrow(), &mut text, "A", 800.));
+    assert!(debug_present(&shared.borrow(), &mut text, "A", 820.));
+    let retired = shared.borrow_mut().take_retired_keys();
+    assert_eq!(retired, vec![placed[2].0]);
+    for key in retired {
+        registry.remove_glyph(key);
+    }
+    assert_eq!(registry.glyph_count(), 2);
+
+    // Host maintenance releases exactly the retired binding; protected
+    // bindings survive with matching generations.
+    let mut host = SharedImageMaintenance::new();
+    let released = host.maintain(
+        shared.borrow().eviction_revision(),
+        [&mut client as &mut dyn ReclaimStaleTextures],
+    );
+    assert_eq!(released, 1);
+    assert_eq!(client.pages.get(pages[2]), None);
+    assert!(client.pages.get(pages[0]).is_some());
+    assert!(client.pages.get(pages[1]).is_some());
+
+    // Protection ends: a cache hit enforces the pending excess with no
+    // fresh allocation — the bitmap stays `None` while residency drops.
+    let hits = shared.borrow().counters().glyph_cache_hits;
+    let hit = resolve(&mut shared.borrow_mut(), &mut text, "A", 800., &empty);
+    assert_eq!(hit.entry, placed[0].1.entry);
+    assert!(
+        hit.bitmap.is_none(),
+        "pending tightening needs no allocation"
+    );
+    assert_eq!(shared.borrow().counters().glyph_cache_hits, hits + 1);
+    assert_eq!(shared.borrow().live_page_count(), 1);
+    assert_eq!(
+        shared.borrow().page_generation(pages[0]),
+        Some(placed[0].1.entry.generation)
+    );
+    assert!(shared.borrow().page_generation(pages[1]).is_none());
+    assert!(!debug_present(&shared.borrow(), &mut text, "A", 820.));
+    let pending = shared.borrow_mut().take_retired_keys();
+    assert_eq!(pending, vec![placed[1].0]);
+    for key in pending {
+        registry.remove_glyph(key);
+    }
+    assert_eq!(registry.glyph_count(), 1);
+
+    // The second maintenance pass releases the newly retired binding.
+    let released_again = host.maintain(
+        shared.borrow().eviction_revision(),
+        [&mut client as &mut dyn ReclaimStaleTextures],
+    );
+    assert_eq!(released_again, 1);
+    assert_eq!(client.pages.get(pages[1]), None);
+    assert!(client.pages.get(pages[0]).is_some());
+
+    // Re-expansion reuses the lowest vacant slot (the initial slot 0)
+    // under a fresh generation, while the retired middle page stays
+    // vacant so its old identity cannot name anything.
+    shared.borrow_mut().set_max_pages(8, &empty);
+    let (_, raster) = place(
+        &mut shared.borrow_mut(),
+        &mut registry,
+        &mut text,
+        "A",
+        880.,
+        &empty,
+    );
+    assert_eq!(raster.entry.page, 0);
+    assert_eq!(raster.entry.generation, placed[0].1.entry.generation + 1);
+    assert_eq!(
+        shared.borrow().page_generation(0),
+        Some(raster.entry.generation)
+    );
+    assert_eq!(shared.borrow().page_generation(pages[1]), None);
 }
 
 /// An over-budget working set behaves deterministically: two identical

@@ -65,7 +65,8 @@ pub use resources::{
     RendererImageCache, RendererImageEntry, SHARED_GRADIENT_TEXEL_BYTES, SharedGpuContext,
     SharedGpuDiagnostics, SharedGpuResourceId, SharedGpuResourceRegistry, SharedImageMaintenance,
     SharedTextureAcquisition, SharedTextureBudget, SharedTextureCache, SharedTextureCounters,
-    SharedTextureEviction, WindowGpuPresentation, WindowGpuState, shared_image_texture_bytes,
+    SharedTextureEviction, WindowGpuPresentation, WindowGpuState, prune_vacant_glyph_page_slots,
+    shared_image_texture_bytes,
 };
 pub use surface::{
     SurfaceAlphaError, SurfaceAlphaPlan, SurfaceAlphaRepresentation, WindowSurfaceTarget,

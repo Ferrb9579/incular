@@ -821,6 +821,36 @@ code, "missing" means absent with no compensating path.
   clean pressure skips, over-budget determinism. Native/headless
   coverage only; GPU-backed upload/bind/draw paths recorded as
   unverified. Same validation as above plus warning-denied rustdoc.
+- W2 glyph-page budget tightening: `set_max_pages` now enforces eagerly
+  instead of awaiting the next allocation. Page-slot identity is split
+  from live residency (`AtlasPage.resident`): tightening retires excess
+  unprotected pages LRU-first into vacant, index-stable slots — never
+  compacting beneath retained references — with bumped generations,
+  dropped placements for the `take_retired_keys` drain (now public so
+  hosts/tests drive the same production handoff the shared context
+  uses), and a per-page eviction-revision advance. Protected pages may
+  temporarily exceed the budget; the pending excess enforces against the
+  next resolve's protection set even on a cache hit, so no unrelated
+  future allocation is required. A zero budget retires everything
+  unprotected and the allocation gate refuses new placements through
+  vacant slots. Vacant slots reuse lowest-index-first under the bumped
+  generation, so old identities resolve to `None`, never new contents.
+  The shared-context resolve path additionally prunes shared page
+  textures for vacant pages through the generic production path
+  `prune_vacant_glyph_page_slots` (revision-gated; stand-in resources in
+  tests, real textures in production), and diagnostics report live pages
+  (`live_page_count`) while `page_count` keeps slot capacity and
+  `glyph_atlas_pages` stays cumulative allocations; `memory()` counts
+  resident pages only. Frame pins still guard the active frame, and
+  pruning touches only vacant pages, so submitted work rests on the
+  wgpu lifetime contract as before. Evidence: three new tests in
+  `shared_glyph_pages.rs` (10 total) populate several pages, tighten to
+  two and zero, and cover protection deferral/release plus re-expansion,
+  asserting live/slot counts, placements, registry metadata via the
+  production `SharedGpuResourceRegistry`, shared-slot pruning,
+  binding reclamation with identity continuity, and exact generation
+  succession. Font-object budgeting stays explicitly pending. Same
+  validation as above.
 - Remaining W2 work: shared eviction for pipelines and identity maps; presented-vs-failed outcome separation;
   two-window GPU churn tests. Text font-byte budgets are not scheduled
   (unbounded map noted above; layouts already bounded by count).

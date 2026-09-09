@@ -828,6 +828,9 @@ pub(crate) struct SharedGpuResources {
     pub(crate) gradient_generation: u64,
     pub(crate) glyph_atlas: GlyphAtlas,
     pub(crate) glyph_pages: Vec<Option<SharedGpuAtlasPage>>,
+    /// Atlas eviction revision at the last shared texture-slot prune, so
+    /// resolves without intervening retirements skip the scan.
+    pub(crate) glyph_prune_revision: u64,
 }
 pub(crate) struct SharedGpuImage {
     pub(crate) identity: SharedGpuResourceId,
@@ -1005,6 +1008,7 @@ impl SharedGpuContext {
                     gradient_generation: 0,
                     glyph_atlas: GlyphAtlas::new(),
                     glyph_pages: Vec::new(),
+                    glyph_prune_revision: 0,
                 }),
                 texture_upload_bytes: std::sync::atomic::AtomicU64::new(0),
             }),
@@ -1048,7 +1052,7 @@ impl SharedGpuContext {
             shared_image_resources: resources.registry.image_count(),
             shared_glyph_resources: resources.registry.glyph_count(),
             shared_gradient_resources: resources.gradients.len(),
-            glyph_atlas_pages: resources.glyph_atlas.page_count(),
+            glyph_atlas_pages: resources.glyph_atlas.live_page_count(),
             shared_image_texel_bytes: resources.image_textures.retained_bytes(),
             shared_image_evictions: image_counters.evictions,
             shared_image_evicted_live: image_counters.evicted_live,
@@ -1300,13 +1304,33 @@ impl SharedGpuContext {
             resources
                 .glyph_atlas
                 .lookup_or_rasterize(run, glyph, scale, protected_pages)?;
+        // Split field borrows up front: the prune closure below observes
+        // the atlas while retirement mutates the texture slots.
+        let SharedGpuResources {
+            registry,
+            glyph_atlas,
+            glyph_pages,
+            glyph_prune_revision,
+            ..
+        } = &mut *resources;
         // Retire placement identities evicted while resolving above, then
         // (re-)register this key. Re-registration is idempotent, so the
         // stale-refresh path below neither leaks nor duplicates identities.
-        for retired in resources.glyph_atlas.take_retired_keys() {
-            resources.registry.remove_glyph(retired);
+        for retired in glyph_atlas.take_retired_keys() {
+            registry.remove_glyph(retired);
         }
-        resources.registry.glyph_identity(key);
+        // Release shared textures for pages retired vacant since the last
+        // prune. Only vacant pages prune, and pages go vacant solely
+        // through budget tightening or eviction turnover — never while
+        // frame-pinned — so no live placement, binding, or in-flight
+        // submission can reference a pruned texture beyond the wgpu
+        // lifetime contract. The advanced eviction revision notifies host
+        // maintenance to reclaim idle renderer bindings.
+        if *glyph_prune_revision != glyph_atlas.eviction_revision() {
+            *glyph_prune_revision = glyph_atlas.eviction_revision();
+            prune_vacant_glyph_page_slots(glyph_pages, &|page| glyph_atlas.page_generation(page));
+        }
+        registry.glyph_identity(key);
         Some(raster)
     }
     pub(crate) fn glyph_counters(&self) -> GpuCounters {
@@ -1397,6 +1421,35 @@ impl SharedGpuContext {
         }
         SharedGradientAcquisition::new(resource, true, generation)
     }
+}
+
+/// Drops shared glyph-page slots with no live atlas page, returning how
+/// many went. The production retirement path for shared page textures:
+/// the shared-context resolve path runs this after draining retired
+/// placement identities. Generic over the slot payload so the same path
+/// runs with stand-in resources where GPU creation is unavailable.
+/// Submitted work stays valid through the wgpu lifetime contract; only
+/// vacant pages prune, and pages go vacant solely through budget
+/// tightening or eviction turnover — never while frame-pinned.
+pub fn prune_vacant_glyph_page_slots<T>(
+    slots: &mut [Option<T>],
+    page_generation: &dyn Fn(u16) -> Option<u64>,
+) -> usize {
+    let mut dropped = 0;
+    for (index, slot) in slots.iter_mut().enumerate() {
+        let vacant = u16::try_from(index)
+            .ok()
+            .and_then(page_generation)
+            .is_none();
+        if vacant && slot.is_some() {
+            *slot = None;
+            dropped += 1;
+        }
+    }
+    dropped
+}
+
+impl SharedGpuContext {
     pub(crate) fn shared_glyph_texture(&self, page: u16, generation: u64) -> wgpu::Texture {
         let mut resources = self.inner.resources.lock().expect("shared resource lock");
         while resources.glyph_pages.len() <= usize::from(page) {
