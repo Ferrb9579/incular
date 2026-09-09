@@ -108,6 +108,11 @@ impl WidgetTree {
         {
             return RawHitResult::default();
         }
+        if matches!(node.object.kind, RenderKind::Follower { .. })
+            && !self.follower_content_visible(id)
+        {
+            return RawHitResult::default();
+        }
         if matches!(
             kind,
             Some(WidgetKind::AbsorbPointer {
@@ -124,7 +129,9 @@ impl WidgetTree {
         // A transform that opts out of hit-test conversion falls through
         // to the ordinary untransformed path below: hits land where the
         // child lays out, not where it paints. Painting and semantics
-        // always follow the visual transform.
+        // always follow the visual transform. Follower placement resolves
+        // through the same shared projection, so hits land where the
+        // content paints; hidden followers return above.
         if matches!(
             node.object.kind,
             RenderKind::Transform {
@@ -132,6 +139,7 @@ impl WidgetTree {
                 ..
             } | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
+                | RenderKind::Follower { .. }
                 | RenderKind::FittedBox { .. }
         ) {
             let current = origin + node.offset;
@@ -573,6 +581,7 @@ impl WidgetTree {
                 ..
             } | RenderKind::Scale { .. }
                 | RenderKind::Rotation { .. }
+                | RenderKind::Follower { .. }
                 | RenderKind::FittedBox { .. }
         ) {
             let current = origin + node.offset;
@@ -615,6 +624,11 @@ impl WidgetTree {
             node.object.kind,
             RenderKind::Visibility { visible: false, .. }
         ) {
+            return None;
+        }
+        if matches!(node.object.kind, RenderKind::Follower { .. })
+            && !self.follower_content_visible(id)
+        {
             return None;
         }
         let child_origin = match &node.object.kind {

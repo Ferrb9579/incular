@@ -838,3 +838,19 @@ fn retained_layers_compose_affines_for_world_bounds() {
     assert!((bounds.size.width - 20.).abs() < 0.0001);
     assert!((bounds.size.height - 10.).abs() < 0.0001);
 }
+
+#[test]
+fn removing_leader_layer_releases_its_link() {
+    let mut tree = LayerTree::new();
+    let link = LayerLink::new();
+    let leader = tree.create_leader(link.clone(), Size::new(60., 30.));
+    tree.set_root(leader);
+    let _ = tree.flatten();
+    assert!(link.is_linked(), "published leader must resolve");
+    // Unmounting the leader layer releases the shared link state so no
+    // follower can track a ghost; the next flatten starts unlinked.
+    tree.remove(leader);
+    assert!(!link.is_linked(), "removed leader must stop resolving");
+    let _ = tree.flatten();
+    assert!(!link.is_linked());
+}

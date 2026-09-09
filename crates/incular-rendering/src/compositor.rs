@@ -451,7 +451,14 @@ impl LayerTree {
         id
     }
     pub fn remove(&mut self, id: LayerId) {
-        if self.layers.remove(id.0).is_some() {
+        if let Some(layer) = self.layers.remove(id.0) {
+            // A removed leader must stop resolving: its shared link state
+            // would otherwise outlive it (flatten only clears leaders it
+            // still walks) and followers would track a ghost, blocking any
+            // replacement leader on the same link.
+            if let LayerKind::Leader { link, .. } = &layer.kind {
+                link.clear_leader();
+            }
             self.diagnostics.layers -= 1;
             if self.root == Some(id) {
                 self.root = None;

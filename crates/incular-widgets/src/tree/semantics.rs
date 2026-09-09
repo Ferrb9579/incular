@@ -132,6 +132,13 @@ impl WidgetTree {
         {
             return Vec::new();
         }
+        if matches!(
+            entry.widget.kind(),
+            WidgetKind::CompositedTransformFollower { .. }
+        ) && !self.follower_content_visible(entry.render)
+        {
+            return Vec::new();
+        }
         let render_id = entry.render;
         let render = self.render_live(render_id, "semantic render must remain live");
         // IndexedSemantics is a transparent render object. Its explicit index

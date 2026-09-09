@@ -1,0 +1,640 @@
+{
+  "schema_version": 2,
+  "family": "LinkedLayers",
+  "scope": "CompositedTransformTarget and CompositedTransformFollower options with their retained link lifecycle in incular-widgets and incular-rendering. Animation wrappers and linked scrolling stay in later slices. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "CompositedTransformTarget",
+      "option": "link",
+      "default": "required, no default",
+      "validation": "shared LayerLink identity, cheap to clone; PartialEq by allocation identity",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformTarget"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformTarget"
+      },
+      "comparison": {
+        "prose": "Link replacement retires the old publication through the shared owner; same-link updates refresh size only.",
+        "refs": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_leader"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "linked_translation_places_hits_and_semantics_together"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "unlink_relink_follows_show_policy_and_new_leader"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformTarget",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformTarget"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformTarget"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "linked_translation_places_hits_and_semantics_together"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "link",
+      "default": "required, no default",
+      "validation": "shared LayerLink identity, cheap to clone",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Link replacement retires the old resolution through the shared owner; same-link updates refresh the follower fields in place.",
+        "refs": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_follower"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "replacing_link_moves_follower_to_new_leader"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "two_followers_share_one_leader"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "show_when_unlinked",
+      "default": true,
+      "validation": "bool fluent setter; false hides paint, hits, and semantics until linked",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Retained as visibility policy on the follower; flag changes follow the follower phase contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "unlinked_hidden_follower_is_not_interactive_or_exposed"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "unlinked_shown_follower_keeps_layout_placement"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "unlink_relink_follows_show_policy_and_new_leader"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "offset",
+      "default": "Offset::ZERO",
+      "validation": "finite_offset normalization on the fluent setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Retained as leader-space displacement; changes follow the follower phase contract without layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "linked_translation_places_hits_and_semantics_together"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "follower_offset_and_center_anchors_reposition"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "target_anchor",
+      "default": "TOP_LEFT",
+      "validation": "Alignment fluent setter; normalized (-1,-1) top-left convention",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Retained as the leader-space anchor; changes follow the follower phase contract without layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "follower_offset_and_center_anchors_reposition"
+        },
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "leader_scale_resolves_anchors_in_leader_space"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "follower_anchor",
+      "default": "TOP_LEFT",
+      "validation": "Alignment fluent setter; normalized (-1,-1) top-left convention",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Retained as the follower-local anchor; changes follow the follower phase contract without layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "follower_offset_and_center_anchors_reposition"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "target_layer_anchor",
+      "default": "TOP_LEFT",
+      "validation": "LayerAnchor fluent setter; same normalized convention as target_anchor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Writes the same retained leader-space anchor as target_anchor; parsed identically downstream.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "layer_anchor_setters_match_alignment_setters"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "follower_layer_anchor",
+      "default": "TOP_LEFT",
+      "validation": "LayerAnchor fluent setter; same normalized convention as follower_anchor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Writes the same retained follower-local anchor as follower_anchor; parsed identically downstream.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "layer_anchor_setters_match_alignment_setters"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CompositedTransformFollower",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CompositedTransformFollower"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "CompositedTransformFollower"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/linked_layers.rs",
+          "name": "linked_translation_places_hits_and_semantics_together"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

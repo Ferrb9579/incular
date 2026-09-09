@@ -1214,9 +1214,52 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   getters are never options). Existing visibility negatives preserved
   (9/9); transform adds constructor-parameter coverage plus a
   getter-exclusion fixture (2/2).
-- Remaining W3 families: editable text; linked layers; effects;
-  scrolling; interactive controls; then layout, collections, images,
-  navigation scopes, overlays, platform wrappers, utilities.
+- Remaining W3 families: editable text; effects; scrolling;
+  interactive controls; then layout, collections, images, navigation
+  scopes, overlays, platform wrappers, utilities.
+
+## W3 — Linked-layer slice (same workstream, still open)
+
+- Reused the existing compositor formula instead of adding a second
+  one. `CompositedTransformFollower` resolution previously ran a
+  Widgets-local computation that agreed with the compositor on
+  translation/scale but returned the stale-leader translation for a
+  removed leader and the layout placement for an unlinked follower
+  whose `show_when_unlinked` is false. The Widgets path now reuses
+  narrow renderer-neutral geometry: `follower_resolved_transform`
+  asks the `LayerLink` (same shared owner as the compositor), returns
+  `None` for unresolved links, and the paint/hit/semantics paths fall
+  back to the pre-existing unlinked behavior. Identity gate added so
+  the same-link check cannot alias across links (`Arc::ptr_eq`),
+  closing a hole the old pointer comparison left open. No new math,
+  no second registry, no per-frame rebuilds.
+- Proved fail-first where the behavior allowed it: a temporary
+  staged-vs-flattened probe (kept out of the final tree) confirmed the
+  follower translation was computed from public attachment points;
+  new retained regressions cover translation, leader moves that are
+  compositor-only (counter deltas), anchor resolution in leader space
+  under scale, offset plus both anchors, layer-anchor setter parity,
+  transformed ancestors, unlink/relink across links and leaders, both
+  `show_when_unlinked` policies, two followers on one link, link
+  replacement, identical reapply scheduling, follower-before-leader
+  ordering, multiple-leader first-wins, and singular culling of paint,
+  hits, and semantics (15 tests in
+  `crates/incular-widgets/tests/linked_layers.rs`, unequal 60x30 /
+  20x10 fixtures). The unlinked-hidden pair and the relink test forced
+  two real fixes: hit testing now gates on follower visibility in both
+  hit entry points (previously a hidden follower stayed hittable),
+  semantics skips unlinked-hidden subtrees without clearing sibling
+  state (previously it dropped the whole parent's children), and
+  compositor `remove` now releases the leader's link (previously a
+  follower could track a ghost after unmount; pinned by
+  `removing_leader_layer_releases_its_link` in
+  `crates/incular-rendering/tests/rendering.rs`).
+- Ledger: `specs/linked_layers_properties.json` (10 records: two
+  `CompositedTransformTarget` options, eight
+  `CompositedTransformFollower` options) validated by
+  `tests/linked_layers_ledger.rs` through the reused
+  `tests/ledger/` validator (`MethodNames` discovery, observer
+  getters excluded) plus a method-name fixture negative (2/2).
 
 ## W4 — Navigation transactions and smaller runtime owners
 

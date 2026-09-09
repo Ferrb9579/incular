@@ -327,7 +327,11 @@ impl WidgetTree {
                 .unwrap_or(CoreTransform::IDENTITY),
         }
     }
-    pub(super) fn follower_content_transform(&self, id: RenderObjectId) -> CoreTransform {
+    /// Resolved follower placement, or `None` when the content must stay
+    /// hidden: unlinked without `show_when_unlinked`, or linked behind a
+    /// singular ancestor chain that admits no inverse. Both match what the
+    /// compositor culls, so paint, hit testing, and semantics agree.
+    fn follower_resolved_transform(&self, id: RenderObjectId) -> Option<CoreTransform> {
         let node = self.render_live(id, "follower render must remain live");
         let RenderKind::Follower {
             link,
@@ -337,24 +341,48 @@ impl WidgetTree {
             follower_anchor,
         } = &node.object.kind
         else {
-            return CoreTransform::IDENTITY;
+            return Some(CoreTransform::IDENTITY);
         };
         let base = self.render_world_transform(id);
         let Some(leader_transform) = link.leader_transform() else {
-            // An unlinked follower remains at its normal layout placement when
-            // requested. A hidden follower is culled by the compositor; the
-            // identity here keeps hit testing and diagnostics deterministic.
-            let _ = show_when_unlinked;
-            return CoreTransform::IDENTITY;
+            // An unlinked follower remains at its normal layout placement
+            // when requested; a hidden one is culled by the compositor.
+            return show_when_unlinked.then_some(CoreTransform::IDENTITY);
         };
         let leader_size = link.leader_size().unwrap_or(Size::ZERO);
         let target = leader_transform.transform_point(target_anchor.along_size(leader_size));
         let leader_origin = leader_transform.transform_point(Offset::ZERO);
         let offset_world = leader_transform.transform_point(*offset) - leader_origin;
-        let Some(target_in_parent) = base.inverse_transform_point(target + offset_world) else {
-            return CoreTransform::IDENTITY;
+        let target_in_parent = base.inverse_transform_point(target + offset_world)?;
+        Some(CoreTransform::translation(
+            target_in_parent - follower_anchor.along_size(node.size),
+        ))
+    }
+
+    pub(super) fn follower_content_transform(&self, id: RenderObjectId) -> CoreTransform {
+        self.follower_resolved_transform(id)
+            .unwrap_or(CoreTransform::IDENTITY)
+    }
+
+    /// Whether a follower's content is observable. Linked followers always
+    /// are when placement resolves; unlinked followers only with
+    /// `show_when_unlinked`. Anything this reports hidden is also culled
+    /// by the compositor, so hidden content is never interactive or
+    /// semantically exposed.
+    pub(super) fn follower_content_visible(&self, id: RenderObjectId) -> bool {
+        let node = self.render_live(id, "follower visibility render must remain live");
+        let RenderKind::Follower {
+            link,
+            show_when_unlinked,
+            ..
+        } = &node.object.kind
+        else {
+            return true;
         };
-        CoreTransform::translation(target_in_parent - follower_anchor.along_size(node.size))
+        if link.leader_transform().is_none() {
+            return *show_when_unlinked;
+        }
+        self.follower_resolved_transform(id).is_some()
     }
     pub(super) fn render_world_transform(&self, id: RenderObjectId) -> CoreTransform {
         let mut path = Vec::new();
