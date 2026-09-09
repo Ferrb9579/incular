@@ -148,6 +148,13 @@ fn custom_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
 }
 
 fn same_compositor_family(old: &RenderKind, new: &RenderKind) -> bool {
+    // Stack alignment, fit, and text direction change measurement, so a
+    // stack pair is compositor-only only for a pure behavior flip.
+    if let (RenderKind::Stack { stack: old_stack }, RenderKind::Stack { stack: new_stack }) =
+        (old, new)
+    {
+        return stack_clip_only_change(old_stack, new_stack);
+    }
     matches!(
         (old, new),
         (RenderKind::Opacity { .. }, RenderKind::Opacity { .. })
@@ -172,5 +179,22 @@ fn same_compositor_family(old: &RenderKind, new: &RenderKind) -> bool {
             | (RenderKind::Transform { .. }, RenderKind::Transform { .. })
             | (RenderKind::Scale { .. }, RenderKind::Scale { .. })
             | (RenderKind::Rotation { .. }, RenderKind::Rotation { .. })
+            // Clip options never affect measurement: the shape resolves
+            // from the retained size, so same-kind changes only need the
+            // compositor layer rewrite in `update_from_kind`.
+            | (RenderKind::ClipRect { .. }, RenderKind::ClipRect { .. })
+            | (RenderKind::ClipRRect { .. }, RenderKind::ClipRRect { .. })
+            | (RenderKind::ClipOval { .. }, RenderKind::ClipOval { .. })
+            | (RenderKind::ClipPath { .. }, RenderKind::ClipPath { .. })
     )
+}
+
+/// True when two stack descriptors differ only in clipping: alignment,
+/// fit, and text direction all change measurement, so only a pure
+/// behavior flip may skip layout.
+fn stack_clip_only_change(old: &incular_layout::Stack, new: &incular_layout::Stack) -> bool {
+    old.clip_behavior != new.clip_behavior
+        && old.alignment == new.alignment
+        && old.fit == new.fit
+        && old.text_direction == new.text_direction
 }

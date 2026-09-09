@@ -9,6 +9,11 @@ use typed_builder::TypedBuilder;
 use crate::{Widget, WidgetKind};
 
 /// Clips its child using a rectangular boundary.
+///
+/// The clip bounds raster output only. Hit testing follows layout
+/// bounds through the clip (points outside the clip node's bounds miss
+/// as usual), and semantic bounds stay whole. `Clip::None` disables
+/// clipping entirely; use `Visibility` to also remove input.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipRect {
     #[builder(default = Clip::HardEdge)]
@@ -44,6 +49,10 @@ impl From<ClipRect> for Widget {
 }
 
 /// Clips its child using a rounded-rectangular boundary.
+///
+/// Same raster-only contract as [`ClipRect`]: the rounded corners bound
+/// pixels, while hit testing and semantic bounds keep the node's full
+/// rectangular geometry.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipRRect {
     #[builder(setter(into))]
@@ -83,6 +92,10 @@ impl From<ClipRRect> for Widget {
 }
 
 /// Clips its child using an elliptical / oval boundary.
+///
+/// Same raster-only contract as [`ClipRect`]: the oval bounds pixels,
+/// while hit testing and semantic bounds keep the node's full
+/// rectangular geometry.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipOval {
     #[builder(default = Clip::AntiAlias)]
@@ -118,6 +131,10 @@ impl From<ClipOval> for Widget {
 }
 
 /// Clips its child using an arbitrary [`Path`] boundary.
+///
+/// Same raster-only contract as [`ClipRect`]: the path bounds pixels
+/// (non-zero fill rule), while hit testing and semantic bounds keep the
+/// node's full rectangular geometry.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct ClipPath {
     #[builder(setter(into))]

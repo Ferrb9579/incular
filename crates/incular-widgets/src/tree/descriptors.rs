@@ -754,6 +754,10 @@ impl From<EditableText> for Widget {
 /// Declarative retained group opacity. The child is painted into an isolated
 /// compositor target when alpha is between zero and one, so overlapping
 /// descendants are attenuated exactly once.
+///
+/// Alpha never affects hit testing or semantic exposure: even a fully
+/// transparent child still hits and stays exposed with whole bounds.
+/// Use `Visibility` to remove input or exposure.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Opacity {
     alpha: f32,
@@ -799,6 +803,8 @@ impl From<Opacity> for Widget {
 }
 
 /// A retained opacity transition driven directly by an [`OpacityController`].
+/// Same input contract as [`Opacity`]: the animated alpha attenuates
+/// pixels only and never gates hit testing or semantics.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FadeTransition {
     controller: OpacityController,

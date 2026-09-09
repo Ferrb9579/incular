@@ -1,0 +1,902 @@
+{
+  "schema_version": 2,
+  "family": "ClipOpacity",
+  "scope": "ClipRect, ClipRRect, ClipOval, ClipPath, Opacity, and FadeTransition options with their retained clip/opacity lifecycle in incular-widgets and incular-rendering. Stack.clip_behavior ships its fix and regressions here but its full option ledger waits for the layout family. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "ClipRect": {
+      "path": "crates/incular-widgets/tests/clip_opacity.rs",
+      "name": "clip_builders_match_fluent_construction"
+    },
+    "ClipRRect": {
+      "path": "crates/incular-widgets/tests/clip_opacity.rs",
+      "name": "clip_builders_match_fluent_construction"
+    },
+    "ClipOval": {
+      "path": "crates/incular-widgets/tests/clip_opacity.rs",
+      "name": "clip_builders_match_fluent_construction"
+    },
+    "ClipPath": {
+      "path": "crates/incular-widgets/tests/clip_opacity.rs",
+      "name": "clip_builders_match_fluent_construction"
+    }
+  },
+  "records": [
+    {
+      "symbol": "ClipRect",
+      "option": "clip_behavior",
+      "default": "HardEdge",
+      "validation": "Copy Clip enum; None disables the clip layer",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipRect"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipRect"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only: the shape resolves from the retained size, so behavior flips skip layout and picture recording.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "function",
+            "name": "same_compositor_family"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_clip"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_behavior_none_records_no_clip"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rect_records_world_clip"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_behavior_toggle_needs_neither_layout_nor_paint"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipRect",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipRect"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipRect"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rect_records_world_clip"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "nested_clips_balance"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipRRect",
+      "option": "radius",
+      "default": "required, no default",
+      "validation": "Into<CornerRadii>; recorded verbatim, resolved against node size",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipRRect"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipRRect"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like ClipRect.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_clip_rrect"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rrect_records_rounded_clip"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rrect_radius_change_needs_neither_layout_nor_paint"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipRRect",
+      "option": "clip_behavior",
+      "default": "AntiAlias",
+      "validation": "Copy Clip enum; None disables the clip layer",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipRRect"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipRRect"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like ClipRect.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rrect_records_rounded_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipRRect",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipRRect"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipRRect"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_rrect_records_rounded_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipOval",
+      "option": "clip_behavior",
+      "default": "AntiAlias",
+      "validation": "Copy Clip enum; None disables the clip layer",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipOval"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipOval"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like ClipRect.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_clip_oval"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_oval_records_oval_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipOval",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipOval"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipOval"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_oval_records_oval_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipPath",
+      "option": "path",
+      "default": "required, no default",
+      "validation": "Into<Arc<Path>>; resolved to world space at flatten, NonZero fill rule",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipPath"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipPath"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like ClipRect; an empty path culls its subtree.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_clip_path"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_path_records_path_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipPath",
+      "option": "clip_behavior",
+      "default": "AntiAlias",
+      "validation": "Copy Clip enum; None disables the clip layer",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipPath"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipPath"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like ClipRect.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_path_records_path_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ClipPath",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ClipPath"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ClipPath"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "clip_path_records_path_clip"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Opacity",
+      "option": "alpha",
+      "default": "1 (normalized at the boundary)",
+      "validation": "normalize_opacity on every setter; never gates input or semantics",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Opacity"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Opacity"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only: the cached offscreen target is reused while alpha ticks.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_opacity"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "opacity_zero_stays_hittable_and_exposed"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "opacity_transitions_carry_alpha_without_repaint_or_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "opacity_identical_reapply_and_identity_hold"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Opacity",
+      "option": "controller",
+      "default": "none (uncontrolled alpha)",
+      "validation": "Option<OpacityController>; replaced controllers animate from the live value",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Opacity"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Opacity"
+      },
+      "comparison": {
+        "prose": "Controller identity compares by shared state; replacement carries the transition instead of snapping.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "carry_replaced_transition"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ],
+        "animation": [
+          {
+            "path": "crates/incular-widgets/src/tree/values.rs",
+            "kind": "method",
+            "owner": "OpacityController",
+            "name": "tick"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "fade_transition_follows_its_controller"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Opacity",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Opacity"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Opacity"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "opacity_identical_reapply_and_identity_hold"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FadeTransition",
+      "option": "controller",
+      "default": "required, no default",
+      "validation": "OpacityController by value; live value read on every compositor tick",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FadeTransition"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Opacity"
+      },
+      "comparison": {
+        "prose": "Lowers to the same Opacity owner as the declarative widget; no separate retained state.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/effects.rs",
+            "kind": "function",
+            "name": "lower_effects"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "fade_transition_follows_its_controller"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FadeTransition",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FadeTransition"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Opacity"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "fade_transition_follows_its_controller"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

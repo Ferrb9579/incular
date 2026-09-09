@@ -66,6 +66,9 @@ impl Stack {
     }
 
     /// Sets clipping behavior for children overflowing stack bounds.
+    /// The clip bounds raster output to the stack bounds only; layout,
+    /// hit testing, and semantic bounds are unaffected, and `Clip::None`
+    /// disables clipping entirely.
     #[must_use]
     pub fn clip_behavior(mut self, clip: Clip) -> Self {
         self.clip_behavior = clip;

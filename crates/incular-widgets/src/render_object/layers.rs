@@ -1,7 +1,25 @@
+use incular_config::Clip;
 use incular_core::{Color, Offset, Rect, Size, Transform as CoreTransform};
-use incular_rendering::{Brush, DisplayList, DropShadowEffect, GaussianBlur, LayerId, LayerTree};
+use incular_rendering::{
+    Brush, CornerRadii, DisplayList, DropShadowEffect, FillRule, GaussianBlur, LayerId, LayerTree,
+    Path, RRect,
+};
+use std::sync::Arc;
 
 use crate::tree::{RenderKind, WidgetKind};
+
+/// Whether a widget clips raster output through a compositor clip layer.
+/// `Clip::None` disables clipping; every other behavior clips.
+fn widget_clips(widget: &WidgetKind) -> bool {
+    match widget {
+        WidgetKind::ClipRect { clip_behavior, .. }
+        | WidgetKind::ClipRRect { clip_behavior, .. }
+        | WidgetKind::ClipOval { clip_behavior, .. }
+        | WidgetKind::ClipPath { clip_behavior, .. } => *clip_behavior != Clip::None,
+        WidgetKind::Stack { clip_behavior, .. } => *clip_behavior != Clip::None,
+        _ => false,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachmentSpec {
@@ -35,6 +53,15 @@ impl LayerSpec {
         );
         let attachment = match widget {
             WidgetKind::Scroll { .. } | WidgetKind::SliverViewport { .. } => AttachmentSpec::Clip,
+            WidgetKind::ClipRect { .. }
+            | WidgetKind::ClipRRect { .. }
+            | WidgetKind::ClipOval { .. }
+            | WidgetKind::ClipPath { .. }
+            | WidgetKind::Stack { .. }
+                if widget_clips(widget) =>
+            {
+                AttachmentSpec::Clip
+            }
             WidgetKind::PersistentHeader { .. }
             | WidgetKind::Translate { .. }
             | WidgetKind::Transform { .. }
@@ -131,6 +158,36 @@ impl RenderLayers {
                 compositor.set_children(root, std::iter::once(clip).chain(picture).collect());
                 compositor.set_children(clip, vec![content]);
                 LayerAttachment::Clip { clip, content }
+            }
+            // Clip widgets start with zero geometry like scrolling; layout
+            // and the update path fill the retained shape from the node
+            // size before any flatten can observe it.
+            WidgetKind::ClipRect { .. } if widget_clips(widget) => {
+                let clip =
+                    compositor.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                Self::create_clip_stage(compositor, root, picture, clip)
+            }
+            WidgetKind::ClipRRect { .. } if widget_clips(widget) => {
+                let clip = compositor.create_clip_rrect(RRect::new(
+                    Rect::from_origin_size(Offset::ZERO, Size::ZERO),
+                    CornerRadii::ZERO,
+                ));
+                Self::create_clip_stage(compositor, root, picture, clip)
+            }
+            WidgetKind::ClipOval { .. } if widget_clips(widget) => {
+                let clip =
+                    compositor.create_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                Self::create_clip_stage(compositor, root, picture, clip)
+            }
+            WidgetKind::ClipPath { .. } if widget_clips(widget) => {
+                let clip = compositor
+                    .create_clip_path(Arc::new(Path::builder().build()), FillRule::NonZero);
+                Self::create_clip_stage(compositor, root, picture, clip)
+            }
+            WidgetKind::Stack { .. } if widget_clips(widget) => {
+                let clip =
+                    compositor.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                Self::create_clip_stage(compositor, root, picture, clip)
             }
             WidgetKind::PersistentHeader { .. } | WidgetKind::Translate { .. } => {
                 let layer = compositor.create_transform(CoreTransform::translation(Offset::ZERO));
@@ -256,6 +313,20 @@ impl RenderLayers {
             focus_picture,
             attachment,
         }
+    }
+
+    /// Attaches a fresh clip stage under `root`: the clip layer owns the
+    /// shape, the content transform positions children inside it.
+    fn create_clip_stage(
+        compositor: &mut LayerTree,
+        root: LayerId,
+        picture: Option<LayerId>,
+        clip: LayerId,
+    ) -> LayerAttachment {
+        let content = compositor.create_transform(CoreTransform::translation(Offset::ZERO));
+        compositor.set_children(root, std::iter::once(clip).chain(picture).collect());
+        compositor.set_children(clip, vec![content]);
+        LayerAttachment::Clip { clip, content }
     }
 
     fn spec(&self) -> LayerSpec {
@@ -401,6 +472,22 @@ impl RenderLayers {
         content_transform: Option<CoreTransform>,
     ) {
         match (&self.attachment, kind) {
+            (LayerAttachment::Clip { clip, .. }, RenderKind::ClipRect { .. })
+            | (LayerAttachment::Clip { clip, .. }, RenderKind::Stack { .. }) => {
+                compositor.update_clip(*clip, Rect::from_origin_size(Offset::ZERO, size));
+            }
+            (LayerAttachment::Clip { clip, .. }, RenderKind::ClipRRect { radius, .. }) => {
+                compositor.update_clip_rrect(
+                    *clip,
+                    RRect::new(Rect::from_origin_size(Offset::ZERO, size), *radius),
+                );
+            }
+            (LayerAttachment::Clip { clip, .. }, RenderKind::ClipOval { .. }) => {
+                compositor.update_clip_oval(*clip, Rect::from_origin_size(Offset::ZERO, size));
+            }
+            (LayerAttachment::Clip { clip, .. }, RenderKind::ClipPath { path, .. }) => {
+                compositor.update_clip_path(*clip, path.clone(), FillRule::NonZero);
+            }
             (LayerAttachment::Opacity { layer }, RenderKind::Opacity { alpha, .. }) => {
                 compositor.update_opacity(*layer, *alpha);
             }
@@ -507,8 +594,25 @@ impl RenderLayers {
         size: Size,
         content_transform: Option<CoreTransform>,
     ) {
+        // Clip geometry follows the measured size here; option changes
+        // take the same path through `update_from_kind`, so neither needs
+        // layout beyond measuring.
         if let LayerAttachment::Clip { clip, .. } = self.attachment {
-            compositor.update_clip(clip, Rect::from_origin_size(Offset::ZERO, size));
+            let bounds = Rect::from_origin_size(Offset::ZERO, size);
+            match kind {
+                RenderKind::ClipRRect { radius, .. } => {
+                    compositor.update_clip_rrect(clip, RRect::new(bounds, *radius));
+                }
+                RenderKind::ClipOval { .. } => {
+                    compositor.update_clip_oval(clip, bounds);
+                }
+                RenderKind::ClipPath { path, .. } => {
+                    compositor.update_clip_path(clip, path.clone(), FillRule::NonZero);
+                }
+                _ => {
+                    compositor.update_clip(clip, bounds);
+                }
+            }
         }
         if let Some(content) = self.content()
             && let Some(transform) = content_transform

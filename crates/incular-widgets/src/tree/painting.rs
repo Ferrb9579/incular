@@ -379,26 +379,11 @@ impl WidgetTree {
             self.diagnostics.display_lists_reused += 1;
             output.extend_from(&cache);
         }
-        let pushed_clip = match &kind {
-            RenderKind::ClipRect { .. }
-            | RenderKind::ClipRRect { .. }
-            | RenderKind::ClipOval { .. }
-            | RenderKind::ClipPath { .. } => {
-                let node_size = self
-                    .render_live(id, "retained render must remain live")
-                    .size;
-                output.push(PaintCommand::PushClip {
-                    rect: Rect::from_origin_size(Offset::ZERO, node_size),
-                });
-                true
-            }
-            _ => false,
-        };
+        // Clipping lives in compositor clip layers, not in this transient
+        // traversal: pushing clip commands here would only reach the
+        // discarded paint output while the flattened scene stays unclipped.
         for child in children {
             self.paint_render(child, output);
-        }
-        if pushed_clip {
-            output.push(PaintCommand::PopClip);
         }
         #[cfg(feature = "devtools")]
         self.devtools_trace_end(trace);

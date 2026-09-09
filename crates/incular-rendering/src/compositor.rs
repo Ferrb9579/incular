@@ -2,8 +2,10 @@ use crate::display_list::{DisplayList, PaintCommand, SurfacePartitionId};
 use crate::effects::{
     BlendMode, ColorFilter, DropShadowEffect, GaussianBlur, blur_bounds, drop_shadow_bounds,
 };
-use crate::geometry::union_rect;
+use crate::geometry::{RRect, union_rect};
 use crate::gradients::Brush;
+use crate::paint::FillRule;
+use crate::paths::Path;
 use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
 use std::{
     any::{Any, TypeId},
@@ -123,6 +125,22 @@ impl LayerAnchor {
             size.width * (self.x + 1.) * 0.5,
             size.height * (self.y + 1.) * 0.5,
         )
+    }
+}
+
+/// World-space bounding box of a clip layer's shape, or `None` when the
+/// shape is empty and clips everything away. Conservative for rounded
+/// corners: the box covers the full rect. Pass only clip layers; any
+/// other kind also reports `None` so a misuse culls rather than leaks.
+fn clip_world_bounds(kind: &LayerKind, world_transform: Transform) -> Option<Rect> {
+    match kind {
+        LayerKind::ClipRect { rect } => Some(world_transform.transform_rect_bbox(*rect)),
+        LayerKind::ClipRRect { rrect } => Some(world_transform.transform_rect_bbox(rrect.rect)),
+        LayerKind::ClipOval { rect } => Some(world_transform.transform_rect_bbox(*rect)),
+        LayerKind::ClipPath { path, .. } => path
+            .bounds()
+            .map(|bounds| world_transform.transform_rect_bbox(bounds)),
+        _ => None,
     }
 }
 
@@ -260,6 +278,16 @@ pub enum LayerKind {
     ClipRect {
         rect: Rect,
     },
+    ClipRRect {
+        rrect: RRect,
+    },
+    ClipOval {
+        rect: Rect,
+    },
+    ClipPath {
+        path: Arc<Path>,
+        fill_rule: FillRule,
+    },
     Opacity {
         alpha: f32,
     },
@@ -383,6 +411,21 @@ impl LayerTree {
     }
     pub fn create_clip_rect(&mut self, rect: Rect) -> LayerId {
         self.insert(LayerKind::ClipRect { rect })
+    }
+    /// Creates a rounded-rectangle clip stage in local space; the world
+    /// shape resolves at flatten time like [`Self::create_clip_rect`].
+    pub fn create_clip_rrect(&mut self, rrect: RRect) -> LayerId {
+        self.insert(LayerKind::ClipRRect { rrect })
+    }
+    /// Creates an oval clip stage in local space; the world shape resolves
+    /// at flatten time like [`Self::create_clip_rect`].
+    pub fn create_clip_oval(&mut self, rect: Rect) -> LayerId {
+        self.insert(LayerKind::ClipOval { rect })
+    }
+    /// Creates a path clip stage in local space; the world shape resolves
+    /// at flatten time like [`Self::create_clip_rect`].
+    pub fn create_clip_path(&mut self, path: Arc<Path>, fill_rule: FillRule) -> LayerId {
+        self.insert(LayerKind::ClipPath { path, fill_rule })
     }
     /// Creates an isolated compositor group. Alpha is normalized at the
     /// renderer-neutral boundary so every backend observes identical values.
@@ -606,6 +649,62 @@ impl LayerTree {
             return false;
         }
         *current = rect;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.diagnostics.clip_updates += 1;
+        true
+    }
+    pub fn update_clip_rrect(&mut self, id: LayerId, rrect: RRect) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::ClipRRect { rrect: current } = &mut layer.kind else {
+            return false;
+        };
+        if *current == rrect {
+            return false;
+        }
+        *current = rrect;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.diagnostics.clip_updates += 1;
+        true
+    }
+    pub fn update_clip_oval(&mut self, id: LayerId, rect: Rect) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::ClipOval { rect: current } = &mut layer.kind else {
+            return false;
+        };
+        if *current == rect {
+            return false;
+        }
+        *current = rect;
+        layer.dirty.insert(DirtyFlags::COMPOSITE);
+        layer.generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1).max(1);
+        self.diagnostics.clip_updates += 1;
+        true
+    }
+    pub fn update_clip_path(&mut self, id: LayerId, path: Arc<Path>, fill_rule: FillRule) -> bool {
+        let Some(layer) = self.layers.get_mut(id.0) else {
+            return false;
+        };
+        let LayerKind::ClipPath {
+            path: current_path,
+            fill_rule: current_rule,
+        } = &mut layer.kind
+        else {
+            return false;
+        };
+        if **current_path == *path && *current_rule == fill_rule {
+            return false;
+        }
+        *current_path = path;
+        *current_rule = fill_rule;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -1044,6 +1143,65 @@ impl LayerTree {
                 }
                 out.push(PaintCommand::PopClip);
             }
+            LayerKind::ClipRRect { rrect } => {
+                // Radii stay in local units; the rect resolves to world
+                // like ClipRect. Culling uses the bounding box, which is
+                // conservative for the rounded corners.
+                let world = world_transform.transform_rect_bbox(rrect.rect);
+                let next_clip = match clip {
+                    Some(old) => old.intersection(world),
+                    None => Some(world),
+                };
+                if next_clip.is_none() {
+                    self.diagnostics.layers_culled += 1;
+                    return;
+                }
+                out.push(PaintCommand::PushClipRRect {
+                    rrect: RRect::new(world, rrect.radii),
+                });
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, next_clip, out);
+                }
+                out.push(PaintCommand::PopClip);
+            }
+            LayerKind::ClipOval { rect } => {
+                let world = world_transform.transform_rect_bbox(rect);
+                let next_clip = match clip {
+                    Some(old) => old.intersection(world),
+                    None => Some(world),
+                };
+                if next_clip.is_none() {
+                    self.diagnostics.layers_culled += 1;
+                    return;
+                }
+                out.push(PaintCommand::PushClipOval { rect: world });
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, next_clip, out);
+                }
+                out.push(PaintCommand::PopClip);
+            }
+            LayerKind::ClipPath { path, fill_rule } => {
+                let world_path = path.transformed(world_transform);
+                let world = world_path
+                    .bounds()
+                    .unwrap_or(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
+                let next_clip = match clip {
+                    Some(old) => old.intersection(world),
+                    None => Some(world),
+                };
+                if next_clip.is_none() {
+                    self.diagnostics.layers_culled += 1;
+                    return;
+                }
+                out.push(PaintCommand::PushClipPath {
+                    path: Arc::new(world_path),
+                    fill_rule,
+                });
+                for child in layer.children {
+                    self.flatten_layer(child, world_transform, next_clip, out);
+                }
+                out.push(PaintCommand::PopClip);
+            }
             LayerKind::Opacity { alpha } => {
                 let bounds = self
                     .subtree_bounds(id, world_transform)
@@ -1293,6 +1451,23 @@ impl LayerTree {
                     self.collect_annotations(child, world_transform, next_clip);
                 }
             }
+            LayerKind::ClipRRect { .. }
+            | LayerKind::ClipOval { .. }
+            | LayerKind::ClipPath { .. } => {
+                let Some(world) = clip_world_bounds(&layer.kind, world_transform) else {
+                    return;
+                };
+                let next_clip = match clip {
+                    Some(current) => current.intersection(world),
+                    None => Some(world),
+                };
+                if next_clip.is_none() {
+                    return;
+                }
+                for child in layer.children {
+                    self.collect_annotations(child, world_transform, next_clip);
+                }
+            }
             LayerKind::Follower {
                 link,
                 show_when_unlinked,
@@ -1491,6 +1666,17 @@ impl LayerTree {
                     .reduce(union_rect)
                     .and_then(|bounds| bounds.intersection(world))
             }
+            LayerKind::ClipRRect { .. }
+            | LayerKind::ClipOval { .. }
+            | LayerKind::ClipPath { .. } => {
+                let world = clip_world_bounds(&layer.kind, world_transform)?;
+                layer
+                    .children
+                    .iter()
+                    .filter_map(|child| self.subtree_bounds(*child, world_transform))
+                    .reduce(union_rect)
+                    .and_then(|bounds| bounds.intersection(world))
+            }
             LayerKind::Opacity { .. } => layer
                 .children
                 .iter()
@@ -1556,6 +1742,12 @@ impl LayerTree {
             }
             LayerKind::ClipRect { rect } => {
                 let world = world_transform.transform_rect_bbox(*rect);
+                child_bounds(self, world_transform).and_then(|bounds| bounds.intersection(world))
+            }
+            LayerKind::ClipRRect { .. }
+            | LayerKind::ClipOval { .. }
+            | LayerKind::ClipPath { .. } => {
+                let world = clip_world_bounds(&layer.kind, world_transform)?;
                 child_bounds(self, world_transform).and_then(|bounds| bounds.intersection(world))
             }
             LayerKind::Opacity { .. }
@@ -1630,6 +1822,19 @@ impl LayerTree {
             LayerKind::ClipRect { rect } => format!(
                 "ClipRect(local={rect:?}, world={:?})",
                 world_transform.transform_rect_bbox(*rect)
+            ),
+            LayerKind::ClipRRect { rrect } => format!(
+                "ClipRRect(local={rrect:?}, world={:?})",
+                world_transform.transform_rect_bbox(rrect.rect)
+            ),
+            LayerKind::ClipOval { rect } => format!(
+                "ClipOval(local={rect:?}, world={:?})",
+                world_transform.transform_rect_bbox(*rect)
+            ),
+            LayerKind::ClipPath { path, .. } => format!(
+                "ClipPath(local_bounds={:?}, world={:?})",
+                path.bounds(),
+                clip_world_bounds(&layer.kind, world_transform)
             ),
             LayerKind::Opacity { alpha } => format!(
                 "Opacity(alpha={alpha:.3}, bounds={:?}, generation={})",
@@ -1716,6 +1921,16 @@ impl LayerTree {
                     world_transform,
                     Some(clip.map_or(world, |old| old.intersection(world).unwrap_or(world))),
                 )
+            }
+            LayerKind::ClipRRect { .. }
+            | LayerKind::ClipOval { .. }
+            | LayerKind::ClipPath { .. } => {
+                // An empty path keeps the incoming clip: this dump never
+                // culls, it only narrows what children report.
+                let narrowed = clip_world_bounds(&layer.kind, world_transform).map(|world| {
+                    clip.map_or(world, |old| old.intersection(world).unwrap_or(world))
+                });
+                (world_transform, narrowed.or(clip))
             }
             LayerKind::Opacity { .. } => (world_transform, clip),
             LayerKind::Blur { .. } | LayerKind::DropShadow { .. } => (world_transform, clip),

@@ -1300,6 +1300,51 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   paint-only ordering test is replaced by the agreement test; the
   ledger is unchanged (no public options added).
 
+## W3 — Clip/opacity slice (same workstream, still open)
+
+- Found by tracing every option to raster output: `clip_behavior`
+  was retained but never read at paint, so `Clip::None` still
+  clipped and radius/oval/path geometry collapsed to a plain rect.
+  Worse, the single emission site wrote into the discarded transient
+  traversal, so widget clips never reached the flattened scene at
+  all. `Stack.clip_behavior` was documented ("clipping behavior for
+  children overflowing stack bounds") but consumed nowhere.
+- Fix at the responsible owners, reusing the scrolling clip
+  mechanism: new `LayerKind::ClipRRect/ClipOval/ClipPath` stages
+  beside `ClipRect` (local-space shapes, world resolution and
+  bounding-box culling at flatten, annotation/bounds/debug
+  coverage), a shared `clip_world_bounds` helper, and a `Clip`
+  layer attachment for clipping `Clip*`/`Stack` widgets with
+  `Clip::None` mapping back to direct rendering. Geometry flows
+  through `update_from_kind` (immediate, off the retained size) and
+  `update_layout_geometry` (size changes); the dead transient
+  emission is removed. No new registries, no per-frame rebuilds.
+- Invalidation narrowed at its owner: same-kind clip changes
+  (behavior, radius, path) and pure `Stack` behavior flips are
+  compositor-only instead of full layout+paint+semantics+hit-test;
+  cross-kind changes keep full invalidation so relayout refills
+  rebuilt layers. Diagnostics separate the phases in the tests
+  (`layouts`/`paints` deltas zero, `opacity_updates` moving).
+- Contracts established in rustdoc and pinned by tests rather than
+  assumed: `Opacity`/`FadeTransition` alpha (including zero) never
+  gates hit testing or semantic exposure — that is `Visibility`'s
+  job; clips bound raster output only, hits follow layout bounds
+  through the clip node, semantic bounds stay whole.
+- Regressions: 16 tests in
+  `crates/incular-widgets/tests/clip_opacity.rs` (9 fail on the
+  previous code: shaped clips, `None` handling, stack overflow,
+  toggle/radius invalidation, nested balance, transformed
+  overflow), plus `specs/clip_opacity_properties.json` (15 records
+  across the four clip widgets, `Opacity`, and `FadeTransition`)
+  validated by `tests/clip_opacity_ledger.rs` through the reused
+  validator with both discovery styles and one shared
+  builder-parity test for the four `TypedBuilder` clip widgets.
+- Known residuals, documented where they bind: shaped-clip hit
+  testing stays bounding-box (corners hit though pixels clip);
+  `RRect` radii are not rescaled under scale transforms; an empty
+  clip path culls its subtree; `Stack`'s remaining options
+  (alignment, fit, text direction) ledger with the layout family.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
