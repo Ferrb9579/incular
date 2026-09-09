@@ -24,3 +24,19 @@ keys include both window and pointer identity. Scale members explicitly opt
 into simultaneous compatibility, while tap, long-press, pan, and directional
 drag members remain exclusive and receive `GestureCallbacks::on_cancel` when
 they lose.
+
+## Focus-highlight notifications
+
+`FocusHighlightManager` commits modality changes before notifying listeners.
+Callbacks may read the manager, change strategy, or register/drop subscriptions
+without borrowing its internal state. Reentrant changes update the current mode
+immediately; notifications are delivered synchronously in commit order after the
+current event, not recursively. Event values describe committed transitions;
+queries return the latest state. Newly registered listeners start with a later
+commit, and dropping a subscription cancels even its queued notifications.
+
+Unchanged input/mode creates no notification. Pending delivery holds weak
+registrations and no persistent event history. Application transition sequences
+must converge. A callback panic propagates, leaves committed state intact and
+discards unfinished delivery; later changes remain usable. This contract concerns
+modality, not focus-scope selection transactions.

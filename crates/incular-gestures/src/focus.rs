@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 
 use incular_core::Rect;
@@ -226,9 +227,31 @@ pub enum FocusHighlightStrategy {
 
 struct HighlightModeState {
     strategy: FocusHighlightStrategy,
-    last_interaction_requires_traditional: Option<bool>,
+    last_input_mode: Option<FocusHighlightMode>,
     mode: FocusHighlightMode,
     observers: Vec<Weak<HighlightModeObserverEntry>>,
+    pending: VecDeque<HighlightNotification>,
+    dispatching: bool,
+}
+
+struct HighlightNotification {
+    mode: FocusHighlightMode,
+    observers: Vec<Weak<HighlightModeObserverEntry>>,
+}
+
+impl HighlightModeState {
+    fn commit_mode(&mut self, mode: FocusHighlightMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.observers
+            .retain(|observer| observer.strong_count() != 0);
+        self.pending.push_back(HighlightNotification {
+            mode,
+            observers: self.observers.clone(),
+        });
+    }
 }
 
 struct HighlightModeObserverEntry {
@@ -241,6 +264,16 @@ struct HighlightModeObserverEntry {
 /// The object is a cheap handle to the current UI thread's modality state.
 /// This mirrors Flutter's process-local `FocusManager` behavior while keeping
 /// the native platform event loop outside the gestures crate.
+///
+/// Changes commit before callbacks run, with no state borrow held during
+/// delivery. A callback may query or change this manager: nested changes commit
+/// immediately, but their notifications follow the current event in commit
+/// order. An event describes its transition; [`Self::mode`] always returns the
+/// latest committed state, which another callback may already have changed.
+/// Application-triggered sequences must converge.
+///
+/// A callback panic propagates without reverting committed state. Unfinished
+/// notifications are discarded, and later changes can dispatch normally.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FocusHighlightManager;
 
@@ -257,10 +290,27 @@ impl Drop for FocusHighlightSubscription {
 thread_local! {
     static HIGHLIGHT_MODE: RefCell<HighlightModeState> = const { RefCell::new(HighlightModeState {
             strategy: FocusHighlightStrategy::Automatic,
-            last_interaction_requires_traditional: None,
+            last_input_mode: None,
             mode: FocusHighlightMode::Traditional,
             observers: Vec::new(),
+            pending: VecDeque::new(),
+            dispatching: false,
         }) };
+}
+
+/// Releases dispatch ownership on return or unwind. Pending snapshots contain
+/// weak registrations, so aborting delivery cannot extend a callback's lifetime.
+struct HighlightDispatchGuard;
+
+impl Drop for HighlightDispatchGuard {
+    fn drop(&mut self) {
+        let abandoned = HIGHLIGHT_MODE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.dispatching = false;
+            std::mem::take(&mut state.pending)
+        });
+        drop(abandoned);
+    }
 }
 
 impl FocusHighlightManager {
@@ -280,44 +330,34 @@ impl FocusHighlightManager {
     }
 
     pub fn set_strategy(self, strategy: FocusHighlightStrategy) {
-        HIGHLIGHT_MODE.with(|state| {
-            let mut state = state.borrow_mut();
+        Self::update(|state| {
             if state.strategy == strategy {
                 return;
             }
             state.strategy = strategy;
             let mode = match strategy {
-                FocusHighlightStrategy::Automatic => state
-                    .last_interaction_requires_traditional
-                    .map_or(state.mode, |traditional| {
-                        if traditional {
-                            FocusHighlightMode::Touch
-                        } else {
-                            FocusHighlightMode::Traditional
-                        }
-                    }),
+                FocusHighlightStrategy::Automatic => state.last_input_mode.unwrap_or(state.mode),
                 FocusHighlightStrategy::AlwaysTouch => FocusHighlightMode::Touch,
                 FocusHighlightStrategy::AlwaysTraditional => FocusHighlightMode::Traditional,
             };
-            Self::set_mode_locked(&mut state, mode);
+            state.commit_mode(mode);
         });
     }
 
     /// Forces a mode, primarily for deterministic embedders and tests. Future
     /// automatic input updates may change it again.
     pub fn set_mode(self, mode: FocusHighlightMode) {
-        HIGHLIGHT_MODE.with(|state| Self::set_mode_locked(&mut state.borrow_mut(), mode));
+        Self::update(|state| state.commit_mode(mode));
     }
 
     /// Records keyboard input, which selects traditional highlights in
     /// automatic mode.
     pub fn note_keyboard_input(self) {
-        HIGHLIGHT_MODE.with(|state| {
-            let mut state = state.borrow_mut();
-            if state.last_interaction_requires_traditional != Some(false) {
-                state.last_interaction_requires_traditional = Some(false);
+        Self::update(|state| {
+            if state.last_input_mode != Some(FocusHighlightMode::Traditional) {
+                state.last_input_mode = Some(FocusHighlightMode::Traditional);
                 if state.strategy == FocusHighlightStrategy::Automatic {
-                    Self::set_mode_locked(&mut state, FocusHighlightMode::Traditional);
+                    state.commit_mode(FocusHighlightMode::Traditional);
                 }
             }
         });
@@ -335,17 +375,19 @@ impl FocusHighlightManager {
         if !requires_touch_highlights {
             return;
         }
-        HIGHLIGHT_MODE.with(|state| {
-            let mut state = state.borrow_mut();
-            if state.last_interaction_requires_traditional != Some(true) {
-                state.last_interaction_requires_traditional = Some(true);
+        Self::update(|state| {
+            if state.last_input_mode != Some(FocusHighlightMode::Touch) {
+                state.last_input_mode = Some(FocusHighlightMode::Touch);
                 if state.strategy == FocusHighlightStrategy::Automatic {
-                    Self::set_mode_locked(&mut state, FocusHighlightMode::Touch);
+                    state.commit_mode(FocusHighlightMode::Touch);
                 }
             }
         });
     }
 
+    /// Observes committed mode transitions in registration order. Dropping the
+    /// token cancels delivery, including an event already queued. Registration
+    /// during a callback starts with the next subsequently committed change.
     #[must_use]
     pub fn observe(
         self,
@@ -356,27 +398,41 @@ impl FocusHighlightManager {
             callback: Rc::new(callback),
         });
         HIGHLIGHT_MODE.with(|state| {
-            state.borrow_mut().observers.push(Rc::downgrade(&entry));
+            let mut state = state.borrow_mut();
+            state
+                .observers
+                .retain(|observer| observer.strong_count() != 0);
+            state.observers.push(Rc::downgrade(&entry));
         });
         FocusHighlightSubscription { entry }
     }
 
-    fn set_mode_locked(state: &mut HighlightModeState, mode: FocusHighlightMode) {
-        if state.mode == mode {
+    fn update(update: impl FnOnce(&mut HighlightModeState)) {
+        HIGHLIGHT_MODE.with(|state| update(&mut state.borrow_mut()));
+        let owns_dispatch = HIGHLIGHT_MODE.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.dispatching || state.pending.is_empty() {
+                return false;
+            }
+            state.dispatching = true;
+            true
+        });
+        if !owns_dispatch {
             return;
         }
-        state.mode = mode;
-        state
-            .observers
-            .retain(|observer| observer.strong_count() != 0);
-        let observers = state
-            .observers
-            .iter()
-            .filter_map(Weak::upgrade)
-            .collect::<Vec<_>>();
-        for observer in observers {
-            if observer.active.get() {
-                (observer.callback)(mode);
+
+        let _dispatch = HighlightDispatchGuard;
+        loop {
+            let next = HIGHLIGHT_MODE.with(|state| state.borrow_mut().pending.pop_front());
+            let Some(notification) = next else {
+                break;
+            };
+            for observer in notification.observers {
+                if let Some(observer) = observer.upgrade()
+                    && observer.active.get()
+                {
+                    (observer.callback)(notification.mode);
+                }
             }
         }
     }
