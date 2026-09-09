@@ -918,7 +918,17 @@ code, "missing" means absent with no compensating path.
   reconfiguration, inline recreation) drive host retry scheduling:
   recovered surfaces and timeouts re-request, while unconfigured/occluded
   surfaces wait for resize/unocclude (plus an explicit repaint on
-  `Occluded(false)`) instead of spinning full-frame work. Acquisition
+  `Occluded(false)`) instead of spinning full-frame work. Pacing is now
+  bounded and host-owned (`PresentationRetry`, one per normal/transient
+  window, no runtime/renderer retry state): the first retryable skip
+  retries immediately, then backoff runs 16/32/64/128ms capped at 250ms;
+  success and resize/unocclude recovery reset to idle, unconfigured and
+  occluded outcomes park dormant without deadlines, and new demand waits
+  for the armed deadline instead of bypassing it. The event loop
+  dispatches due retries, gates all demand/redraw paths on the same
+  component, and waits on the earliest armed deadline
+  (`ControlFlow::WaitUntil`, indefinite `Wait` when none); closing a
+  window drops its policy and cancels its retry. Acquisition
   routes backend results through one neutral classifier
   (`SurfaceAcquisitionStatus::of`/`disposition`, wgpu 30 semantics:
   suboptimal presents before reconfiguring, outdated/lost recover inline
@@ -930,9 +940,12 @@ code, "missing" means absent with no compensating path.
   values stay separate from wgpu error types; the runtime is untouched.
   Evidence: `incular-wgpu/tests/frame_outcomes.rs` (injected backend
   results through the real classifier, retry mapping, outcome accessors),
-  `incular-desktop/tests/frame_outcome_dispatch.rs` (host dispatch per
-  outcome through the real `present_window` mapping), and a runtime
-  presented/skipped accounting contract. Actual GPU presentation stays
+  `incular-desktop/tests/presentation_retry.rs` (8 tests driving the
+  production pacing component with a fake clock: exact backoff dispatch
+  times, reset on success, dormant parking with prompt recovery,
+  demand gating, earliest-deadline computation with window close, and
+  identical normal/transient pacing), and a runtime presented/skipped
+  accounting contract. Actual GPU presentation stays
   recorded as unverified. Same validation as above.
 - Remaining W2 work: two-window GPU churn tests. Shared
   source-font-byte budgeting stays separate and explicitly tracked

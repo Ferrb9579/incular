@@ -19,6 +19,7 @@ pub(crate) struct NativeAccessibilityState {
 pub(crate) struct NativeWindowState {
     pub(crate) id: IncularWindowId,
     pub(crate) renderer: WgpuRenderer,
+    pub(crate) retry: crate::presentation::PresentationRetry,
     pub(crate) metrics: WindowMetrics,
     pub(crate) input: WindowInputState,
     pub(crate) native_cursor: NativeCursorCoordinator,

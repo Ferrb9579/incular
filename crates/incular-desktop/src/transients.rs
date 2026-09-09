@@ -60,6 +60,7 @@ pub(super) struct NativeTransientState {
     key: TransientHostKey,
     snapshot: TransientSurfaceSnapshot,
     renderer: WgpuRenderer,
+    retry: crate::presentation::PresentationRetry,
     metrics: WindowMetrics,
     input: WindowInputState,
     native_cursor: NativeCursorCoordinator,
@@ -71,6 +72,24 @@ pub(super) struct NativeTransientState {
     /// The renderer also owns this window through its surface target. Keeping
     /// the host reference last preserves renderer-before-window teardown.
     window: Arc<Window>,
+}
+
+impl NativeTransientState {
+    /// Whether a paced retry is owed now, for the event loop's deadline
+    /// control. Same rules as normal windows.
+    pub(super) fn retry_due(&self, now: std::time::Instant) -> bool {
+        self.retry.retry_due(now)
+    }
+
+    /// Armed retry deadline, if any, for the event loop's wait control.
+    pub(super) fn retry_at(&self) -> Option<std::time::Instant> {
+        self.retry.retry_at()
+    }
+
+    /// Dispatches an owed paced retry redraw.
+    pub(super) fn request_retry_redraw(&self) {
+        self.window.request_redraw();
+    }
 }
 
 impl TransientContext<'_> {
@@ -420,6 +439,7 @@ impl TransientContext<'_> {
                 snapshot,
                 window,
                 renderer,
+                retry: crate::presentation::PresentationRetry::new(),
                 metrics,
                 input: WindowInputState::default(),
                 native_cursor: NativeCursorCoordinator::default(),
@@ -568,11 +588,12 @@ impl TransientContext<'_> {
             .render(&state.display_list, state.metrics.scale_factor)
         {
             Ok(outcome) => {
-                let dispatch = crate::dispatch_frame_outcome(&outcome);
-                if !dispatch.record_presented && dispatch.request_retry {
-                    state.window.request_redraw();
-                }
-                dispatch.record_presented
+                // Same pacing as normal windows: skips arm the transient's
+                // own deadline instead of requesting an immediate redraw.
+                state
+                    .retry
+                    .note_outcome(&outcome, std::time::Instant::now());
+                outcome.presented()
             }
             Err(RendererError::OutOfMemory) => {
                 eprintln!("Incular transient renderer stopped: out of GPU memory");
@@ -608,6 +629,11 @@ impl TransientContext<'_> {
             if state.snapshot.content_rect != state.native_rect {
                 return;
             }
+            if !state.retry.attempt_due(std::time::Instant::now()) {
+                // Same pacing as normal windows: backoff and dormancy gate
+                // every redraw path, with the armed deadline re-firing.
+                return;
+            }
             if state.requires_opaque_surface_base
                 && !state
                     .display_list
@@ -624,11 +650,10 @@ impl TransientContext<'_> {
                     .render(&state.display_list, state.metrics.scale_factor)
                 {
                     Ok(outcome) => {
-                        let dispatch = crate::dispatch_frame_outcome(&outcome);
-                        if !dispatch.record_presented && dispatch.request_retry {
-                            state.window.request_redraw();
-                        }
-                        if dispatch.record_presented && !state.visible {
+                        state
+                            .retry
+                            .note_outcome(&outcome, std::time::Instant::now());
+                        if outcome.presented() && !state.visible {
                             match self.platform_services.show_transient(
                                 system,
                                 &state.window,

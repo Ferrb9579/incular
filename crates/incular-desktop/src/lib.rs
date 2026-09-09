@@ -13,7 +13,7 @@ mod platform_menus;
 mod platform_services;
 mod pointer;
 mod presentation;
-pub use presentation::{FrameHostDispatch, dispatch_frame_outcome};
+pub use presentation::{PresentationRetry, earliest_retry_after};
 mod window_host;
 pub mod winit_adapter;
 use input::{InputKind, WindowInputState};
@@ -829,6 +829,7 @@ impl DesktopHost {
                 id,
                 window,
                 renderer,
+                retry: crate::presentation::PresentationRetry::new(),
                 metrics,
                 input: WindowInputState::default(),
                 native_cursor: NativeCursorCoordinator::default(),
@@ -1088,6 +1089,11 @@ impl DesktopHost {
 
     fn request_frame_if_needed(&mut self, id: IncularWindowId) {
         self.apply_text_input_commands(id);
+        // Ordinary demand funnels through the same retry gate as paced
+        // retries: demand during backoff waits for the armed deadline
+        // instead of bypassing it, and dormant windows wait for recovery
+        // events. The armed deadline (or the recovery repaint) still
+        // carries the demand promptly.
         if self.application.frame_requested(id)
             && let Some(native_id) = self.native_ids.get(&id).copied()
             && let Some(state) = self.windows.get(&native_id)
@@ -1096,6 +1102,7 @@ impl DesktopHost {
                 .window
                 .is_minimized()
                 .is_none_or(|minimized| !minimized)
+            && state.retry.attempt_due(std::time::Instant::now())
         {
             state.window.request_redraw();
             self.application.note_frame_requested(id);
@@ -1127,6 +1134,9 @@ impl DesktopHost {
                 ));
         }
         if !size.is_zero() {
+            // A usable size makes attempts useful again: clear any
+            // backoff or dormancy so recovery is prompt.
+            state.retry.note_recovered();
             state.window.request_redraw();
             self.application.note_frame_requested(id);
         }
@@ -1174,6 +1184,17 @@ impl DesktopHost {
             // suppressed. The first unoccluded/restored event-loop turn will
             // request one frame containing every retained invalidation queued
             // while the window could not contribute visible pixels.
+            return;
+        }
+        if self
+            .windows
+            .get(&native_id)
+            .is_some_and(|state| !state.retry.attempt_due(std::time::Instant::now()))
+        {
+            // Paced backoff or dormant parking: demand flags stay set and
+            // the armed deadline (or a recovery event) re-fires the attempt.
+            // This gate covers every RedrawRequested path, so ordinary
+            // demand cannot bypass the retry pacing and recreate a loop.
             return;
         }
         let Some(metrics) = self.windows.get(&native_id).map(|state| state.metrics) else {
@@ -1997,10 +2018,12 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
                 {
                     self.publish_window_environment(native_id);
                 }
-                if !occluded && let Some(state) = self.windows.get(&native_id) {
+                if !occluded && let Some(state) = self.windows.get_mut(&native_id) {
                     // Visibility restored: the host never schedules occluded
-                    // windows (skipped occlusion attempts request no retry),
-                    // so repaint explicitly instead of waiting for demand.
+                    // windows (occlusion parks without deadlines), so clear
+                    // any parking/backoff and repaint explicitly instead of
+                    // waiting for demand.
+                    state.retry.note_recovered();
                     state.window.request_redraw();
                 }
             }
@@ -2071,11 +2094,50 @@ impl ApplicationHandler<RuntimeWakeEvent> for DesktopHost {
         self.process_pending_global_shortcuts();
         self.process_pending_application_shell();
         self.start_pending_file_dialogs();
+        let now = std::time::Instant::now();
+        // Dispatch paced retries whose deadlines passed. Visible normal
+        // windows only — occluded or minimized windows wait for their
+        // restore events instead; transients follow the same pacing
+        // without a visibility gate (their hosts are short-lived popups
+        // driven by the owner, and backoff still bounds them).
+        for state in self.windows.values() {
+            let visible = !state.environment.is_occluded()
+                && state
+                    .window
+                    .is_minimized()
+                    .is_none_or(|minimized| !minimized);
+            if visible && state.retry.retry_due(now) {
+                state.window.request_redraw();
+            }
+        }
+        for state in self.transient_windows.values() {
+            if state.retry_due(now) {
+                state.request_retry_redraw();
+            }
+        }
         for id in self.application.active_window_ids() {
             self.request_frame_if_needed(id);
         }
         self.reclaim_stale_shared_images();
-        target.set_control_flow(winit::event_loop::ControlFlow::Wait);
+        // Pace the loop by the earliest armed retry deadline instead of
+        // polling: with no deadlines the loop waits indefinitely, and
+        // closed windows simply stop contributing.
+        let deadline = crate::presentation::earliest_retry_after(
+            self.windows
+                .values()
+                .map(|state| state.retry.retry_at())
+                .chain(
+                    self.transient_windows
+                        .values()
+                        .map(|state| state.retry_at()),
+                ),
+        );
+        match deadline {
+            Some(deadline) => {
+                target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(deadline))
+            }
+            None => target.set_control_flow(winit::event_loop::ControlFlow::Wait),
+        }
     }
 
     fn user_event(&mut self, target: &ActiveEventLoop, event: RuntimeWakeEvent) {

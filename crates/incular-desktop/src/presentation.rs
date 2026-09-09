@@ -4,36 +4,108 @@ use incular_rendering::DisplayList;
 use incular_runtime::{Application, GpuSample, RenderFrameMetrics, Screenshot};
 use incular_wgpu::{FrameOutcome, RendererError};
 
-/// Settled host actions for one frame outcome: the real mapping
-/// `present_window` applies, factored out so headless tests inject every
-/// outcome through it. Presented frames record a presentation and settle
-/// pending simulator waiters; skips record no presentation, keep waiters
-/// eligible for a later attempt, and schedule a retry only when another
-/// attempt could present (recovered surfaces and timeouts — never
-/// unconfigured or occluded surfaces, which wait for resize/unocclude
-/// instead of spinning full-frame work).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameHostDispatch {
-    pub record_presented: bool,
-    pub request_retry: bool,
-    pub settle_waiters: bool,
+/// Delay before the next attempt after this many consecutive retryable
+/// skips. The first retry is immediate: a single transient timeout or an
+/// inline surface recovery usually succeeds at once. Further consecutive
+/// failures back off exponentially to a quarter-second cap, so repeated
+/// failures stay responsive without spinning full-frame work.
+fn retry_delay(consecutive_skips: u32) -> std::time::Duration {
+    match consecutive_skips {
+        0 | 1 => std::time::Duration::ZERO,
+        2 => std::time::Duration::from_millis(16),
+        3 => std::time::Duration::from_millis(32),
+        4 => std::time::Duration::from_millis(64),
+        5 => std::time::Duration::from_millis(128),
+        _ => std::time::Duration::from_millis(250),
+    }
 }
 
-/// Host dispatch for a settled frame outcome. See [`FrameHostDispatch`].
-#[must_use]
-pub fn dispatch_frame_outcome(outcome: &FrameOutcome) -> FrameHostDispatch {
-    match outcome {
-        FrameOutcome::Presented(_) => FrameHostDispatch {
-            record_presented: true,
-            request_retry: false,
-            settle_waiters: true,
-        },
-        FrameOutcome::Skipped(reason) => FrameHostDispatch {
-            record_presented: false,
-            request_retry: reason.should_request_retry(),
-            settle_waiters: false,
-        },
+/// Host-owned pacing for presentation retries: one per window (normal and
+/// transient alike), driven by settled frame outcomes and explicit clock
+/// readings. The event loop owns deadlines and window lifetime; the
+/// runtime and renderer hold no retry state. All decisions are pure over
+/// the injected `now`, so headless tests drive exact dispatch times with
+/// a fake clock.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PresentationRetry {
+    consecutive_skips: u32,
+    retry_at: Option<std::time::Instant>,
+    dormant: bool,
+}
+
+impl PresentationRetry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
     }
+
+    /// Settles one frame outcome at `now`. Presentation resets to idle;
+    /// retryable skips (timeouts, inline recoveries) arm a deadline —
+    /// immediate for the first, then backing off; dormant reasons
+    /// (unconfigured, occluded) park without deadlines until an explicit
+    /// recovery event. Skips never settle waiters: pending work stays
+    /// eligible for the armed attempt.
+    pub fn note_outcome(&mut self, outcome: &FrameOutcome, now: std::time::Instant) {
+        match outcome {
+            FrameOutcome::Presented(_) => {
+                *self = Self::new();
+            }
+            FrameOutcome::Skipped(reason) => {
+                if reason.should_request_retry() {
+                    self.dormant = false;
+                    self.consecutive_skips = self.consecutive_skips.saturating_add(1);
+                    self.retry_at = Some(now + retry_delay(self.consecutive_skips));
+                } else {
+                    self.consecutive_skips = 0;
+                    self.retry_at = None;
+                    self.dormant = true;
+                }
+            }
+        }
+    }
+
+    /// Recovery events that make attempts useful again — non-zero resize,
+    /// unocclusion: dormant or backed-off windows become immediately
+    /// eligible. New application demand deliberately does not reset: gated
+    /// demand waits for the armed deadline instead of bypassing it.
+    pub fn note_recovered(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Armed retry deadline, if any. `None` means idle (demand decides) or
+    /// dormant (recovery events decide).
+    #[must_use]
+    pub const fn retry_at(&self) -> Option<std::time::Instant> {
+        self.retry_at
+    }
+
+    /// Whether an attempt may run now: idle always, armed deadlines once
+    /// due, never while dormant. Gates both demand scheduling and redraw
+    /// handling, so no path can recreate an unrestricted cycle.
+    #[must_use]
+    pub fn attempt_due(&self, now: std::time::Instant) -> bool {
+        !self.dormant && self.retry_at.is_none_or(|deadline| now >= deadline)
+    }
+
+    /// Whether a paced retry is owed now: an armed deadline has passed.
+    /// Unlike [`Self::attempt_due`], idle windows report false — the host
+    /// dispatches redraws from this, so idle windows are never prodded.
+    #[must_use]
+    pub fn retry_due(&self, now: std::time::Instant) -> bool {
+        !self.dormant && self.retry_at.is_some_and(|deadline| now >= deadline)
+    }
+}
+
+/// Earliest armed deadline across live windows, normal and transient:
+/// pass each window's [`PresentationRetry::retry_at`]. `None` means no
+/// window owes a paced retry and the loop may wait indefinitely. Closing
+/// a window drops its policy with it, which simply stops contributing —
+/// pending retries cancel without further action.
+#[must_use]
+pub fn earliest_retry_after(
+    deadlines: impl IntoIterator<Item = Option<std::time::Instant>>,
+) -> Option<std::time::Instant> {
+    deadlines.into_iter().flatten().min()
 }
 
 pub(crate) fn present_window(
@@ -46,20 +118,25 @@ pub(crate) fn present_window(
     let id = state.id;
     match state.renderer.render(list, state.metrics.scale_factor) {
         Ok(outcome) => {
-            let dispatch = dispatch_frame_outcome(&outcome);
-            application.note_presented(id, dispatch.record_presented);
+            // Settle pacing first: skips arm a deadline (or park dormant)
+            // instead of requesting an immediate redraw, so no path can
+            // spin an unrestricted cycle. The armed deadline fires from the
+            // event loop's wait control.
+            state
+                .retry
+                .note_outcome(&outcome, std::time::Instant::now());
             let stats = match outcome {
-                FrameOutcome::Presented(stats) => stats,
+                FrameOutcome::Presented(stats) => {
+                    application.note_presented(id, true);
+                    stats
+                }
                 FrameOutcome::Skipped(_) => {
                     // Skipped attempts record no presentation and no frame
                     // metrics beyond an empty sample; simulator waiters stay
-                    // pending for a later attempt, and only retryable
-                    // reasons schedule one.
+                    // pending for the armed attempt.
+                    application.note_presented(id, false);
                     application.note_render_metrics(id, RenderFrameMetrics::default(), None);
                     application.complete_simulation_frame(id, false, None);
-                    if dispatch.request_retry {
-                        state.window.request_redraw();
-                    }
                     return;
                 }
             };
