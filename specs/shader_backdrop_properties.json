@@ -1,0 +1,641 @@
+{
+  "schema_version": 2,
+  "family": "ShaderBackdrop",
+  "scope": "ShaderCallback, ShaderMask, and BackdropFilter options with their retained resolution and stage lifecycle in incular-widgets and incular-rendering. GPU pixel execution belongs to the native backend and is out of scope; this ledger covers the renderer-neutral contracts only. It does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "ShaderCallback",
+      "option": "callback",
+      "default": "required, no default",
+      "validation": "Rc-held Fn(Rect) -> Shader; equality is allocation identity",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "method",
+        "owner": "ShaderCallback",
+        "name": "new"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree.rs",
+        "kind": "variant",
+        "owner": "RenderKind",
+        "name": "ShaderMask"
+      },
+      "comparison": {
+        "prose": "A fresh closure re-resolves even when it returns an equal brush; the identical allocation never does.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/shader_mask.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_shader_mask_kind"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_shader_mask"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "shader_callback_runs_once_with_local_bounds"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "identical_reapply_never_reruns_callback"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "new_callback_identity_reruns_despite_equal_output"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ShaderMask",
+      "option": "shader",
+      "default": "required, no default",
+      "validation": "Into<ShaderCallback>; runs with local bounds at resolve points only, never per frame",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ShaderMask"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ShaderMask"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only; resolution itself runs on the update path and on repaints.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/shader_mask.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_shader_mask_kind"
+          }
+        ],
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_shader_mask"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "semantic_bounds"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "shader_callback_runs_once_with_local_bounds"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "child_resize_reruns_callback_with_new_bounds"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "child_replacement_keeps_callback_and_layer"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "zero_size_mask_culls_raster_but_keeps_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ShaderMask",
+      "option": "blend_mode",
+      "default": "Modulate",
+      "validation": "Copy BlendMode; refreshed on the tick without re-running the callback",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ShaderMask"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ShaderMask"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like the shader itself.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_shader_mask_blend"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "blend_change_updates_layer_without_layout_or_paint"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ShaderMask",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ShaderMask"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "ShaderMask"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path; swapping a same-size child re-resolves nothing.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "child_replacement_keeps_callback_and_layer"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "mask_under_clip_and_transform_positions_together"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "blur",
+      "default": "required (new); normalized Gaussian sigmas",
+      "validation": "GaussianBlur by value; zero sigma passes through at flatten",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "BackdropFilter"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only; sigma reaches the layer on the tick and on updates.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_backdrop_filter"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_compositor"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_filter_bounds_child_with_prior_backdrop"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_disabled_and_zero_sigma_pass_through"
+        },
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_updates_are_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "sigma",
+      "default": "required (blur constructor)",
+      "validation": "uniform f32 sigma; same normalization as blur",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "method",
+        "owner": "BackdropFilter",
+        "name": "blur"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Constructor alias for a uniform blur; retained as GaussianBlur like new.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_filter_bounds_child_with_prior_backdrop"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "sigma_x",
+      "default": "required (asymmetric constructor)",
+      "validation": "horizontal f32 sigma; same normalization as blur",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "method",
+        "owner": "BackdropFilter",
+        "name": "asymmetric"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Constructor alias for split sigmas; retained as GaussianBlur like new.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_updates_are_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "sigma_y",
+      "default": "required (asymmetric constructor)",
+      "validation": "vertical f32 sigma; same normalization as blur",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "method",
+        "owner": "BackdropFilter",
+        "name": "asymmetric"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Constructor alias for split sigmas; retained as GaussianBlur like new.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_updates_are_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "blend_mode",
+      "default": "SrcOver",
+      "validation": "Copy BlendMode",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "BackdropFilter"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only like blur.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_backdrop_filter"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_updates_are_compositor_only"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "enabled",
+      "default": true,
+      "validation": "bool setter; false flattens children directly with no stage",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "BackdropFilter"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Same-kind changes are compositor-only; the child stays mounted either way.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "flatten"
+          },
+          {
+            "path": "crates/incular-rendering/src/compositor.rs",
+            "kind": "method",
+            "owner": "LayerTree",
+            "name": "update_backdrop_filter"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_disabled_and_zero_sigma_pass_through"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "BackdropFilter",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "required Into<Widget> conversion parameter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/compositing.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "BackdropFilter"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "BackdropFilter"
+      },
+      "comparison": {
+        "prose": "Child identity follows the ordinary child reconciliation path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/effects.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_effect_kind"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "reconcile_children"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/shader_backdrop.rs",
+          "name": "backdrop_child_identity_and_identical_reapply"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

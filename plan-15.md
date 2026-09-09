@@ -1345,6 +1345,50 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   clip path culls its subtree; `Stack`'s remaining options
   (alignment, fit, text direction) ledger with the layout family.
 
+## W3 — ShaderMask/BackdropFilter slice (same workstream, still open)
+
+- Audited, no implementation change: the lifecycle proved sound.
+  The callback runs at resolve points only — first paint, node
+  repaints including child resize (which relayouts and repaints the
+  mask node upward through layout propagation), and mask
+  configuration changes on the update path — never per frame
+  (identical reapply resolves nothing). `mask_size`/`mask_transform`
+  snapshot resolve time while stage bounds recompute live every
+  flatten; blend/backdrop params refresh on the compositor tick.
+  Same-kind changes stay compositor-only on the existing family
+  rule; no stale geometry and no excessive invalidation was
+  demonstrated, so nothing was narrowed.
+- Contracts defined in rustdoc and pinned by renderer-neutral
+  command assertions: callbacks receive local bounds (zero origin,
+  node size); callback equality is allocation identity, not output
+  equality; placement follows the live stack while the recorded
+  transform stays a resolve-time snapshot (both halves pinned, so
+  the boundary cannot drift); the backdrop is whatever painted
+  before the stage in paint order with bounds covering the child
+  only; disabled and zero-sigma filters pass children through with
+  no stage; an empty mask culls raster but keeps semantics,
+  mirroring clips; hits and semantics pass through both stages
+  untouched. GPU pixel execution (stencil masking, backdrop
+  sampling) belongs to the native backend, which has no in-repo
+  coverage to extend — the neutral contracts above are the
+  deterministic boundary, and pixel fidelity stays an explicit
+  unresolved item for backend work.
+- Regressions: 15 tests in
+  `crates/incular-widgets/tests/shader_backdrop.rs` (callback
+  timing/identity/bounds, resize, child swap, blend-only updates,
+  ancestor-move snapshot boundary, clip+transform nesting with
+  hits and semantics, empty-masked semantics, backdrop ordering
+  and bounds with hits and semantics, disable/zero-sigma
+  passthrough with phase counters, constructor aliases, identity
+  stability), plus `specs/shader_backdrop_properties.json` (11
+  records: callback, mask, and all seven backdrop options)
+  validated by `tests/shader_backdrop_ledger.rs` through the
+  reused validator with a constructor-parameter fixture negative.
+- Residual noted, not enshrined: a blend-only mask change
+  re-invokes the callback once on the update path (same output, no
+  extra phases). Untouched as harmless; revisit only with a real
+  cost case.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

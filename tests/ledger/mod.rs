@@ -55,6 +55,10 @@ const FIXED_PHASES: &[&str] = &[
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiscoveryStyle {
     /// Option per setter name (minus `new`) plus `new` parameter names.
+    /// Each ledger test binary compiles this module separately, so
+    /// binaries without a fluent-builder family legitimately never
+    /// construct this variant.
+    #[allow(dead_code)]
     MethodNames,
     /// Option per parameter name of every `pub` `Self`-returning method.
     /// Only exercised by families with constructor-style APIs; each ledger

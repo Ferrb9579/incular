@@ -11,10 +11,14 @@ use crate::tree::{Widget, WidgetKind};
 
 /// The renderer-neutral form of Flutter's `ShaderCallback`.
 ///
-/// A callback is evaluated once for a retained paint pass with the widget's
-/// local bounds. Keeping the callback behind an identity-bearing value lets
-/// reconciliation distinguish a changed shader source without putting a
-/// backend shader object into the widget tree.
+/// A callback runs at resolve time with the widget's local bounds (zero
+/// origin, node size): on first paint, on any repaint (including child
+/// resize, which relayouts and repaints the mask node), and on mask
+/// configuration changes. It never runs per frame: rebuilding the
+/// identical mask resolves nothing. Keeping the callback behind an
+/// identity-bearing value lets reconciliation distinguish a changed
+/// shader source without putting a backend shader object into the
+/// widget tree.
 #[derive(Clone)]
 pub struct ShaderCallback(Rc<dyn Fn(Rect) -> Shader>);
 
@@ -53,6 +57,11 @@ impl PartialEq for ShaderCallback {
 
 /// Applies a callback-generated shader to a child using Flutter's default
 /// `BlendMode::modulate` behavior.
+///
+/// The recorded mask size and transform snapshot resolve time; placement
+/// of resolved content follows the live transform stack every flatten,
+/// while the stage bounds recompute live. Hit testing and semantics pass
+/// through the mask untouched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShaderMask {
     shader: ShaderCallback,
@@ -93,8 +102,12 @@ impl From<ShaderMask> for Widget {
     }
 }
 
-/// Filters the already-painted backdrop behind a child. The filter is
-/// disabled without removing the child from layout or paint order.
+/// Filters the already-painted backdrop behind a child: the backdrop is
+/// whatever the flattened scene painted before the stage in paint order,
+/// and the recorded bounds cover the child only. The filter is disabled
+/// without removing the child from layout or paint order, and zero sigma
+/// passes through identically. Hit testing and semantics pass through
+/// the filter untouched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackdropFilter {
     blur: GaussianBlur,
