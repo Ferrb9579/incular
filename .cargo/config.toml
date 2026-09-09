@@ -10,7 +10,7 @@
 # several GiB for the facade and renderer crates, so do not scale jobs with the
 # host CPU count.
 jobs = 4
-incremental = false
+incremental = true
 
 [env]
 CARGO_INCREMENTAL = "0"
@@ -22,7 +22,7 @@ RUST_TEST_THREADS = "1"
 # Bound compilation/linking; RUST_TEST_THREADS above bounds test execution.
 # Keeping harness arguments out of the alias lets callers append Cargo options
 # such as --all-features without accidentally passing them to libtest.
-test-constrained = "test --workspace --jobs 16"
+test-constrained = "test --workspace --jobs 12"
 # Escape hatch for unusually memory-heavy compiler or linker regressions. This
 # retains the normal full-debug test profile while allowing only one rustc.
 test-sequential = "test --workspace --jobs 1"
