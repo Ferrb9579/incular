@@ -959,10 +959,41 @@ code, "missing" means absent with no compensating path.
   windows share the scheduling contract), and a runtime presented/skipped
   accounting contract. Actual GPU presentation stays
   recorded as unverified. Same validation as above.
-- Remaining W2 work: two-window GPU churn tests. Shared
-  source-font-byte budgeting stays separate and explicitly tracked
-  (unbounded `font_handles` map noted above — app-owned `Arc` retention,
-  not cache ownership; layouts already bounded by count).
+- W2 two-window GPU churn (live, opt-in): `incular-desktop/tests/
+  two_window_resource_churn.rs` (harness=false, runs only under
+  `INCULAR_DESKTOP_LIVE_TESTS=1`, fails on any init/presentation error,
+  bounded 180s worker completion) drives two real windows sharing one
+  GPU context through production acquisition, retirement, host
+  maintenance, and presentation paths. Window A renders fixed shared
+  content (image, gradient, text) then idles; window B starts with the
+  same shared handles, then churns 12 epochs of 24 distinct images +
+  24 distinct gradients + new text sizes without touching them — 288
+  admissions per family past the default 256-entry shared budgets, so
+  A's entries evict cold while idle maintenance reclaims. A resumes
+  pixel-identical (proving eviction, reclamation, and re-resolution
+  stayed correct on the device; stale images, gradients, or atlas
+  contents would corrupt the screenshots, asserted via alignment-free
+  region scans with opaque colors and stable interior samples); A closes
+  while B keeps rendering, then B closes and the loop exits. Verified
+  live on Windows (AMD Radeon 610M, wgpu 30 default backend selection):
+  all 12 epochs presented, resume identical, survivor sane, exit 0.
+  Residency counts, registry identities, and page-budget
+  tightening/protection/release stay asserted headlessly against the
+  production policy components (existing image/gradient/glyph suites —
+  the live worker cannot reach them by design, and no duplicate cache
+  simulation was substituted); no physical GPU reclamation is claimed
+  from handle counts. One `incular-image` dev-dependency was added for
+  raw test handles (dev-deps are excluded from the reviewed boundary).
+  Test-only scaffolding found while running: the worker now closes both
+  windows unconditionally via panic-caught teardown (a failing worker
+  previously stranded open windows and hung the loop), and the fixed
+  shared image is actually red (an all-white fixture silently passed
+  nowhere — it failed loudly once asserted).
+- Remaining W2 work: none open — W2 acceptance is the live run above
+  plus the cited headless suites. Shared source-font-byte budgeting
+  stays separate and explicitly tracked (unbounded `font_handles` map
+  noted above — app-owned `Arc` retention, not cache ownership; layouts
+  already bounded by count).
 
 Exit: memory stabilizes under churn within the documented budget plus live/in-flight
 allowance; counters report actual shared residency; failure reasons reach the host.

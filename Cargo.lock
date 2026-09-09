@@ -2055,6 +2055,7 @@ dependencies = [
  "incular-core",
  "incular-devtools",
  "incular-devtools-protocol",
+ "incular-image",
  "incular-platform",
  "incular-rendering",
  "incular-runtime",

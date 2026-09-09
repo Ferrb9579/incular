@@ -42,6 +42,10 @@ url = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Live GPU churn regression builds raw image handles; dev-dependencies are
+# excluded from the reviewed dependency boundary so integration tests may
+# compose layers.
+incular-image = { workspace = true }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 native-dialog = { workspace = true }
@@ -56,6 +60,11 @@ devtools = ["dep:incular-devtools", "dep:incular-devtools-protocol", "incular-ru
 [[test]]
 name = "in_place_resize"
 path = "tests/in_place_resize.rs"
+harness = false
+
+[[test]]
+name = "two_window_resource_churn"
+path = "tests/two_window_resource_churn.rs"
 harness = false
 
 [[test]]
