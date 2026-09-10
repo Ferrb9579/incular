@@ -1669,6 +1669,45 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   actions, IME preedit/commit gating, cut/paste gating), and the
   reentrancy case in `crates/incular-text/tests/editing.rs`.
 
+## W3 — Pointer blocking and focus wrappers (same workstream, still open)
+
+- Pointer flags are element state, never render state: both hit
+  paths read the live element configuration, so a mounted flag flip
+  takes effect on rebuild alone with no re-layout. Blocking implies
+  no semantic removal; both subtrees still collect semantics.
+  `AbsorbPointer` additionally hardens the window-chrome dismissal
+  walk. `SliverIgnorePointer` delegates from the scrolling crate and
+  stays outside this family.
+- `Focus` without node, autofocus, or refusal passes its child
+  through with no wrapper element; refusal excludes the element from
+  traversal and autofocus advertisement. Node replacement detaches
+  tree resolution while the old node's local flag is untouched;
+  removing a focused child clears resolution and stale-id mirroring
+  is a no-op. Scope autofocus resolves to the first focusable
+  descendant. Listener callbacks compare by `Rc` pointer, so
+  replacement swaps handlers and identical reapplication bails out.
+- Found gap, behavior unchanged: `KeyboardListener.include_semantics`
+  is stored and compared but no semantic-tree reader consumes it, so
+  toggling leaves collected semantics byte-identical. The ledger
+  records implemented storage with an explicitly documented missing
+  reader instead of claiming semantic behavior.
+- Adjacent finding while testing: sibling roots share no semantic
+  parent, so the debug dump follows one root; multi-root assertions
+  go through node handles, not dump text.
+- Evidence: 19 tree tests in
+  `crates/incular-widgets/tests/pointer_focus_wrappers.rs`
+  (Ignore/Absorb overlap, disabled flags, layout-free flag change,
+  semantics retention, Focus pass-through/refusal/replacement/
+  removal, scope autofocus and all three traversal policies,
+  listener replacement/bailout/alias/autofocus-needs-node/
+  include_semantics reader absence/typed shortcuts/node alias,
+  neighbor-rebuild preservation), 2 mount tests in
+  `crates/incular-runtime/tests/focus_mount.rs`, plus
+  `specs/pointer_blocking_properties.json` (4 options) and
+  `specs/focus_wrappers_properties.json` (21 options) validated by
+  `tests/pointer_blocking_ledger.rs` and
+  `tests/focus_wrappers_ledger.rs`.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

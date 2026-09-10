@@ -1,0 +1,316 @@
+{
+  "schema_version": 2,
+  "family": "PointerBlocking",
+  "scope": "Public IgnorePointer/AbsorbPointer options and their retained consumers in incular-widgets. SliverIgnorePointer delegates to IgnorePointer from the scrolling crate and is not inventoried here. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "IgnorePointer",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim; no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/gestures.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IgnorePointer"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IgnorePointer"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; the wrapper lowers to a child-preserving RenderKind.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/gestures.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IgnorePointer"
+          }
+        ],
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "disabled_pointer_flags_restore_child_hits"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "mounted_pointer_flag_change_applies_without_layout"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IgnorePointer",
+      "option": "ignoring",
+      "default": true,
+      "validation": "bool setter, no normalization; both hit paths read the live element configuration, so toggling needs a rebuild but no re-layout and no render invalidation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/gestures.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IgnorePointer"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IgnorePointer"
+      },
+      "comparison": {
+        "prose": "Ignoring is element state, not render state: the flag never reaches RenderKind, so RenderKind equality cannot observe it and hit behavior flips on rebuild alone. Pointer blocking implies no semantic removal; the subtree still collects semantics.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "ignore_pointer_passes_through_to_sibling_behind"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "disabled_pointer_flags_restore_child_hits"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "mounted_pointer_flag_change_applies_without_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "pointer_wrappers_keep_subtree_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AbsorbPointer",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim; no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/gestures.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AbsorbPointer"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "AbsorbPointer"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; the wrapper lowers to a child-preserving RenderKind.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/gestures.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AbsorbPointer"
+          }
+        ],
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "disabled_pointer_flags_restore_child_hits"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "mounted_pointer_flag_change_applies_without_layout"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AbsorbPointer",
+      "option": "absorbing",
+      "default": true,
+      "validation": "bool setter, no normalization; both hit paths read the live element configuration, so toggling needs a rebuild but no re-layout and no render invalidation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/gestures.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AbsorbPointer"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "AbsorbPointer"
+      },
+      "comparison": {
+        "prose": "Absorbing is element state, not render state: the raw path reports the wrapper itself with sibling blocking, the render path returns the wrapper id before descending, and the window-chrome dismissal walk treats an absorbing wrapper as opaque. Pointer blocking implies no semantic removal.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "function",
+            "name": "window_chrome_blocks_at"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_raw_hit_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test_render"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "function",
+            "name": "window_chrome_blocks_at"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "absorb_pointer_blocks_sibling_behind"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "disabled_pointer_flags_restore_child_hits"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "mounted_pointer_flag_change_applies_without_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
+          "name": "pointer_wrappers_keep_subtree_semantics"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}
