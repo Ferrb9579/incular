@@ -1425,6 +1425,49 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   extra phases). Untouched as harmless; revisit only with a real
   cost case.
 
+## W3 — Effect backend honesty (same workstream, still open)
+
+- Traced the skip: the WGPU lowering arm for both stages recursed
+  into children and extended batches, drawing content unaffected.
+  Inspected the offscreen infrastructure first (layer-keyed target
+  pool and cache, Filtered/Shadow/Blend batches, fixed-function
+  Porter-Duff pipelines plus a blend shader). Both effects need
+  larger work on top of it, so neither was rushed:
+  - ShaderMask needs a masked offscreen composite — the child
+    target composited through the brush pattern with the blend
+    mode. Missing: a mask-composite shader and pipeline plus
+    brush-parameterized composite bind groups and cache keys.
+  - BackdropFilter needs backdrop capture — sampling the
+    already-painted destination with invalidation keyed to
+    backdrop content, which no cache key covers, plus
+    pass-splitting to sample the active target.
+- Explicit outcome instead of silent passthrough: lowering now
+  fails the frame with `RendererError::UnsupportedShaderMask` /
+  `UnsupportedBackdropFilter` (frame errors are logged, never
+  fatal to the host). Supported passthroughs keep the direct path:
+  disabled and zero-sigma backdrop filters (matching the neutral
+  contract), and stages under fully-clipped subtrees (matching the
+  opacity/blur early-outs). The per-command decision lives in one
+  queryable predicate (`unsupported_effect`) consulted by the
+  lowering arm, so the two cannot disagree.
+- Ledger updated first: a `backend` block per effect separates
+  execution (unresolved) from pixel verification (unresolved, no
+  harness in-repo), names the missing mechanism, and references
+  the outcome test; the validator resolves those references like
+  `builder_parity` (ledgers without the block skip it). Option
+  records stay implemented: configuration and retained transport
+  were already correct. Public rustdocs state the compatibility
+  impact: scenes containing an executable stage fail presentation
+  with the named error; transport, hit testing, and semantics are
+  unaffected.
+- Regressions: four CPU-deterministic backend tests over the
+  predicate (both errors with messages, both passthroughs,
+  ordinary commands), referenced from the ledger. Neutral widget
+  tests stand unchanged as complementary evidence. No in-repo
+  widget, control, or example uses either stage, so nothing that
+  rendered before changes outcome except previously-misrendered
+  effect scenes, which now fail loudly.
+
 ## W3 — Linked-layer traversal (same workstream, still open)
 
 - Reproduced first: a target nested inside a linked follower

@@ -117,6 +117,11 @@ pub enum LedgerError {
     MissingBuilderCoverage {
         symbol: String,
     },
+    UnknownBackendDisposition {
+        symbol: String,
+        field: String,
+        status: String,
+    },
     UnknownPhase {
         record: String,
         phase: String,
@@ -162,6 +167,14 @@ impl fmt::Display for LedgerError {
             Self::DuplicateOption { symbol, option } => {
                 write!(formatter, "duplicate ledger entry {symbol}::{option}")
             }
+            Self::UnknownBackendDisposition {
+                symbol,
+                field,
+                status,
+            } => write!(
+                formatter,
+                "backend {symbol}::{field}: unknown disposition {status}"
+            ),
             Self::MissingOption { symbol, option } => write!(
                 formatter,
                 "{symbol}::{option} is public API without a ledger record"
@@ -1004,6 +1017,37 @@ pub fn validate_ledger(
                             });
                         }
                     }
+                }
+            }
+            // Backend support declares per-effect execution and pixel
+            // verification separately from the option records above. The
+            // validator checks the dispositions are known and resolves
+            // each declared outcome test; a reviewer judges whether the
+            // outcome proves what the prose claims. Ledgers without a
+            // backend block skip this entirely.
+            let backend = ledger["backend"].as_object().cloned().unwrap_or_default();
+            for (symbol, entry) in &backend {
+                for field in ["execution", "pixel_verification"] {
+                    let status = entry[field].as_str().unwrap_or_default();
+                    if !["implemented", "intentionally_unsupported", "unresolved"].contains(&status)
+                    {
+                        errors.push(LedgerError::UnknownBackendDisposition {
+                            symbol: symbol.clone(),
+                            field: field.to_owned(),
+                            status: status.to_owned(),
+                        });
+                    }
+                }
+                if let Some(outcome) = entry.get("outcome")
+                    && let Err(reason) = resolve_regression(&mut index, root, outcome)
+                {
+                    errors.push(LedgerError::RegressionNotATest {
+                        reference: format!(
+                            "backend::{symbol}::{}",
+                            outcome["name"].as_str().unwrap_or("?")
+                        ),
+                        reason,
+                    });
                 }
             }
         }

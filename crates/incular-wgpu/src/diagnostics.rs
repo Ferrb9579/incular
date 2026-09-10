@@ -297,6 +297,17 @@ pub enum RendererError {
     },
     StencilDepthOverflow,
     UnbalancedClipStack,
+    /// A scene requested a shader mask, which needs a masked offscreen
+    /// composite the backend does not provide yet. Lowering fails the
+    /// frame instead of drawing the child unmasked; retained transport,
+    /// hit testing, and semantics are unaffected.
+    UnsupportedShaderMask,
+    /// A scene requested an enabled backdrop filter with nonzero sigma,
+    /// which needs backdrop capture the backend does not provide yet.
+    /// Lowering fails the frame instead of drawing the child unfiltered;
+    /// disabled and zero-sigma filters still pass through. Retained
+    /// transport, hit testing, and semantics are unaffected.
+    UnsupportedBackdropFilter,
     OffscreenTargetTooLarge {
         width: u32,
         height: u32,
@@ -353,6 +364,18 @@ impl std::fmt::Display for RendererError {
             Self::UnbalancedClipStack => {
                 write!(f, "display list contains an unbalanced clip stack")
             }
+            Self::UnsupportedShaderMask => {
+                write!(
+                    f,
+                    "shader masks are not executed by this backend; remove the mask or await backend support"
+                )
+            }
+            Self::UnsupportedBackdropFilter => {
+                write!(
+                    f,
+                    "enabled backdrop filters are not executed by this backend; disable the filter or await backend support"
+                )
+            }
             Self::OffscreenTargetTooLarge {
                 width,
                 height,
@@ -379,6 +402,27 @@ impl std::fmt::Display for RendererError {
     }
 }
 impl std::error::Error for RendererError {}
+
+/// Reports the explicit unsupported outcome for one flattened command:
+/// stages the backend cannot execute yet. Lowering consults this single
+/// decision site for every command, so hosts and tools can also query
+/// the support boundary without rendering. Returns `None` for everything
+/// the backend handles, including stages that correctly pass through
+/// (disabled and zero-sigma backdrop filters).
+#[must_use]
+pub fn unsupported_effect(command: &PaintCommand) -> Option<RendererError> {
+    match command {
+        PaintCommand::PushShaderMask { .. } => Some(RendererError::UnsupportedShaderMask),
+        PaintCommand::PushBackdropFilter { blur, enabled, .. } => {
+            if !*enabled || (blur.sigma_x <= f32::EPSILON && blur.sigma_y <= f32::EPSILON) {
+                None
+            } else {
+                Some(RendererError::UnsupportedBackdropFilter)
+            }
+        }
+        _ => None,
+    }
+}
 
 /// Why a frame attempt produced no presentation. Renderer-neutral: hosts
 /// schedule retries and settle pending work from these reasons without

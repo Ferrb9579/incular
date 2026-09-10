@@ -382,11 +382,22 @@ impl WgpuRenderer {
                     }
                     continue;
                 }
-                PaintCommand::PushShaderMask { .. } | PaintCommand::PushBackdropFilter { .. } => {
+                command @ (PaintCommand::PushShaderMask { .. }
+                | PaintCommand::PushBackdropFilter { .. }) => {
                     let end = find_effect_end(commands, command_index)?;
                     let start = command_index + 1;
                     let parent_clip = *clips.last().expect("clip stack");
                     command_index = end.saturating_add(1);
+                    if parent_clip == ClipState::Empty {
+                        continue;
+                    }
+                    // Unsupported stages fail the frame here instead of
+                    // drawing their children unaffected; supported
+                    // passthroughs (disabled and zero-sigma backdrops)
+                    // keep the direct path below.
+                    if let Some(error) = crate::diagnostics::unsupported_effect(command) {
+                        return Err(error);
+                    }
                     let child =
                         self.lower_commands(&commands[start..end], scale, transform, parent_clip)?;
                     batches.extend(child);

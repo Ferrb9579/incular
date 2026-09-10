@@ -13,6 +13,26 @@
     "lowering",
     "conversion"
   ],
+  "backend": {
+    "ShaderMask": {
+      "execution": "unresolved",
+      "pixel_verification": "unresolved",
+      "missing_mechanism": "masked offscreen composite: the child render target composited through the brush pattern with the blend mode; no masked-composite pipeline exists",
+      "outcome": {
+        "path": "crates/incular-wgpu/tests/unsupported_effects.rs",
+        "name": "shader_mask_reports_unsupported_effect"
+      }
+    },
+    "BackdropFilter": {
+      "execution": "unresolved",
+      "pixel_verification": "unresolved",
+      "missing_mechanism": "backdrop capture: sampling the already-painted destination with invalidation keyed to backdrop content, which no cache key covers",
+      "outcome": {
+        "path": "crates/incular-wgpu/tests/unsupported_effects.rs",
+        "name": "enabled_backdrop_filter_reports_unsupported_effect"
+      }
+    }
+  },
   "records": [
     {
       "symbol": "ShaderCallback",

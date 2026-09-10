@@ -54,7 +54,7 @@ mod surface;
 pub use batching::{BatchPlan, RectangleBatch, RectangleInstance};
 pub use diagnostics::{
     AcquisitionDisposition, CapturedFrame, FrameOutcome, FrameSkipReason, GpuCounters,
-    GpuFrameTimings, RenderStats, RendererError, SurfaceAcquisitionStatus,
+    GpuFrameTimings, RenderStats, RendererError, SurfaceAcquisitionStatus, unsupported_effect,
 };
 pub use geometry::{PathMesh, tessellate_path};
 pub use glyphs::{

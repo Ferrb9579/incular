@@ -62,6 +62,12 @@ impl PartialEq for ShaderCallback {
 /// of resolved content follows the live transform stack every flatten,
 /// while the stage bounds recompute live. Hit testing and semantics pass
 /// through the mask untouched.
+///
+/// Backend compatibility: the WGPU backend does not execute this stage
+/// yet — presenting a scene containing it fails the frame with
+/// `RendererError::UnsupportedShaderMask` instead of drawing the child
+/// unmasked. Retained transport, hit testing, and semantics are
+/// unaffected by backend support.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShaderMask {
     shader: ShaderCallback,
@@ -108,6 +114,13 @@ impl From<ShaderMask> for Widget {
 /// without removing the child from layout or paint order, and zero sigma
 /// passes through identically. Hit testing and semantics pass through
 /// the filter untouched.
+///
+/// Backend compatibility: the WGPU backend executes only the supported
+/// passthroughs (disabled filters and zero sigma). Presenting an enabled
+/// nonzero filter fails the frame with
+/// `RendererError::UnsupportedBackdropFilter` instead of drawing the
+/// child unfiltered. Retained transport, hit testing, and semantics are
+/// unaffected by backend support.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackdropFilter {
     blur: GaussianBlur,
