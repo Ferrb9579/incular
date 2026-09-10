@@ -1367,6 +1367,203 @@ fn rrect_under_scale_selects_representation() {
     );
 }
 
+/// Four distinct corner radii: per-corner assertions catch averaging or
+/// ownership mistakes that uniform radii would hide. Opposing sums stay
+/// within the 40px edges, so normalization leaves them untouched.
+fn distinct_radii() -> CornerRadii {
+    CornerRadii {
+        top_left: 4.,
+        top_right: 10.,
+        bottom_right: 16.,
+        bottom_left: 2.,
+    }
+}
+
+fn distinct_rrect_clip(tree: &mut LayerTree) -> LayerId {
+    tree.create_clip_rrect(RRect::new(
+        Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+        distinct_radii(),
+    ))
+}
+
+fn fallback_path_under(world: Transform) -> Path {
+    let mut tree = LayerTree::new();
+    let clip = distinct_rrect_clip(&mut tree);
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(200., 200.), Size::new(10., 10.)),
+    );
+    tree.set_children(clip, vec![picture]);
+    let shift = tree.create_transform(world);
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let list = tree.flatten();
+    list.commands()
+        .iter()
+        .find_map(|command| match command {
+            PaintCommand::PushClipPath { path, .. } => Some(path.as_ref().clone()),
+            _ => None,
+        })
+        .expect("fallback path clip")
+}
+
+#[test]
+fn positive_uniform_scale_keeps_distinct_radii() {
+    let command = flatten_clip_under(Transform::scale(3.), |tree| distinct_rrect_clip(tree));
+    let PaintCommand::PushClipRRect { rrect } = command else {
+        panic!("positive uniform scale stays analytic, got {command:?}");
+    };
+    assert_eq!(
+        rrect.radii,
+        CornerRadii {
+            top_left: 12.,
+            top_right: 30.,
+            bottom_right: 48.,
+            bottom_left: 6.,
+        },
+        "each corner scales independently"
+    );
+    assert_eq!(
+        rrect.rect,
+        Rect::from_origin_size(Offset::ZERO, Size::new(120., 120.))
+    );
+}
+
+#[test]
+fn mirrored_corners_fall_back_to_path() {
+    // scale(-1,-1) mirrors both axes: corner ownership would permute, so
+    // the emitter falls back instead of guessing the permutation.
+    for (name, world) in [
+        ("both", Transform::scale_non_uniform(-1., -1.)),
+        ("single", Transform::scale_non_uniform(-2., 1.)),
+    ] {
+        let path = fallback_path_under(world);
+        // Deep interior point and a point outside the top-left corner
+        // (margin ~0.95 local units, far above tolerance), mapped
+        // through the world independently of the clip machinery.
+        assert!(
+            path.contains(
+                world.transform_point(Offset::new(20., 20.)),
+                FillRule::NonZero
+            ),
+            "{name} reflection must contain the mapped center"
+        );
+        assert!(
+            !path.contains(
+                world.transform_point(Offset::new(0.5, 0.5)),
+                FillRule::NonZero
+            ),
+            "{name} reflection must exclude the mapped outside corner"
+        );
+    }
+}
+
+#[test]
+fn nonuniform_scale_plus_rotation_falls_back_to_path() {
+    let world = Transform::rotation(0.5).then(Transform::scale_non_uniform(2., 1.));
+    let path = fallback_path_under(world);
+    assert!(
+        path.contains(
+            world.transform_point(Offset::new(20., 20.)),
+            FillRule::NonZero
+        ),
+        "scaled rotation must contain the mapped center"
+    );
+    assert!(
+        !path.contains(
+            world.transform_point(Offset::new(0.5, 0.5)),
+            FillRule::NonZero
+        ),
+        "scaled rotation must exclude the mapped outside corner"
+    );
+}
+
+#[test]
+fn fallback_error_holds_across_scales() {
+    // Same rotated shape at 0.5x, 1x, and 8x: containment with margins
+    // far above the 0.1 world-space tolerance target at every scale.
+    for scale in [0.5, 1., 8.] {
+        let world = Transform::rotation(0.5).then(Transform::scale(scale));
+        let path = fallback_path_under(world);
+        assert!(
+            path.contains(
+                world.transform_point(Offset::new(20., 20.)),
+                FillRule::NonZero
+            ),
+            "scale {scale} must contain the mapped center"
+        );
+        assert!(
+            !path.contains(
+                world.transform_point(Offset::new(0.5, 0.5)),
+                FillRule::NonZero
+            ),
+            "scale {scale} must exclude the mapped outside corner"
+        );
+    }
+}
+
+fn curve_count(path: &Path) -> usize {
+    path.bez_path()
+        .elements()
+        .iter()
+        .filter(|element| {
+            matches!(
+                element,
+                kurbo::PathEl::QuadTo(..) | kurbo::PathEl::CurveTo(..)
+            )
+        })
+        .count()
+}
+
+fn fallback_oval_under(world: Transform) -> Path {
+    let mut tree = LayerTree::new();
+    // Radii (100,50): large enough that kurbo's tolerance subdivision
+    // (floored at 4 segments) visibly differs between tolerances.
+    let clip = tree.create_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::new(200., 100.)));
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(200., 200.), Size::new(10., 10.)),
+    );
+    tree.set_children(clip, vec![picture]);
+    let shift = tree.create_transform(world);
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let list = tree.flatten();
+    list.commands()
+        .iter()
+        .find_map(|command| match command {
+            PaintCommand::PushClipPath { path, .. } => Some(path.as_ref().clone()),
+            _ => None,
+        })
+        .expect("fallback path clip")
+}
+
+#[test]
+fn fallback_keeps_curves_with_tolerance_subdivision() {
+    // The fallback is an approximation by construction: kurbo subdivides
+    // arcs into cubic segments within tolerance, so curves survive but
+    // their count follows the tolerance. At 8x magnification the local
+    // tolerance tightens 8x for the same 0.1 world-space target, which
+    // must subdivide a full ellipse further than at 1x. (Quarter-arcs
+    // fit one cubic at any sane tolerance, so corners cannot show this.)
+    let near = fallback_oval_under(Transform::rotation(0.5).then(Transform::scale(1.)));
+    let far = fallback_oval_under(Transform::rotation(0.5).then(Transform::scale(8.)));
+    let near_curves = curve_count(&near);
+    let far_curves = curve_count(&far);
+    assert!(near_curves > 0, "arcs stay curves, not lines");
+    assert!(
+        far_curves > near_curves,
+        "tighter local tolerance must subdivide further: 1x has {near_curves} curves, 8x has {far_curves}"
+    );
+}
+
+/// A clip layer under a rotation (forcing the path fallback for every
+/// variant) with one picture child, returned with its clip id for
+/// removal and update tests.
 #[test]
 fn clip_path_identity_stable_across_flattens() {
     // Static clips reuse one path identity (and one backend mesh) no

@@ -139,10 +139,24 @@ fn point(offset: Offset) -> Point {
     Point::new(f64::from(offset.x), f64::from(offset.y))
 }
 
-/// Flattening tolerance for analytic clip fallbacks. Curve deviation stays
-/// an order of magnitude below a logical pixel, so the fallback path is
-/// indistinguishable from the analytic shape at any supported scale.
-const CLIP_PATH_TOLERANCE: f64 = 0.1;
+/// Target world-space curve deviation for analytic clip fallbacks: a
+/// tenth of a logical pixel after the world transform is applied.
+const CLIP_PATH_WORLD_TOLERANCE: f64 = 0.1;
+
+/// Local-space arc-subdivision tolerance for one world transform,
+/// targeting [`CLIP_PATH_WORLD_TOLERANCE`] in world space. kurbo
+/// subdivides arcs into cubics in the shape's local space, so the local
+/// tolerance divides the target by the transform's magnification
+/// (largest column norm); the floor bounds segment counts where
+/// magnification exceeds 100x, past which the world bound relaxes
+/// linearly instead. Tolerance is a pure function of the world
+/// transform, so memoized fallback paths stay valid exactly while their
+/// world does.
+pub(crate) fn fallback_tolerance(world: Transform) -> f64 {
+    let [a, b, c, d, _, _] = world.to_kurbo().as_coeffs();
+    let magnification = (a * a + b * b).sqrt().max((c * c + d * d).sqrt()).max(1e-6);
+    (CLIP_PATH_WORLD_TOLERANCE / magnification).clamp(1e-3, 1.0)
+}
 
 /// Exact local-space path of an axis-aligned rect: straight edges only,
 /// so no tolerance applies.
@@ -160,9 +174,11 @@ pub(crate) fn rect_as_path(rect: Rect) -> Path {
     builder.build()
 }
 
-/// Local-space path of a rounded rect, flattened within tolerance. Used
-/// only where uniform corner radii cannot survive the world transform.
-pub(crate) fn rrect_as_path(rect: Rect, radii: CornerRadii) -> Path {
+/// Local-space path of a rounded rect, arcs subdivided into cubics
+/// within `tolerance`. Used only where uniform corner radii cannot
+/// survive the world transform; an approximation by construction, never
+/// an exact curve.
+pub(crate) fn rrect_as_path(rect: Rect, radii: CornerRadii, tolerance: f64) -> Path {
     let shape = RoundedRect::new(
         f64::from(rect.origin.x),
         f64::from(rect.origin.y),
@@ -175,12 +191,13 @@ pub(crate) fn rrect_as_path(rect: Rect, radii: CornerRadii) -> Path {
             f64::from(radii.bottom_left),
         ),
     );
-    Path::from_bez_path(shape.to_path(CLIP_PATH_TOLERANCE))
+    Path::from_bez_path(shape.to_path(tolerance))
 }
 
-/// Local-space path of the ellipse inscribed in `rect`, flattened within
-/// tolerance. Used only where the world transform would rotate the oval.
-pub(crate) fn ellipse_as_path(rect: Rect) -> Path {
+/// Local-space path of the ellipse inscribed in `rect`, arcs subdivided
+/// into cubics within `tolerance`. Used only where the world transform
+/// would rotate the oval.
+pub(crate) fn ellipse_as_path(rect: Rect, tolerance: f64) -> Path {
     let shape = Ellipse::new(
         Point::new(
             f64::from(rect.origin.x) + f64::from(rect.size.width) * 0.5,
@@ -192,5 +209,5 @@ pub(crate) fn ellipse_as_path(rect: Rect) -> Path {
         ),
         0.0,
     );
-    Path::from_bez_path(shape.to_path(CLIP_PATH_TOLERANCE))
+    Path::from_bez_path(shape.to_path(tolerance))
 }

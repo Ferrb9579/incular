@@ -185,7 +185,7 @@
       "symbol": "ClipRRect",
       "option": "radius",
       "default": "required, no default",
-      "validation": "Into<CornerRadii>; analytic under translation and uniform scale (radii scale), tolerance-flattened path fallback otherwise",
+      "validation": "Into<CornerRadii>; analytic under translation and positive uniform scale (radii scale per corner); mirrors and all other worlds fall back to a tolerance-subdivided path",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
         "kind": "trait_impl",
@@ -250,6 +250,18 @@
         {
           "path": "crates/incular-widgets/tests/clip_opacity.rs",
           "name": "nonuniformly_scaled_rrect_records_path_clip"
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "name": "positive_uniform_scale_keeps_distinct_radii"
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "name": "mirrored_corners_fall_back_to_path"
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "name": "fallback_error_holds_across_scales"
         }
       ],
       "status": "implemented"
@@ -468,7 +480,7 @@
       "symbol": "ClipPath",
       "option": "path",
       "default": "required, no default",
-      "validation": "Into<Arc<Path>>; resolved to world space at flatten with NonZero fill rule; identity-stable memo until world, path, or rule change",
+      "validation": "Into<Arc<Path>>; resolved to world space at flatten with NonZero fill rule; per-layer memo keeps one identity across flattens until world, path, or rule change (same discipline covers rect/rrect/oval fallbacks)",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
         "kind": "trait_impl",

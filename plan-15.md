@@ -1381,6 +1381,23 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   fail on the previous emission; the clip/opacity ledger prose now
   states the policy.
 
+## W3 — Clip reflections and tolerance (same workstream, still open)
+
+- Analytic rounded rectangles now require positive uniform scale:
+  mirrors and nonuniform scales fall back to paths instead of
+  permuting (or silently misplacing) corner ownership. Four
+  distinct corner radii in every reflection regression keep
+  per-corner mistakes observable.
+- Tolerance is defined, not assumed: kurbo subdivides arcs into
+  cubics in shape-local space, so the local tolerance divides the
+  0.1 world-space target by the transform magnification, floored
+  locally past 100x. No world-space error bound is claimed beyond
+  that derivation. Containment holds with margins far above
+  tolerance at 0.5x, 1x, and 8x against independently mapped
+  geometry, and curve counts prove the tolerance engages where
+  kurbo's 4-segment floor allows observing it (full ellipses, not
+  quarter-arcs).
+
 ## W3 — ShaderMask/BackdropFilter slice (same workstream, still open)
 
 - Audited, no implementation change: the lifecycle proved sound.

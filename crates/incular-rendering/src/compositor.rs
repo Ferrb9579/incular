@@ -5,7 +5,7 @@ use crate::effects::{
 use crate::geometry::{RRect, union_rect};
 use crate::gradients::Brush;
 use crate::paint::FillRule;
-use crate::paths::{Path, ellipse_as_path, rect_as_path, rrect_as_path};
+use crate::paths::{Path, ellipse_as_path, fallback_tolerance, rect_as_path, rrect_as_path};
 use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
 use std::{
     any::{Any, TypeId},
@@ -132,9 +132,9 @@ impl LayerAnchor {
 /// other kind also reports `None` so a misuse culls rather than leaks.
 fn clip_world_bounds(kind: &LayerKind, world_transform: Transform) -> Option<Rect> {
     match kind {
-        LayerKind::ClipRect { rect } => Some(world_transform.transform_rect_bbox(*rect)),
-        LayerKind::ClipRRect { rrect } => Some(world_transform.transform_rect_bbox(rrect.rect)),
-        LayerKind::ClipOval { rect } => Some(world_transform.transform_rect_bbox(*rect)),
+        LayerKind::ClipRect { rect, .. } => Some(world_transform.transform_rect_bbox(*rect)),
+        LayerKind::ClipRRect { rrect, .. } => Some(world_transform.transform_rect_bbox(rrect.rect)),
+        LayerKind::ClipOval { rect, .. } => Some(world_transform.transform_rect_bbox(*rect)),
         LayerKind::ClipPath { path, .. } => path
             .bounds()
             .map(|bounds| world_transform.transform_rect_bbox(bounds)),
@@ -1155,14 +1155,15 @@ impl LayerTree {
                 ClipSpace::Translation => PaintCommand::PushClipRRect {
                     rrect: RRect::new(world.transform_rect_bbox(rrect.rect), rrect.radii),
                 },
-                ClipSpace::Scale { x, y } if x == y => PaintCommand::PushClipRRect {
-                    rrect: RRect::new(
-                        world.transform_rect_bbox(rrect.rect),
-                        rrect.radii.scaled(x.abs()),
-                    ),
+                // Positive uniform scales keep corners circular; anything
+                // else (mirrors, nonuniform scales) would move corner
+                // ownership, so those shapes fall back to a path.
+                ClipSpace::Scale { x, y } if x > 0. && x == y => PaintCommand::PushClipRRect {
+                    rrect: RRect::new(world.transform_rect_bbox(rrect.rect), rrect.radii.scaled(x)),
                 },
                 _ => {
-                    let path = rrect_as_path(rrect.rect, rrect.radii).transformed(world);
+                    let path = rrect_as_path(rrect.rect, rrect.radii, fallback_tolerance(world))
+                        .transformed(world);
                     PaintCommand::PushClipPath {
                         path: Arc::new(path),
                         fill_rule: FillRule::NonZero,
@@ -1175,7 +1176,7 @@ impl LayerTree {
                     rect: world.transform_rect_bbox(*rect),
                 },
                 ClipSpace::General => {
-                    let path = ellipse_as_path(*rect).transformed(world);
+                    let path = ellipse_as_path(*rect, fallback_tolerance(world)).transformed(world);
                     PaintCommand::PushClipPath {
                         path: Arc::new(path),
                         fill_rule: FillRule::NonZero,
@@ -1689,7 +1690,7 @@ impl LayerTree {
                     self.collect_annotations(child, next, clip);
                 }
             }
-            LayerKind::ClipRect { rect } => {
+            LayerKind::ClipRect { rect, .. } => {
                 let world = world_transform.transform_rect_bbox(rect);
                 let next_clip = match clip {
                     Some(current) => current.intersection(world),
@@ -1908,7 +1909,7 @@ impl LayerTree {
                 .iter()
                 .filter_map(|child| self.subtree_bounds(*child, world_transform.then(*local)))
                 .reduce(union_rect),
-            LayerKind::ClipRect { rect } => {
+            LayerKind::ClipRect { rect, .. } => {
                 let world = world_transform.transform_rect_bbox(*rect);
                 layer
                     .children
@@ -1991,7 +1992,7 @@ impl LayerTree {
             LayerKind::Transform { transform: local } => {
                 child_bounds(self, world_transform.then(*local))
             }
-            LayerKind::ClipRect { rect } => {
+            LayerKind::ClipRect { rect, .. } => {
                 let world = world_transform.transform_rect_bbox(*rect);
                 child_bounds(self, world_transform).and_then(|bounds| bounds.intersection(world))
             }
@@ -2070,15 +2071,15 @@ impl LayerTree {
                     world_transform.then(*transform)
                 )
             }
-            LayerKind::ClipRect { rect } => format!(
+            LayerKind::ClipRect { rect, .. } => format!(
                 "ClipRect(local={rect:?}, world={:?})",
                 world_transform.transform_rect_bbox(*rect)
             ),
-            LayerKind::ClipRRect { rrect } => format!(
+            LayerKind::ClipRRect { rrect, .. } => format!(
                 "ClipRRect(local={rrect:?}, world={:?})",
                 world_transform.transform_rect_bbox(rrect.rect)
             ),
-            LayerKind::ClipOval { rect } => format!(
+            LayerKind::ClipOval { rect, .. } => format!(
                 "ClipOval(local={rect:?}, world={:?})",
                 world_transform.transform_rect_bbox(*rect)
             ),
@@ -2166,7 +2167,7 @@ impl LayerTree {
         let (next_translation, next_clip) = match &layer.kind {
             LayerKind::Picture { .. } => (world_transform, clip),
             LayerKind::Transform { transform: local } => (world_transform.then(*local), clip),
-            LayerKind::ClipRect { rect } => {
+            LayerKind::ClipRect { rect, .. } => {
                 let world = world_transform.transform_rect_bbox(*rect);
                 (
                     world_transform,
