@@ -1,0 +1,983 @@
+{
+  "schema_version": 2,
+  "family": "StackLayout",
+  "scope": "Public Stack/Positioned/IndexedStack options and their retained consumers in incular-widgets, delegating positioning math to incular-layout. Clip behavior keeps its own ledger and is referenced, not re-inventoried. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "Stack": {
+      "path": "crates/incular-widgets/tests/stack_layout.rs",
+      "name": "stack_builders_match_fluent_construction"
+    },
+    "Positioned": {
+      "path": "crates/incular-widgets/tests/stack_layout.rs",
+      "name": "positioned_builder_matches_fluent_construction"
+    },
+    "IndexedStack": {
+      "path": "crates/incular-widgets/tests/stack_layout.rs",
+      "name": "stack_builders_match_fluent_construction"
+    }
+  },
+  "records": [
+    {
+      "symbol": "Stack",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained verbatim in paint order; no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; keyed reorder permutes identities and removal recomputes from survivors.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Stack"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "stack_keyed_reorder_and_removal"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Stack",
+      "option": "alignment",
+      "default": "TOP_LEFT",
+      "validation": "stored absolute alignment; no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "Non-positioned children center through Alignment::within inside layout_stack; alignment changes re-run layout only.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_stack"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "stack_alignment_positions_asymmetric_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Stack",
+      "option": "fit",
+      "default": "Loose",
+      "validation": "enum setter, no normalization; Loose loosens, Expand tightens to biggest, Passthrough forwards incoming",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "Fit selects the non-positioned child constraints and the stack size policy in the retained Stack arm.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "stack_fit_loose_expand_passthrough"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Stack",
+      "option": "clip_behavior",
+      "default": "HardEdge",
+      "validation": "enum setter, no normalization; raster-only clip at stack bounds",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "Clip resolution, layer structure, and edge cases are inventoried by the clip/opacity ledger; this record only names the lowered owner.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ]
+      },
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "reconcile_structure"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "tests/clip_opacity_ledger.rs",
+          "name": "clip_opacity_ledger_validates"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Stack",
+      "option": "text_direction",
+      "default": "Ltr",
+      "validation": "stored and compared, but no consumer reads it: alignment factors are absolute, so the option is accepted yet inert",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "WidgetKind equality includes the field so a flip rebuilds, and the regression proves resolution is identical. Recorded as implemented storage with no behavior, not as directional alignment.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/widget/structure.rs",
+            "kind": "method",
+            "owner": "WidgetKind",
+            "name": "eq"
+          },
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "method",
+            "owner": "Stack",
+            "name": "text_direction"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Stack"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "stack_text_direction_change_keeps_absolute_layout"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Stack",
+      "option": "aligned",
+      "default": "n/a, alternate constructor for new plus alignment",
+      "validation": "delegates to new and the alignment setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Stack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Stack"
+      },
+      "comparison": {
+        "prose": "Alternate constructor shares the lowering with alignment; covered by the same layout regression.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Stack"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "stack_alignment_positions_asymmetric_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Positioned"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_builder_matches_fluent_construction"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "left",
+      "default": "none (falls through to right or origin)",
+      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Positioned geometry resolves left over right; left with explicit width bounds measurement while left+right derive the algorithm width.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_horizontal_combinations_resolve_documented"
+        },
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_negative_edges_drop_to_unset"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "right",
+      "default": "none",
+      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Right anchors only when left is absent; the retained arm and layout algorithm share the same width for the offset.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_horizontal_combinations_resolve_documented"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "top",
+      "default": "none",
+      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Top resolves over bottom with the same conflict policy as the horizontal axis.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_vertical_combinations_resolve_documented"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "bottom",
+      "default": "none",
+      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Bottom anchors only when top is absent.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_vertical_combinations_resolve_documented"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "width",
+      "default": "none (child measured width)",
+      "validation": "finite nonnegative kept, otherwise dropped as unset; bounds the child's loose measurement without forcing fixed children larger",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Explicit width becomes the algorithm width but the child keeps its measured size; right-anchoring math reuses the algorithm width, not the render size.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          },
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_horizontal_combinations_resolve_documented"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "height",
+      "default": "none (child measured height)",
+      "validation": "finite nonnegative kept, otherwise dropped as unset; bounds loose measurement symmetrically to width",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "Explicit height becomes the algorithm height while the render keeps measured size.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "positioned_vertical_combinations_resolve_documented"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Positioned",
+      "option": "fill",
+      "default": "n/a, alternate constructor setting all four edges to zero",
+      "validation": "delegates to builder with zero insets",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Positioned"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Positioned"
+      },
+      "comparison": {
+        "prose": "fill resolves through the same left+right/top+bottom derivation as explicit edges.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "positioned_geometry"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Positioned"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/positioned_hit_testing.rs",
+          "name": "positioned_overlay_defers_to_its_child_hit_policy"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IndexedStack",
+      "option": "children",
+      "default": "empty",
+      "validation": "all children laid out; only the indexed child paints, hits, traverses, and contributes semantics",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IndexedStack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IndexedStack"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; layer selection follows the index.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/stack.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IndexedStack"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_switches_active_child"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IndexedStack",
+      "option": "index",
+      "default": "0",
+      "validation": "usize setter, no normalization; out-of-range indexes hide all children gracefully",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IndexedStack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IndexedStack"
+      },
+      "comparison": {
+        "prose": "Paint, hit, focus, and semantics select the indexed child; layout still measures every child.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/focus.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "append_focus_members"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_render_inner"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_switches_active_child"
+        },
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_out_of_range_hides_gracefully"
+        },
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_inactive_focus_leaves_membership"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IndexedStack",
+      "option": "alignment",
+      "default": "TOP_LEFT",
+      "validation": "stored absolute alignment, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IndexedStack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IndexedStack"
+      },
+      "comparison": {
+        "prose": "Each laid-out child is aligned within the shared size; the active child uses its own offset.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_switches_active_child"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IndexedStack",
+      "option": "fit",
+      "default": "Loose",
+      "validation": "enum setter, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IndexedStack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IndexedStack"
+      },
+      "comparison": {
+        "prose": "Fit is accepted for API parity but the retained IndexedStack arm always loosens child constraints and wraps the largest child; stored configuration without behavior, so unresolved rather than implemented.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "IndexedStack",
+      "option": "clip_behavior",
+      "default": "HardEdge",
+      "validation": "enum setter, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/stack.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IndexedStack"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "IndexedStack"
+      },
+      "comparison": {
+        "prose": "Clip behavior is not lowered through RenderKind for IndexedStack; recorded as stored configuration whose clip path is the shared ledger's concern, with no dedicated regression here.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
+            "kind": "function",
+            "name": "lower_layout"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_switches_active_child"
+        }
+      ],
+      "status": "unresolved"
+    }
+  ]
+}

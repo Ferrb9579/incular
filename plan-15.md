@@ -1109,6 +1109,36 @@ Exit: every exported option has a reviewed disposition and behavioral evidence;
 property changes schedule only necessary work; identity and deterministic
 performance contracts pass. No arbitrary file-size threshold is the acceptance test.
 
+## W3 — Current status (reconciled against public exports; W3 remains open)
+
+This table is the current status. The historical slice notes below are
+evidence, not a duplicate status; where they disagree with this table,
+the table wins.
+
+| family | exported options inventoried | behavioral gaps | evidence | status |
+| --- | --- | --- | --- | --- |
+| Visibility / Offstage | 9/9 | none known | `specs/visibility_properties.json`, `tests/visibility_ledger.rs` | complete |
+| Transform / Rotation / Scale / Translate / FractionalTranslation | all exported | none known | `specs/transform_properties.json`, `tests/transform_ledger.rs` | complete |
+| Clip / Opacity | all exported | none known | `specs/clip_opacity_properties.json`, `tests/clip_opacity_ledger.rs` | complete |
+| Linked layers | all exported | none known | `specs/linked_layers_properties.json`, `tests/linked_layers_ledger.rs` | complete |
+| ShaderMask / BackdropFilter | all exported | GPU pixel verification reported separately | `specs/shader_backdrop_properties.json`, `tests/shader_backdrop_ledger.rs` | complete |
+| Pointer blocking (IgnorePointer/AbsorbPointer) | 4/4 | none known | `specs/pointer_blocking_properties.json`, `tests/pointer_blocking_ledger.rs` | complete |
+| Focus wrappers (Focus/FocusScope/KeyboardListener) | 21/21 | none known | `specs/focus_wrappers_properties.json`, `tests/focus_wrappers_ledger.rs` | complete |
+| Action wrappers (CallbackShortcuts/ActionListener/FocusableActionDetector) | 17/17 | none known | `specs/action_wrappers_properties.json`, `tests/action_wrappers_ledger.rs` | complete |
+| EditableText | 22/22 | none known | `specs/editable_text_properties.json`, `tests/editable_text_ledger.rs` | complete |
+| Stack / Positioned / IndexedStack | 19/19 | IndexedStack `fit`/`clip_behavior` stored without behavior | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | partial |
+| Row / Column / Flex / Flexible / Expanded / Spacer | 36/36 | none known | `specs/flex_layout_properties.json`, `tests/flex_layout_ledger.rs` | complete |
+| Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
+| Sizing / constraints (11 types) | 35/35 | IntrinsicWidth step fields, PreferredSize public reach, ConstraintsTransformBox clip stored | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
+| Baseline / AspectRatio / Fractional / Fitted | 10/10 | FittedBox non-contain fits unverified | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | partial |
+| Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
+| Collections (Wrap/Table) | not inventoried | Wrap/Table not yet audited | none yet | open |
+| Images | not inventoried | fit/alignment/replacement not yet audited | none yet | open |
+| Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
+| Navigation scopes | not inventoried | none yet | none yet | open |
+| Platform wrappers | not inventoried | none yet | none yet | open |
+| Utilities (SafeArea/Offstage/SplitView/OverflowBar) | not inventoried | none yet | none yet | open |
+
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 
 - Ledger: `specs/visibility_properties.json` records all nine exported
@@ -1928,38 +1958,6 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   nothing because per-element ranges never normalized, unlike the
   cross-element content range. Endpoints now normalize within one
   element too.
-- Evidence: 7 tests in
-  `crates/incular-widgets/tests/selectable_text_pointer.rs`
-  through real clicks and drags (RTL logical bytes both drag
-  directions, mixed byte/affinity handles via the area controller,
-  aligned interior anchors with suffix highlight geometry, wrapped
-  partition exactness, cross-run exact substrings,
-  ligature/combining cluster snaps, width-change agreement with a
-  fresh mount). Fail-first: RTL and mixed tests fail on the walk;
-  the reverse drag fails without normalization. Non-ASCII
-  fixtures use explicit escapes where normalization would change
-  bytes.
-
-## W3 — SelectableText shaped pointer mapping (same workstream, still open)
-
-- Selectable clicks went through the approximate glyph walk with
-  an unshifted width cutoff; they now resolve bytes and affinities
-  from shaped caret stops like text fields do, with identity still
-  defined by (element, byte) so collapsed detection and
-  anchor/extent roles cannot flip on affinity alone. Handles follow
-  the stored affinity, observable through the area controller's
-  selection geometry.
-- Real defect alongside: single-element backward drags selected
-  nothing because per-element ranges never normalized, unlike the
-  cross-element content range. Endpoints now normalize within one
-  element too.
-- Overflow clicks resolve to the nearest caret in both systems:
-  far-right of RTL-base text is byte zero, far-left the minimum-x
-  stop. One long-standing drag expectation encoded direction-blind
-  overflow and now extends past the visual end instead. Boundary
-  ties resolve to the smaller byte; paragraph-final bytes sharing
-  their only visual point with an earlier boundary stay reachable
-  by keyboard motion.
 - Evidence: 7 tests in
   `crates/incular-widgets/tests/selectable_text_pointer.rs`
   through real clicks and drags (RTL logical bytes both drag

@@ -1,0 +1,1666 @@
+{
+  "schema_version": 2,
+  "family": "SizingConstraints",
+  "scope": "Public SizedBox/ConstrainedBox/LimitedBox/OverflowBox/UnconstrainedBox/LayoutBuilder/IntrinsicWidth/IntrinsicHeight/SizedOverflowBox/ConstraintsTransformBox/PreferredSize options and their retained consumers in incular-widgets. Several are composition shorthands that lower to other retained kinds; the lowering target is recorded per option. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "SizedBox": {
+      "path": "crates/incular-widgets/tests/layout_basic.rs",
+      "name": "sized_box_builder_defaults_match_new"
+    },
+    "ConstrainedBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "LimitedBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "OverflowBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "UnconstrainedBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "IntrinsicWidth": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "IntrinsicHeight": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "SizedOverflowBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "sizing_family_builders_match_fluent_construction"
+    },
+    "PreferredSize": {
+      "path": "crates/incular-widgets/tests/layout_basic.rs",
+      "name": "builder_defaults_match_constructor_defaults"
+    }
+  },
+  "records": [
+    {
+      "symbol": "SizedBox",
+      "option": "width",
+      "default": "none (unconstrained)",
+      "validation": "finite widths clamp to a tight lower-bound of zero at conversion; infinite defers to expand",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Finite dimensions compose into a ConstrainedBox whose additional constraints clamp into the parent via enforced_constraints.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "height",
+      "default": "none (unconstrained)",
+      "validation": "finite heights clamp to a tight lower-bound of zero at conversion",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Shares the width conversion path on the vertical axis.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "child",
+      "default": "none (transparent box)",
+      "validation": "child edge retained verbatim; childless defaults to an empty box",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update after composition.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_basic.rs",
+          "name": "optional_child_builders_accept_widgets"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "from_dimensions",
+      "default": "n/a, alternate constructor accepting optional width/height/child",
+      "validation": "delegates to the same conversion as width/height",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Alternate constructor shares the dimension conversion.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "method",
+            "owner": "SizedBox",
+            "name": "from_dimensions"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_basic.rs",
+          "name": "optional_child_builders_accept_widgets"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "from_size",
+      "default": "n/a, alternate constructor from a Size",
+      "validation": "delegates to width/height",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Alternate constructor shares the dimension conversion.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "method",
+            "owner": "SizedBox",
+            "name": "from_size"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "square",
+      "default": "n/a, alternate constructor for equal width and height",
+      "validation": "delegates to width/height",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Alternate constructor shares the dimension conversion.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "method",
+            "owner": "SizedBox",
+            "name": "square"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "shrink",
+      "default": "n/a, alternate constructor for a zero box",
+      "validation": "delegates to width/height of zero",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Alternate constructor shares the dimension conversion.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "method",
+            "owner": "SizedBox",
+            "name": "shrink"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "expand",
+      "default": "n/a, alternate constructor requesting parent-matched size",
+      "validation": "infinite dimensions are not finite constraints; a childless expand lowers to Align(CENTER)",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Align"
+      },
+      "comparison": {
+        "prose": "Childless expand composes Align(CENTER) over a shrink box so it fills bounded constraints without an infinite constraint.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_basic.rs",
+          "name": "sized_box_builder_defaults_match_new"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedBox",
+      "option": "empty",
+      "default": "n/a, alternate constructor for an unconstrained box",
+      "validation": "delegates to new; childless lowers to an empty Box",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Box"
+      },
+      "comparison": {
+        "prose": "Childless empty lowers to an empty Box with no constraints.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "method",
+            "owner": "SizedBox",
+            "name": "empty"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_box_constructors_agree_and_clamp"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ConstrainedBox",
+      "option": "constraints",
+      "default": "required, no default",
+      "validation": "additional constraints clamp into incoming bounds; invalid construction panics at Constraints::new",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstrainedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "enforced_constraints intersects parent and additional bounds before measuring the child.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/widget/geometry.rs",
+            "kind": "function",
+            "name": "enforced_constraints"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_box_negative_panics_loudly"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ConstrainedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstrainedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ConstrainedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "LimitedBox",
+      "option": "max_width",
+      "default": "infinity",
+      "validation": "floored at zero by builder and setter; applies only when the incoming width is unbounded",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "LimitedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Limited"
+      },
+      "comparison": {
+        "prose": "The Limited arm substitutes max_width only when the parent maximum is infinite.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "LimitedBox",
+      "option": "max_height",
+      "default": "infinity",
+      "validation": "floored at zero by builder and setter; applies only when the incoming height is unbounded",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "LimitedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Limited"
+      },
+      "comparison": {
+        "prose": "The Limited arm substitutes max_height only when the parent maximum is infinite.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "LimitedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "LimitedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Limited"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "LimitedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverflowBox",
+      "option": "min_width",
+      "default": "none (inherit parent minimum)",
+      "validation": "stored raw, no floor; a negative minimum fails deferred at Constraints::new in the Overflow arm",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "The Overflow arm composes child constraints from the supplied bounds and the incoming minimums, so minimums force growth while the reported size stays parent-constrained. Raw min values flow unvalidated to Constraints::new, an established asymmetry with LimitedBox's floors.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverflowBox",
+      "option": "max_width",
+      "default": "none (inherit parent maximum)",
+      "validation": "stored raw, no floor; clamped above the minimum when composing",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "Shares the Overflow constraint composition path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverflowBox",
+      "option": "min_height",
+      "default": "none (inherit parent minimum)",
+      "validation": "stored raw, no floor; negative minimums fail deferred at Constraints::new",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "Shares the Overflow constraint composition path on the vertical axis.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverflowBox",
+      "option": "max_height",
+      "default": "none (inherit parent maximum)",
+      "validation": "stored raw, no floor; clamped above the minimum when composing",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "Shares the Overflow constraint composition path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "OverflowBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "OverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "OverflowBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constrained_limited_overflow_boxes"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "UnconstrainedBox",
+      "option": "constrained_axis",
+      "default": "none (both axes loosened to infinity)",
+      "validation": "axis setter, no normalization; retains parent bounds on the named axis and unbounds the other",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "UnconstrainedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "unconstrained_constraints loosens the unselected axis and preserves the selected one.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/widget/geometry.rs",
+            "kind": "function",
+            "name": "unconstrained_constraints"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "unconstrained_and_intrinsic_aliases_measure_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "UnconstrainedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "UnconstrainedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "UnconstrainedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "unconstrained_and_intrinsic_aliases_measure_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "LayoutBuilder",
+      "option": "builder",
+      "default": "required, no default",
+      "validation": "callback retained as an Rc; re-run when incoming constraints change",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "LayoutBuilder"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "LayoutBuilder"
+      },
+      "comparison": {
+        "prose": "The LayoutBuilder retained kind rebuilds its subtree from the callback with the current constraints, invalidating when constraints change.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constraints_transform_box_rewrites_child_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IntrinsicWidth",
+      "option": "step_width",
+      "default": "none (exact intrinsic width)",
+      "validation": "stored, no normalization; retained configuration without a distinct retained reader",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IntrinsicWidth"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "IntrinsicWidth lowers to UnconstrainedBox; the step fields are accepted but no reader consumes them, so this is stored configuration without behavior rather than a rounding contract.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IntrinsicWidth"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "IntrinsicWidth",
+      "option": "step_height",
+      "default": "none",
+      "validation": "stored, no normalization; no retained reader consumes it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IntrinsicWidth"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "Stored configuration without behavior, same as step_width.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IntrinsicWidth"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "IntrinsicWidth",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim through UnconstrainedBox",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IntrinsicWidth"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update after UnconstrainedBox lowering.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IntrinsicWidth"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "unconstrained_and_intrinsic_aliases_measure_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "IntrinsicHeight",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim through UnconstrainedBox",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "IntrinsicHeight"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Unconstrained"
+      },
+      "comparison": {
+        "prose": "IntrinsicHeight lowers to UnconstrainedBox; shares the Unconstrained child path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "IntrinsicHeight"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "unconstrained_and_intrinsic_aliases_measure_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedOverflowBox",
+      "option": "size",
+      "default": "required, no default",
+      "validation": "Size used verbatim; composes a fixed SizedBox around an Align/OverflowBox chain",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedOverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Align"
+      },
+      "comparison": {
+        "prose": "SizedOverflowBox composes SizedBox from_size + Align(alignment) over OverflowBox, so the box reports the fixed size while the child overflows.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedOverflowBox"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedOverflowBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_overflow_box_reports_size_and_overflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedOverflowBox",
+      "option": "alignment",
+      "default": "CENTER",
+      "validation": "absolute alignment retained, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedOverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Align"
+      },
+      "comparison": {
+        "prose": "Alignment feeds the composed Align, which centers an overflowing child within the fixed box.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_align"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedOverflowBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_overflow_box_reports_size_and_overflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SizedOverflowBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim through the composed chain",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SizedOverflowBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Overflow"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update after composition.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SizedOverflowBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "sized_overflow_box_reports_size_and_overflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ConstraintsTransformBox",
+      "option": "transform",
+      "default": "required, no default",
+      "validation": "callback retained; applied to incoming constraints each layout pass",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstraintsTransformBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "LayoutBuilder"
+      },
+      "comparison": {
+        "prose": "ConstraintsTransformBox composes a LayoutBuilder that applies the transform then wraps the child in a ConstrainedBox + Align.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ConstraintsTransformBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constraints_transform_box_rewrites_child_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ConstraintsTransformBox",
+      "option": "alignment",
+      "default": "CENTER",
+      "validation": "absolute alignment retained, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstraintsTransformBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Align"
+      },
+      "comparison": {
+        "prose": "Alignment feeds the composed Align inside the transform builder.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_align"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ConstraintsTransformBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constraints_transform_box_rewrites_child_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ConstraintsTransformBox",
+      "option": "clip_behavior",
+      "default": "None",
+      "validation": "enum setter, no normalization; retained on the wrapper but not lowered through the transform builder",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstraintsTransformBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "LayoutBuilder"
+      },
+      "comparison": {
+        "prose": "The clip value is stored on the descriptor but the composed LayoutBuilder/ConstrainedBox chain never applies it, so it is stored configuration without a clip path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ConstraintsTransformBox"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "ConstraintsTransformBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim through the composed chain",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ConstraintsTransformBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "LayoutBuilder"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update after composition.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ConstraintsTransformBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constraints_transform_box_rewrites_child_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PreferredSize",
+      "option": "preferred_size",
+      "default": "required, no default",
+      "validation": "Size used verbatim as tight constraints; invalid sizes panic at Constraints::new",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PreferredSize"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "PreferredSize lowers to a ConstrainedBox with tight bounds. The type is not re-exported from the Widgets facade, so it is unreachable by applications and deferred.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PreferredSize"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "PreferredSize",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PreferredSize"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Constrained"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; unreachable publicly until the type is exported.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "status": "unresolved"
+    }
+  ]
+}

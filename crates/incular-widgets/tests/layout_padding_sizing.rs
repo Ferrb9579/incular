@@ -6,7 +6,7 @@
 //! which expands. Layout math lives in `incular-layout`; widgets
 //! resolve configuration and measure children.
 
-use incular_config::{Alignment, Constraints, EdgeInsets};
+use incular_config::{Alignment, Axis, Constraints, EdgeInsets};
 use incular_core::{Color, Size};
 use incular_rendering::PaintCommand;
 use incular_text::TextStyle;
@@ -462,6 +462,117 @@ fn mounted_padding_update_and_identical_reapply() {
     let after_reapply = tree.diagnostics();
     assert_eq!(after_reapply.layouts, after_update.layouts);
     assert_eq!(bounds_of(&tree, only_child(&tree, root)).0, 20.);
+}
+
+#[test]
+fn alignment_family_builders_match_fluent_construction() {
+    let child = || white_box(10., 10.);
+    assert_eq!(
+        Widget::from(Align::new(Alignment::BOTTOM_RIGHT, child()).width_factor(2.)),
+        Widget::from(
+            Align::builder()
+                .alignment(Alignment::BOTTOM_RIGHT)
+                .width_factor(2.)
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(Center::new(child()).height_factor(3.)),
+        Widget::from(Center::builder().height_factor(3.).child(child()).build())
+    );
+}
+
+#[test]
+fn sizing_family_builders_match_fluent_construction() {
+    let child = || white_box(10., 10.);
+    assert_eq!(
+        Widget::from(ConstrainedBox::new(
+            Constraints::tight(Size::new(5., 5.)),
+            child()
+        )),
+        Widget::from(
+            ConstrainedBox::builder()
+                .constraints(Constraints::tight(Size::new(5., 5.)))
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(LimitedBox::new(child()).max_width(7.)),
+        Widget::from(LimitedBox::builder().max_width(7.).child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(OverflowBox::new(child()).min_width(7.)),
+        Widget::from(OverflowBox::builder().min_width(7.).child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(UnconstrainedBox::new(child()).constrained_axis(Axis::Vertical)),
+        Widget::from(
+            UnconstrainedBox::builder()
+                .constrained_axis(Axis::Vertical)
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(IntrinsicWidth::new(child()).step_width(3.)),
+        Widget::from(
+            IntrinsicWidth::builder()
+                .step_width(3.)
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(IntrinsicHeight::new(child())),
+        Widget::from(IntrinsicHeight::builder().child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(SizedOverflowBox::new(Size::new(9., 9.), child())),
+        Widget::from(
+            SizedOverflowBox::builder()
+                .size(Size::new(9., 9.))
+                .child(child())
+                .build()
+        )
+    );
+}
+
+#[test]
+fn baseline_aspect_fractional_builders_match_fluent_construction() {
+    let child = || white_box(10., 10.);
+    assert_eq!(
+        Widget::from(AspectRatio::new(2., child())),
+        Widget::from(
+            AspectRatio::builder()
+                .aspect_ratio(2.)
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(Baseline::new(8., child())),
+        Widget::from(Baseline::builder().baseline(8.).child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(FittedBox::new(child()).fit(BoxFit::Cover)),
+        Widget::from(
+            FittedBox::builder()
+                .fit(BoxFit::Cover)
+                .child(child())
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(FractionallySizedBox::new(child()).width_factor(0.5)),
+        Widget::from(
+            FractionallySizedBox::builder()
+                .width_factor(0.5)
+                .child(child())
+                .build()
+        )
+    );
 }
 
 #[test]

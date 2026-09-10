@@ -1,0 +1,517 @@
+{
+  "schema_version": 2,
+  "family": "BaselineAspectFractional",
+  "scope": "Public FractionallySizedBox/Baseline/AspectRatio/FittedBox options and their retained consumers in incular-widgets, delegating layout math to incular-layout/incular-layout. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "FractionallySizedBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "baseline_aspect_fractional_builders_match_fluent_construction"
+    },
+    "Baseline": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "baseline_aspect_fractional_builders_match_fluent_construction"
+    },
+    "AspectRatio": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "baseline_aspect_fractional_builders_match_fluent_construction"
+    },
+    "FittedBox": {
+      "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+      "name": "baseline_aspect_fractional_builders_match_fluent_construction"
+    }
+  },
+  "records": [
+    {
+      "symbol": "FractionallySizedBox",
+      "option": "width_factor",
+      "default": "none (inherit incoming width)",
+      "validation": "floored at zero by builder and setter; non-finite factors ignored by fractional_constraints",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionallySizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Fractional"
+      },
+      "comparison": {
+        "prose": "fractional_constraints scales the incoming width bound by the factor before measuring the child.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/widget/geometry.rs",
+            "kind": "function",
+            "name": "fractional_constraints"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fractionally_sized_box_scales_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FractionallySizedBox",
+      "option": "height_factor",
+      "default": "none (inherit incoming height)",
+      "validation": "floored at zero by builder and setter; non-finite factors ignored",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionallySizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Fractional"
+      },
+      "comparison": {
+        "prose": "fractional_constraints scales the incoming height bound by the factor.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/widget/geometry.rs",
+            "kind": "function",
+            "name": "fractional_constraints"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fractionally_sized_box_scales_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FractionallySizedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FractionallySizedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Fractional"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "FractionallySizedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fractionally_sized_box_scales_constraints"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Baseline",
+      "option": "baseline",
+      "default": "required, no default",
+      "validation": "floored at zero by builder and setter; non-finite targets resolve to zero in layout_baseline",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Baseline"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Baseline"
+      },
+      "comparison": {
+        "prose": "layout_baseline offsets the child downward when the target exceeds the child baseline; upward deltas clamp to zero.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          },
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_baseline"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "baseline_offsets_follow_target_deltas"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Baseline",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Baseline"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Baseline"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Baseline"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "baseline_offsets_follow_target_deltas"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AspectRatio",
+      "option": "aspect_ratio",
+      "default": "required, no default",
+      "validation": "floored to f32::EPSILON by builder and setter; zero and negative ratios never divide by zero",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AspectRatio"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "AspectRatio"
+      },
+      "comparison": {
+        "prose": "The retained AspectRatio arm derives the bounded size from the ratio and clamps to incoming constraints.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "aspect_ratio_drives_size_and_floors_invalid"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AspectRatio",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AspectRatio"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "AspectRatio"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AspectRatio"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "aspect_ratio_drives_size_and_floors_invalid"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FittedBox",
+      "option": "fit",
+      "default": "Contain",
+      "validation": "enum setter, no normalization; box-fit geometry resolves through the rendering helper",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FittedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "FittedBox"
+      },
+      "comparison": {
+        "prose": "FittedBox measures the child loosely then places a scaled/offset box via image_fit_rects; the fit mode selects the scale policy.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_contain_centers"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FittedBox",
+      "option": "alignment",
+      "default": "CENTER",
+      "validation": "absolute alignment retained, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FittedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "FittedBox"
+      },
+      "comparison": {
+        "prose": "Alignment offsets the scaled child inside the fitted box.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_contain_centers"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FittedBox",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "FittedBox"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "FittedBox"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "FittedBox"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_contain_centers"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

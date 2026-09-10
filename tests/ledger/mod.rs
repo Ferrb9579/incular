@@ -646,6 +646,12 @@ fn builder_field_status(field: &syn::Field) -> Result<BuilderField, String> {
                                 };
                                 match ident.as_str() {
                                     "doc" | "deprecated" => {}
+                                    // A transform still yields the
+                                    // field-named setter, so the
+                                    // discovered option name is the
+                                    // field; only the value shape
+                                    // changes, which discovery ignores.
+                                    "transform" => {}
                                     _ => return Err(format!("setter({ident} = ..)")),
                                 }
                             }
