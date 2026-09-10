@@ -50,6 +50,33 @@ fn synthetic_disjoint_spans_stay_separate() {
 }
 
 #[test]
+fn span_edges_reject_empty_reversed_and_out_of_line_ranges() {
+    let line = synthetic_line(&[(0, 2, 0., 10.), (2, 4, 10., 20.), (8, 10, 30., 40.)]);
+    // Collapsed, even inside a cluster, highlights nothing; carets are
+    // a separate path.
+    assert!(line.selection_spans(1, 1).is_empty());
+    assert!(line.selection_spans(3, 3).is_empty());
+    // Reversed ranges are empty by policy; callers normalize first.
+    assert!(line.selection_spans(4, 0).is_empty());
+    assert!(line.selection_spans(10, 2).is_empty());
+    // Ranges outside the line select nothing on it.
+    assert!(line.selection_spans(20, 30).is_empty());
+    assert!(line.selection_spans(4, 8).is_empty());
+}
+
+#[test]
+fn partial_cluster_range_expands_to_whole_clusters() {
+    // Gapped clusters keep a range splitting both sides separate while
+    // each side expands to its full shaped span: there are no visual
+    // edges inside a cluster to resolve to, including across a
+    // multi-grapheme ligature.
+    let line = synthetic_line(&[(0, 3, 0., 9.), (4, 6, 15., 20.)]);
+    assert_eq!(line.selection_spans(1, 5), vec![(0., 9.), (15., 20.)]);
+    // A range fully inside one cluster still yields that cluster.
+    assert_eq!(line.selection_spans(1, 2), vec![(0., 9.)]);
+}
+
+#[test]
 fn synthetic_empty_line_yields_caret_point() {
     let line = TextLine {
         runs: Arc::new([]),
@@ -62,7 +89,11 @@ fn synthetic_empty_line_yields_caret_point() {
         caret_end: 0,
         end: 0,
     };
-    assert_eq!(line.selection_spans(0, 0), vec![(5., 5.)]);
+    // Collapsed yields nothing even on an empty line: carets render
+    // through caret stops, never through highlight spans.
+    assert!(line.selection_spans(0, 0).is_empty());
+    // A nonempty range covering the empty line yields its caret point.
+    assert_eq!(line.selection_spans(0, 1), vec![(5., 5.)]);
     assert!(line.selection_spans(1, 1).is_empty());
 }
 

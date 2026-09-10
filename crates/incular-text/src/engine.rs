@@ -42,19 +42,27 @@ pub struct TextClusterSpan {
 }
 
 impl TextLine {
-    /// Visual x-intervals covered by a logical byte range on this line.
+    /// Visual x-intervals covered by a half-open logical byte range on
+    /// this line. Collapsed and reversed ranges yield nothing by
+    /// policy; callers pass normalized ranges and never rely on
+    /// rejection. Caret rendering stays separate: collapsed positions
+    /// highlight nothing here and resolve through caret stops instead.
     ///
     /// Four granularities meet here and are not interchangeable: the
     /// range arrives in UTF-8 bytes (clamped to char boundaries
     /// upstream, so mid-char bytes never arrive); shaping clusters are
-    /// the coverage granularity (a range splitting a cluster snaps to
-    /// its edges, matching grapheme-granular editing); visual order
-    /// comes from the stored spans, never from re-sorting bytes or
-    /// glyphs downstream. Touching spans merge; genuinely disjoint
-    /// spans stay separate. An empty line covered by the range yields
-    /// its caret point.
+    /// the coverage granularity (a range splitting a cluster expands
+    /// to the whole shaped cluster, including a multi-grapheme
+    /// ligature, whose interior graphemes have no visual edges to
+    /// resolve to); visual order comes from the stored spans, never
+    /// from re-sorting bytes or glyphs downstream. Touching spans
+    /// merge; genuinely disjoint spans stay separate. An empty line
+    /// covered by a nonempty range yields its caret point.
     #[must_use]
     pub fn selection_spans(&self, start: usize, end: usize) -> Vec<(f32, f32)> {
+        if start >= end {
+            return Vec::new();
+        }
         let mut spans: Vec<(f32, f32)> = self
             .clusters
             .iter()

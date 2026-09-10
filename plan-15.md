@@ -1988,6 +1988,22 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   both paint and engine level. Fixture correction: my earlier
   tiling claim is withdrawn above.
 
+## W3 — Selection-span API contract (same workstream, still open)
+
+- `TextLine::selection_spans` takes a half-open logical byte
+  range: collapsed and reversed ranges yield nothing by policy
+  (caret rendering stays on caret stops), callers pass normalized
+  ranges. Partial-cluster ranges expand to whole shaped clusters,
+  documented including multi-grapheme ligatures. Line-edge
+  abutment after clamping yields nothing instead of a stray
+  cluster rect. Mounted EditableText and SelectableText suites
+  keep agreeing through both consumers.
+- Evidence: edge cases in
+  `crates/incular-text/tests/selection_spans.rs` (collapsed
+  inside clusters, reversed, out-of-line, empty lines,
+  partial-cluster expansion) alongside the existing paint tests
+  for collapsed, newline-only, and joiner-only selections.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
