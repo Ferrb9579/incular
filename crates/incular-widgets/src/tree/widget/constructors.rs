@@ -467,9 +467,10 @@ impl Widget {
         })
     }
     /// Creates the editable primitive with renderer-neutral caret and
-    /// selection paint controls. Material uses this richer boundary for
-    /// `TextField` cursor/selection configuration while the legacy constructor
-    /// above keeps its source-compatible defaults.
+    /// selection paint controls. Material uses this boundary for
+    /// `TextField` cursor/selection configuration. All numeric policy
+    /// arrives already normalized from `EditableText` setters (see the
+    /// invariant there); this step trusts it.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn editable_text_configured_with_cursor(
@@ -502,16 +503,16 @@ impl Widget {
                 placeholder,
                 on_submit,
                 multiline,
-                min_lines: min_lines.map(|value| value.max(1)),
-                max_lines: max_lines.map(|value| value.max(1)),
+                min_lines,
+                max_lines,
                 expands,
                 text_align,
                 enabled,
                 read_only,
                 obscure_text,
-                cursor_width: cursor_width.max(0.0),
-                cursor_height: cursor_height.map(|value| value.max(0.0)),
-                cursor_radius: cursor_radius.max(0.0),
+                cursor_width,
+                cursor_height,
+                cursor_radius,
                 show_cursor,
                 cursor_color,
                 selection_color,

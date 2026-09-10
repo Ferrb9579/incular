@@ -469,7 +469,7 @@ impl TextEngine {
         options: TextLayoutOptions,
     ) -> TextLayout {
         let wrap_width = options.soft_wrap.then_some(options.max_width).flatten();
-        let layout = self.shape_raw(text, style, wrap_width, options.align);
+        let layout = self.shape_raw(text, style, wrap_width, options.max_width, options.align);
         let horizontal_overflow = !options.soft_wrap
             && options
                 .max_width
@@ -498,10 +498,13 @@ impl TextEngine {
         limit: usize,
     ) -> TextLayout {
         if limit == 0 {
-            return clipped_layout(self.shape_raw("", style, None, options.align), 0);
+            return clipped_layout(
+                self.shape_raw("", style, None, options.max_width, options.align),
+                0,
+            );
         }
         let wrap_width = options.soft_wrap.then_some(options.max_width).flatten();
-        let initial = self.shape_raw(text, style, wrap_width, options.align);
+        let initial = self.shape_raw(text, style, wrap_width, options.max_width, options.align);
         let end = initial
             .lines
             .get(limit.saturating_sub(1))
@@ -514,7 +517,13 @@ impl TextEngine {
             // The ellipsis always enters Parley as source text and is shaped
             // with the selected/fallback font stack, never appended as a raw
             // renderer glyph or a byte-truncated source suffix.
-            let shaped = self.shape_raw(&candidate, style, wrap_width, options.align);
+            let shaped = self.shape_raw(
+                &candidate,
+                style,
+                wrap_width,
+                options.max_width,
+                options.align,
+            );
             let fits_width = options.max_width.is_none_or(|width| {
                 shaped
                     .lines
@@ -543,6 +552,7 @@ impl TextEngine {
         text: &str,
         style: &TextStyle,
         max_width: Option<f32>,
+        align_width: Option<f32>,
         align: TextAlign,
     ) -> TextLayout {
         let mut builder =
@@ -576,8 +586,11 @@ impl TextEngine {
 
         let mut layout: Layout<()> = builder.build(text);
         layout.break_all_lines(max_width);
+        // Alignment resolves against the measured width even when the text
+        // does not wrap: single-line content otherwise ignores alignment
+        // because the wrap width is empty.
         layout.align(
-            max_width,
+            align_width,
             match align {
                 TextAlign::Start => Alignment::Start,
                 TextAlign::Center => Alignment::Center,
@@ -679,7 +692,9 @@ impl TextEngine {
                         id: glyph.id as u16,
                         // Incular's renderer uses `origin.y - offset.y`; Parley
                         // exposes glyph y from its top-left layout coordinate.
-                        offset: Offset::new(glyph.x, -glyph.y),
+                        // The line alignment offset rides along: parley keeps
+                        // it in line metrics, outside the item glyph positions.
+                        offset: Offset::new(glyph.x + metrics.offset, -glyph.y),
                         advance: glyph.advance,
                         cluster,
                     })
@@ -693,9 +708,11 @@ impl TextEngine {
                 for (glyph, cluster_range) in
                     parley_run.positioned_glyphs().zip(clusters.iter().cloned())
                 {
-                    let edge = glyph.x + glyph.advance;
-                    let left = glyph.x.min(edge);
-                    let right = glyph.x.max(edge);
+                    // Same line alignment offset as the glyph positions
+                    // above, so carets land where glyphs paint.
+                    let edge = glyph.x + metrics.offset + glyph.advance;
+                    let left = (glyph.x + metrics.offset).min(edge);
+                    let right = (glyph.x + metrics.offset).max(edge);
                     if let Some((previous_range, _, previous_right)) = cluster_positions.last_mut()
                         && *previous_range == cluster_range
                     {

@@ -534,6 +534,12 @@ impl From<RichText> for Widget {
 /// belong to a higher-level component library. Keep the controller outside a
 /// rebuilt widget description so text, selection, and active composition
 /// survive rebuilds.
+///
+/// Numeric policy is resolved once, here: `min_lines`/`max_lines` are
+/// `None` or at least one, caret sizes are non-negative, and `multiline`
+/// tracks whether `max_lines` differs from a single line with the last
+/// setter winning. The widget conversion trusts this invariant instead of
+/// re-clamping.
 pub struct EditableText {
     controller: TextEditingController,
     size: Size,

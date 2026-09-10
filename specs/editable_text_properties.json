@@ -1,0 +1,1164 @@
+{
+  "schema_version": 2,
+  "family": "EditableText",
+  "scope": "Public EditableText options and their retained consumers in incular-widgets. Controller internals live in incular-text and are covered by behavior, not inventoried here. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "animation",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "EditableText",
+      "option": "controller",
+      "default": "required, no default",
+      "validation": "Rc-identity comparison; content/visual revisions polled in the layout preamble, no listener subscriptions",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality compares controllers by allocation identity, so swapping controllers is a full invalidation; revisions are consumed by refresh_text_fields during layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/layout.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "refresh_text_fields"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "identical_reapplication_schedules_nothing"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "content_and_style_changes_repaint_with_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "semantic_text_selection_and_actions"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "size",
+      "default": "ZERO (intrinsic)",
+      "validation": "no normalization; positive components win over intrinsic measurement",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the desired size drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "desired_size_expands_and_unbounded_width"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "height",
+      "default": "current size height",
+      "validation": "setter-only name; writes size.height and preserves width",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "Covered by the same desired-size equality as size.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "desired_size_expands_and_unbounded_width"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "style",
+      "default": "TextStyle::default()",
+      "validation": "stored by value; family/size/weight/style/line-height/letter-spacing feed shaping, color feeds paint",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "Style changes invalidate layout as well as paint; there is no paint-only path for text fields.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "content_and_style_changes_repaint_with_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "empty_field_paints_placeholder_then_text"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "center_alignment_shifts_glyphs"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "placeholder",
+      "default": "empty",
+      "validation": "stored string; painted gray only when committed text is empty",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the placeholder string drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "empty_field_paints_placeholder_then_text"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "on_submit",
+      "default": "none",
+      "validation": "Rc callback compared by allocation identity; invoked with controller text on submit actions",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "Compared by allocation identity during reconciliation diffing; invoked with the controller text by submit_text_field on input actions.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "submit_text_field"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "submit_invokes_current_callback_with_text"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "multiline",
+      "default": false,
+      "validation": "coupled to max_lines: enabling clears a single-line cap, disabling pins max_lines to one; last setter wins",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "multiline_tracks_max_lines_with_last_setter_winning"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "min_lines",
+      "default": "none",
+      "validation": "clamped to at least one; not reconciled against max_lines, so a higher minimum wins the height deterministically",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the bound drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "line_count_floor_is_one"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "conflicting_min_max_lines_stay_deterministic"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "max_lines",
+      "default": "single line",
+      "validation": "clamped to at least one; any value but one implies multiline, so the setter updates the flag",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the bound drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "multiline_tracks_max_lines_with_last_setter_winning"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "line_count_floor_is_one"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "conflicting_min_max_lines_stay_deterministic"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "expands",
+      "default": false,
+      "validation": "bool setter, no normalization; fills bounded height, intrinsic height when unbounded",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "desired_size_expands_and_unbounded_width"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "text_align",
+      "default": "Start",
+      "validation": "stored alignment; resolves glyph positions through the engine for wrapped and single-line text alike",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over alignment drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "center_alignment_shifts_glyphs"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "enabled",
+      "default": true,
+      "validation": "bool setter, no normalization; gates editability, focusability, and the SetText action",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation; input dispatch additionally gates on it at runtime.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "semantic_text_selection_and_actions"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "read_only",
+      "default": false,
+      "validation": "bool setter, no normalization; keeps focus and selection while forbidding mutation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation; input dispatch additionally gates on it at runtime.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "semantic_text_selection_and_actions"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "obscure_text",
+      "default": false,
+      "validation": "bool setter, no normalization; masks paint to one glyph per source byte while semantics keep the value",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ],
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "collect_semantics_inner"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "obscure_masks_paint_keeps_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "cursor_width",
+      "default": 1.0,
+      "validation": "clamped at zero; zero width paints no caret",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over caret geometry drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_paints_geometry_and_color_when_focused"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "cursor_height",
+      "default": "none (shaped line height)",
+      "validation": "clamped at zero when present",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over caret geometry drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_height_and_radius_shape"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "cursor_radius",
+      "default": 0.0,
+      "validation": "clamped at zero; positive radius paints a rounded rect instead of a rect",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over caret geometry drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_height_and_radius_shape"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "show_cursor",
+      "default": true,
+      "validation": "bool setter, no normalization; gates caret paint while focused",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the flag drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_paints_geometry_and_color_when_focused"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "cursor_color",
+      "default": "white",
+      "validation": "stored color, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the color drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_paints_geometry_and_color_when_focused"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "cursor_height_and_radius_shape"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "selection_color",
+      "default": "translucent blue",
+      "validation": "stored color, no normalization; paints only for non-empty focused selections",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "EditableText"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "RenderKind equality over the color drives layout, paint, semantics, and hit-test invalidation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "selection_highlight_follows_focus_and_color"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "input_type",
+      "default": "Text",
+      "validation": "stored hint; reaches the native bridge through semantic properties, not the render kind",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "method",
+        "owner": "Widget",
+        "name": "with_text_input_hints"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "Hint changes replace the widget description and re-resolve semantic properties on update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "text_field_input_snapshot"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "input_hints_reach_the_native_snapshot"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "EditableText",
+      "option": "input_action",
+      "default": "Unspecified",
+      "validation": "stored hint; reaches the native bridge through semantic properties, not the render kind",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "method",
+        "owner": "Widget",
+        "name": "with_text_input_hints"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "TextField"
+      },
+      "comparison": {
+        "prose": "Hint changes replace the widget description and re-resolve semantic properties on update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "text_field_input_snapshot"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/editable_text.rs",
+          "name": "input_hints_reach_the_native_snapshot"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

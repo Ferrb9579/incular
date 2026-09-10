@@ -1614,6 +1614,33 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   shared transform resolver, reworded to what the sharing
   actually guarantees.
 
+## W3 — EditableText configuration and measurement (same workstream, still open)
+
+- Numeric policy resolves once, in the descriptor setters: line
+  counts clamp at one, caret sizes at zero, and `multiline` tracks
+  `max_lines` with the last setter winning. The single-funnel
+  `editable_text_configured_with_cursor` conversion trusts this
+  invariant instead of re-clamping; conflicting `min_lines` above
+  `max_lines` stays unnormalized and deterministic (minimum height
+  wins). Also removed a stale "legacy constructor" comment with no
+  referent.
+- Fail-first alignment fix across two layers: single-line
+  `text_align` was inert because the engine fed the wrap width
+  (empty without wrapping) to parley's align call, and translation
+  dropped parley's per-line alignment offset from glyph and caret
+  positions. Both fixed at their owners; caret, selection, and hit
+  testing follow the translated layout from the same funnel.
+- Evidence: 15 tests in
+  `crates/incular-widgets/tests/editable_text.rs` (setter order,
+  floors, conflicting ranges, desired/expands/unbounded sizing,
+  placeholder/text paint, caret geometry and color, selection,
+  alignment shift, byte-per-glyph obscuring with intact semantics,
+  identical reapplication, content/style invalidation, semantic
+  actions) plus `specs/editable_text_properties.json` (all 22
+  discovered options) validated by
+  `tests/editable_text_ledger.rs` with missing/stale/unresolved
+  negatives.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
