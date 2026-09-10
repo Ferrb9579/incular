@@ -205,7 +205,7 @@ pub(super) fn transform_around(
 /// pivot keeps its established node-size basis; only the documented
 /// child-size fraction uses the child measurement. Every projection
 /// (compositor, hit testing, semantics) resolves through this one
-/// function with the same inputs so the three can never diverge again.
+/// function with the same inputs, which keeps the three on one formula.
 pub(super) fn resolve_transform(
     transform: CoreTransform,
     origin: Option<Offset>,

@@ -958,6 +958,263 @@ fn distinct_links_with_identical_geometry_resolve_independently() {
     assert!(link_b.is_linked(), "sibling link must be unaffected");
 }
 
+/// A target nested inside a linked follower, with a second follower on
+/// the nested target. The nested leader must publish in the outer
+/// follower's resolved frame, not its layout frame.
+fn nested_link_tree() -> (
+    LayerTree,
+    LayerLink,
+    LayerLink,
+    LayerId,
+    LayerId,
+    LayerId,
+    LayerId,
+) {
+    let mut tree = LayerTree::new();
+    let link_outer = LayerLink::new();
+    let link_inner = LayerLink::new();
+    let shift = tree.create_transform(Transform::translation(Offset::new(70., 0.)));
+    let outer = tree.create_leader(link_outer.clone(), Size::new(60., 30.));
+    tree.set_children(shift, vec![outer]);
+    let picture_a = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(20., 10.)),
+    );
+    let inner = tree.create_leader(link_inner.clone(), Size::new(10., 6.));
+    let picture_b = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(10., 6.)),
+    );
+    tree.set_children(inner, vec![picture_b]);
+    let follower_outer = tree.create_follower(
+        link_outer.clone(),
+        false,
+        Offset::ZERO,
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(20., 10.),
+    );
+    tree.set_children(follower_outer, vec![picture_a, inner]);
+    let picture_c = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(8., 4.)),
+    );
+    let follower_inner = tree.create_follower(
+        link_inner.clone(),
+        false,
+        Offset::new(2., 3.),
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(8., 4.),
+    );
+    tree.set_children(follower_inner, vec![picture_c]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift, follower_outer, follower_inner]);
+    tree.set_root(root);
+    (
+        tree,
+        link_outer,
+        link_inner,
+        shift,
+        outer,
+        follower_outer,
+        follower_inner,
+    )
+}
+
+#[test]
+fn nested_target_publishes_in_resolved_follower_frame() {
+    let (mut tree, _, _, _, _, _, _) = nested_link_tree();
+    let _ = tree.flatten();
+    let bounds: Vec<Rect> = tree
+        .flattened_pictures()
+        .iter()
+        .map(|picture| picture.world_bounds)
+        .collect();
+    assert_eq!(
+        bounds,
+        vec![
+            Rect::from_origin_size(Offset::new(70., 0.), Size::new(20., 10.)),
+            Rect::from_origin_size(Offset::new(70., 0.), Size::new(10., 6.)),
+            Rect::from_origin_size(Offset::new(72., 3.), Size::new(8., 4.)),
+        ]
+    );
+}
+
+#[test]
+fn nested_links_follow_outer_target_moves() {
+    let (mut tree, _, _, shift, _, _, _) = nested_link_tree();
+    let _ = tree.flatten();
+    assert!(tree.update_transform(shift, Transform::translation(Offset::new(81., 13.))));
+    let _ = tree.flatten();
+    let bounds: Vec<Rect> = tree
+        .flattened_pictures()
+        .iter()
+        .map(|picture| picture.world_bounds)
+        .collect();
+    assert_eq!(
+        bounds,
+        vec![
+            Rect::from_origin_size(Offset::new(81., 13.), Size::new(20., 10.)),
+            Rect::from_origin_size(Offset::new(81., 13.), Size::new(10., 6.)),
+            Rect::from_origin_size(Offset::new(83., 16.), Size::new(8., 4.)),
+        ]
+    );
+}
+
+/// A dependency cycle: the A-follower contains the B-leader while the
+/// B-follower contains the A-leader. Policy: hidden members never
+/// publish (their followers observe unlinked), while showing members
+/// publish in the follower's parent frame exactly like any other
+/// unlinked-but-shown follower. Either way flatten terminates.
+fn cyclic_link_tree(show: bool) -> (LayerTree, LayerLink, LayerLink) {
+    let mut tree = LayerTree::new();
+    let link_a = LayerLink::new();
+    let link_b = LayerLink::new();
+    let picture_a = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(5., 5.), Size::new(4., 4.)),
+    );
+    let leader_b = tree.create_leader(link_b.clone(), Size::new(10., 6.));
+    tree.set_children(leader_b, vec![picture_a]);
+    let follower_a = tree.create_follower(
+        link_a.clone(),
+        show,
+        Offset::ZERO,
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(20., 10.),
+    );
+    tree.set_children(follower_a, vec![leader_b]);
+    let picture_b = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(40., 0.), Size::new(6., 4.)),
+    );
+    let leader_a = tree.create_leader(link_a.clone(), Size::new(12., 8.));
+    tree.set_children(leader_a, vec![picture_b]);
+    let follower_b = tree.create_follower(
+        link_b.clone(),
+        show,
+        Offset::ZERO,
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(20., 10.),
+    );
+    tree.set_children(follower_b, vec![leader_a]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![follower_a, follower_b]);
+    tree.set_root(root);
+    (tree, link_a, link_b)
+}
+
+#[test]
+fn hidden_cyclic_links_stay_unpublished() {
+    let (mut tree, link_a, link_b) = cyclic_link_tree(false);
+    let _ = tree.flatten();
+    assert!(!link_a.is_linked(), "cyclic leader must not publish");
+    assert!(!link_b.is_linked(), "cyclic leader must not publish");
+    assert!(
+        tree.flattened_pictures().is_empty(),
+        "hidden cyclic followers cull their subtrees"
+    );
+    // A second flatten with identical input stays put: no hidden state
+    // accumulates across passes.
+    let _ = tree.flatten();
+    assert!(!link_a.is_linked());
+    assert!(!link_b.is_linked());
+}
+
+#[test]
+fn shown_cyclic_links_publish_in_parent_frame() {
+    let (mut tree, link_a, link_b) = cyclic_link_tree(true);
+    let _ = tree.flatten();
+    assert!(link_a.is_linked() && link_b.is_linked());
+    let bounds: Vec<Rect> = tree
+        .flattened_pictures()
+        .iter()
+        .map(|picture| picture.world_bounds)
+        .collect();
+    assert_eq!(
+        bounds,
+        vec![
+            Rect::from_origin_size(Offset::new(5., 5.), Size::new(4., 4.)),
+            Rect::from_origin_size(Offset::new(40., 0.), Size::new(6., 4.)),
+        ]
+    );
+}
+
+#[test]
+fn shown_self_cycle_publishes_in_parent_frame() {
+    // A follower showing above the only leader on its own link: the
+    // leader still publishes in the parent frame, and the follower then
+    // resolves against it like any other linked pair.
+    let mut tree = LayerTree::new();
+    let link = LayerLink::new();
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(4., 2.), Size::new(6., 4.)),
+    );
+    let leader = tree.create_leader(link.clone(), Size::new(10., 6.));
+    tree.set_children(leader, vec![picture]);
+    let follower = tree.create_follower(
+        link.clone(),
+        true,
+        Offset::new(3., 1.),
+        LayerAnchor::TOP_LEFT,
+        LayerAnchor::TOP_LEFT,
+        Size::new(20., 10.),
+    );
+    tree.set_children(follower, vec![leader]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![follower]);
+    tree.set_root(root);
+    let _ = tree.flatten();
+    assert!(link.is_linked());
+    // The leader publishes in the parent frame; at flatten time the
+    // follower resolves against that publication, shifting the picture
+    // by the (3,1) offset.
+    let bounds: Vec<Rect> = tree
+        .flattened_pictures()
+        .iter()
+        .map(|picture| picture.world_bounds)
+        .collect();
+    assert_eq!(
+        bounds,
+        vec![Rect::from_origin_size(
+            Offset::new(7., 3.),
+            Size::new(6., 4.)
+        )]
+    );
+}
+
+#[test]
+fn publisher_identity_survives_across_trees() {
+    // One link shared by two trees: both first leaders hold the same
+    // arena index, so only the owned token can tell publishers apart.
+    let link = LayerLink::new();
+    let mut first = LayerTree::new();
+    let leader_a = first.create_leader(link.clone(), Size::new(60., 30.));
+    first.set_root(leader_a);
+    let mut second = LayerTree::new();
+    let leader_b = second.create_leader(link.clone(), Size::new(60., 30.));
+    second.set_root(leader_b);
+    assert_eq!(leader_a, leader_b, "indices overlap across trees");
+    let _ = first.flatten();
+    assert!(link.is_linked());
+    // B never published: removing it must not disturb A's publication.
+    second.remove(leader_b);
+    assert!(link.is_linked(), "cross-tree non-owner removal preserves");
+    // B publishes a successor; removing A's leader afterwards must not
+    // clear B's publication even though the indices still overlap.
+    let leader_c = second.create_leader(link.clone(), Size::new(60., 30.));
+    second.set_root(leader_c);
+    let _ = second.flatten();
+    first.remove(leader_a);
+    assert!(link.is_linked(), "stale owner must not clear the successor");
+    let _ = first.flatten();
+    assert!(link.is_linked());
+}
+
 #[test]
 fn follower_before_leader_resolves_like_leader_before_follower() {
     // Leader publication runs as its own pass before follower resolution,

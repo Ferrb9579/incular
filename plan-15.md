@@ -1389,6 +1389,43 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   extra phases). Untouched as harmless; revisit only with a real
   cost case.
 
+## W3 — Linked-layer traversal (same workstream, still open)
+
+- Reproduced first: a target nested inside a linked follower
+  published in its layout frame, so the inner follower landed at
+  (2,3) instead of (72,3) while paint, hit testing, and semantics
+  followed the (correct) flatten-time resolution. The old publish
+  pass propagated ordinary transforms only.
+- Fix without a second transform algorithm: the publish pass now
+  collects leaders in paint order with a parent map, then ensures
+  each leader once with cycle-guarded recursion. Each leader's
+  frame folds its ancestor chain with flatten's own rules —
+  transforms compose, ancestor followers resolve through the shared
+  `follower_transform` (ensuring their links' candidates in paint
+  order first), showing-but-unlinked followers keep the parent
+  frame, and hidden followers, emptied clips, and singular
+  inversions resolve to nothing. The publish set is exactly the
+  leader set flatten traverses; the first resolvable leader per
+  link wins with runner-up fallback. Immutable walks borrow child
+  vectors instead of cloning them.
+- Declared policy, all pinned: nested chains resolve through outer
+  frames (compositor placement plus widget paint/hit/semantics,
+  outer moves, outer unlink releasing the inner link at once);
+  dependency cycles terminate — hidden members never publish,
+  showing members publish in the parent frame by the same
+  unlinked-showing rule flatten applies (self-cycles included);
+  cross-tree links distinguish publishers even when arena indices
+  overlap. Prior ownership tests (non-winner removal, rebinding,
+  winner election) pass unchanged.
+- The raw global publisher counter is replaced by an owned
+  `PublisherIdentity` token (`Rc` allocation per leader layer,
+  `same_owner` comparison, construction kept crate-private,
+  exported only because the public `LayerKind` carries it).
+  Owner-checked clearing is preserved.
+- Also removed the absolute "can never diverge again" claim on the
+  shared transform resolver, reworded to what the sharing
+  actually guarantees.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

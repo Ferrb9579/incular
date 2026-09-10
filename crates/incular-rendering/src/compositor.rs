@@ -10,11 +10,9 @@ use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
+    collections::HashMap,
     rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 
 /// Opaque retained compositor identity. It uses the core generational arena so
@@ -160,26 +158,49 @@ pub fn resolve_follower_target(
     target_point + (leader_transform.transform_point(offset) - leader_origin)
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct LeaderData {
-    owner: u64,
+    owner: PublisherIdentity,
     transform: Transform,
     size: Size,
     generation: u64,
 }
 
-/// Process-wide publication identity minted per leader layer. A link may be
-/// shared across layer trees whose arena indices overlap, so a tree-local
-/// `LayerId` cannot name the publisher; the token travels inside the leader
-/// layer itself. Zero is never minted and means "no owner".
-static NEXT_LINK_PUBLISHER: AtomicU64 = AtomicU64::new(1);
+/// One reachable leader layer snapshotted for the resolution pass, in
+/// paint order. The snapshot carries everything publication needs so the
+/// pass never holds layer borrows across recursive resolution.
+struct LeaderRecord {
+    id: LayerId,
+    link: LayerLink,
+    size: Size,
+    publisher: PublisherIdentity,
+    generation: u64,
+}
 
-fn mint_link_publisher() -> u64 {
-    let mut id = NEXT_LINK_PUBLISHER.fetch_add(1, Ordering::Relaxed);
-    if id == 0 {
-        id = NEXT_LINK_PUBLISHER.fetch_add(1, Ordering::Relaxed);
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PublishState {
+    InProgress,
+    Published,
+    Unresolvable,
+}
+
+/// Opaque publication owner minted per leader layer. A link may be shared
+/// across layer trees whose arena indices overlap, so a tree-local
+/// `LayerId` cannot name the publisher; instead each leader layer owns one
+/// allocation whose identity is inseparable from the owner's lifetime.
+/// Compare only with `same_owner`, never by detached address.
+#[derive(Clone, Debug)]
+pub struct PublisherIdentity(Rc<()>);
+impl PublisherIdentity {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(()))
     }
-    id
+    /// Whether both tokens name the same owning leader layer. Clones of
+    /// one token always agree, including across layer trees.
+    #[must_use]
+    pub fn same_owner(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// Shared identity used to resolve a composited target and any number of
@@ -230,9 +251,12 @@ impl LayerLink {
     }
     /// Releases the publication only when `owner` made it. Removing or
     /// rebinding any other leader layer must not disturb the winner.
-    fn clear_if_owned_by(&self, owner: u64) {
+    fn clear_if_owned_by(&self, owner: &PublisherIdentity) {
         let mut state = self.0.borrow_mut();
-        if state.is_some_and(|leader| leader.owner == owner) {
+        if state
+            .as_ref()
+            .is_some_and(|leader| leader.owner.same_owner(owner))
+        {
             *state = None;
         }
     }
@@ -241,10 +265,10 @@ impl LayerLink {
     fn clear_publication(&self) {
         *self.0.borrow_mut() = None;
     }
-    fn publish(&self, owner: u64, transform: Transform, size: Size, generation: u64) {
-        // One target per link and the first target in paint order wins.
-        // Keeping that rule deterministic is preferable to allowing a later
-        // subtree to move an already published follower.
+    fn publish(&self, owner: PublisherIdentity, transform: Transform, size: Size, generation: u64) {
+        // One target per link: the first resolvable leader in paint order
+        // wins. Keeping that rule deterministic is preferable to allowing
+        // a later subtree to move an already published follower.
         let mut state = self.0.borrow_mut();
         if state.is_none() {
             *state = Some(LeaderData {
@@ -322,7 +346,7 @@ pub enum LayerKind {
     Leader {
         link: LayerLink,
         size: Size,
-        publisher: u64,
+        publisher: PublisherIdentity,
     },
     Follower {
         link: LayerLink,
@@ -509,7 +533,7 @@ impl LayerTree {
         self.insert(LayerKind::Leader {
             link,
             size,
-            publisher: mint_link_publisher(),
+            publisher: PublisherIdentity::new(),
         })
     }
     pub fn create_follower(
@@ -553,7 +577,7 @@ impl LayerTree {
                 link, publisher, ..
             } = &layer.kind
             {
-                link.clear_if_owned_by(*publisher);
+                link.clear_if_owned_by(publisher);
             }
             self.diagnostics.layers -= 1;
             if self.root == Some(id) {
@@ -930,7 +954,6 @@ impl LayerTree {
         }
         // The rebound layer releases only its own publication; a non-owner
         // rebind must not clear the winner it never displaced.
-        let publisher = *publisher;
         current_link.clear_if_owned_by(publisher);
         *current_link = link;
         *current_size = size;
@@ -1047,7 +1070,7 @@ impl LayerTree {
             // resolves, so flatten order cannot strand a follower behind
             // its leader: paint, hit testing, and semantics all read the
             // same post-publication state.
-            self.publish_leaders(root, Transform::IDENTITY);
+            self.publish_resolved_leaders(root);
             self.flatten_layer(root, Transform::IDENTITY, None, &mut out);
             self.collect_annotations(root, Transform::IDENTITY, None);
         }
@@ -1378,12 +1401,36 @@ impl LayerTree {
         if let LayerKind::Leader { link, .. } = &layer.kind {
             link.clear_publication();
         }
-        let children = layer.children.clone();
-        for child in children {
-            self.clear_link_states(child);
+        for child in layer.children.iter() {
+            self.clear_link_states(*child);
         }
     }
-    fn publish_leaders(&self, id: LayerId, world_transform: Transform) {
+    /// Publishes every reachable leader in dependency order: a leader
+    /// nested under linked followers resolves through the same follower
+    /// projection the flatten walk uses, so nested publications land in
+    /// the resolved frame rather than the layout frame. Leaders are
+    /// attempted once each in paint order with cycle-guarded recursion,
+    /// so chains and cycles always terminate; the first resolvable
+    /// leader per link wins and anything culled or cyclic stays
+    /// unpublished for its followers to treat as unlinked.
+    fn publish_resolved_leaders(&self, root: LayerId) {
+        let mut parents = HashMap::new();
+        let mut leaders = Vec::new();
+        self.collect_publish_state(root, &mut parents, &mut leaders);
+        if leaders.is_empty() {
+            return;
+        }
+        let mut states = HashMap::new();
+        for index in 0..leaders.len() {
+            self.ensure_published(index, &leaders, &parents, &mut states);
+        }
+    }
+    fn collect_publish_state(
+        &self,
+        id: LayerId,
+        parents: &mut HashMap<LayerId, LayerId>,
+        leaders: &mut Vec<LeaderRecord>,
+    ) {
         let Some(layer) = self.layers.get(id.0) else {
             return;
         };
@@ -1393,16 +1440,146 @@ impl LayerTree {
             publisher,
         } = &layer.kind
         {
-            link.publish(*publisher, world_transform, *size, layer.generation);
+            leaders.push(LeaderRecord {
+                id,
+                link: link.clone(),
+                size: *size,
+                publisher: publisher.clone(),
+                generation: layer.generation,
+            });
         }
-        let next = match &layer.kind {
-            LayerKind::Transform { transform } => world_transform.then(*transform),
-            _ => world_transform,
+        for child in layer.children.iter() {
+            parents.entry(*child).or_insert(id);
+            self.collect_publish_state(*child, parents, leaders);
+        }
+    }
+    fn ensure_published(
+        &self,
+        index: usize,
+        leaders: &[LeaderRecord],
+        parents: &HashMap<LayerId, LayerId>,
+        states: &mut HashMap<LayerId, PublishState>,
+    ) -> bool {
+        let id = leaders[index].id;
+        match states.get(&id) {
+            Some(PublishState::Published) => return true,
+            Some(PublishState::Unresolvable) => return false,
+            // A dependency cycle: the revisit reports failure so the
+            // depender treats the link as currently unlinked. The outer
+            // attempt still finishes and overwrites this marker with its
+            // own outcome, so a leader whose only dependent is itself
+            // resolves through the unlinked-follower rule below.
+            Some(PublishState::InProgress) => {
+                states.insert(id, PublishState::Unresolvable);
+                return false;
+            }
+            None => {}
+        }
+        states.insert(id, PublishState::InProgress);
+        let published = match self.leader_context(index, leaders, parents, states) {
+            Some(world) => {
+                let record = &leaders[index];
+                record.link.publish(
+                    record.publisher.clone(),
+                    world,
+                    record.size,
+                    record.generation,
+                );
+                true
+            }
+            None => false,
         };
-        let children = layer.children.clone();
-        for child in children {
-            self.publish_leaders(child, next);
+        states.insert(
+            id,
+            if published {
+                PublishState::Published
+            } else {
+                PublishState::Unresolvable
+            },
+        );
+        published
+    }
+    /// Resolves one leader's publication frame by folding its ancestor
+    /// chain with the same rules the flatten walk applies: transforms
+    /// compose, followers resolve through the shared projection (ensuring
+    /// their links' winners first), showing-but-unlinked followers keep
+    /// the parent frame, and anything the flatten walk would cull —
+    /// hidden followers, emptied clips, singular inversions — resolves
+    /// to nothing so the leader stays unpublished exactly where flatten
+    /// would never visit it.
+    fn leader_context(
+        &self,
+        index: usize,
+        leaders: &[LeaderRecord],
+        parents: &HashMap<LayerId, LayerId>,
+        states: &mut HashMap<LayerId, PublishState>,
+    ) -> Option<Transform> {
+        let mut chain = vec![leaders[index].id];
+        while let Some(parent) = chain.last().and_then(|id| parents.get(id)) {
+            chain.push(*parent);
         }
+        let mut world = Transform::IDENTITY;
+        let mut clip: Option<Rect> = None;
+        for node in chain.iter().rev() {
+            let layer = self.layers.get(node.0)?;
+            match &layer.kind {
+                LayerKind::Transform { transform } => {
+                    world = world.then(*transform);
+                }
+                LayerKind::Follower {
+                    link,
+                    show_when_unlinked,
+                    offset,
+                    target_anchor,
+                    follower_anchor,
+                    size,
+                } => {
+                    if link.leader_transform().is_none() {
+                        // Publish the dependency first: a nested leader
+                        // waits for its ancestor follower's link, trying
+                        // candidates in paint order until one publishes.
+                        for dependency in 0..leaders.len() {
+                            if leaders[dependency].link == *link {
+                                self.ensure_published(dependency, leaders, parents, states);
+                                if link.leader_transform().is_some() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    match link.leader_transform() {
+                        Some(_) => {
+                            world = self.follower_transform(
+                                world,
+                                link.clone(),
+                                *show_when_unlinked,
+                                *offset,
+                                *target_anchor,
+                                *follower_anchor,
+                                *size,
+                            )?;
+                        }
+                        None if *show_when_unlinked => {}
+                        None => return None,
+                    }
+                }
+                LayerKind::ClipRect { .. }
+                | LayerKind::ClipRRect { .. }
+                | LayerKind::ClipOval { .. }
+                | LayerKind::ClipPath { .. } => {
+                    let shape = clip_world_bounds(&layer.kind, world)?;
+                    clip = match clip {
+                        Some(active) => active.intersection(shape),
+                        None => Some(shape),
+                    };
+                    // An emptied clip culls the subtree: flatten never
+                    // visits leaders beneath it, so neither does this pass.
+                    clip?;
+                }
+                _ => {}
+            }
+        }
+        Some(world)
     }
     // Keep the transform inputs explicit so this helper mirrors the retained
     // follower state without changing the existing call-site contract.

@@ -891,6 +891,139 @@ fn distinct_links_with_identical_geometry_do_not_cross_talk() {
 }
 
 #[test]
+fn nested_target_inside_follower_resolves_paint_hit_and_semantics() {
+    // A target nested inside a linked follower publishes in the outer
+    // follower's resolved frame; a second follower on the nested target
+    // tracks it. Paint, hit testing, and semantics must agree.
+    let link_outer = LayerLink::new();
+    let link_inner = LayerLink::new();
+    let make = |offset: Offset| {
+        Column::new([
+            Widget::from(incular_widgets::Transform::translation(
+                offset,
+                leader_box(&link_outer),
+            )),
+            Widget::from(
+                CompositedTransformFollower::new(link_outer.clone(), leader_box(&link_inner))
+                    .offset(Offset::new(5., 7.)),
+            ),
+            Widget::from(
+                CompositedTransformFollower::new(
+                    link_inner.clone(),
+                    action(Size::new(8., 4.), Color::WHITE, ActionId(1))
+                        .accessibility_label("nested child"),
+                )
+                .offset(Offset::new(2., 3.)),
+            ),
+        ])
+        .into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(make(Offset::ZERO)).unwrap();
+    let nested = tree.children(root).unwrap()[2];
+    let moved = tree.children(nested).unwrap()[0];
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    // Outer leader at (70,0); outer follower at (75,7); nested target at
+    // (75,7); nested follower's 8x4 box at (77,10).
+    let expected = Rect::from_origin_size(Offset::new(77., 10.), Size::new(8., 4.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint())
+            .iter()
+            .find(|rect| rect.size.width == 8. && rect.size.height == 4.)
+            .expect("nested follower rect"),
+        expected,
+        "nested follower paint",
+    );
+    let hit = tree
+        .hit_test(Offset::new(78., 11.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("nested semantics");
+    assert_rect_eq(semantic.bounds, expected, "nested semantics");
+    // Moving the outer target shifts the whole chain by the same delta.
+    tree.update(root, make(Offset::new(11., 13.)))
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let nested = tree.children(root).unwrap()[2];
+    let moved = tree.children(nested).unwrap()[0];
+    let expected = Rect::from_origin_size(Offset::new(88., 23.), Size::new(8., 4.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint())
+            .iter()
+            .find(|rect| rect.size.width == 8. && rect.size.height == 4.)
+            .expect("moved nested rect"),
+        expected,
+        "moved nested paint",
+    );
+    let hit = tree
+        .hit_test(Offset::new(89., 24.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("moved nested semantics");
+    assert_rect_eq(semantic.bounds, expected, "moved nested semantics");
+    // Unlinking the outer follower unmounts the nested target: the inner
+    // link releases at once while the outer link keeps resolving, and the
+    // nested follower falls back to its layout placement.
+    assert!(link_outer.is_linked());
+    assert!(link_inner.is_linked());
+    tree.update(
+        root,
+        Column::new([
+            Widget::from(incular_widgets::Transform::translation(
+                Offset::new(11., 13.),
+                leader_box(&link_outer),
+            )),
+            Widget::box_(Size::new(60., 30.), Color::WHITE),
+            Widget::from(
+                CompositedTransformFollower::new(
+                    link_inner.clone(),
+                    action(Size::new(8., 4.), Color::WHITE, ActionId(1))
+                        .accessibility_label("nested child"),
+                )
+                .offset(Offset::new(2., 3.)),
+            ),
+        ])
+        .into(),
+    )
+    .expect("update");
+    assert!(link_outer.is_linked(), "outer link survives");
+    assert!(!link_inner.is_linked(), "nested link releases at once");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let nested = tree.children(root).unwrap()[2];
+    let moved = tree.children(nested).unwrap()[0];
+    let expected = Rect::from_origin_size(Offset::new(96., 60.), Size::new(8., 4.));
+    assert_rect_eq(
+        *painted_rects(&tree.paint())
+            .iter()
+            .find(|rect| rect.size.width == 8. && rect.size.height == 4.)
+            .expect("unlinked nested rect"),
+        expected,
+        "unlinked nested paint",
+    );
+    let hit = tree
+        .hit_test(Offset::new(97., 61.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("unlinked nested semantics");
+    assert_rect_eq(semantic.bounds, expected, "unlinked nested semantics");
+}
+
+#[test]
 fn multiple_leaders_first_painted_wins() {
     // The compositor keeps the first publication per flatten; a later
     // leader on the same link never moves an already-painted follower.
