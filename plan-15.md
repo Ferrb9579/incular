@@ -1899,16 +1899,17 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   visual positions come from caret stops and stored spans, never
   from re-sorted bytes or glyphs. Mid-grapheme edges survive
   clamping and resolve to cluster edges in mapping.
-- Shaped output tiles contiguously: the mixed-direction fixture's
-  spans join edge-to-edge in visual order, so disjoint visuals are
-  absent from shaping, not lost in extraction; the merge still
-  preserves genuine gaps, proven by synthetic span tests labeled
-  as algorithm coverage. Newline-only and invisible-joiner
-  selections highlight nothing (sane, pinned); collapsed
-  selections highlight nothing; intra-char bytes never reach
-  mapping. No multi-grapheme cluster arises in this environment
-  (Latin ligatures split per char, lam-alef per grapheme), so that
-  limitation is documented, not claimed.
+- Shaped spans tile contiguously in visual order, but that does
+  not imply single-segment selections: a logical prefix ending
+  inside the Hebrew run covers two separated visual intervals
+  with unselected ink between them, and the merge preserves the
+  gap (proven by regression, not by tiling). Synthetic span tests
+  stay separately labeled as algorithm coverage. Newline-only and
+  invisible-joiner selections highlight nothing (sane, pinned);
+  collapsed selections highlight nothing; intra-char bytes never
+  reach mapping. No multi-grapheme cluster arises in this
+  environment (Latin ligatures split per char, lam-alef per
+  grapheme), so that limitation is documented, not claimed.
 - Evidence: `crates/incular-text/tests/selection_spans.rs`
   (synthetic disjoint/empty merge plus shaped tiling) and 3 new
   paint tests in `editable_text_bidi.rs` (collapsed, newline-only,
@@ -1970,6 +1971,22 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   the reverse drag fails without normalization. Non-ASCII
   fixtures use explicit escapes where normalization would change
   bytes.
+
+## W3 — Cluster extraction audit and separated spans (same workstream, still open)
+
+- Parley source audit: `glyphs()` and `positioned_glyphs()` both
+  iterate `Run::visual_clusters().flat_map(glyphs)`, the latter
+  only adding running x (which already carries the line offset),
+  so order and cardinality correspond structurally for RTL runs,
+  ligatures, and multi-glyph clusters alike; the window
+  re-locates the style-uniform slice within that same sequence.
+  No production change: extraction is correct as written, now
+  with the invariant documented at the site.
+- Evidence: a logical-prefix regression over "hi שלום bye"
+  ([0..5), boundaries calculated from the string, not magic
+  numbers) asserting two rects with an uncovered gap middle at
+  both paint and engine level. Fixture correction: my earlier
+  tiling claim is withdrawn above.
 
 ## W4 — Navigation transactions and smaller runtime owners
 

@@ -425,6 +425,53 @@ fn joiner_only_selection_paints_no_highlight() {
 }
 
 #[test]
+fn logical_prefix_over_rtl_run_selects_separated_spans() {
+    // "hi שלום bye": bytes are h0 i1 sp2 ש3 ל5 ו7 ם9 sp11 b12 y13 e14.
+    // A logical prefix ending inside the Hebrew run covers two visual
+    // intervals with unselected ink between them: the LTR head on the
+    // left and the first Hebrew character on the right. All clusters
+    // tile one continuous line, yet the SELECTED clusters do not.
+    let text = "hi שלום bye";
+    let hebrew_start = text
+        .char_indices()
+        .find(|(_, caret)| *caret == 'ש')
+        .map(|(index, _)| index)
+        .expect("hebrew run");
+    let first_hebrew_end = hebrew_start + 'ש'.len_utf8();
+    assert_eq!((hebrew_start, first_hebrew_end), (3, 5));
+
+    let highlight = Color::rgba(0, 255, 0, 255);
+    let controller = TextEditingController::with_text(text);
+    controller.set_selection(TextSelection {
+        base: 0,
+        extent: first_hebrew_end,
+    });
+    let (mut tree, root) = mount_field(controller.clone(), |field| {
+        field
+            .text_align(TextAlign::Start)
+            .selection_color(highlight)
+            .size(Size::new(300., 32.))
+    });
+    layout_tight(&mut tree, 300., 32.);
+    tree.set_focused(root, true, Instant::now())
+        .expect("focus field");
+    let rects = colored_rects(&tree.paint(), highlight);
+    assert_eq!(rects.len(), 2, "separated visual intervals: {rects:?}");
+    assert!(
+        rects[0].origin.x + rects[0].size.width < rects[1].origin.x - 5.,
+        "a real gap of unselected ink sits between them: {rects:?}"
+    );
+    // The gap middle belongs to unselected bytes: no rect covers it.
+    let gap_middle = (rects[0].origin.x + rects[0].size.width + rects[1].origin.x) / 2.;
+    assert!(
+        rects.iter().all(|rect| {
+            gap_middle < rect.origin.x || gap_middle > rect.origin.x + rect.size.width
+        }),
+        "gap middle {gap_middle} must stay uncovered: {rects:?}"
+    );
+}
+
+#[test]
 fn ligature_and_combining_carets_snap_to_cluster_edges() {
     // U+FB01 is one char in three bytes: intra-char bytes never reach
     // caret mapping because selection clamps down to char boundaries.

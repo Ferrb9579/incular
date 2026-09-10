@@ -720,6 +720,15 @@ impl TextEngine {
                 // before translating it. This keeps caret movement and
                 // selection on shaped cluster boundaries instead of assigning
                 // every glyph to the run's first byte.
+                //
+                // Order and cardinality correspond structurally, not by
+                // length coincidence: `glyphs()` and `positioned_glyphs()`
+                // both iterate `Run::visual_clusters().flat_map(glyphs)`,
+                // the latter only adding running x (which already carries
+                // the line offset). The window below re-locates this
+                // style-uniform slice within that same sequence, so the
+                // zip pairs each positioned glyph with its own cluster
+                // for RTL runs, ligatures, and multi-glyph clusters alike.
                 let visible_glyphs = parley_run.glyphs().collect::<Vec<_>>();
                 let all_clustered_glyphs = run
                     .visual_clusters()

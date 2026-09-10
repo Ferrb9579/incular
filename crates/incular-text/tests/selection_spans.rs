@@ -35,8 +35,9 @@ fn synthetic_line(spans: &[(usize, usize, f32, f32)]) -> TextLine {
 
 #[test]
 fn synthetic_disjoint_spans_stay_separate() {
-    // Algorithm coverage only: these gaps do not occur in observed
-    // shaped output, where spans tile contiguously.
+    // Algorithm coverage only: full tilings join edge-to-edge, but
+    // selected subsets of mixed-direction lines genuinely gap, as the
+    // prefix regression below proves against shaped output.
     let line = synthetic_line(&[(0, 2, 0., 10.), (2, 4, 10., 20.), (8, 10, 30., 40.)]);
     assert_eq!(line.selection_spans(0, 10), vec![(0., 20.), (30., 40.)]);
     assert_eq!(line.selection_spans(0, 4), vec![(0., 20.)]);
@@ -93,4 +94,13 @@ fn shaped_mixed_line_tiles_contiguously() {
     assert_eq!(projected.len(), 1);
     assert!((projected[0].0 - 12.9296875).abs() < 1.5);
     assert!((projected[0].1 - 58.453125).abs() < 1.5);
+
+    // A logical prefix ending inside the Hebrew run (bytes 0..5: the
+    // LTR head plus ש) covers two separated visual intervals with
+    // unselected ink between them.
+    let separated = line.selection_spans(0, 5);
+    assert_eq!(separated.len(), 2);
+    assert!(separated[0].1 < separated[1].0);
+    assert!((separated[0].0 - 0.0).abs() < 1.5);
+    assert!((separated[1].1 - 54.070313).abs() < 1.5);
 }
