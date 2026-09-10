@@ -574,7 +574,7 @@
       "symbol": "EditableText",
       "option": "text_align",
       "default": "Start",
-      "validation": "stored alignment; resolves glyph positions through the engine for wrapped and single-line text alike",
+      "validation": "stored alignment; resolves glyph positions through the engine for wrapped and single-line text alike with exactly one translation: parley seeds positioned glyphs with the line offset, TextLine.offset records it for edge mapping, and paint/hit paths share the stored layout",
       "conversion": {
         "path": "crates/incular-widgets/src/tree/descriptors.rs",
         "kind": "trait_impl",
@@ -621,6 +621,22 @@
         {
           "path": "crates/incular-widgets/tests/editable_text.rs",
           "name": "center_alignment_shifts_glyphs"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_alignment.rs",
+          "name": "alignment_modes_space_short_single_line"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_alignment.rs",
+          "name": "alignment_start_end_follow_text_direction"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_alignment.rs",
+          "name": "selection_rect_covers_the_aligned_line_end"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_alignment.rs",
+          "name": "pointer_maps_through_centered_text"
         }
       ],
       "status": "implemented"

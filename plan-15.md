@@ -1726,6 +1726,44 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   old identical-output test is replaced, and the focus ledger record
   now names the real semantic consumer.
 
+## W3 — EditableText validation and alignment audit (same workstream, still open)
+
+- Validation funnel holds: `EditableText` fields are private with
+  normalized `new()` defaults, every numeric setter clamps, and the
+  single `From` conversion (`descriptors.rs`) feeds the single
+  `pub(crate)` constructor holding the only `TextFieldSpec` literal.
+  No public low-level constructor, alias, or sibling path bypasses
+  the setters, so no bypass regression was needed; the audit itself
+  is the evidence.
+- Real defects found and fixed. The package-A alignment fix rested
+  on a false premise: parley 0.7 seeds positioned glyph x with the
+  line offset, so adding `metrics.offset` translated centered/right
+  text twice (center rendered end-aligned, end painted off-field;
+  only start, offset zero, looked right). `translate_layout` now
+  reuses positioned x verbatim. Separately, `line_caret_x` and
+  `caret_for_line_x` treated `TextLine.width` (unshifted advance) as
+  an absolute edge, misplacing selection trailing edges and line-end
+  fallbacks on aligned text. `TextLine.offset` records the
+  translation once; paint and hit testing share the stored layout,
+  so one fix covers both.
+- Hardening-claim correction: `f8e853c` added only the reentrant
+  `add_listener` regression — the clone-then-notify protection in
+  `update`/`notify_listeners` predates package B, and every mutation
+  path funnels through `update`. No controller production change was
+  needed. Replacement review also holds: swaps invalidate through
+  render-kind controller identity (covering A-B-A), the revision
+  poll serves in-place edits only, and `reset_caret` notifies
+  nothing.
+- Evidence: 8 tests in
+  `crates/incular-widgets/tests/editable_text_alignment.rs` (exact
+  mode offsets, direction-sensitive start/end, empty/placeholder,
+  overflow translation-once, multiline per-line offsets, mounted
+  width/alignment changes, aligned selection edges, pointer
+  mapping). Fail-first verified per fix by reverting each
+  production change independently. The editable-text ledger's
+  `text_align` record now states the single-translation policy and
+  cites the new regressions.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

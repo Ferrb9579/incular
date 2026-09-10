@@ -868,9 +868,13 @@ pub(super) fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
 }
 pub(super) fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
     if byte >= line.caret_end {
-        return line.width;
+        // Glyph x positions carry the alignment offset, so the end-of-line
+        // edge must add it too; `width` alone is the unshifted advance.
+        return line.offset + line.width;
     }
-    let mut x = 0.;
+    // The walk starts at the line offset for the same reason: stored glyph
+    // edges are already shifted, and byte zero sits at the aligned start.
+    let mut x = line.offset;
     for glyph in line.glyphs.iter() {
         if glyph.cluster as usize >= byte {
             break;
@@ -906,7 +910,7 @@ pub(super) fn line_caret_x_for_affinity(
         )
 }
 pub(super) fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
-    if x >= line.width {
+    if x >= line.offset + line.width {
         return line.caret_end;
     }
     let mut best = 0usize;

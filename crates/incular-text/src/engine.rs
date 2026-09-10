@@ -33,6 +33,12 @@ pub struct TextLine {
     pub runs: Arc<[Arc<GlyphRun>]>,
     pub glyphs: Arc<[GlyphPosition]>,
     pub width: f32,
+    /// Horizontal alignment offset in text-area coordinates. Glyph and
+    /// caret x positions already include it; `width` stays the unshifted
+    /// advance so extent checks keep working. Consumers mapping absolute
+    /// x positions must add this to `width` instead of re-deriving the
+    /// alignment.
+    pub offset: f32,
     pub baseline: f32,
     pub start: usize,
     /// End of selectable/caret text on this visual line. This excludes a
@@ -419,6 +425,7 @@ impl TextEngine {
                     runs: shifted_runs.into(),
                     glyphs: glyphs.into(),
                     width: line.width,
+                    offset: line.offset,
                     baseline: line.baseline + height,
                     start: line.start + byte_start,
                     caret_end: line.caret_end + byte_start,
@@ -436,6 +443,7 @@ impl TextEngine {
                 runs: Arc::new([]),
                 glyphs: Arc::new([]),
                 width: 0.,
+                offset: 0.,
                 baseline: 0.,
                 start: 0,
                 caret_end: 0,
@@ -692,9 +700,10 @@ impl TextEngine {
                         id: glyph.id as u16,
                         // Incular's renderer uses `origin.y - offset.y`; Parley
                         // exposes glyph y from its top-left layout coordinate.
-                        // The line alignment offset rides along: parley keeps
-                        // it in line metrics, outside the item glyph positions.
-                        offset: Offset::new(glyph.x + metrics.offset, -glyph.y),
+                        // Parley seeds positioned glyph x with the line
+                        // alignment offset, so adding it again would translate
+                        // aligned text twice.
+                        offset: Offset::new(glyph.x, -glyph.y),
                         advance: glyph.advance,
                         cluster,
                     })
@@ -708,11 +717,12 @@ impl TextEngine {
                 for (glyph, cluster_range) in
                     parley_run.positioned_glyphs().zip(clusters.iter().cloned())
                 {
-                    // Same line alignment offset as the glyph positions
-                    // above, so carets land where glyphs paint.
-                    let edge = glyph.x + metrics.offset + glyph.advance;
-                    let left = (glyph.x + metrics.offset).min(edge);
-                    let right = (glyph.x + metrics.offset).max(edge);
+                    // Positioned glyph x already carries the line alignment
+                    // offset; cluster edges reuse it verbatim so carets land
+                    // where glyphs paint with exactly one translation.
+                    let edge = glyph.x + glyph.advance;
+                    let left = glyph.x.min(edge);
+                    let right = glyph.x.max(edge);
                     if let Some((previous_range, _, previous_right)) = cluster_positions.last_mut()
                         && *previous_range == cluster_range
                     {
@@ -801,6 +811,7 @@ impl TextEngine {
                 runs: runs.into(),
                 glyphs: glyphs.into(),
                 width: metrics.advance,
+                offset: metrics.offset,
                 baseline: metrics.baseline,
                 start: range.start,
                 caret_end,
@@ -813,6 +824,7 @@ impl TextEngine {
                 runs: Arc::new([]),
                 glyphs: Arc::new([]),
                 width: 0.0,
+                offset: 0.0,
                 baseline: 0.0,
                 start: 0,
                 caret_end: 0,
