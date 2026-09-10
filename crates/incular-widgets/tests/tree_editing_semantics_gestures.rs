@@ -49,12 +49,16 @@ fn selectable_text_drag_uses_cached_parley_layout_and_copies_across_widgets() {
     let first_origin = tree.element_bounds(first).unwrap().origin;
     let second_origin = tree.element_bounds(second).unwrap().origin;
     assert!(tree.selectable_text_set_selection(first, first_origin, false));
+    // Overflow clicks resolve to the nearest caret. The second label is
+    // RTL-base, so its visual end is the far left and the nearest caret
+    // there is byte 11; the paragraph-final byte shares its only visual
+    // point with that boundary and stays reachable by keyboard motion.
     assert!(tree.selectable_text_set_selection(
         second,
-        second_origin + Offset::new(10_000., 0.),
+        second_origin + Offset::new(-10_000., 0.),
         true,
     ));
-    assert_eq!(controller.selected_text(), "Latin café\nעברית mixed 世界");
+    assert_eq!(controller.selected_text(), "Latin café\nעברית ");
     let before = tree.text_diagnostics().layouts_requested;
     let _ = tree.paint();
     assert_eq!(tree.text_diagnostics().layouts_requested, before);

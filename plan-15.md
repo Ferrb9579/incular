@@ -1915,6 +1915,62 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   joiner-only). Non-ASCII fixtures use explicit escapes so editors
   cannot normalize them.
 
+## W3 — SelectableText shaped pointer mapping (same workstream, still open)
+
+- Selectable clicks went through the approximate glyph walk with
+  an unshifted width cutoff; they now resolve bytes and affinities
+  from shaped caret stops like text fields do. `StaticSelectionPoint`
+  carries the click affinity into handle placement with identity
+  still defined by (element, byte), so collapsed detection and
+  anchor/extent roles cannot flip on affinity alone.
+- Real defect alongside: single-element backward drags selected
+  nothing because per-element ranges never normalized, unlike the
+  cross-element content range. Endpoints now normalize within one
+  element too.
+- Evidence: 7 tests in
+  `crates/incular-widgets/tests/selectable_text_pointer.rs`
+  through real clicks and drags (RTL logical bytes both drag
+  directions, mixed byte/affinity handles via the area controller,
+  aligned interior anchors with suffix highlight geometry, wrapped
+  partition exactness, cross-run exact substrings,
+  ligature/combining cluster snaps, width-change agreement with a
+  fresh mount). Fail-first: RTL and mixed tests fail on the walk;
+  the reverse drag fails without normalization. Non-ASCII
+  fixtures use explicit escapes where normalization would change
+  bytes.
+
+## W3 — SelectableText shaped pointer mapping (same workstream, still open)
+
+- Selectable clicks went through the approximate glyph walk with
+  an unshifted width cutoff; they now resolve bytes and affinities
+  from shaped caret stops like text fields do, with identity still
+  defined by (element, byte) so collapsed detection and
+  anchor/extent roles cannot flip on affinity alone. Handles follow
+  the stored affinity, observable through the area controller's
+  selection geometry.
+- Real defect alongside: single-element backward drags selected
+  nothing because per-element ranges never normalized, unlike the
+  cross-element content range. Endpoints now normalize within one
+  element too.
+- Overflow clicks resolve to the nearest caret in both systems:
+  far-right of RTL-base text is byte zero, far-left the minimum-x
+  stop. One long-standing drag expectation encoded direction-blind
+  overflow and now extends past the visual end instead. Boundary
+  ties resolve to the smaller byte; paragraph-final bytes sharing
+  their only visual point with an earlier boundary stay reachable
+  by keyboard motion.
+- Evidence: 7 tests in
+  `crates/incular-widgets/tests/selectable_text_pointer.rs`
+  through real clicks and drags (RTL logical bytes both drag
+  directions, mixed byte/affinity handles via the area controller,
+  aligned interior anchors with suffix highlight geometry, wrapped
+  partition exactness, cross-run exact substrings,
+  ligature/combining cluster snaps, width-change agreement with a
+  fresh mount). Fail-first: RTL and mixed tests fail on the walk;
+  the reverse drag fails without normalization. Non-ASCII
+  fixtures use explicit escapes where normalization would change
+  bytes.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

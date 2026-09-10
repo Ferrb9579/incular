@@ -305,12 +305,22 @@ impl WidgetTree {
             .render_world_transform(render)
             .inverse_transform_point(point)
             .unwrap_or(point);
-        let line = layout
+        // Shaped stops resolve both edges: the walk below used raw
+        // glyph order and an unshifted width cutoff, which mis-mapped
+        // aligned, RTL, and mixed-direction clicks.
+        let line_index = (local.y / layout.metrics.line_height).floor().max(0.) as usize;
+        let line_index = line_index.min(layout.lines.len().saturating_sub(1));
+        let (byte, affinity) = layout
             .lines
-            .get((local.y / layout.metrics.line_height).floor().max(0.) as usize)
-            .or_else(|| layout.lines.last());
-        let byte = line.map_or(0, |line| caret_for_line_x(line, local.x));
-        let point = StaticSelectionPoint { element: id, byte };
+            .get(line_index)
+            .map_or((0, incular_text::TextAffinity::Downstream), |_| {
+                caret_for_line_position(&layout, line_index, local.x)
+            });
+        let point = StaticSelectionPoint {
+            element: id,
+            byte,
+            affinity,
+        };
         if extend
             && self
                 .static_selections
@@ -360,7 +370,11 @@ impl WidgetTree {
         } else {
             previous_grapheme_boundary(&text, current)
         };
-        let point = StaticSelectionPoint { element: id, byte };
+        let point = StaticSelectionPoint {
+            element: id,
+            byte,
+            affinity: incular_text::TextAffinity::Downstream,
+        };
         let anchor = if extend {
             self.static_selections
                 .get(&area)
@@ -391,6 +405,7 @@ impl WidgetTree {
         let point = StaticSelectionPoint {
             element: id,
             byte: if end { text.len() } else { 0 },
+            affinity: incular_text::TextAffinity::Downstream,
         };
         let anchor = if extend {
             self.static_selections
@@ -433,10 +448,12 @@ impl WidgetTree {
                 anchor: StaticSelectionPoint {
                     element: first,
                     byte: 0,
+                    affinity: incular_text::TextAffinity::Downstream,
                 },
                 extent: StaticSelectionPoint {
                     element: last,
                     byte: last_len,
+                    affinity: incular_text::TextAffinity::Downstream,
                 },
             },
         );
@@ -674,8 +691,7 @@ impl WidgetTree {
         }
         let render = self.render_id(point.element)?;
         let layout = self.renders.get(render.0)?.text_layout()?.as_ref();
-        let (x, y, line_height) =
-            caret_geometry(layout, point.byte, incular_text::TextAffinity::Downstream);
+        let (x, y, line_height) = caret_geometry(layout, point.byte, point.affinity);
         let area_transform = self
             .render_id(area)
             .and_then(|render| self.render_world_transform(render).inverse())
@@ -1040,6 +1056,14 @@ pub(super) fn static_selection_range(
     if !(first_index..=last_index).contains(&element_index) {
         return None;
     }
+    // A backward drag within one element must select the same bytes as
+    // the forward drag: normalize the endpoints like selection_content_range
+    // does across elements, or right-to-left drags select nothing.
+    let (first_byte, last_byte) = if first_index == last_index {
+        (first_byte.min(last_byte), first_byte.max(last_byte))
+    } else {
+        (first_byte, last_byte)
+    };
     let text = tree.selectable_text_value(element)?;
     let start = if element_index == first_index {
         valid_boundary(&text, first_byte)

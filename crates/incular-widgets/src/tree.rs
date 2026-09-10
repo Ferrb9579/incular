@@ -40,8 +40,8 @@ use incular_semantics::{
     SemanticsDiagnostics, SemanticsTree, TextSelection as SemanticTextSelection,
 };
 use incular_text::{
-    RichText, TextAlign, TextDiagnostics, TextEditingController, TextEngine, TextLayout,
-    TextLayoutOptions, TextOverflow, TextRange, TextSelection, TextStyle,
+    RichText, TextAffinity, TextAlign, TextDiagnostics, TextEditingController, TextEngine,
+    TextLayout, TextLayoutOptions, TextOverflow, TextRange, TextSelection, TextStyle,
 };
 use std::sync::Arc;
 
@@ -804,10 +804,37 @@ fn disposition_for(
         .map_or(GestureDisposition::Cancelled, |entry| entry.disposition)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug)]
 struct StaticSelectionPoint {
     element: ElementId,
     byte: usize,
+    /// Visual edge owning a collapsed boundary, recovered from shaped
+    /// caret stops at click time. Handle placement follows it; byte-only
+    /// consumers (ranges, synced controllers) ignore it.
+    affinity: TextAffinity,
+}
+
+// Identity is the (element, byte) location: affinity selects a visual
+// edge for handles but must never flip collapsed detection or
+// anchor/extent roles.
+impl PartialEq for StaticSelectionPoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.element == other.element && self.byte == other.byte
+    }
+}
+
+impl Eq for StaticSelectionPoint {}
+
+impl PartialOrd for StaticSelectionPoint {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StaticSelectionPoint {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.element, self.byte).cmp(&(other.element, other.byte))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
