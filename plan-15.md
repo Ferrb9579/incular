@@ -2074,6 +2074,30 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   semantics, main-axis size, shared representation, builder
   parity, identical reapplication).
 
+## W3 — Padding, alignment, and sizing constraints (same workstream, still open)
+
+- Size and ratio validation floors at descriptors and conversion
+  (negative factors to zero, aspect ratios to epsilon, box
+  dimensions clamped); core `Size::new` and `Constraints::new`
+  panic loudly on invalid input instead, and negative padding
+  stays meaningful by expanding. Overflow minimums trust the
+  lowering path; additional constraints clamp into incoming
+  bounds exactly like Flutter's enforce. `PreferredSize` is not
+  publicly reachable and stays out of scope.
+- Aliases resolve through shared policies: Center delegates to
+  Align, IntrinsicWidth/Height to UnconstrainedBox, and builder
+  forms equal fluent construction everywhere checked.
+- Evidence: 16 tests in
+  `crates/incular-widgets/tests/layout_padding_sizing.rs`
+  (insets with insufficient space, negative padding, constructor
+  parity, align factors with negative flooring, fractional
+  scaling, aspect ratios with invalid flooring, baseline target
+  deltas, fitted contain, overflow reporting with paint past the
+  edge, constrained/limited/overflow bounds, unconstrained
+  aliases, loud invalid constraints, sized-box parity with
+  clamping, mounted updates with identical reapplication,
+  constraint transforms).
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
