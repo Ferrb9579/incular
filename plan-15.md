@@ -1557,6 +1557,25 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   geometry, predicate tests are classification, and the waiter
   test is host handling. Pixel presentation of masks and
   backdrops remains unresolved pending backend execution.
+- Clip cache state is private: `resolved` left the public
+  `LayerKind` clip variants and `ResolvedClipPath` left the crate
+  root export; one `clip_cache` slot per private `Layer` owns the
+  single current resolution, reset by the geometry update paths
+  and released with the layer. Construction paths were compatible
+  (all sites go through `create_clip_*`/`insert`), and all 64
+  compositor plus 20 widget linked-layer tests pass unchanged,
+  including the memo identity/replacement/release coverage.
+- Native execution evidence:
+  `crates/incular-desktop/tests/unsupported_effect_execution.rs`
+  (opt-in `INCULAR_DESKTOP_LIVE_TESTS=1`, watchdog-bounded) drives
+  one window through mask, backdrop, then plain phases: both
+  effect attempts fail with the typed `FrameFailed` waiter outcome
+  carrying the backend message plus `CaptureUnavailable` with no
+  presentation, and the plain phase presents, proving failure is
+  scoped per attempt and the loop survives it. Executed live on
+  Windows: full run completes in ~15s, exit 0. Failed frames show
+  only the uncleared (black) surface, which is the correct
+  observable for presented-nothing.
 
 ## W3 — Linked-layer traversal (same workstream, still open)
 

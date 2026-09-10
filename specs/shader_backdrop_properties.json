@@ -21,7 +21,8 @@
       "outcome": {
         "path": "crates/incular-wgpu/tests/unsupported_effects.rs",
         "name": "shader_mask_reports_unsupported_effect"
-      }
+      },
+      "execution_evidence": "crates/incular-desktop/tests/unsupported_effect_execution.rs phase 1 drives a real frame with a shader mask and asserts the typed FrameFailed waiter outcome plus CaptureUnavailable with no presentation"
     },
     "BackdropFilter": {
       "execution": "unresolved",
@@ -30,7 +31,8 @@
       "outcome": {
         "path": "crates/incular-wgpu/tests/unsupported_effects.rs",
         "name": "enabled_backdrop_filter_reports_unsupported_effect"
-      }
+      },
+      "execution_evidence": "crates/incular-desktop/tests/unsupported_effect_execution.rs phase 2 drives a real frame with an enabled backdrop filter and asserts the typed FrameFailed waiter outcome plus CaptureUnavailable with no presentation; phase 3 presents plain content proving the failure is scoped per attempt"
     }
   },
   "records": [

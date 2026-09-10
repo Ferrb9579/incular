@@ -76,3 +76,8 @@ harness = false
 name = "pointer_input_native"
 path = "tests/pointer_input_native.rs"
 harness = false
+
+[[test]]
+name = "unsupported_effect_execution"
+path = "tests/unsupported_effect_execution.rs"
+harness = false

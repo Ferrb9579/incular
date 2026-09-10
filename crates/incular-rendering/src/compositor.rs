@@ -126,30 +126,6 @@ impl LayerAnchor {
     }
 }
 
-/// Retained fallback path of a clip layer, if any. Reads only; writes go
-/// through the layer's own update path or the flatten memo.
-fn clip_memo(kind: &LayerKind) -> Option<&ResolvedClipPath> {
-    match kind {
-        LayerKind::ClipRect { resolved, .. } => resolved.as_ref(),
-        LayerKind::ClipRRect { resolved, .. } => resolved.as_ref(),
-        LayerKind::ClipOval { resolved, .. } => resolved.as_ref(),
-        LayerKind::ClipPath { resolved, .. } => resolved.as_ref(),
-        _ => None,
-    }
-}
-
-/// Stores a fallback resolution. Only the flatten memo calls this, and
-/// only right after resolving; geometry updates reset instead of writing.
-fn set_clip_memo(kind: &mut LayerKind, memo: ResolvedClipPath) {
-    match kind {
-        LayerKind::ClipRect { resolved, .. } => *resolved = Some(memo),
-        LayerKind::ClipRRect { resolved, .. } => *resolved = Some(memo),
-        LayerKind::ClipOval { resolved, .. } => *resolved = Some(memo),
-        LayerKind::ClipPath { resolved, .. } => *resolved = Some(memo),
-        _ => {}
-    }
-}
-
 /// World-space bounding box of a clip layer's shape, or `None` when the
 /// shape is empty and clips everything away. Conservative for rounded
 /// corners: the box covers the full rect. Pass only clip layers; any
@@ -209,13 +185,12 @@ pub fn resolve_follower_target(
 }
 
 /// World-resolved fallback path retained per clip layer. At most one
-/// lives on a layer: geometry or transform changes replace it through
-/// the layer's update path, removal drops it with the layer, and no
-/// global map or transform history exists. Tolerance is a pure function
-/// of the world, so world equality implies tolerance equality. Opaque
-/// outside the compositor: construction and comparison stay internal.
+/// lives on a layer: geometry updates replace it through their own
+/// update path, removal drops it with the layer, and no global map or
+/// transform history exists. Tolerance is a pure function of the world,
+/// so world equality implies tolerance equality.
 #[derive(Clone, Debug)]
-pub struct ResolvedClipPath {
+struct ResolvedClipPath {
     world: Transform,
     path: Arc<Path>,
 }
@@ -363,20 +338,16 @@ pub enum LayerKind {
     },
     ClipRect {
         rect: Rect,
-        resolved: Option<ResolvedClipPath>,
     },
     ClipRRect {
         rrect: RRect,
-        resolved: Option<ResolvedClipPath>,
     },
     ClipOval {
         rect: Rect,
-        resolved: Option<ResolvedClipPath>,
     },
     ClipPath {
         path: Arc<Path>,
         fill_rule: FillRule,
-        resolved: Option<ResolvedClipPath>,
     },
     Opacity {
         alpha: f32,
@@ -431,6 +402,10 @@ struct Layer {
     surface_partition: Option<SurfacePartitionId>,
     dirty: DirtyFlags,
     generation: u64,
+    /// Owned fallback-path cache for clip layers. `LayerKind` describes
+    /// requested behavior only; resolved state lives here so removal
+    /// releases it and geometry updates invalidate it in one place.
+    clip_cache: Option<ResolvedClipPath>,
 }
 
 /// Renderer-independent retained layer arena. Picture display lists are owned
@@ -500,35 +475,22 @@ impl LayerTree {
         self.insert(LayerKind::Transform { transform })
     }
     pub fn create_clip_rect(&mut self, rect: Rect) -> LayerId {
-        self.insert(LayerKind::ClipRect {
-            rect,
-            resolved: None,
-        })
+        self.insert(LayerKind::ClipRect { rect })
     }
     /// Creates a rounded-rectangle clip stage in local space; the world
     /// shape resolves at flatten time like [`Self::create_clip_rect`].
     pub fn create_clip_rrect(&mut self, rrect: RRect) -> LayerId {
-        self.insert(LayerKind::ClipRRect {
-            rrect,
-            resolved: None,
-        })
+        self.insert(LayerKind::ClipRRect { rrect })
     }
     /// Creates an oval clip stage in local space; the world shape resolves
     /// at flatten time like [`Self::create_clip_rect`].
     pub fn create_clip_oval(&mut self, rect: Rect) -> LayerId {
-        self.insert(LayerKind::ClipOval {
-            rect,
-            resolved: None,
-        })
+        self.insert(LayerKind::ClipOval { rect })
     }
     /// Creates a path clip stage in local space; the world shape resolves
     /// at flatten time like [`Self::create_clip_rect`].
     pub fn create_clip_path(&mut self, path: Arc<Path>, fill_rule: FillRule) -> LayerId {
-        self.insert(LayerKind::ClipPath {
-            path,
-            fill_rule,
-            resolved: None,
-        })
+        self.insert(LayerKind::ClipPath { path, fill_rule })
     }
     /// Creates an isolated compositor group. Alpha is normalized at the
     /// renderer-neutral boundary so every backend observes identical values.
@@ -642,6 +604,7 @@ impl LayerTree {
             surface_partition: None,
             dirty: DirtyFlags::COMPOSITE,
             generation,
+            clip_cache: None,
         }));
         self.diagnostics.layers += 1;
         id
@@ -745,18 +708,14 @@ impl LayerTree {
         let Some(layer) = self.layers.get_mut(id.0) else {
             return false;
         };
-        let LayerKind::ClipRect {
-            rect: current,
-            resolved,
-        } = &mut layer.kind
-        else {
+        let LayerKind::ClipRect { rect: current } = &mut layer.kind else {
             return false;
         };
         if *current == rect {
             return false;
         }
         *current = rect;
-        *resolved = None;
+        layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -767,18 +726,14 @@ impl LayerTree {
         let Some(layer) = self.layers.get_mut(id.0) else {
             return false;
         };
-        let LayerKind::ClipRRect {
-            rrect: current,
-            resolved,
-        } = &mut layer.kind
-        else {
+        let LayerKind::ClipRRect { rrect: current } = &mut layer.kind else {
             return false;
         };
         if *current == rrect {
             return false;
         }
         *current = rrect;
-        *resolved = None;
+        layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -789,18 +744,14 @@ impl LayerTree {
         let Some(layer) = self.layers.get_mut(id.0) else {
             return false;
         };
-        let LayerKind::ClipOval {
-            rect: current,
-            resolved,
-        } = &mut layer.kind
-        else {
+        let LayerKind::ClipOval { rect: current } = &mut layer.kind else {
             return false;
         };
         if *current == rect {
             return false;
         }
         *current = rect;
-        *resolved = None;
+        layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -814,7 +765,6 @@ impl LayerTree {
         let LayerKind::ClipPath {
             path: current_path,
             fill_rule: current_rule,
-            resolved,
         } = &mut layer.kind
         else {
             return false;
@@ -824,7 +774,7 @@ impl LayerTree {
         }
         *current_path = path;
         *current_rule = fill_rule;
-        *resolved = None;
+        layer.clip_cache = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -1281,20 +1231,17 @@ impl LayerTree {
         world: Transform,
     ) -> Arc<Path> {
         if let Some(layer) = self.layers.get(id.0)
-            && let Some(memo) = clip_memo(&layer.kind)
+            && let Some(memo) = layer.clip_cache.as_ref()
             && memo.world == world
         {
             return memo.path.clone();
         }
         let resolved = Arc::new(build().transformed(world));
         if let Some(layer) = self.layers.get_mut(id.0) {
-            set_clip_memo(
-                &mut layer.kind,
-                ResolvedClipPath {
-                    world,
-                    path: resolved.clone(),
-                },
-            );
+            layer.clip_cache = Some(ResolvedClipPath {
+                world,
+                path: resolved.clone(),
+            });
         }
         resolved
     }
