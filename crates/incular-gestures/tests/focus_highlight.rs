@@ -329,3 +329,40 @@ fn queued_notifications_do_not_own_dropped_callback_captures() {
 
     assert!(dropped.get());
 }
+
+#[test]
+fn focus_behavior_hover_drives_hover_highlight_callbacks() {
+    // No tree driver calls mouse_enter today; the behavior contract is
+    // pinned at its owner so the widget audit can reference it.
+    let _manager = manager();
+    let hovered = Rc::new(RefCell::new(Vec::new()));
+    let behavior = FocusBehavior::new(
+        FocusNode::new(),
+        true,
+        None,
+        None,
+        Some(Rc::new({
+            let hovered = hovered.clone();
+            move |visible| hovered.borrow_mut().push(visible)
+        })),
+    );
+    behavior.mouse_enter();
+    behavior.mouse_enter();
+    behavior.mouse_exit();
+    assert_eq!(&*hovered.borrow(), &[true, false]);
+
+    let suppressed = Rc::new(RefCell::new(Vec::new()));
+    let disabled = FocusBehavior::new(
+        FocusNode::new(),
+        false,
+        None,
+        None,
+        Some(Rc::new({
+            let suppressed = suppressed.clone();
+            move |visible| suppressed.borrow_mut().push(visible)
+        })),
+    );
+    disabled.mouse_enter();
+    disabled.mouse_exit();
+    assert!(suppressed.borrow().is_empty());
+}

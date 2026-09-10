@@ -1836,6 +1836,36 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   bounds; selectable-text edge clicks keep the approximate
   fallback path.
 
+## W3 — Shortcut/action wrapper audit (same workstream, still open)
+
+- Subscription ownership is Weak-at-the-source with Drop removal
+  everywhere: action invocation listeners snapshot before delivery
+  (reentrant invokes terminate with exact nested phase order and no
+  live borrows), focus behaviors observe nodes weakly (rebuilds keep
+  exactly one live observer, unmounts go silent), and rebuilt
+  shortcut scopes replace handlers instead of duplicating them.
+- Scope lookup is dispatch-walk order: nested `CallbackShortcuts`
+  and nested detector scopes both resolve nearest-first with
+  outward fallthrough, pinned per activator. Detector `enabled`
+  gates the node and both highlight visibilities but not the
+  independently owned shortcut/action scopes; that composition is
+  the established contract, not Flutter parity.
+- Found gap, behavior unchanged: `FocusBehavior::mouse_enter` has no
+  retained caller, so `on_show_hover_highlight` is unreachable
+  through tree dispatch. The ledger records wired storage with an
+  explicitly undriven tree path plus owner-level execution
+  evidence; wiring hover dispatch would be new behavior.
+- Evidence: 9 tests in
+  `crates/incular-widgets/tests/action_wrappers.rs` (shortcut
+  replacement/unmount, nested scope preference, reentrant invoke
+  order, single focus subscription across rebuilds, callback
+  replacement, unmount release with highlight observation,
+  autofocus advertisement, nested detector scopes, disabled
+  contract), 1 owner-level hover test in
+  `crates/incular-gestures/tests/focus_highlight.rs`, plus
+  `specs/action_wrappers_properties.json` (16 options) validated by
+  `tests/action_wrappers_ledger.rs`.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
