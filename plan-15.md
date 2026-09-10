@@ -2004,6 +2004,31 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   partial-cluster expansion) alongside the existing paint tests
   for collapsed, newline-only, and joiner-only selections.
 
+## W3 — Selection-area lifetime and affinity (same workstream, still open)
+
+- Audit verdict: the endpoint-identity design (logical identity on
+  element and byte, affinity for handle edges only, manual Eq/Ord
+  ignoring affinity, same-element backward normalization) is
+  correct as built; fail-first toggle experiments confirm the
+  mapping, the normalization, and the overflow expectations all
+  depend on it. No production change in this package.
+- Forward and backward drags across elements produce identical
+  document-ordered copies with identical handles. Keyed reorder
+  permutes identities: endpoints stick to elements while coverage
+  follows document order (reordering back restores the copy).
+  Removed endpoints resolve to nothing through generational IDs
+  with no extra registry; queries degrade to empty without
+  panicking and fresh clicks recover. Shortened text clamps
+  through the existing boundary helper. Hidden content without
+  maintain flags is structurally absent (replaced at conversion);
+  maintained offstage content still copies.
+- Evidence: 6 tests in
+  `crates/incular-widgets/tests/selection_area_lifetime.rs`.
+  Limitation: paragraph-final bytes coinciding with earlier
+  boundary stops stay pointer-unreachable (keyboard motion
+  reaches them); far-overflow clicks resolve to the nearest
+  caret.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
