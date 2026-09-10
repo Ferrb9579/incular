@@ -5,7 +5,7 @@ use crate::effects::{
 use crate::geometry::{RRect, union_rect};
 use crate::gradients::Brush;
 use crate::paint::FillRule;
-use crate::paths::Path;
+use crate::paths::{Path, ellipse_as_path, rect_as_path, rrect_as_path};
 use incular_core::{Arena, ArenaId, DirtyFlags, Offset, Rect, Size, Transform};
 use std::{
     any::{Any, TypeId},
@@ -139,6 +139,32 @@ fn clip_world_bounds(kind: &LayerKind, world_transform: Transform) -> Option<Rec
             .bounds()
             .map(|bounds| world_transform.transform_rect_bbox(bounds)),
         _ => None,
+    }
+}
+
+/// What shape representations stay exact under a world transform.
+/// Misclassification only costs a path fallback, never correctness: the
+/// fallback path is exact for every affine map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ClipSpace {
+    Translation,
+    Scale { x: f32, y: f32 },
+    General,
+}
+
+fn clip_space(world: Transform) -> ClipSpace {
+    let [a, b, c, d, _, _] = world.to_kurbo().as_coeffs();
+    if b == 0. && c == 0. {
+        if a == 1. && d == 1. {
+            ClipSpace::Translation
+        } else {
+            ClipSpace::Scale {
+                x: a as f32,
+                y: d as f32,
+            }
+        }
+    } else {
+        ClipSpace::General
     }
 }
 
@@ -311,6 +337,12 @@ pub enum LayerKind {
     ClipPath {
         path: Arc<Path>,
         fill_rule: FillRule,
+        /// World-resolved path memoized per flatten. Re-resolving mints a
+        /// fresh path identity (and a backend re-tessellation) every
+        /// flatten, so static clips reuse their mesh until the world, the
+        /// path, or the rule changes. Reset only by `update_clip_path`
+        /// alongside the values it derives from.
+        resolved: Option<(Transform, Arc<Path>)>,
     },
     Opacity {
         alpha: f32,
@@ -449,7 +481,11 @@ impl LayerTree {
     /// Creates a path clip stage in local space; the world shape resolves
     /// at flatten time like [`Self::create_clip_rect`].
     pub fn create_clip_path(&mut self, path: Arc<Path>, fill_rule: FillRule) -> LayerId {
-        self.insert(LayerKind::ClipPath { path, fill_rule })
+        self.insert(LayerKind::ClipPath {
+            path,
+            fill_rule,
+            resolved: None,
+        })
     }
     /// Creates an isolated compositor group. Alpha is normalized at the
     /// renderer-neutral boundary so every backend observes identical values.
@@ -720,6 +756,7 @@ impl LayerTree {
         let LayerKind::ClipPath {
             path: current_path,
             fill_rule: current_rule,
+            resolved,
         } = &mut layer.kind
         else {
             return false;
@@ -729,6 +766,7 @@ impl LayerTree {
         }
         *current_path = path;
         *current_rule = fill_rule;
+        *resolved = None;
         layer.dirty.insert(DirtyFlags::COMPOSITE);
         layer.generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1).max(1);
@@ -1092,6 +1130,92 @@ impl LayerTree {
         // advisory/debug-only and property writes remain coalesced by value.
         out
     }
+    /// Exact world-space clip command for one clip layer. Translation-only
+    /// worlds keep every shape analytic; uniform scales additionally keep
+    /// rounded corners analytic with scaled radii. Anything a shape cannot
+    /// represent falls back to an equivalent tolerance-flattened path,
+    /// which stays exact for every affine map. Culling still uses the
+    /// bounding box from `clip_world_bounds`: conservative there, never
+    /// the emitted shape.
+    fn clip_command(&mut self, id: LayerId, kind: &LayerKind, world: Transform) -> PaintCommand {
+        match kind {
+            LayerKind::ClipRect { rect } => match clip_space(world) {
+                ClipSpace::Translation | ClipSpace::Scale { .. } => PaintCommand::PushClip {
+                    rect: world.transform_rect_bbox(*rect),
+                },
+                ClipSpace::General => {
+                    let path = rect_as_path(*rect).transformed(world);
+                    PaintCommand::PushClipPath {
+                        path: Arc::new(path),
+                        fill_rule: FillRule::NonZero,
+                    }
+                }
+            },
+            LayerKind::ClipRRect { rrect } => match clip_space(world) {
+                ClipSpace::Translation => PaintCommand::PushClipRRect {
+                    rrect: RRect::new(world.transform_rect_bbox(rrect.rect), rrect.radii),
+                },
+                ClipSpace::Scale { x, y } if x == y => PaintCommand::PushClipRRect {
+                    rrect: RRect::new(
+                        world.transform_rect_bbox(rrect.rect),
+                        rrect.radii.scaled(x.abs()),
+                    ),
+                },
+                _ => {
+                    let path = rrect_as_path(rrect.rect, rrect.radii).transformed(world);
+                    PaintCommand::PushClipPath {
+                        path: Arc::new(path),
+                        fill_rule: FillRule::NonZero,
+                    }
+                }
+            },
+            LayerKind::ClipOval { rect } => match clip_space(world) {
+                // Axis-aligned scales keep ovals exact through the box.
+                ClipSpace::Translation | ClipSpace::Scale { .. } => PaintCommand::PushClipOval {
+                    rect: world.transform_rect_bbox(*rect),
+                },
+                ClipSpace::General => {
+                    let path = ellipse_as_path(*rect).transformed(world);
+                    PaintCommand::PushClipPath {
+                        path: Arc::new(path),
+                        fill_rule: FillRule::NonZero,
+                    }
+                }
+            },
+            LayerKind::ClipPath {
+                path, fill_rule, ..
+            } => PaintCommand::PushClipPath {
+                path: self.memoized_clip_path(id, path, world),
+                fill_rule: *fill_rule,
+            },
+            _ => unreachable!("clip emitter received a non-clip layer"),
+        }
+    }
+    /// World-resolved path for a ClipPath layer, reusing the memoized
+    /// resolution while the world, path, and rule stand still. Identity
+    /// worlds reuse the supplied arc directly so static clips never mint
+    /// replacement identities (and backend re-tessellations) per flatten.
+    fn memoized_clip_path(&mut self, id: LayerId, path: &Arc<Path>, world: Transform) -> Arc<Path> {
+        if world == Transform::IDENTITY {
+            return path.clone();
+        }
+        if let Some(layer) = self.layers.get(id.0)
+            && let LayerKind::ClipPath {
+                resolved: Some((known, cached)),
+                ..
+            } = &layer.kind
+            && *known == world
+        {
+            return cached.clone();
+        }
+        let resolved = Arc::new(path.transformed(world));
+        if let Some(layer) = self.layers.get_mut(id.0)
+            && let LayerKind::ClipPath { resolved: memo, .. } = &mut layer.kind
+        {
+            *memo = Some((world, resolved.clone()));
+        }
+        resolved
+    }
     fn flatten_layer(
         &mut self,
         id: LayerId,
@@ -1150,76 +1274,26 @@ impl LayerTree {
                     self.flatten_layer(child, next, clip, out);
                 }
             }
-            LayerKind::ClipRect { rect } => {
-                let world = world_transform.transform_rect_bbox(rect);
+            LayerKind::ClipRect { .. }
+            | LayerKind::ClipRRect { .. }
+            | LayerKind::ClipOval { .. }
+            | LayerKind::ClipPath { .. } => {
+                // Conservative world bounds drive culling; the emitted
+                // command carries the exact shape (or its path fallback),
+                // never the box.
+                let Some(shape_bounds) = clip_world_bounds(&layer.kind, world_transform) else {
+                    self.diagnostics.layers_culled += 1;
+                    return;
+                };
                 let next_clip = match clip {
-                    Some(old) => old.intersection(world),
-                    None => Some(world),
+                    Some(active) => active.intersection(shape_bounds),
+                    None => Some(shape_bounds),
                 };
                 if next_clip.is_none() {
                     self.diagnostics.layers_culled += 1;
                     return;
                 }
-                out.push(PaintCommand::PushClip { rect: world });
-                for child in layer.children {
-                    self.flatten_layer(child, world_transform, next_clip, out);
-                }
-                out.push(PaintCommand::PopClip);
-            }
-            LayerKind::ClipRRect { rrect } => {
-                // Radii stay in local units; the rect resolves to world
-                // like ClipRect. Culling uses the bounding box, which is
-                // conservative for the rounded corners.
-                let world = world_transform.transform_rect_bbox(rrect.rect);
-                let next_clip = match clip {
-                    Some(old) => old.intersection(world),
-                    None => Some(world),
-                };
-                if next_clip.is_none() {
-                    self.diagnostics.layers_culled += 1;
-                    return;
-                }
-                out.push(PaintCommand::PushClipRRect {
-                    rrect: RRect::new(world, rrect.radii),
-                });
-                for child in layer.children {
-                    self.flatten_layer(child, world_transform, next_clip, out);
-                }
-                out.push(PaintCommand::PopClip);
-            }
-            LayerKind::ClipOval { rect } => {
-                let world = world_transform.transform_rect_bbox(rect);
-                let next_clip = match clip {
-                    Some(old) => old.intersection(world),
-                    None => Some(world),
-                };
-                if next_clip.is_none() {
-                    self.diagnostics.layers_culled += 1;
-                    return;
-                }
-                out.push(PaintCommand::PushClipOval { rect: world });
-                for child in layer.children {
-                    self.flatten_layer(child, world_transform, next_clip, out);
-                }
-                out.push(PaintCommand::PopClip);
-            }
-            LayerKind::ClipPath { path, fill_rule } => {
-                let world_path = path.transformed(world_transform);
-                let world = world_path
-                    .bounds()
-                    .unwrap_or(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
-                let next_clip = match clip {
-                    Some(old) => old.intersection(world),
-                    None => Some(world),
-                };
-                if next_clip.is_none() {
-                    self.diagnostics.layers_culled += 1;
-                    return;
-                }
-                out.push(PaintCommand::PushClipPath {
-                    path: Arc::new(world_path),
-                    fill_rule,
-                });
+                out.push(self.clip_command(id, &layer.kind, world_transform));
                 for child in layer.children {
                     self.flatten_layer(child, world_transform, next_clip, out);
                 }

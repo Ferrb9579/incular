@@ -1,6 +1,7 @@
+use crate::geometry::CornerRadii;
 use crate::paint::FillRule;
 use incular_core::{Offset, Rect, Size, Transform};
-use kurbo::{BezPath, Point, Shape};
+use kurbo::{BezPath, Ellipse, Point, RoundedRect, RoundedRectRadii, Shape, Vec2};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -46,6 +47,27 @@ impl Path {
         match rule {
             FillRule::NonZero => winding != 0,
             FillRule::EvenOdd => winding.unsigned_abs() % 2 == 1,
+        }
+    }
+
+    /// Wraps an already-built Bézier path with fresh identity and bounds.
+    /// Clip fallbacks convert analytic shapes through here; every other
+    /// construction keeps its existing entry point.
+    pub(crate) fn from_bez_path(path: BezPath) -> Self {
+        let bounds = (!path.is_empty() && path.is_finite()).then(|| {
+            let bounds = path.bounding_box();
+            Rect::from_origin_size(
+                Offset::new(bounds.x0 as f32, bounds.y0 as f32),
+                incular_core::Size::new(
+                    (bounds.x1 - bounds.x0) as f32,
+                    (bounds.y1 - bounds.y0) as f32,
+                ),
+            )
+        });
+        Self {
+            id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
+            path: Arc::new(path),
+            bounds,
         }
     }
 
@@ -109,24 +131,66 @@ impl PathBuilder {
     }
     #[must_use]
     pub fn build(self) -> Path {
-        let bounds = (!self.path.is_empty() && self.path.is_finite()).then(|| {
-            let bounds = self.path.bounding_box();
-            Rect::from_origin_size(
-                Offset::new(bounds.x0 as f32, bounds.y0 as f32),
-                incular_core::Size::new(
-                    (bounds.x1 - bounds.x0) as f32,
-                    (bounds.y1 - bounds.y0) as f32,
-                ),
-            )
-        });
-        Path {
-            id: PathId(NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed)),
-            path: Arc::new(self.path),
-            bounds,
-        }
+        Path::from_bez_path(self.path)
     }
 }
 
 fn point(offset: Offset) -> Point {
     Point::new(f64::from(offset.x), f64::from(offset.y))
+}
+
+/// Flattening tolerance for analytic clip fallbacks. Curve deviation stays
+/// an order of magnitude below a logical pixel, so the fallback path is
+/// indistinguishable from the analytic shape at any supported scale.
+const CLIP_PATH_TOLERANCE: f64 = 0.1;
+
+/// Exact local-space path of an axis-aligned rect: straight edges only,
+/// so no tolerance applies.
+pub(crate) fn rect_as_path(rect: Rect) -> Path {
+    let mut builder = PathBuilder::default();
+    builder
+        .move_to(rect.origin)
+        .line_to(Offset::new(rect.origin.x + rect.size.width, rect.origin.y))
+        .line_to(Offset::new(
+            rect.origin.x + rect.size.width,
+            rect.origin.y + rect.size.height,
+        ))
+        .line_to(Offset::new(rect.origin.x, rect.origin.y + rect.size.height))
+        .close();
+    builder.build()
+}
+
+/// Local-space path of a rounded rect, flattened within tolerance. Used
+/// only where uniform corner radii cannot survive the world transform.
+pub(crate) fn rrect_as_path(rect: Rect, radii: CornerRadii) -> Path {
+    let shape = RoundedRect::new(
+        f64::from(rect.origin.x),
+        f64::from(rect.origin.y),
+        f64::from(rect.origin.x + rect.size.width),
+        f64::from(rect.origin.y + rect.size.height),
+        RoundedRectRadii::new(
+            f64::from(radii.top_left),
+            f64::from(radii.top_right),
+            f64::from(radii.bottom_right),
+            f64::from(radii.bottom_left),
+        ),
+    );
+    Path::from_bez_path(shape.to_path(CLIP_PATH_TOLERANCE))
+}
+
+/// Local-space path of the ellipse inscribed in `rect`, flattened within
+/// tolerance. Used only where the world transform would rotate the oval.
+pub(crate) fn ellipse_as_path(rect: Rect) -> Path {
+    let shape = Ellipse::new(
+        Point::new(
+            f64::from(rect.origin.x) + f64::from(rect.size.width) * 0.5,
+            f64::from(rect.origin.y) + f64::from(rect.size.height) * 0.5,
+        ),
+        Vec2::new(
+            f64::from(rect.size.width) * 0.5,
+            f64::from(rect.size.height) * 0.5,
+        ),
+        0.0,
+    );
+    Path::from_bez_path(shape.to_path(CLIP_PATH_TOLERANCE))
 }

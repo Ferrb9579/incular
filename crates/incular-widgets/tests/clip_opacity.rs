@@ -324,6 +324,80 @@ fn clip_path_records_path_clip() {
 }
 
 #[test]
+fn nonuniformly_scaled_rrect_records_path_clip() {
+    // A 2x1 scale turns rounded corners elliptical, which no rounded
+    // rect represents: the stage falls back to a path while hit testing
+    // and semantics keep the documented layout-bounds policy.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(centered(Widget::from(incular_widgets::Transform::new(
+            CoreTransform::scale_non_uniform(2., 1.),
+            ClipRRect::new(CornerRadii::uniform(8.), labeled_action("scaled child")),
+        ))))
+        .unwrap();
+    let scaled = tree.children(root).unwrap()[0];
+    let clipped = tree.children(scaled).unwrap()[0];
+    let moved = tree.children(clipped).unwrap()[0];
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let list = tree.paint();
+    // Scaled about the node center (100,20): x 80..120 maps to 60..140.
+    let expected = Rect::from_origin_size(Offset::new(60., 0.), Size::new(80., 40.));
+    let clips = world_clips(&list);
+    assert_eq!(clips.len(), 1, "one clip entry, got {clips:?}");
+    assert!(
+        matches!(clips[0], WorldClip::Path),
+        "nonuniform scale must fall back to a path, got {:?}",
+        clips[0]
+    );
+    let (recorded, _) = clip_path_shape(&list).expect("fallback path shape");
+    assert_rect_eq(
+        recorded.bounds().expect("nonempty fallback"),
+        expected,
+        "fallback path bounds",
+    );
+    // Raster correctness stays separate from the input contract: the
+    // center still hits and semantic bounds stay whole and transformed.
+    let hit = tree
+        .hit_test(Offset::new(100., 20.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit, Some(moved));
+    tree.update_semantics();
+    let semantic = tree
+        .semantic_node_for_element(moved)
+        .and_then(|id| tree.semantics().node(id))
+        .expect("scaled semantics");
+    assert_rect_eq(semantic.bounds, expected, "scaled semantic bounds");
+}
+
+#[test]
+fn uniformly_scaled_rrect_doubles_radii() {
+    // Uniform scales keep rounded corners analytic: radii scale with the
+    // rect instead of falling back to a path.
+    let mut tree = WidgetTree::new();
+    tree.mount(centered(Widget::from(incular_widgets::Transform::scale(
+        2.,
+        ClipRRect::new(CornerRadii::uniform(8.), labeled_action("scaled child")),
+    ))))
+    .unwrap();
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let clips = world_clips(&tree.paint());
+    assert_eq!(clips.len(), 1, "one clip entry, got {clips:?}");
+    match &clips[0] {
+        WorldClip::RRect(rrect) => {
+            assert_eq!(rrect.radii, CornerRadii::uniform(16.));
+            assert_rect_eq(
+                rrect.rect,
+                Rect::from_origin_size(Offset::new(60., -20.), Size::new(80., 80.)),
+                "scaled clip rect",
+            );
+        }
+        other => panic!("uniform scale must stay analytic, got {other:?}"),
+    }
+}
+
+#[test]
 fn nested_clips_balance() {
     let mut tree = WidgetTree::new();
     tree.mount(Widget::from(ClipRect::new(ClipRect::new(labeled_action(

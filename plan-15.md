@@ -1341,9 +1341,45 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   builder-parity test for the four `TypedBuilder` clip widgets.
 - Known residuals, documented where they bind: shaped-clip hit
   testing stays bounding-box (corners hit though pixels clip);
-  `RRect` radii are not rescaled under scale transforms; an empty
-  clip path culls its subtree; `Stack`'s remaining options
+  an empty clip path culls its subtree; `Stack`'s remaining options
   (alignment, fit, text direction) ledger with the layout family.
+
+## W3 — Transformed clip geometry (same workstream, still open)
+
+- Replaced the world-box emission (with unscaled radii) by exact
+  world shapes: translation-only worlds keep every shape analytic;
+  uniform scales additionally keep rounded corners analytic with
+  scaled radii — resolving the reported unscaled-radius limitation
+  instead of recording it. Anything a shape cannot represent
+  (rotated/skewed rects and rounded rects, nonuniformly scaled
+  corners, rotated ellipses) falls back to an equivalent
+  tolerance-flattened path (0.1 logical px), exact for every affine
+  map; misclassification can only cost the fallback, never
+  correctness. One consolidated emitter serves all four variants;
+  bounding boxes stay the culling/annotation input (conservative
+  there, never the emitted shape).
+- The backend contract needed no change: world-space emission meets
+  identity stream position, so existing scissor logic stays a
+  superset and stencil instances receive exact geometry. Verified
+  against the real backend tessellator (CPU-deterministic, no
+  device): fallback meshes match path area within 5% and stay far
+  under bbox area for rotated rounded rects and ovals.
+- ClipPath resolutions memoize per layer (reset only by
+  `update_clip_path` with the values it derives from): static clips
+  keep one path identity and one backend mesh across flattens;
+  identity worlds reuse the supplied arc without transforming at
+  all. Hit-test and semantic policies are untouched and covered
+  alongside the new geometry (center hits, whole transformed
+  semantic bounds).
+- Regressions: compositor shape-vs-box distinctions via
+  `Path::contains` (rotated rect/rrect/oval emit paths excluding
+  their own bbox corners), scale representation selection
+  (uniform doubles radii, nonuniform falls back), path identity
+  stability across flattens with single re-resolution on move,
+  annotation lookup through a rotated variant, widget integration
+  for both scale cases, and two backend tessellation tests. All
+  fail on the previous emission; the clip/opacity ledger prose now
+  states the policy.
 
 ## W3 — ShaderMask/BackdropFilter slice (same workstream, still open)
 

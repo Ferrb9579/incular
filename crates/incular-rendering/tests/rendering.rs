@@ -1215,6 +1215,226 @@ fn publisher_identity_survives_across_trees() {
     assert!(link.is_linked());
 }
 
+use std::f32::consts::FRAC_PI_4;
+
+/// A clip layer of `make` under `world`, with one picture child, as a
+/// flattened root. Returns the emitted clip command.
+fn flatten_clip_under(
+    world: Transform,
+    make: impl FnOnce(&mut LayerTree) -> LayerId,
+) -> PaintCommand {
+    let mut tree = LayerTree::new();
+    let clip = make(&mut tree);
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::new(200., 200.), Size::new(10., 10.)),
+    );
+    tree.set_children(clip, vec![picture]);
+    let shift = tree.create_transform(world);
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let list = tree.flatten();
+    list.commands()
+        .iter()
+        .find(|command| {
+            matches!(
+                command,
+                PaintCommand::PushClip { .. }
+                    | PaintCommand::PushClipRRect { .. }
+                    | PaintCommand::PushClipOval { .. }
+                    | PaintCommand::PushClipPath { .. }
+            )
+        })
+        .expect("one clip command")
+        .clone()
+}
+
+#[test]
+fn rrect_under_rotation_emits_path_not_box() {
+    // A 45-degree rotation turns the rounded rect into a diamond no
+    // axis-aligned rounded rect can represent: the emitter must fall
+    // back to a path whose geometry differs from its bounding box.
+    let command = flatten_clip_under(Transform::rotation(FRAC_PI_4), |tree| {
+        tree.create_clip_rrect(RRect::uniform(
+            Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+            8.,
+        ))
+    });
+    let PaintCommand::PushClipPath { path, .. } = command else {
+        panic!("rotated rounded rect must fall back to a path, got {command:?}");
+    };
+    let bounds = path.bounds().expect("nonempty clip path");
+    // Bounding-box corners lie strictly outside the diamond.
+    let corner = Offset::new(bounds.origin.x, bounds.origin.y);
+    assert!(bounds.contains(corner), "sanity: corner in bounds");
+    assert!(
+        !path.contains(corner, FillRule::NonZero),
+        "path must exclude its own bounding-box corner"
+    );
+    assert!(
+        path.contains(
+            Offset::new(
+                bounds.origin.x + bounds.size.width * 0.5,
+                bounds.origin.y + bounds.size.height * 0.5
+            ),
+            FillRule::NonZero
+        ),
+        "path must contain its center"
+    );
+}
+
+#[test]
+fn oval_under_rotation_emits_path() {
+    let command = flatten_clip_under(Transform::rotation(0.5), |tree| {
+        tree.create_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::new(40., 20.)))
+    });
+    let PaintCommand::PushClipPath { path, .. } = command else {
+        panic!("rotated oval must fall back to a path, got {command:?}");
+    };
+    let bounds = path.bounds().expect("nonempty clip path");
+    let corner = Offset::new(bounds.origin.x + bounds.size.width, bounds.origin.y);
+    assert!(bounds.contains(corner), "sanity: corner in bounds");
+    assert!(
+        !path.contains(corner, FillRule::NonZero),
+        "rotated oval path must exclude its bounding-box corner"
+    );
+}
+
+#[test]
+fn rect_under_rotation_emits_exact_path() {
+    // Rect edges stay straight, so the fallback path is exact: interior
+    // points are in, and bounding-box-only points are out.
+    let command = flatten_clip_under(Transform::rotation(FRAC_PI_4), |tree| {
+        tree.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::new(60., 30.)))
+    });
+    let PaintCommand::PushClipPath { path, .. } = command else {
+        panic!("rotated rect must fall back to a path, got {command:?}");
+    };
+    let bounds = path.bounds().expect("nonempty clip path");
+    assert!((bounds.size.width - 63.64).abs() < 0.5, "{bounds:?}");
+    assert!((bounds.size.height - 63.64).abs() < 0.5, "{bounds:?}");
+    let corner = Offset::new(bounds.origin.x, bounds.origin.y);
+    assert!(
+        !path.contains(corner, FillRule::NonZero),
+        "rotated rect path must exclude its bounding-box corner"
+    );
+    assert!(
+        path.contains(
+            Offset::new(
+                bounds.origin.x + bounds.size.width * 0.5,
+                bounds.origin.y + bounds.size.height * 0.5
+            ),
+            FillRule::NonZero
+        ),
+        "rotated rect path must contain its center"
+    );
+}
+
+#[test]
+fn rrect_under_scale_selects_representation() {
+    // Uniform scales keep rounded corners analytic with scaled radii
+    // (resolving the old unscaled-radius limitation); nonuniform scales
+    // cannot represent elliptical corners and fall back to a path.
+    let command = flatten_clip_under(Transform::scale(2.), |tree| {
+        tree.create_clip_rrect(RRect::uniform(
+            Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+            8.,
+        ))
+    });
+    let PaintCommand::PushClipRRect { rrect } = command else {
+        panic!("uniformly scaled rounded rect stays analytic, got {command:?}");
+    };
+    assert_eq!(
+        rrect.radii,
+        CornerRadii::uniform(16.),
+        "radii scale with the transform"
+    );
+    assert_eq!(
+        rrect.rect,
+        Rect::from_origin_size(Offset::ZERO, Size::new(80., 80.))
+    );
+    let command = flatten_clip_under(Transform::scale_non_uniform(2., 1.), |tree| {
+        tree.create_clip_rrect(RRect::uniform(
+            Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+            8.,
+        ))
+    });
+    assert!(
+        matches!(command, PaintCommand::PushClipPath { .. }),
+        "nonuniformly scaled rounded rect must fall back to a path, got {command:?}"
+    );
+}
+
+#[test]
+fn clip_path_identity_stable_across_flattens() {
+    // Static clips reuse one path identity (and one backend mesh) no
+    // matter how many flattens observe them; moving re-resolves once.
+    let mut builder = Path::builder();
+    builder
+        .move_to(Offset::ZERO)
+        .line_to(Offset::new(40., 0.))
+        .line_to(Offset::new(0., 40.))
+        .close();
+    let path = Arc::new(builder.build());
+    let mut tree = LayerTree::new();
+    let clip = tree.create_clip_path(path, FillRule::NonZero);
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(10., 10.)),
+    );
+    tree.set_children(clip, vec![picture]);
+    let shift = tree.create_transform(Transform::translation(Offset::new(10., 0.)));
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let id_of = |list: &DisplayList| {
+        list.commands().iter().find_map(|command| match command {
+            PaintCommand::PushClipPath { path, .. } => Some(path.id()),
+            _ => None,
+        })
+    };
+    let first = id_of(&tree.flatten()).expect("path clip");
+    let second = id_of(&tree.flatten()).expect("path clip");
+    assert_eq!(first, second, "static clip keeps one path identity");
+    assert!(tree.update_transform(shift, Transform::translation(Offset::new(20., 0.))));
+    let third = id_of(&tree.flatten()).expect("path clip");
+    assert_ne!(third, first, "moved clip re-resolves once");
+    let fourth = id_of(&tree.flatten()).expect("path clip");
+    assert_eq!(fourth, third, "re-resolved clip stays stable");
+}
+
+#[test]
+fn annotation_lookup_uses_conservative_clip_bounds() {
+    // Annotation traversal resolves the new clip variants through the
+    // same conservative bounds as culling: lookup follows paint order
+    // and bounding boxes, never the exact fallback shape.
+    let mut tree = LayerTree::new();
+    let region = tree.create_annotated_region(Annotation::new(7u32), true, Size::new(10., 10.));
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(10., 10.)),
+    );
+    tree.set_children(region, vec![picture]);
+    let clip = tree.create_clip_rrect(RRect::uniform(
+        Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+        8.,
+    ));
+    tree.set_children(clip, vec![region]);
+    let shift = tree.create_transform(Transform::rotation(FRAC_PI_4));
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let _ = tree.flatten();
+    // The 10x10 region at the clip-local origin lands near (0,7) after
+    // the 45-degree rotation.
+    assert_eq!(tree.find_annotation::<u32>(Offset::new(0., 7.)), Some(7));
+    assert_eq!(tree.find_annotation::<u32>(Offset::new(500., 500.)), None);
+}
+
 #[test]
 fn follower_before_leader_resolves_like_leader_before_follower() {
     // Leader publication runs as its own pass before follower resolution,

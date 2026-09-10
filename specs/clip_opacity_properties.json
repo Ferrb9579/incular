@@ -185,7 +185,7 @@
       "symbol": "ClipRRect",
       "option": "radius",
       "default": "required, no default",
-      "validation": "Into<CornerRadii>; recorded verbatim, resolved against node size",
+      "validation": "Into<CornerRadii>; analytic under translation and uniform scale (radii scale), tolerance-flattened path fallback otherwise",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
         "kind": "trait_impl",
@@ -242,6 +242,14 @@
         {
           "path": "crates/incular-widgets/tests/clip_opacity.rs",
           "name": "clip_rrect_radius_change_needs_neither_layout_nor_paint"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "uniformly_scaled_rrect_doubles_radii"
+        },
+        {
+          "path": "crates/incular-widgets/tests/clip_opacity.rs",
+          "name": "nonuniformly_scaled_rrect_records_path_clip"
         }
       ],
       "status": "implemented"
@@ -460,7 +468,7 @@
       "symbol": "ClipPath",
       "option": "path",
       "default": "required, no default",
-      "validation": "Into<Arc<Path>>; resolved to world space at flatten, NonZero fill rule",
+      "validation": "Into<Arc<Path>>; resolved to world space at flatten with NonZero fill rule; identity-stable memo until world, path, or rule change",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/clipping.rs",
         "kind": "trait_impl",

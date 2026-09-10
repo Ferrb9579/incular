@@ -29,6 +29,20 @@ impl CornerRadii {
             && self.bottom_left <= 0.0
     }
 
+    /// Scales every corner uniformly, keeping mirrored (negative) scales
+    /// non-negative. Uniform world scales resolve rounded corners through
+    /// here instead of a path fallback.
+    #[must_use]
+    pub fn scaled(self, scale: f32) -> Self {
+        let scale = scale.abs();
+        Self {
+            top_left: self.top_left * scale,
+            top_right: self.top_right * scale,
+            bottom_right: self.bottom_right * scale,
+            bottom_left: self.bottom_left * scale,
+        }
+    }
+
     /// CSS-compatible normalization: invalid values become zero and all four
     /// radii scale together when an opposing pair exceeds an edge.
     #[must_use]
