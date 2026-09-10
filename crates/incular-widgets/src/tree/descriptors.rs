@@ -53,14 +53,18 @@ impl Image {
             sampling: ImageSampling::Linear,
         }
     }
+    /// Sets an explicit width. Negative values floor to zero, matching the
+    /// other size-bearing descriptors; core `Size::new` would otherwise
+    /// panic later during layout.
     #[must_use]
     pub fn width(mut self, width: f32) -> Self {
-        self.width = Some(width);
+        self.width = Some(width.max(0.0));
         self
     }
+    /// Sets an explicit height. Negative values floor to zero.
     #[must_use]
     pub fn height(mut self, height: f32) -> Self {
-        self.height = Some(height);
+        self.height = Some(height.max(0.0));
         self
     }
     #[must_use]
@@ -73,6 +77,8 @@ impl Image {
         self.repeat = repeat;
         self
     }
+    /// Sets the alignment used when the fitted image is smaller than its
+    /// box or cropped by `Cover`.
     #[must_use]
     pub fn alignment(mut self, alignment: Alignment) -> Self {
         self.alignment = alignment;

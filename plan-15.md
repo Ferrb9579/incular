@@ -1133,7 +1133,7 @@ the table wins.
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | FittedBox non-contain fits unverified | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | partial |
 | Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
-| Images | not inventoried | fit/alignment/replacement not yet audited | none yet | open |
+| Images (Image/RawImage/ImageIcon) | 19/19 | RawImage `scale`/`color`, ImageIcon `color` stored without behavior | `specs/image_properties.json`, `tests/image_ledger.rs` | partial |
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
 | Navigation scopes | not inventoried | none yet | none yet | open |
 | Platform wrappers | not inventoried | none yet | none yet | open |
@@ -1181,6 +1181,30 @@ the table wins.
   table, hit and semantic geometry) plus
   `specs/collections_properties.json` validated by
   `tests/collections_ledger.rs`.
+
+## W3 — Image layout and retained updates (same workstream, still open)
+
+- Reproduced a real defect: `Image::width`/`height` stored raw, so a
+  negative dimension panicked at layout in core `Size::new`, while
+  the sibling `RawImage`/`ImageIcon` setters floored. The descriptor
+  now floors at its owner, matching the family.
+- Layout sizes from the intrinsic ratio; fit resolution (Fill,
+  Contain, Cover, FitWidth, FitHeight, None, ScaleDown) and alignment
+  live in `image_fit_rects` at paint, with alignment a paint-only
+  change after a cached paint; repeat tiles within bounds; a handle
+  swap re-measures; identical reapplication bails out. Decoding and
+  CPU caches stay in incular-image; GPU resources in incular-wgpu.
+- Unresolved (recorded, not claimed): `RawImage.scale`,
+  `RawImage.color`, and `ImageIcon.color` are stored but never read
+  by their conversions, so no tint or intrinsic scaling occurs.
+- Evidence: 10 tests in
+  `crates/incular-widgets/tests/image_layout.rs` (intrinsic/ratio
+  sizing, negative flooring with fail-first, all fit modes with
+  independent source/destination rects, alignment after cached
+  paint, replacement, identical reapplication, repeat tiling,
+  transform geometry with hit testing, filter-quality sampling,
+  RawImage lowering) plus `specs/image_properties.json` validated
+  by `tests/image_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

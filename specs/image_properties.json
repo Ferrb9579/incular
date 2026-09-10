@@ -1,0 +1,870 @@
+{
+  "schema_version": 2,
+  "family": "Image",
+  "scope": "Public Image/RawImage/ImageIcon options and their retained consumers in incular-widgets. Decoding and CPU caches are owned by incular-image; GPU resources by incular-wgpu; this ledger covers only the widget-facing sizing/paint descriptors. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "compositor",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "RawImage": {
+      "path": "crates/incular-widgets/tests/painting_effects.rs",
+      "name": "effect_builders_preserve_defaults_and_normalize_values"
+    },
+    "ImageIcon": {
+      "path": "crates/incular-widgets/tests/painting_effects.rs",
+      "name": "effect_builders_preserve_defaults_and_normalize_values"
+    }
+  },
+  "records": [
+    {
+      "symbol": "Image",
+      "option": "image",
+      "default": "required, no default",
+      "validation": "shared ImageHandle retained; equality compares handles so a swap re-measures",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "The retained Image arm measures the intrinsic ratio; a handle change is a full invalidation because the render kind carries it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          },
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Image"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_replacement_changes_intrinsic_size"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "width",
+      "default": "none (intrinsic width)",
+      "validation": "floored to zero at the setter; a finite width with no height derives height from the intrinsic ratio",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Layout sizes from width/height/intrinsic; the descriptor floors negatives so layout never receives an invalid Size.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Image"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_sizes_from_intrinsic_ratio"
+        },
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_negative_dimensions_floor_to_zero"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "height",
+      "default": "none (intrinsic height)",
+      "validation": "floored to zero at the setter; a finite height with no width derives width from the ratio",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Shares the width sizing path on the vertical axis.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Image"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_sizes_from_intrinsic_ratio"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "fit",
+      "default": "Contain",
+      "validation": "enum setter, no normalization; resolution happens at paint through image_fit_rects",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Paint projects source/destination through image_fit_rects for Fill, Contain, Cover, FitWidth, FitHeight, None, and ScaleDown; fit is not a layout input.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "image_fit_rects"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "fit_modes_project_source_and_destination"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "repeat",
+      "default": "NoRepeat",
+      "validation": "enum setter, no normalization; tiling stays inside the paint bounds",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Paint expands the fitted destination into tiled destinations via image_repeat_destinations.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "image_repeat_destinations"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "repeat_tiles_within_bounds"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "alignment",
+      "default": "CENTER",
+      "validation": "absolute alignment retained, no normalization; applied to the fitted destination or the cover crop",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "image_fit_rects offsets the destination or crop by Alignment::within; a paint-only alignment change skips layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "image_fit_rects"
+          },
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "function",
+            "name": "image_paint_only_change"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "alignment_moves_fitted_image_after_cached_paint"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "sampling",
+      "default": "Linear",
+      "validation": "enum setter, no normalization; carried to the paint command",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "The paint command carries the sampling mode; a change is paint-only.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "function",
+            "name": "image_paint_only_change"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "filter_quality_selects_sampling"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
+      "option": "filter_quality",
+      "default": "n/a, alias mapping FilterQuality to sampling",
+      "validation": "delegates to sampling; None maps to Nearest, everything else to Linear",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Alias shares the sampling paint path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "function",
+            "name": "image_paint_only_change"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting/behavior/content.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "paint_content_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "filter_quality_selects_sampling"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "image",
+      "default": "none (empty box sized by width/height)",
+      "validation": "optional handle; absent lowers to a fixed empty box",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "RawImage lowers to the Image descriptor (or an empty SizedBox when no handle); it shares Image layout and paint.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "raw_image_lowering_matches_direct_image"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "width",
+      "default": "none",
+      "validation": "floored to zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Delegates to Image::width; shares the Image sizing path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "method",
+            "owner": "Image",
+            "name": "width"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "height",
+      "default": "none",
+      "validation": "floored to zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Delegates to Image::height; shares the Image sizing path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "method",
+            "owner": "Image",
+            "name": "height"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "scale",
+      "default": "1.0, floored to 0.001 by builder and setter",
+      "validation": "stored and floored, but From<RawImage> never reads it: intrinsic scaling is not applied",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Recorded as stored configuration without behavior: no retained path divides intrinsic dimensions by scale, so the option is unresolved rather than implemented.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "color",
+      "default": "none",
+      "validation": "stored but From<RawImage> never reads it: no tint is applied",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Recorded as stored configuration without behavior: the Image descriptor has no tint option, so color is unresolved.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "status": "unresolved"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "fit",
+      "default": "Contain",
+      "validation": "enum setter, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Delegates to Image::fit; shares the fit paint path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "image_fit_rects"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "RawImage",
+      "option": "repeat",
+      "default": "NoRepeat",
+      "validation": "enum setter, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "RawImage"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Delegates to Image::repeat; shares the repeat paint path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/rendering.rs",
+            "kind": "function",
+            "name": "image_repeat_destinations"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "RawImage"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ImageIcon",
+      "option": "image",
+      "default": "required, no default",
+      "validation": "handle retained through the Image lowering",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ImageIcon"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "ImageIcon lowers to a square Image (Contain) sharing Image layout and paint.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ImageIcon"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ImageIcon"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ImageIcon",
+      "option": "size",
+      "default": "24.0",
+      "validation": "floored to zero by builder and setter; applies to both axes",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ImageIcon"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Size becomes the square Image width and height.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/descriptors.rs",
+            "kind": "method",
+            "owner": "Image",
+            "name": "width"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ImageIcon"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/painting_effects.rs",
+          "name": "effect_builders_preserve_defaults_and_normalize_values"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ImageIcon",
+      "option": "color",
+      "default": "none",
+      "validation": "stored but From<ImageIcon> never reads it: no tint is applied",
+      "conversion": {
+        "path": "crates/incular-widgets/src/painting_effects/images.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ImageIcon"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Recorded as stored configuration without behavior: the Image descriptor has no tint option, so color is unresolved.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/painting_effects/images.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ImageIcon"
+          }
+        ]
+      },
+      "status": "unresolved"
+    }
+  ]
+}
