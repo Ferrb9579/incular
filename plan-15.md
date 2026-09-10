@@ -1126,7 +1126,7 @@ the table wins.
 | Focus wrappers (Focus/FocusScope/KeyboardListener) | 21/21 | none known | `specs/focus_wrappers_properties.json`, `tests/focus_wrappers_ledger.rs` | complete |
 | Action wrappers (CallbackShortcuts/ActionListener/FocusableActionDetector) | 17/17 | none known | `specs/action_wrappers_properties.json`, `tests/action_wrappers_ledger.rs` | complete |
 | EditableText | 22/22 | none known | `specs/editable_text_properties.json`, `tests/editable_text_ledger.rs` | complete |
-| Stack / Positioned / IndexedStack | 18/18 | IndexedStack `fit`/`clip_behavior` stored without behavior | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | partial |
+| Stack / Positioned / IndexedStack | 18/18 | none known | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | complete |
 | Row / Column / Flex / Flexible / Expanded / Spacer | 36/36 | none known | `specs/flex_layout_properties.json`, `tests/flex_layout_ledger.rs` | complete |
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
 | Sizing / constraints (11 types) | 35/35 | IntrinsicWidth step fields, PreferredSize public reach, ConstraintsTransformBox clip stored | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
@@ -1205,6 +1205,25 @@ the table wins.
   transform geometry with hit testing, filter-quality sampling,
   RawImage lowering) plus `specs/image_properties.json` validated
   by `tests/image_ledger.rs`.
+
+## W3 — IndexedStack fit and clipping (same workstream, still open)
+
+- `IndexedStack.fit` and `clip_behavior` previously survived
+  conversion only as dead descriptor fields. Both are now carried
+  through `WidgetKind`, lowering, `RenderKind`, and comparison, and
+  resolved at their existing owners: fit applies the shared Stack
+  policy to every measured child (inactive children keep state and
+  identity), clip routes through the existing compositor clip
+  attachment with no picture work on toggle.
+- Reproduced the gaps fail-first: the fit test failed against the old
+  always-loosen arm, and dropping the `RenderKind` fields fails to
+  compile. Retained identity is stable across index and fit changes;
+  only the selected child paints, hits, and exposes semantics.
+- Evidence: 5 new tests in
+  `crates/incular-widgets/tests/stack_layout.rs` (fit policies,
+  mounted fit change, clip toggle after cached paint, overflow
+  hit/semantic geometry, plus the existing indexed behavior tests)
+  and the stack ledger records both options implemented.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

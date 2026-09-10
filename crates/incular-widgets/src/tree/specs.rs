@@ -379,6 +379,8 @@ pub(crate) enum WidgetKind {
     IndexedStack {
         alignment: Alignment,
         index: usize,
+        fit: StackFit,
+        clip_behavior: Clip,
         children: Vec<Widget>,
     },
     SafeArea {

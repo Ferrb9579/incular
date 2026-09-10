@@ -11,7 +11,7 @@
 use incular_config::{Alignment, Constraints, StackFit};
 use incular_core::{Color, Offset, Size};
 use incular_widgets::{
-    Focus, FocusNode, IndexedStack, Positioned, Stack, Text, Widget,
+    Focus, FocusNode, IndexedStack, Positioned, Stack, Text, UnconstrainedBox, Widget,
     internal::{ActionId, ElementId, WidgetTree, action},
 };
 
@@ -344,6 +344,150 @@ fn indexed_stack_switches_active_child() {
         !dump.contains("first"),
         "inactive semantics absent:\n{dump}"
     );
+}
+
+#[test]
+fn indexed_stack_fit_policies_size_children() {
+    // Loose: children keep intrinsic size; the stack wraps the largest.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([white_box(30., 20.), white_box(50., 10.)])
+                .fit(StackFit::Loose)
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(bounds_of(&tree, root).2, 50.);
+    assert_eq!(bounds_of(&tree, root).3, 20.);
+    let kids = stack_kids(&tree, root);
+    assert_eq!(bounds_of(&tree, kids[0]).2, 30.);
+
+    // Expand: children stretch to the biggest constraints, stack fills.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([white_box(30., 20.), white_box(50., 10.)])
+                .fit(StackFit::Expand)
+                .into(),
+        )
+        .expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    assert_eq!(bounds_of(&tree, root).2, 200.);
+    assert_eq!(bounds_of(&tree, stack_kids(&tree, root)[0]).2, 200.);
+
+    // Passthrough: incoming constraints reach children unchanged.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([white_box(30., 20.)])
+                .fit(StackFit::Passthrough)
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(bounds_of(&tree, root).2, 30.);
+}
+
+#[test]
+fn indexed_stack_fit_change_reflows_every_child() {
+    let build = |fit| {
+        IndexedStack::new([white_box(30., 20.), white_box(50., 10.)])
+            .fit(fit)
+            .index(1)
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(build(StackFit::Loose).into()).expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let kids = stack_kids(&tree, root);
+    let loose_active = bounds_of(&tree, kids[1]);
+    assert_eq!(loose_active.2, 50.);
+
+    // Switching to Expand re-measures the active child to the parent.
+    tree.update(root, build(StackFit::Expand).into())
+        .expect("switch fit");
+    layout_tight(&mut tree, 200., 200.);
+    let kids_after = stack_kids(&tree, root);
+    assert_eq!(kids_after, kids, "retained identity is stable");
+    assert_eq!(bounds_of(&tree, kids_after[1]).2, 200.);
+}
+
+#[test]
+fn indexed_stack_clip_layers_follow_clip_behavior() {
+    use incular_config::Clip;
+    use incular_core::Rect;
+    use incular_rendering::DisplayList;
+    use incular_rendering::PaintCommand;
+
+    let clip_rects = |list: &DisplayList| -> Vec<Rect> {
+        let mut out = Vec::new();
+        for command in list.commands() {
+            if let PaintCommand::PushClip { rect } = command {
+                out.push(*rect);
+            }
+        }
+        out
+    };
+
+    let build = |clip| {
+        IndexedStack::new([white_box(40., 40.), white_box(80., 80.)])
+            .index(1)
+            .clip_behavior(clip)
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(build(Clip::HardEdge).into()).expect("mount");
+    layout_tight(&mut tree, 100., 100.);
+    let clipped = clip_rects(&tree.paint());
+    assert_eq!(clipped.len(), 1, "hard edge paints a clip");
+    assert_eq!(clipped[0].size, Size::new(100., 100.));
+
+    // Toggling to None rebuilds the layer binding without layout work;
+    // the active child keeps its geometry and identity.
+    let layouts = tree.diagnostics().layouts;
+    tree.update(root, build(Clip::None).into())
+        .expect("disable clip");
+    layout_tight(&mut tree, 100., 100.);
+    assert!(
+        clip_rects(&tree.paint()).is_empty(),
+        "Clip::None paints none"
+    );
+    assert_eq!(tree.diagnostics().layouts, layouts + 1);
+    assert_eq!(bounds_of(&tree, stack_kids(&tree, root)[1]).2, 80.);
+}
+
+#[test]
+fn indexed_stack_active_child_overflow_hits_within_parent() {
+    // An unconstrained child wider than the stack overflows; hits inside
+    // the parent reach it, hits beyond the parent do not descend.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([UnconstrainedBox::new(
+                action(Size::new(200., 40.), Color::WHITE, ActionId(3))
+                    .accessibility_label("overflowing child"),
+            )])
+            .index(0)
+            .clip_behavior(incular_config::Clip::None)
+            .into(),
+        )
+        .expect("mount");
+    layout_tight(&mut tree, 100., 100.);
+    let wrapper = stack_kids(&tree, root)[0];
+    let child = tree.children(wrapper).expect("unconstrained child")[0];
+    assert_eq!(bounds_of(&tree, child).2, 200.);
+    assert_eq!(tree.action_for_element(child), Some(ActionId(3)));
+    assert!(tree.hit_test(Offset::new(90., 10.)).is_some());
+    assert!(tree.hit_test(Offset::new(150., 10.)).is_none());
+
+    // Clipping is raster-only: the overflow keeps its semantic bounds.
+    tree.update_semantics();
+    let node = tree
+        .semantic_node_for_element(child)
+        .expect("overflow semantics");
+    assert!(tree.semantics().node(node).expect("node").bounds.size.width > 100.);
 }
 
 #[test]

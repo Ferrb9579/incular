@@ -350,11 +350,15 @@ impl std::fmt::Debug for WidgetKind {
             Self::IndexedStack {
                 alignment,
                 index,
+                fit,
+                clip_behavior,
                 children,
             } => f
                 .debug_struct("IndexedStack")
                 .field("alignment", alignment)
                 .field("index", index)
+                .field("fit", fit)
+                .field("clip_behavior", clip_behavior)
                 .field("children", children)
                 .finish(),
             Self::LayoutBuilder { .. } => f.debug_struct("LayoutBuilder").finish(),
@@ -1322,14 +1326,18 @@ impl PartialEq for WidgetKind {
                 Self::IndexedStack {
                     alignment: a,
                     index: b,
-                    children: c,
+                    fit: c,
+                    clip_behavior: d,
+                    children: e,
                 },
                 Self::IndexedStack {
-                    alignment: d,
-                    index: e,
-                    children: f,
+                    alignment: f,
+                    index: g,
+                    fit: h,
+                    clip_behavior: i,
+                    children: j,
                 },
-            ) => a == d && b == e && c == f,
+            ) => a == f && b == g && c == h && d == i && e == j,
             (
                 Self::SafeArea {
                     minimum: a,

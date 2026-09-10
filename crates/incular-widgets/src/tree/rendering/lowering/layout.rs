@@ -180,10 +180,16 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
             height: *height,
         },
         WidgetKind::IndexedStack {
-            alignment, index, ..
+            alignment,
+            index,
+            fit,
+            clip_behavior,
+            ..
         } => RenderKind::IndexedStack {
             alignment: *alignment,
             index: *index,
+            fit: *fit,
+            clip_behavior: *clip_behavior,
         },
         WidgetKind::LayoutBuilder { .. } => RenderKind::LayoutBuilder,
         WidgetKind::Visibility {

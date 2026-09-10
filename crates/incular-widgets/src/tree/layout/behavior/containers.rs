@@ -284,10 +284,18 @@ impl WidgetTree {
                     result.children.into_iter().map(|c| c.offset).collect(),
                 )
             }
-            RenderKind::IndexedStack { alignment, .. } => {
+            RenderKind::IndexedStack { alignment, fit, .. } => {
+                // Fit applies the established Stack policy to every child
+                // (all children are measured so inactive ones keep state
+                // and identity), then the widest/tallest drives the box.
+                let child_constraints = match fit {
+                    StackFit::Loose => constraints.loosen(),
+                    StackFit::Expand => Constraints::tight(constraints.biggest()),
+                    StackFit::Passthrough => constraints,
+                };
                 let mut natural = Size::ZERO;
                 for child in children {
-                    self.layout_render(*child, constraints.loosen())?;
+                    self.layout_render(*child, child_constraints)?;
                     let child_size = self
                         .render_live(child, "retained render must remain live")
                         .size;
@@ -296,7 +304,11 @@ impl WidgetTree {
                         natural.height.max(child_size.height),
                     );
                 }
-                let size = constraints.constrain(natural);
+                let size = constraints.constrain(if matches!(fit, StackFit::Expand) {
+                    constraints.biggest()
+                } else {
+                    natural
+                });
                 let offsets = children
                     .iter()
                     .map(|child| {

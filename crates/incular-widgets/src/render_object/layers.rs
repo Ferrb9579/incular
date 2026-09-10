@@ -16,7 +16,8 @@ fn widget_clips(widget: &WidgetKind) -> bool {
         | WidgetKind::ClipRRect { clip_behavior, .. }
         | WidgetKind::ClipOval { clip_behavior, .. }
         | WidgetKind::ClipPath { clip_behavior, .. } => *clip_behavior != Clip::None,
-        WidgetKind::Stack { clip_behavior, .. } => *clip_behavior != Clip::None,
+        WidgetKind::Stack { clip_behavior, .. }
+        | WidgetKind::IndexedStack { clip_behavior, .. } => *clip_behavior != Clip::None,
         _ => false,
     }
 }
@@ -58,6 +59,7 @@ impl LayerSpec {
             | WidgetKind::ClipOval { .. }
             | WidgetKind::ClipPath { .. }
             | WidgetKind::Stack { .. }
+            | WidgetKind::IndexedStack { .. }
                 if widget_clips(widget) =>
             {
                 AttachmentSpec::Clip
@@ -184,7 +186,7 @@ impl RenderLayers {
                     .create_clip_path(Arc::new(Path::builder().build()), FillRule::NonZero);
                 Self::create_clip_stage(compositor, root, picture, clip)
             }
-            WidgetKind::Stack { .. } if widget_clips(widget) => {
+            WidgetKind::Stack { .. } | WidgetKind::IndexedStack { .. } if widget_clips(widget) => {
                 let clip =
                     compositor.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::ZERO));
                 Self::create_clip_stage(compositor, root, picture, clip)
@@ -473,7 +475,8 @@ impl RenderLayers {
     ) {
         match (&self.attachment, kind) {
             (LayerAttachment::Clip { clip, .. }, RenderKind::ClipRect { .. })
-            | (LayerAttachment::Clip { clip, .. }, RenderKind::Stack { .. }) => {
+            | (LayerAttachment::Clip { clip, .. }, RenderKind::Stack { .. })
+            | (LayerAttachment::Clip { clip, .. }, RenderKind::IndexedStack { .. }) => {
                 compositor.update_clip(*clip, Rect::from_origin_size(Offset::ZERO, size));
             }
             (LayerAttachment::Clip { clip, .. }, RenderKind::ClipRRect { radius, .. }) => {

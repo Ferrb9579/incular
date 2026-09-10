@@ -510,6 +510,8 @@ pub enum RenderKind {
     IndexedStack {
         alignment: Alignment,
         index: usize,
+        fit: StackFit,
+        clip_behavior: Clip,
     },
     SafeArea {
         minimum: EdgeInsets,

@@ -844,7 +844,7 @@
       "symbol": "IndexedStack",
       "option": "fit",
       "default": "Loose",
-      "validation": "enum setter, no normalization",
+      "validation": "enum setter, no normalization; applies the shared Stack fit policy to every child (all children measured so inactive ones keep state and identity)",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -859,7 +859,7 @@
         "name": "IndexedStack"
       },
       "comparison": {
-        "prose": "Fit is accepted for API parity but the retained IndexedStack arm always loosens child constraints and wraps the largest child; stored configuration without behavior, so unresolved rather than implemented.",
+        "prose": "The retained IndexedStack arm applies Loose/Expand/Passthrough exactly like Stack, then wraps the largest measured child; the selected child is the only presentation/input/semantics contributor.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
@@ -869,13 +869,33 @@
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_fit_policies_size_children"
+        },
+        {
+          "path": "crates/incular-widgets/tests/stack_layout.rs",
+          "name": "indexed_stack_fit_change_reflows_every_child"
+        }
+      ],
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      }
     },
     {
       "symbol": "IndexedStack",
       "option": "clip_behavior",
       "default": "HardEdge",
-      "validation": "enum setter, no normalization",
+      "validation": "enum setter, no normalization; routed through the existing clip-layer attachment, toggling without layout or picture work",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -890,7 +910,7 @@
         "name": "IndexedStack"
       },
       "comparison": {
-        "prose": "Clip behavior is not lowered through RenderKind for IndexedStack; recorded as stored configuration whose clip path is the shared ledger's concern, with no dedicated regression here.",
+        "prose": "IndexedStack shares Stack's compositor clip attachment: HardEdge (and every non-None behavior) bounds raster output to the stack size, Clip::None records no clip, and the toggle reconciles the layer binding via RenderKind.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/rendering/lowering/layout.rs",
@@ -900,22 +920,22 @@
         ]
       },
       "consumers": {
-        "reconciliation": [
+        "compositor": [
           {
-            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
             "kind": "method",
-            "owner": "WidgetTree",
-            "name": "update_existing_inner"
+            "owner": "RenderLayers",
+            "name": "reconcile_structure"
           }
         ]
       },
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/stack_layout.rs",
-          "name": "indexed_stack_switches_active_child"
+          "name": "indexed_stack_clip_layers_follow_clip_behavior"
         }
       ],
-      "status": "unresolved"
+      "status": "implemented"
     }
   ]
 }

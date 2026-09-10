@@ -275,6 +275,8 @@ impl From<IndexedStack> for Widget {
         Widget::from_kind(WidgetKind::IndexedStack {
             alignment: value.alignment,
             index: value.index,
+            fit: value.fit,
+            clip_behavior: value.clip_behavior,
             children: value.children,
         })
     }
