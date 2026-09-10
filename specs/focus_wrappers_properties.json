@@ -1214,7 +1214,7 @@
       "symbol": "KeyboardListener",
       "option": "include_semantics",
       "default": true,
-      "validation": "bool setter stored on the gesture callbacks and compared by WidgetKind equality, but no semantic-tree reader consumes it today: toggling leaves collected semantics byte-identical while the element keeps routing keys",
+      "validation": "bool setter governing exactly the listener's own keyboard affordance: withdrawing it removes Increment/Decrement executability from the listener node while child nodes, sibling nodes, and key dispatch keep working, with no layout or picture work scheduled",
       "conversion": {
         "path": "crates/incular-widgets/src/focus_keyboard.rs",
         "kind": "trait_impl",
@@ -1229,13 +1229,18 @@
         "name": "Gesture"
       },
       "comparison": {
-        "prose": "The flag participates in rebuild identity through WidgetKind equality only; semantics collection keys keyboard affordances off has_keyboard_listener, which this flag does not gate. Recorded as implemented storage with an explicitly documented missing reader, not as semantic behavior.",
+        "prose": "The flag participates in rebuild identity through WidgetKind equality, and gates the listener arm of increment/decrement executability: a listener services those actions through key dispatch even without a bound semantic callback, and opting out withdraws exactly that advertisement. Child collection never reads the flag.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/widget/structure.rs",
             "kind": "method",
             "owner": "WidgetKind",
             "name": "eq"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "function",
+            "name": "semantic_action_is_executable"
           }
         ]
       },
@@ -1247,6 +1252,13 @@
             "trait": "From",
             "target": "Widget",
             "source": "KeyboardListener"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "function",
+            "name": "semantic_action_is_executable"
           }
         ],
         "reconciliation": [
@@ -1261,7 +1273,7 @@
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
-          "name": "keyboard_listener_include_semantics_has_no_tree_reader"
+          "name": "keyboard_listener_include_semantics_governs_listener_affordance"
         }
       ],
       "status": "implemented"

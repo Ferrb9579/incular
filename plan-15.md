@@ -1686,11 +1686,9 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   is a no-op. Scope autofocus resolves to the first focusable
   descendant. Listener callbacks compare by `Rc` pointer, so
   replacement swaps handlers and identical reapplication bails out.
-- Found gap, behavior unchanged: `KeyboardListener.include_semantics`
-  is stored and compared but no semantic-tree reader consumes it, so
-  toggling leaves collected semantics byte-identical. The ledger
-  records implemented storage with an explicitly documented missing
-  reader instead of claiming semantic behavior.
+- Resolved gap (package A below): `KeyboardListener.include_semantics`
+  now gates the listener's own increment/decrement affordance instead
+  of sitting unread; the ledger records the established contract.
 - Adjacent finding while testing: sibling roots share no semantic
   parent, so the debug dump follows one root; multi-root assertions
   go through node handles, not dump text.
@@ -1707,6 +1705,26 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `specs/focus_wrappers_properties.json` (21 options) validated by
   `tests/pointer_blocking_ledger.rs` and
   `tests/focus_wrappers_ledger.rs`.
+
+## W3 — KeyboardListener semantic policy (same workstream, still open)
+
+- `include_semantics` governs exactly the listener's own keyboard
+  affordance: the increment/decrement executability arm in
+  `semantic_action_is_executable`, which exists so a listener can
+  service those actions through key dispatch without a bound semantic
+  callback (the slider path). Gating withdraws that advertisement
+  from the listener node only; child and sibling nodes collect
+  normally and `dispatch_keyboard` never reads the flag. No new
+  role: the existing `Group` node plus `Increment`/`Decrement`
+  actions carry the contribution.
+- Evidence: `keyboard_listener_include_semantics_governs_listener_affordance`
+  mounts a labeled `Group` listener over a `Text` child beside a
+  sibling root with a working `on_key`, then drives true to false to
+  true asserting the affordance flips while labels, node handles,
+  element ids, dispatch counts, and layout/paint/composite counters
+  stay put. Fail-first verified by reverting the one-line gate. The
+  old identical-output test is replaced, and the focus ledger record
+  now names the real semantic consumer.
 
 ## W4 — Navigation transactions and smaller runtime owners
 

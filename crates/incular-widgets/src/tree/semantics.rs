@@ -406,9 +406,15 @@ pub(super) fn semantic_action_is_executable(
             )
         }
         SemanticActionKind::Increment | SemanticActionKind::Decrement => {
+            // A keyboard listener services increment/decrement through key
+            // dispatch even without a bound semantic callback. The affordance
+            // belongs to the listener's own node: opting out via
+            // include_semantics withdraws exactly this advertisement while
+            // child semantics and keyboard dispatch keep working.
             matches!(
                 kind,
-                WidgetKind::Gesture { callbacks, .. } if callbacks.has_keyboard_listener()
+                WidgetKind::Gesture { callbacks, .. }
+                    if callbacks.has_keyboard_listener() && callbacks.include_semantics
             )
         }
     }

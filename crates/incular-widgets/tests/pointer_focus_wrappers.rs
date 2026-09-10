@@ -10,10 +10,11 @@ use std::{cell::Cell, rc::Rc};
 
 use incular_config::Constraints;
 use incular_core::{Code, Color, KeyboardEvent, KeyboardKey, Modifiers, NamedKey, Offset, Size};
+use incular_semantics::{SemanticAction, SemanticActionKind, SemanticRole};
 use incular_widgets::{
     AbsorbPointer, ActionResult, Actions, Focus, FocusNode, FocusScope, FocusTraversalOrder,
-    IgnorePointer, KeyboardListener, LogicalShortcutKey, Positioned, Shortcuts, SizedBox, Stack,
-    Text, Widget,
+    IgnorePointer, KeyboardListener, LogicalShortcutKey, Positioned, Semantics, Shortcuts,
+    SizedBox, Stack, Text, Widget,
     internal::{ActionId, ElementId, WidgetTree, action},
 };
 
@@ -477,37 +478,120 @@ fn keyboard_listener_autofocus_needs_a_node() {
 }
 
 #[test]
-fn keyboard_listener_include_semantics_has_no_tree_reader() {
+fn keyboard_listener_include_semantics_governs_listener_affordance() {
     let calls = Rc::new(Cell::new(0));
     let build = |include: bool| {
         let observed = calls.clone();
         Widget::from(
-            KeyboardListener::new(Widget::from(Text::new("listener label")))
-                .on_key(move |_| {
-                    observed.set(observed.get() + 1);
-                    false
-                })
-                .include_semantics(include),
+            Semantics::new(
+                KeyboardListener::new(Widget::from(Text::new("child label")))
+                    .on_key(move |_| {
+                        observed.set(observed.get() + 1);
+                        false
+                    })
+                    .include_semantics(include),
+            )
+            .role(SemanticRole::Group)
+            .label("listener")
+            .action(SemanticAction::Increment)
+            .action(SemanticAction::Decrement),
         )
     };
     let mut tree = WidgetTree::new();
-    let root = tree.mount(build(true)).expect("mount");
-    layout_loose(&mut tree);
-    tree.update_semantics();
-    let before_dump = tree.semantics_debug_dump();
-    assert!(before_dump.contains("listener label"));
+    let root = tree
+        .mount(Stack::new([build(true), Widget::from(Text::new("sibling"))]).into())
+        .expect("mount");
+    let refresh = |tree: &mut WidgetTree| {
+        layout_loose(tree);
+        let _ = tree.paint();
+        tree.update_semantics();
+    };
+    refresh(&mut tree);
+    let stack_kids: Vec<_> = tree.children(root).expect("stack children").to_vec();
+    let listener_text = tree.children(stack_kids[0]).expect("listener child")[0];
+    let sibling_text = stack_kids[1];
+    let listener_semantic = tree
+        .semantic_node_for_element(stack_kids[0])
+        .expect("listener node");
+    let child_semantic = tree
+        .semantic_node_for_element(listener_text)
+        .expect("child node");
+    let sibling_semantic = tree
+        .semantic_node_for_element(sibling_text)
+        .expect("sibling node");
+    let actions = |tree: &WidgetTree| {
+        tree.semantics()
+            .node(listener_semantic)
+            .expect("listener node")
+            .actions
+            .clone()
+    };
+    assert!(actions(&tree).contains(&SemanticActionKind::Increment));
+    assert!(actions(&tree).contains(&SemanticActionKind::Decrement));
 
-    // No semantic-tree reader consumes the flag today (it is stored and
-    // compared in `WidgetKind::eq`, but only `has_keyboard_listener`
-    // reaches semantics): toggling it must leave the collected semantics
-    // byte-identical while the element itself keeps routing keys.
-    tree.update(root, build(false))
-        .expect("toggle include_semantics");
-    layout_loose(&mut tree);
-    tree.update_semantics();
-    assert_eq!(tree.semantics_debug_dump(), before_dump);
-    assert!(!tree.dispatch_keyboard(Some(root), key_down(Code::KeyA)));
+    // With the flag off the listener node keeps its label but withdraws
+    // exactly its own keyboard affordance: child and sibling nodes,
+    // retained identity, and key dispatch are untouched, and the
+    // render-neutral toggle schedules no layout or picture work.
+    let before = tree.diagnostics();
+    tree.update(
+        root,
+        Stack::new([build(false), Widget::from(Text::new("sibling"))]).into(),
+    )
+    .expect("disable include_semantics");
+    refresh(&mut tree);
+    let after = tree.diagnostics();
+    assert_eq!(after.layouts, before.layouts);
+    assert_eq!(after.paints, before.paints);
+    assert_eq!(after.composites, before.composites);
+    assert_eq!(
+        tree.children(root).expect("stack children").to_vec(),
+        stack_kids
+    );
+    assert!(!actions(&tree).contains(&SemanticActionKind::Increment));
+    assert!(!actions(&tree).contains(&SemanticActionKind::Decrement));
+    assert_eq!(
+        tree.semantics()
+            .node(listener_semantic)
+            .expect("listener node")
+            .label
+            .as_deref(),
+        Some("listener")
+    );
+    assert_eq!(
+        tree.semantic_node_for_element(listener_text),
+        Some(child_semantic)
+    );
+    assert_eq!(
+        tree.semantic_node_for_element(sibling_text),
+        Some(sibling_semantic)
+    );
+    assert!(!tree.dispatch_keyboard(Some(stack_kids[0]), key_down(Code::KeyA)));
     assert_eq!(calls.get(), 1);
+
+    // Re-enabling restores the affordance on the same retained elements.
+    tree.update(
+        root,
+        Stack::new([build(true), Widget::from(Text::new("sibling"))]).into(),
+    )
+    .expect("re-enable include_semantics");
+    refresh(&mut tree);
+    assert!(actions(&tree).contains(&SemanticActionKind::Increment));
+    assert!(actions(&tree).contains(&SemanticActionKind::Decrement));
+    assert_eq!(
+        tree.children(root).expect("stack children").to_vec(),
+        stack_kids
+    );
+    assert_eq!(
+        tree.semantic_node_for_element(listener_text),
+        Some(child_semantic)
+    );
+    assert_eq!(
+        tree.semantic_node_for_element(sibling_text),
+        Some(sibling_semantic)
+    );
+    assert!(!tree.dispatch_keyboard(Some(stack_kids[0]), key_down(Code::KeyA)));
+    assert_eq!(calls.get(), 2);
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
