@@ -1,11 +1,16 @@
 //! Flutter-style stack and positioning layout descriptors.
 
-use incular_config::{Alignment, Clip, StackFit, TextDirection};
+use incular_config::{Alignment, Clip, StackFit};
 use typed_builder::TypedBuilder;
 
 use crate::{Widget, WidgetKind};
 
 /// Overlays children in paint order with alignment, sizing fit, and clipping.
+///
+/// Alignment factors are absolute (left/right, not start/end), so the
+/// stack needs no text direction. The removed `text_direction` option
+/// never influenced layout; see `docs/API_MIGRATIONS.md` for the
+/// migration to absolute alignments or a directional wrapper.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Stack {
     #[builder(default, setter(into))]
@@ -16,8 +21,6 @@ pub struct Stack {
     fit: StackFit,
     #[builder(default = Clip::HardEdge)]
     clip_behavior: Clip,
-    #[builder(default, setter(strip_option))]
-    text_direction: Option<TextDirection>,
 }
 
 impl Default for Stack {
@@ -27,7 +30,6 @@ impl Default for Stack {
             alignment: Alignment::TOP_LEFT,
             fit: StackFit::Loose,
             clip_behavior: Clip::HardEdge,
-            text_direction: None,
         }
     }
 }
@@ -75,15 +77,6 @@ impl Stack {
         self
     }
 
-    /// Retains the text direction for API compatibility. Stack alignment
-    /// factors are absolute, so direction never alters layout; changing
-    /// it still rebuilds but resolves identically.
-    #[must_use]
-    pub fn text_direction(mut self, direction: TextDirection) -> Self {
-        self.text_direction = Some(direction);
-        self
-    }
-
     #[must_use]
     pub fn get_alignment(&self) -> Alignment {
         self.alignment
@@ -104,7 +97,6 @@ impl From<Stack> for Widget {
     fn from(value: Stack) -> Self {
         Widget::from_kind(WidgetKind::Stack {
             alignment: value.alignment,
-            text_direction: value.text_direction.unwrap_or(TextDirection::Ltr),
             fit: value.fit,
             clip_behavior: value.clip_behavior,
             children: value.children,

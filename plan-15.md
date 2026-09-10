@@ -1126,7 +1126,7 @@ the table wins.
 | Focus wrappers (Focus/FocusScope/KeyboardListener) | 21/21 | none known | `specs/focus_wrappers_properties.json`, `tests/focus_wrappers_ledger.rs` | complete |
 | Action wrappers (CallbackShortcuts/ActionListener/FocusableActionDetector) | 17/17 | none known | `specs/action_wrappers_properties.json`, `tests/action_wrappers_ledger.rs` | complete |
 | EditableText | 22/22 | none known | `specs/editable_text_properties.json`, `tests/editable_text_ledger.rs` | complete |
-| Stack / Positioned / IndexedStack | 19/19 | IndexedStack `fit`/`clip_behavior` stored without behavior | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | partial |
+| Stack / Positioned / IndexedStack | 18/18 | IndexedStack `fit`/`clip_behavior` stored without behavior | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | partial |
 | Row / Column / Flex / Flexible / Expanded / Spacer | 36/36 | none known | `specs/flex_layout_properties.json`, `tests/flex_layout_ledger.rs` | complete |
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
 | Sizing / constraints (11 types) | 35/35 | IntrinsicWidth step fields, PreferredSize public reach, ConstraintsTransformBox clip stored | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
@@ -1138,6 +1138,27 @@ the table wins.
 | Navigation scopes | not inventoried | none yet | none yet | open |
 | Platform wrappers | not inventoried | none yet | none yet | open |
 | Utilities (SafeArea/Offstage/SplitView/OverflowBar) | not inventoried | none yet | none yet | open |
+
+## W3 — Stack API honesty and positioning policy (same workstream, still open)
+
+- Removed `Stack.text_direction`: alignment factors are absolute, so
+  the option never reached layout and was an accepted no-op. Removal
+  follows the compatibility policy with a migration note in
+  `docs/API_MIGRATIONS.md`; no production caller used it.
+- Reproduced four real `Positioned` defects: right/bottom insets were
+  wrong by the difference between the algorithm size and the
+  measured render size (right+width gave a 40px inset for 20);
+  left+right and top+bottom left the child at its measured size, so
+  the derived size never applied; and negative offsets were dropped
+  instead of honored. Now a single shared `positioned_axis_size`
+  policy tightens configured axes so measurement and anchoring agree;
+  opposing edges win over explicit size; negative offsets are kept
+  while negative dimensions drop as unset.
+- Evidence: corrected and extended
+  `crates/incular-widgets/tests/stack_layout.rs` (per-axis
+  combinations with exact insets, edge-beats-size, meaningful
+  negative offsets with invalid-dimension drop, alignment rebuild),
+  the stack ledger, and `docs/API_MIGRATIONS.md`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

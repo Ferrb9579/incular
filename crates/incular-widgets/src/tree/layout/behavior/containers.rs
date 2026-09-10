@@ -245,20 +245,27 @@ impl WidgetTree {
                             width,
                             height,
                         };
-                        let child_w = width.or_else(|| {
-                            left.zip(right)
-                                .map(|(l, r)| (stack_size.width - l - r).max(0.0))
-                        });
-                        let child_h = height.or_else(|| {
-                            top.zip(bottom)
-                                .map(|(t, b)| (stack_size.height - t - b).max(0.0))
-                        });
-                        let child_constraints = Constraints::new(
-                            0.0,
-                            child_w.unwrap_or(stack_size.width),
-                            0.0,
-                            child_h.unwrap_or(stack_size.height),
+                        // Share the positioning policy: a configured axis
+                        // (explicit size or opposing edges) tightens the
+                        // child, so the size it adopts equals the size the
+                        // algorithm anchors with and right/bottom insets are
+                        // exact. Unconfigured axes stay loosely bounded by
+                        // the stack.
+                        let child_w = incular_layout::positioned_axis_size(
+                            stack_size.width,
+                            left,
+                            right,
+                            width,
                         );
+                        let child_h = incular_layout::positioned_axis_size(
+                            stack_size.height,
+                            top,
+                            bottom,
+                            height,
+                        );
+                        let (min_w, max_w) = child_w.map_or((0.0, stack_size.width), |w| (w, w));
+                        let (min_h, max_h) = child_h.map_or((0.0, stack_size.height), |h| (h, h));
+                        let child_constraints = Constraints::new(min_w, max_w, min_h, max_h);
                         self.layout_render(*child, child_constraints)?;
                         let size = self
                             .render_live(child, "retained render must remain live")

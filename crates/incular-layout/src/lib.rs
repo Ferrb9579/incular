@@ -17,7 +17,7 @@ pub use algorithms::{
     AlignmentChild, BaselineChild, FlexChild, StackChild, StackPosition, TableChild, WrapChild,
     layout_align, layout_aspect_ratio, layout_baseline, layout_center, layout_constrained_box,
     layout_flex, layout_fractionally_sized, layout_padding, layout_sized_box, layout_stack,
-    layout_table, layout_unconstrained_box, layout_wrap,
+    layout_table, layout_unconstrained_box, layout_wrap, positioned_axis_size,
 };
 pub use alignment::{
     Alignment, AlignmentDirectional, Axis, AxisDirection, CrossAxisAlignment, FlexFit,

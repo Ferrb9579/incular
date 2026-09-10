@@ -229,68 +229,6 @@
     },
     {
       "symbol": "Stack",
-      "option": "text_direction",
-      "default": "Ltr",
-      "validation": "stored and compared, but no consumer reads it: alignment factors are absolute, so the option is accepted yet inert",
-      "conversion": {
-        "path": "crates/incular-widgets/src/layout/stack.rs",
-        "kind": "trait_impl",
-        "trait": "From",
-        "target": "Widget",
-        "source": "Stack"
-      },
-      "retained_owner": {
-        "path": "crates/incular-widgets/src/tree/specs.rs",
-        "kind": "variant",
-        "owner": "WidgetKind",
-        "name": "Stack"
-      },
-      "comparison": {
-        "prose": "WidgetKind equality includes the field so a flip rebuilds, and the regression proves resolution is identical. Recorded as implemented storage with no behavior, not as directional alignment.",
-        "refs": [
-          {
-            "path": "crates/incular-widgets/src/tree/widget/structure.rs",
-            "kind": "method",
-            "owner": "WidgetKind",
-            "name": "eq"
-          },
-          {
-            "path": "crates/incular-widgets/src/layout/stack.rs",
-            "kind": "method",
-            "owner": "Stack",
-            "name": "text_direction"
-          }
-        ]
-      },
-      "consumers": {
-        "conversion": [
-          {
-            "path": "crates/incular-widgets/src/layout/stack.rs",
-            "kind": "trait_impl",
-            "trait": "From",
-            "target": "Widget",
-            "source": "Stack"
-          }
-        ],
-        "reconciliation": [
-          {
-            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
-            "kind": "method",
-            "owner": "WidgetTree",
-            "name": "update_existing_inner"
-          }
-        ]
-      },
-      "regressions": [
-        {
-          "path": "crates/incular-widgets/tests/stack_layout.rs",
-          "name": "stack_text_direction_change_keeps_absolute_layout"
-        }
-      ],
-      "status": "implemented"
-    },
-    {
-      "symbol": "Stack",
       "option": "aligned",
       "default": "n/a, alternate constructor for new plus alignment",
       "validation": "delegates to new and the alignment setter",
@@ -388,7 +326,7 @@
       "symbol": "Positioned",
       "option": "left",
       "default": "none (falls through to right or origin)",
-      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "validation": "any finite offset kept (including negative overflow); opposing edges derive size",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -403,7 +341,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Positioned geometry resolves left over right; left with explicit width bounds measurement while left+right derive the algorithm width.",
+        "prose": "Positioned geometry resolves left over right. The retained measurement pass and the layout algorithm share positioned_axis_size, so a configured axis tightens the child to the placement size; opposing edges win over an explicit width.",
         "refs": [
           {
             "path": "crates/incular-layout/src/algorithms.rs",
@@ -435,7 +373,7 @@
         },
         {
           "path": "crates/incular-widgets/tests/stack_layout.rs",
-          "name": "positioned_negative_edges_drop_to_unset"
+          "name": "positioned_negative_edges_are_meaningful_offsets"
         }
       ],
       "status": "implemented"
@@ -444,7 +382,7 @@
       "symbol": "Positioned",
       "option": "right",
       "default": "none",
-      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "validation": "any finite offset kept (including negative overflow); ignored when left is set",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -459,7 +397,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Right anchors only when left is absent; the retained arm and layout algorithm share the same width for the offset.",
+        "prose": "Right anchors only when left is absent; the measured child is sized to the derived/explicit width first, so the inset is exact rather than measured-size dependent.",
         "refs": [
           {
             "path": "crates/incular-layout/src/algorithms.rs",
@@ -490,7 +428,7 @@
       "symbol": "Positioned",
       "option": "top",
       "default": "none",
-      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "validation": "any finite offset kept (including negative overflow); preferred over bottom",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -505,7 +443,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Top resolves over bottom with the same conflict policy as the horizontal axis.",
+        "prose": "Top resolves over bottom with the same shared axis policy as the horizontal axis.",
         "refs": [
           {
             "path": "crates/incular-layout/src/algorithms.rs",
@@ -536,7 +474,7 @@
       "symbol": "Positioned",
       "option": "bottom",
       "default": "none",
-      "validation": "finite nonnegative kept, otherwise dropped as unset",
+      "validation": "any finite offset kept (including negative overflow); ignored when top is set",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -551,7 +489,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Bottom anchors only when top is absent.",
+        "prose": "Bottom anchors only when top is absent, against the resolved placement height.",
         "refs": [
           {
             "path": "crates/incular-layout/src/algorithms.rs",
@@ -582,7 +520,7 @@
       "symbol": "Positioned",
       "option": "width",
       "default": "none (child measured width)",
-      "validation": "finite nonnegative kept, otherwise dropped as unset; bounds the child's loose measurement without forcing fixed children larger",
+      "validation": "finite nonnegative kept; invalid or negative dimensions dropped as unset, never clamped",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -597,7 +535,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Explicit width becomes the algorithm width but the child keeps its measured size; right-anchoring math reuses the algorithm width, not the render size.",
+        "prose": "Explicit width is a dimension. Opposing edges win over it; otherwise the child is measured tightly to it so the render equals the placement size.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
@@ -634,7 +572,7 @@
       "symbol": "Positioned",
       "option": "height",
       "default": "none (child measured height)",
-      "validation": "finite nonnegative kept, otherwise dropped as unset; bounds loose measurement symmetrically to width",
+      "validation": "finite nonnegative kept; invalid or negative dimensions dropped as unset, never clamped",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/stack.rs",
         "kind": "trait_impl",
@@ -649,7 +587,7 @@
         "name": "Positioned"
       },
       "comparison": {
-        "prose": "Explicit height becomes the algorithm height while the render keeps measured size.",
+        "prose": "Explicit height is a dimension: opposing edges win, otherwise the child is measured tightly to it.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",

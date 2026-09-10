@@ -1,6 +1,6 @@
 //! Stack descriptor behavior tests.
 
-use incular_config::{Alignment, Clip, StackFit, TextDirection};
+use incular_config::{Alignment, Clip, StackFit};
 use incular_widgets::{IndexedStack, Positioned, Stack, Text, Widget};
 
 #[test]
@@ -12,13 +12,11 @@ fn stack_builder_defaults_match_default_and_lowering() {
         .alignment(Alignment::CENTER)
         .fit(StackFit::Expand)
         .clip_behavior(Clip::None)
-        .text_direction(TextDirection::Rtl)
         .build();
     let expected = Stack::new([Text::new("child")])
         .alignment(Alignment::CENTER)
         .fit(StackFit::Expand)
-        .clip_behavior(Clip::None)
-        .text_direction(TextDirection::Rtl);
+        .clip_behavior(Clip::None);
     assert_eq!(stack, expected);
     assert_eq!(Widget::from(stack).debug_type_name(), "Stack");
 }

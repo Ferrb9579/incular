@@ -1,12 +1,14 @@
 //! Stack, Positioned, and IndexedStack layout contracts.
 //!
-//! Conflict policy (established in `incular-layout`, pinned here):
-//! left wins over right, top wins over bottom; left+right derive
-//! width (explicit width ignored) and top+bottom derive height;
-//! negative or non-finite edges are dropped as unset, never clamped.
+//! Conflict policy (owned by `incular-layout`, pinned here): left
+//! wins over right and top wins over bottom; a single edge bounds
+//! measurement loosely while opposing edges derive the algorithm
+//! size; the child keeps its measured size, so drawing may differ
+//! from the algorithm size; non-finite edges are dropped as unset
+//! and negative edges are meaningful offsets, not invalid dimensions.
 //! Clip behavior is covered by the clip ledger and not re-tested here.
 
-use incular_config::{Alignment, Constraints, StackFit, TextDirection};
+use incular_config::{Alignment, Constraints, StackFit};
 use incular_core::{Color, Offset, Size};
 use incular_widgets::{
     Focus, FocusNode, IndexedStack, Positioned, Stack, Text, Widget,
@@ -38,34 +40,33 @@ fn white_box(width: f32, height: f32) -> Widget {
 
 #[test]
 fn positioned_horizontal_combinations_resolve_documented() {
-    // Positions follow left, else right-anchored math (which uses the
-    // explicit or derived width), else the origin. Measurement takes
-    // the explicit width over the derived one as a loose bound, and
-    // fixed children shrink to it but never grow: the render keeps
-    // measured size, which right/bottom anchoring math does not reuse.
+    // A configured axis tightens the child so its measured width equals
+    // the placement width. Opposing offsets derive the width and win
+    // over an explicit width; a lone edge places against the resolved
+    // (explicit or measured) width. Nonnegative right insets are exact.
     let cases: &[(&str, Positioned, (f32, f32))] = &[
         (
             "left_width",
             Positioned::new(white_box(10., 10.)).left(20.).width(30.),
-            (20., 10.),
+            (20., 30.),
         ),
         (
             "right_width",
             Positioned::new(white_box(10., 10.)).right(20.).width(30.),
-            (150., 10.),
+            (150., 30.),
         ),
         (
             "left_right",
             Positioned::new(white_box(10., 10.)).left(20.).right(30.),
-            (20., 10.),
+            (20., 150.),
         ),
         (
-            "left_right_width_bounds_measure",
+            "left_right_beats_width",
             Positioned::new(white_box(10., 10.))
                 .left(20.)
                 .right(30.)
                 .width(5.),
-            (20., 5.),
+            (20., 150.),
         ),
         ("bare", Positioned::new(white_box(10., 10.)), (0., 10.)),
     ];
@@ -79,6 +80,9 @@ fn positioned_horizontal_combinations_resolve_documented() {
         let inner = tree.children(child).expect("positioned child")[0];
         let (actual_x, _, actual_width, _) = bounds_of(&tree, inner);
         assert_eq!((actual_x, actual_width), (*x, *width), "{name}");
+        if *name == "right_width" {
+            assert_eq!(200.0 - (actual_x + actual_width), 20.0, "{name}");
+        }
     }
 }
 
@@ -88,27 +92,26 @@ fn positioned_vertical_combinations_resolve_documented() {
         (
             "top_height",
             Positioned::new(white_box(10., 10.)).top(20.).height(30.),
-            (20., 10.),
+            (20., 30.),
         ),
         (
             "bottom_height",
             Positioned::new(white_box(10., 10.)).bottom(20.).height(30.),
-            (150., 10.),
+            (150., 30.),
         ),
         (
             "top_bottom",
             Positioned::new(white_box(10., 10.)).top(20.).bottom(30.),
-            (20., 10.),
+            (20., 150.),
         ),
-        // top wins placement while explicit height still bounds
-        // measurement even though top+bottom derive the algorithm size.
+        // Opposing edges derive the height and win over explicit height.
         (
-            "top_wins",
+            "top_bottom_beats_height",
             Positioned::new(white_box(10., 10.))
                 .top(20.)
                 .bottom(30.)
                 .height(5.),
-            (20., 5.),
+            (20., 150.),
         ),
         ("bare", Positioned::new(white_box(10., 10.)), (0., 10.)),
     ];
@@ -122,18 +125,21 @@ fn positioned_vertical_combinations_resolve_documented() {
         let inner = tree.children(child).expect("positioned child")[0];
         let (_, actual_y, _, actual_height) = bounds_of(&tree, inner);
         assert_eq!((actual_y, actual_height), (*y, *height), "{name}");
+        if *name == "bottom_height" {
+            assert_eq!(200.0 - (actual_y + actual_height), 20.0, "{name}");
+        }
     }
 }
 
 #[test]
-fn positioned_negative_edges_drop_to_unset() {
-    // Negative edges are not clamped to zero: they read as absent, so
-    // layout falls through to the opposite edge or the origin.
+fn positioned_negative_edges_are_meaningful_offsets() {
+    // Negative offsets are kept verbatim (overflow), while negative
+    // dimensions are invalid and dropped as unset.
     let mut tree = WidgetTree::new();
     let root = tree
         .mount(
             Stack::new([
-                Widget::from(Positioned::new(white_box(10., 10.)).left(-20.).width(30.)),
+                Widget::from(Positioned::new(white_box(30., 10.)).left(-20.).width(30.)),
                 Widget::from(Positioned::new(white_box(10., 10.)).right(20.).left(-5.)),
             ])
             .into(),
@@ -141,14 +147,28 @@ fn positioned_negative_edges_drop_to_unset() {
         .expect("mount");
     layout_tight(&mut tree, 200., 200.);
     let kids = stack_kids(&tree, root);
-    // Negative left with explicit width: width still only bounds the
-    // fixed child, origin falls to 0.
+    // Negative left is honored; the explicit width still sizes the child.
     let first = tree.children(kids[0]).expect("child")[0];
-    assert_eq!(bounds_of(&tree, first), (0., 0., 10., 10.));
-    // Negative left with valid right: right anchors against the
-    // measured width.
+    assert_eq!(bounds_of(&tree, first), (-20., 0., 30., 10.));
+    // Negative left wins over right: right is ignored when left is set.
     let second = tree.children(kids[1]).expect("child")[0];
-    assert_eq!(bounds_of(&tree, second), (170., 0., 10., 10.));
+    assert_eq!(bounds_of(&tree, second).0, -5.);
+
+    // A negative width is invalid and dropped, so the child measures its
+    // intrinsic size instead.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            Stack::new([Widget::from(
+                Positioned::new(white_box(25., 10.)).width(-5.),
+            )])
+            .into(),
+        )
+        .expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    let child = stack_kids(&tree, root)[0];
+    let inner = tree.children(child).expect("child")[0];
+    assert_eq!(bounds_of(&tree, inner).2, 25.);
 }
 
 #[test]
@@ -245,20 +265,22 @@ fn stack_alignment_positions_asymmetric_children() {
 }
 
 #[test]
-fn stack_text_direction_change_keeps_absolute_layout() {
-    // Stack alignment factors are absolute: text direction is retained
-    // but never consulted, so flipping it re-resolves identically.
-    let build = |direction| {
-        Widget::from(
-            Stack::aligned(Alignment::CENTER, [white_box(40., 20.)]).text_direction(direction),
-        )
-    };
+fn stack_alignment_rebuilds_to_the_same_absolute_result() {
+    // Alignment factors are absolute; rebuilding with a different
+    // alignment moves the child deterministically, and re-applying the
+    // original alignment restores the original position exactly.
+    let build = |alignment| Widget::from(Stack::aligned(alignment, [white_box(40., 20.)]));
     let mut tree = WidgetTree::new();
-    let root = tree.mount(build(TextDirection::Ltr)).expect("mount");
+    let root = tree.mount(build(Alignment::TOP_LEFT)).expect("mount");
     layout_tight(&mut tree, 200., 100.);
     let before = bounds_of(&tree, stack_kids(&tree, root)[0]);
-    tree.update(root, build(TextDirection::Rtl))
-        .expect("flip direction");
+    tree.update(root, build(Alignment::BOTTOM_RIGHT))
+        .expect("realign");
+    layout_tight(&mut tree, 200., 100.);
+    let moved = bounds_of(&tree, stack_kids(&tree, root)[0]);
+    assert!(moved.0 > before.0 && moved.1 > before.1);
+    tree.update(root, build(Alignment::TOP_LEFT))
+        .expect("realign back");
     layout_tight(&mut tree, 200., 100.);
     assert_eq!(bounds_of(&tree, stack_kids(&tree, root)[0]), before);
 }

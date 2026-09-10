@@ -115,14 +115,12 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
         },
         WidgetKind::Stack {
             alignment,
-            text_direction,
             fit,
             clip_behavior,
             ..
         } => RenderKind::Stack {
             stack: incular_layout::Stack {
                 alignment: *alignment,
-                text_direction: *text_direction,
                 fit: *fit,
                 clip_behavior: *clip_behavior,
             },

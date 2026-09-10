@@ -39,6 +39,7 @@ when they return an explicit unsupported result.
 | Tooltip `show_at` / `hide_at` | Timestamp unused for immediate visibility mutation; preserve explicit outcomes and distinguish scheduling from immediate changes. | F/G; tooltip tests and popup examples. |
 | controls radio/autocomplete `build(_theme)` | Custom/content composition ignores the argument. Unify themed/default/custom composition contracts; remove argument where no presentation needs it. | F; controls and Material galleries. |
 | `ButtonStyle::resolve_elevation(..., _theme)` | Elevation currently resolves solely from style/state. Remove unused theme parameter or make fallback policy real. | F; style resolution tests. |
+| `Stack::text_direction` | Removed. Stack alignment factors are absolute (left/right, not start/end), so direction never reached layout and the option was an accepted no-op. Use the absolute alignment you mean, or wrap directional content in `Directionality` and resolve the alignment before constructing the `Stack`. The `incular-layout::Stack` policy struct likewise drops the field. | B; `specs/stack_layout_properties.json`, `stack_layout.rs`/`layout_stack.rs`. |
 
 ## Public fields and mutation ownership
 

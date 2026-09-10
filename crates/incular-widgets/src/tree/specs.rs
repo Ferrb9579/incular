@@ -363,7 +363,6 @@ pub(crate) enum WidgetKind {
     },
     Stack {
         alignment: Alignment,
-        text_direction: TextDirection,
         fit: StackFit,
         clip_behavior: Clip,
         children: Vec<Widget>,

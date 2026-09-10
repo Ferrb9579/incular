@@ -265,14 +265,12 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Stack {
                 alignment,
-                text_direction,
                 fit,
                 clip_behavior,
                 children,
             } => f
                 .debug_struct("Stack")
                 .field("alignment", alignment)
-                .field("text_direction", text_direction)
                 .field("fit", fit)
                 .field("clip_behavior", clip_behavior)
                 .field("children", children)
@@ -1289,19 +1287,17 @@ impl PartialEq for WidgetKind {
             (
                 Self::Stack {
                     alignment: a,
-                    text_direction: b,
-                    fit: c,
-                    clip_behavior: d,
-                    children: e,
+                    fit: b,
+                    clip_behavior: c,
+                    children: d,
                 },
                 Self::Stack {
-                    alignment: f,
-                    text_direction: g,
-                    fit: h,
-                    clip_behavior: i,
-                    children: j,
+                    alignment: e,
+                    fit: f,
+                    clip_behavior: g,
+                    children: h,
                 },
-            ) => a == f && b == g && c == h && d == i && e == j,
+            ) => a == e && b == f && c == g && d == h,
             (
                 Self::Positioned {
                     left: a,

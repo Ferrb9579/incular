@@ -189,12 +189,9 @@ fn same_compositor_family(old: &RenderKind, new: &RenderKind) -> bool {
     )
 }
 
-/// True when two stack descriptors differ only in clipping: alignment,
-/// fit, and text direction all change measurement, so only a pure
-/// behavior flip may skip layout.
+/// True when two stack descriptors differ only in clipping: alignment
+/// and fit both change measurement, so only a pure behavior flip may
+/// skip layout.
 fn stack_clip_only_change(old: &incular_layout::Stack, new: &incular_layout::Stack) -> bool {
-    old.clip_behavior != new.clip_behavior
-        && old.alignment == new.alignment
-        && old.fit == new.fit
-        && old.text_direction == new.text_direction
+    old.clip_behavior != new.clip_behavior && old.alignment == new.alignment && old.fit == new.fit
 }

@@ -168,10 +168,12 @@ impl Column {
     }
 }
 
+/// Stack layout policy. Alignment factors are absolute, so the policy
+/// carries no text direction; directional placement is the caller's
+/// concern via the alignment it resolves before layout.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stack {
     pub alignment: Alignment,
-    pub text_direction: TextDirection,
     pub fit: StackFit,
     pub clip_behavior: Clip,
 }
@@ -187,7 +189,6 @@ impl Stack {
     pub const fn new() -> Self {
         Self {
             alignment: Alignment::TOP_LEFT,
-            text_direction: TextDirection::Ltr,
             fit: StackFit::Loose,
             clip_behavior: Clip::HardEdge,
         }

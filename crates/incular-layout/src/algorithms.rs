@@ -741,31 +741,60 @@ struct WrapRun {
     cross: f32,
 }
 
+/// Resolves the tight placement size of a positioned child on one axis from
+/// its parent extent and raw configuration, or `None` when the axis is not
+/// sized by configuration (the caller then measures the child loosely).
+///
+/// This is the single policy the retained measurement pass and the
+/// positioning pass share, so the size a child adopts is exactly the size
+/// used for end-anchoring. Opposing offsets derive the size and win over an
+/// explicit size, matching Flutter's `Positioned` conflict resolution; an
+/// explicit size applies only when the opposing edge is absent; otherwise
+/// the axis is unset and the caller measures the child loosely. `start`/
+/// `end` are offsets and may be negative (meaningful overflow); `size` is a
+/// dimension and invalid (non-finite or negative) values are dropped as
+/// unset rather than clamped.
+#[must_use]
+pub fn positioned_axis_size(
+    parent: f32,
+    start: Option<f32>,
+    end: Option<f32>,
+    size: Option<f32>,
+) -> Option<f32> {
+    match (finite_offset(start), finite_offset(end)) {
+        (Some(start), Some(end)) => Some((parent - start - end).max(0.0)),
+        _ => finite_dimension(size),
+    }
+}
+
+/// Applies a resolved placement size and offsets to a measured child.
+///
+/// Offsets are kept verbatim, including negative values. When only an end
+/// offset applies, the measured size is subtracted from the end edge.
+fn positioned_axis_placement(
+    parent: f32,
+    child: f32,
+    start: Option<f32>,
+    end: Option<f32>,
+) -> (f32, f32) {
+    let start = finite_offset(start);
+    let end = finite_offset(end);
+    let x = start.unwrap_or_else(|| end.map(|end| parent - end - child).unwrap_or(0.0));
+    (x, child)
+}
+
 fn positioned_geometry(parent: Size, child: Size, position: Positioned) -> (Size, Offset) {
-    let left = finite_nonnegative(position.left);
-    let right = finite_nonnegative(position.right);
-    let top = finite_nonnegative(position.top);
-    let bottom = finite_nonnegative(position.bottom);
-    let width = if let (Some(left), Some(right)) = (left, right) {
-        (parent.width - left - right).max(0.0)
-    } else {
-        finite_nonnegative(position.width).unwrap_or(child.width)
-    };
-    let height = if let (Some(top), Some(bottom)) = (top, bottom) {
-        (parent.height - top - bottom).max(0.0)
-    } else {
-        finite_nonnegative(position.height).unwrap_or(child.height)
-    };
-    let x = left.unwrap_or_else(|| {
-        right
-            .map(|right| (parent.width - right - width).max(0.0))
-            .unwrap_or(0.0)
-    });
-    let y = top.unwrap_or_else(|| {
-        bottom
-            .map(|bottom| (parent.height - bottom - height).max(0.0))
-            .unwrap_or(0.0)
-    });
+    let width = positioned_axis_size(parent.width, position.left, position.right, position.width)
+        .unwrap_or(child.width);
+    let height = positioned_axis_size(
+        parent.height,
+        position.top,
+        position.bottom,
+        position.height,
+    )
+    .unwrap_or(child.height);
+    let (x, _) = positioned_axis_placement(parent.width, width, position.left, position.right);
+    let (y, _) = positioned_axis_placement(parent.height, height, position.top, position.bottom);
     (Size::new(width, height), Offset::new(x, y))
 }
 
@@ -815,7 +844,15 @@ fn finite_factor(value: f32) -> Option<f32> {
     (value.is_finite() && value >= 0.0).then_some(value)
 }
 
-fn finite_nonnegative(value: Option<f32>) -> Option<f32> {
+/// A usable offset: any finite value, including negative overflow.
+fn finite_offset(value: Option<f32>) -> Option<f32> {
+    value.filter(|value| value.is_finite())
+}
+
+/// A usable dimension: finite and nonnegative. Invalid dimensions are
+/// dropped as unset rather than clamped, so they never silently become
+/// zero-sized content.
+fn finite_dimension(value: Option<f32>) -> Option<f32> {
     value.and_then(finite_factor)
 }
 
