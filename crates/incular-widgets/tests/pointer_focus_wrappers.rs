@@ -711,8 +711,12 @@ fn sibling_focus_and_semantics_survive_neighbor_rebuild() {
         Some(left_semantic),
         "left semantics must stay stable"
     );
-    // Sibling roots share no semantic parent, so the debug dump follows one
-    // root; assert through node handles instead.
+    // Node handles stay the precise assertions; the multi-root dump now
+    // covers both siblings as well.
+    let dump = tree.semantics_debug_dump();
+    assert!(dump.contains("left"), "left root dumped:\n{dump}");
+    assert!(dump.contains("right v2"), "updated root dumped:\n{dump}");
+    assert!(!dump.contains("right v1"), "stale label gone:\n{dump}");
     let siblings_after: Vec<_> = tree.children(root).expect("stack children").to_vec();
     assert_eq!(siblings_after[0], siblings[0]);
     assert_eq!(siblings_after[1], siblings[1]);

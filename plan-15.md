@@ -1764,6 +1764,24 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `text_align` record now states the single-translation policy and
   cites the new regressions.
 
+## W3 — Multi-root semantic diagnostics (same workstream, still open)
+
+- `debug_dump_limited` walked only the designated root, silently
+  omitting sibling roots. It now visits every parentless node with
+  the designated root first (single-root output byte-identical),
+  then the rest in id order under the shared node/depth budgets.
+  Collection and parentage are untouched; each node still prints
+  once under its first-visited parent.
+- Adjacent finding while testing: explicit semantics merge onto the
+  same element, so a group-with-descendant case needs the role on a
+  container, not on the text itself.
+- Evidence: 5 tests in
+  `crates/incular-widgets/tests/semantic_roots.rs` built through
+  real collection (two roots, nested-plus-sibling without
+  duplication, root removal, deterministic recollection,
+  hidden/excluded absence). The neighbor-rebuild test now asserts
+  the corrected dump alongside its node-handle assertions.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

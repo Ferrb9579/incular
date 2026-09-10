@@ -332,11 +332,29 @@ impl SemanticsTree {
             Some(result)
         }
 
+        // Sibling semantic roots share no parent, so walking only the
+        // designated root silently omits them. Visit every parentless
+        // node instead: the designated root first (single-root output is
+        // unchanged), then the rest in id order. Parentage is untouched;
+        // each node still prints once under its first-visited parent.
         let mut output = String::new();
-        let Some(root) = self.root else {
-            return output;
-        };
-        let mut stack = vec![(root, 0usize)];
+        let mut parented = std::collections::HashSet::new();
+        for (_, node) in self.iter() {
+            parented.extend(node.children.iter().copied());
+        }
+        let mut extra: Vec<SemanticNodeId> = self
+            .iter()
+            .map(|(id, _)| id)
+            .filter(|id| Some(*id) != self.root && !parented.contains(id))
+            .collect();
+        extra.sort_by_key(|id| id.0);
+        let mut stack = Vec::new();
+        for id in extra.into_iter().rev() {
+            stack.push((id, 0usize));
+        }
+        if let Some(root) = self.root {
+            stack.push((root, 0usize));
+        }
         let mut visited = 0usize;
         while let Some((id, depth)) = stack.pop() {
             if visited >= max_nodes {
