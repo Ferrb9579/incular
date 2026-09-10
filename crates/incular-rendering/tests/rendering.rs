@@ -1504,6 +1504,62 @@ fn fallback_error_holds_across_scales() {
     }
 }
 
+#[test]
+fn shear_diagonal_stretch_resolves_exact_path() {
+    // skew(1, 0) stretches the diagonal well beyond either basis vector,
+    // the case a largest-column tolerance bound misses. The bound is
+    // checked first from independently transformed unit vectors, then
+    // the emitted curved geometry is verified at 1x and 8x.
+    let world = Transform::skew(1., 0.);
+    let length = |point: Offset| {
+        let mapped = world.transform_point(point);
+        let origin = world.transform_point(Offset::ZERO);
+        let dx = f64::from(mapped.x - origin.x);
+        let dy = f64::from(mapped.y - origin.y);
+        dx.hypot(dy)
+    };
+    let basis = length(Offset::new(1., 0.)).max(length(Offset::new(0., 1.)));
+    let diagonal = length(Offset::new(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    ));
+    assert!(
+        diagonal > basis,
+        "shear diagonal ({diagonal}) must out-stretch both basis vectors ({basis})"
+    );
+    let bound = f64::from(world.magnification_bound());
+    assert!(
+        diagonal <= bound * (1. + 1e-6),
+        "worst measured stretch ({diagonal}) must stay within the bound ({bound})"
+    );
+    for scale in [1., 8.] {
+        let world = Transform::skew(1., 0.).then(Transform::scale(scale));
+        let path = fallback_path_under(world);
+        // Mapped center sits deep inside; the mapped outside corner keeps
+        // a margin far above the 0.1 world-space tolerance target even
+        // along the maximally stretched diagonal.
+        assert!(
+            path.contains(
+                world.transform_point(Offset::new(20., 20.)),
+                FillRule::NonZero
+            ),
+            "shear {scale}x must contain the mapped center"
+        );
+        assert!(
+            !path.contains(
+                world.transform_point(Offset::new(0.5, 0.5)),
+                FillRule::NonZero
+            ),
+            "shear {scale}x must exclude the mapped outside corner"
+        );
+        assert!(
+            path.bounds()
+                .is_some_and(|bounds| bounds.size.width > 0. && bounds.size.height > 0.),
+            "shear {scale}x fallback must stay non-degenerate"
+        );
+    }
+}
+
 fn curve_count(path: &Path) -> usize {
     path.bez_path()
         .elements()

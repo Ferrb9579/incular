@@ -146,16 +146,13 @@ const CLIP_PATH_WORLD_TOLERANCE: f64 = 0.1;
 /// Local-space arc-subdivision tolerance for one world transform,
 /// targeting [`CLIP_PATH_WORLD_TOLERANCE`] in world space. kurbo
 /// subdivides arcs into cubics in the shape's local space, so the local
-/// tolerance divides the target by the transform's magnification
-/// (largest column norm); the floor bounds segment counts where
-/// magnification exceeds 100x, past which the world bound relaxes
-/// linearly instead. Tolerance is a pure function of the world
-/// transform, so memoized fallback paths stay valid exactly while their
-/// world does.
+/// tolerance divides the target by the transform's magnification bound;
+/// the floor bounds segment counts where magnification exceeds 100x,
+/// past which the world bound relaxes linearly instead. Tolerance is a
+/// pure function of the world transform, so memoized fallback paths stay
+/// valid exactly while their world does.
 pub(crate) fn fallback_tolerance(world: Transform) -> f64 {
-    let [a, b, c, d, _, _] = world.to_kurbo().as_coeffs();
-    let magnification = (a * a + b * b).sqrt().max((c * c + d * d).sqrt()).max(1e-6);
-    (CLIP_PATH_WORLD_TOLERANCE / magnification).clamp(1e-3, 1.0)
+    (CLIP_PATH_WORLD_TOLERANCE / f64::from(world.magnification_bound())).clamp(1e-3, 1.0)
 }
 
 /// Exact local-space path of an axis-aligned rect: straight edges only,

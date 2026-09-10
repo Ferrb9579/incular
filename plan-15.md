@@ -1392,11 +1392,24 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   cubics in shape-local space, so the local tolerance divides the
   0.1 world-space target by the transform magnification, floored
   locally past 100x. No world-space error bound is claimed beyond
-  that derivation. Containment holds with margins far above
-  tolerance at 0.5x, 1x, and 8x against independently mapped
+  that derivation, and no device-pixel accuracy is claimed from a
+  world/logical-space tolerance. Containment holds with margins far
+  above tolerance at 0.5x, 1x, and 8x against independently mapped
   geometry, and curve counts prove the tolerance engages where
   kurbo's 4-segment floor allows observing it (full ellipses, not
   quarter-arcs).
+- Magnification is the Frobenius norm (`Transform::magnification_bound`
+  in core), a conservative operator-norm bound that also covers shear,
+  where diagonal directions stretch more than either basis vector
+  (skew(1,0): diagonal ~1.581 vs longest column ~1.414). The previous
+  largest-column calculation underestimated exactly that case.
+  Degenerate zero maps report 0.0; non-finite inputs report infinity,
+  consistent with `inverse()` failing on them — downstream geometry is
+  culled rather than measured. Core tests pin the bound against
+  independently transformed unit vectors plus tightness and
+  degenerate/non-finite cases; a shear regression verifies curved
+  clip geometry at 1x and 8x. Reflection and rotation/scale coverage
+  is retained unchanged.
 
 ## W3 — Retained fallback paths (same workstream, still open)
 

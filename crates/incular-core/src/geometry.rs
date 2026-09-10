@@ -392,6 +392,31 @@ impl Transform {
         a == 1. && b == 0. && c == 0. && d == 1.
     }
 
+    /// Conservative bound on the linear part's operator norm: no unit
+    /// vector stretches more than this. It is the Frobenius norm, which
+    /// dominates the operator norm, rounded up to a representable value
+    /// so the bound never underestimates through float conversion.
+    /// Unlike largest-column norms it also covers shear, where diagonal
+    /// directions stretch more than either basis vector.
+    ///
+    /// Degenerate zero maps report `0.0`. Non-finite inputs report
+    /// infinity, consistent with [`Self::inverse`] failing on them:
+    /// downstream geometry is culled rather than measured.
+    #[must_use]
+    pub fn magnification_bound(self) -> f32 {
+        let [a, b, c, d, _, _] = self.0.as_coeffs();
+        let bound = a.hypot(b).hypot(c.hypot(d));
+        if !bound.is_finite() {
+            f32::INFINITY
+        } else if bound == 0.0 {
+            // All-zero linear part stretches nothing exactly; rounding up
+            // a true zero would only whitelist nothing.
+            0.0
+        } else {
+            (bound as f32).next_up()
+        }
+    }
+
     #[must_use]
     pub fn transform_point(self, point: Offset) -> Offset {
         let point = self.0 * Point::new(f64::from(point.x), f64::from(point.y));
