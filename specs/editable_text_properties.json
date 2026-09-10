@@ -637,6 +637,18 @@
         {
           "path": "crates/incular-widgets/tests/editable_text_alignment.rs",
           "name": "pointer_maps_through_centered_text"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_bidi.rs",
+          "name": "rtl_logical_edges_map_to_visual_edges"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_bidi.rs",
+          "name": "rtl_partial_selection_covers_its_visual_span"
+        },
+        {
+          "path": "crates/incular-widgets/tests/editable_text_bidi.rs",
+          "name": "mixed_direction_partial_selection_matches_cluster_spans"
         }
       ],
       "status": "implemented"

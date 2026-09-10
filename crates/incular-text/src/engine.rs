@@ -28,10 +28,24 @@ pub struct TextMetrics {
     pub line_height: f32,
 }
 
+/// One shaped cluster's visual span on a line, in text-area coordinates
+/// with `left <= right`. Spans follow visual order, so a logical byte
+/// range can cover several disjoint spans in mixed-direction text.
+/// Consumers merge spans intersecting a selection instead of assuming
+/// the range maps to one rectangle.
+#[derive(Clone, Copy, Debug)]
+pub struct TextClusterSpan {
+    pub start: usize,
+    pub end: usize,
+    pub left: f32,
+    pub right: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct TextLine {
     pub runs: Arc<[Arc<GlyphRun>]>,
     pub glyphs: Arc<[GlyphPosition]>,
+    pub clusters: Arc<[TextClusterSpan]>,
     pub width: f32,
     /// Horizontal alignment offset in text-area coordinates. Glyph and
     /// caret x positions already include it; `width` stays the unshifted
@@ -424,6 +438,16 @@ impl TextEngine {
                 lines.push(TextLine {
                     runs: shifted_runs.into(),
                     glyphs: glyphs.into(),
+                    clusters: line
+                        .clusters
+                        .iter()
+                        .map(|span| TextClusterSpan {
+                            start: span.start + byte_start,
+                            end: span.end + byte_start,
+                            left: span.left,
+                            right: span.right,
+                        })
+                        .collect(),
                     width: line.width,
                     offset: line.offset,
                     baseline: line.baseline + height,
@@ -442,6 +466,7 @@ impl TextEngine {
             lines.push(TextLine {
                 runs: Arc::new([]),
                 glyphs: Arc::new([]),
+                clusters: Arc::new([]),
                 width: 0.,
                 offset: 0.,
                 baseline: 0.,
@@ -634,6 +659,7 @@ impl TextEngine {
             let range = line.text_range();
             let mut runs = Vec::new();
             let mut glyphs = Vec::new();
+            let mut cluster_spans = Vec::new();
             let mut caret_end = range.start;
             let caret_start = caret_positions.len();
             for item in line.items() {
@@ -732,35 +758,45 @@ impl TextEngine {
                     }
                 }
                 let rtl = run.is_rtl();
-                for (cluster_range, left, right) in cluster_positions {
+                for (cluster_range, left, right) in &cluster_positions {
                     if rtl {
                         caret_positions.push(TextCaretPosition {
                             offset: cluster_range.end,
                             affinity: TextAffinity::Upstream,
-                            x: left,
+                            x: *left,
                             line: line_index,
                         });
                         caret_positions.push(TextCaretPosition {
                             offset: cluster_range.start,
                             affinity: TextAffinity::Downstream,
-                            x: right,
+                            x: *right,
                             line: line_index,
                         });
                     } else {
                         caret_positions.push(TextCaretPosition {
                             offset: cluster_range.start,
                             affinity: TextAffinity::Downstream,
-                            x: left,
+                            x: *left,
                             line: line_index,
                         });
                         caret_positions.push(TextCaretPosition {
                             offset: cluster_range.end,
                             affinity: TextAffinity::Upstream,
-                            x: right,
+                            x: *right,
                             line: line_index,
                         });
                     }
                 }
+                // Retain the visual spans alongside the stops so selection
+                // projection never reconstructs bidi ordering downstream.
+                cluster_spans.extend(cluster_positions.iter().map(|(range, left, right)| {
+                    TextClusterSpan {
+                        start: range.start,
+                        end: range.end,
+                        left: *left,
+                        right: *right,
+                    }
+                }));
                 glyphs.extend(positions.iter().copied());
                 runs.push(Arc::new(GlyphRun {
                     font,
@@ -810,6 +846,7 @@ impl TextEngine {
             lines.push(TextLine {
                 runs: runs.into(),
                 glyphs: glyphs.into(),
+                clusters: cluster_spans.into(),
                 width: metrics.advance,
                 offset: metrics.offset,
                 baseline: metrics.baseline,
@@ -823,6 +860,7 @@ impl TextEngine {
             lines.push(TextLine {
                 runs: Arc::new([]),
                 glyphs: Arc::new([]),
+                clusters: Arc::new([]),
                 width: 0.0,
                 offset: 0.0,
                 baseline: 0.0,

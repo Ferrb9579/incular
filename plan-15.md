@@ -1803,6 +1803,39 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   hidden/excluded absence). The neighbor-rebuild test now asserts
   the corrected dump alongside its node-handle assertions.
 
+## W3 — RTL caret and selection geometry (same workstream, still open)
+
+- Shaped caret stops were already direction-correct, but
+  `selection_rects` mapped two byte edges through the LTR-assuming
+  glyph walk: partial RTL selections collapsed to a sliver and
+  mixed-direction ranges could not split. The engine now retains
+  per-line visual cluster spans (`TextClusterSpan`, rebased across
+  document paragraphs); Widgets projects intersecting spans and
+  merges them, so one logical range yields every visual segment it
+  covers. Mid-cluster ranges snap to cluster edges, matching
+  grapheme-granular editing. Paint, hit testing, and selection
+  areas share the rewrite through the stored layout.
+- `line_caret_x` and `caret_for_line_x` remain solely as documented
+  stop-free fallbacks (affinity fallback, empty lines, and the
+  pre-existing selectable-text click path); no byte or glyph order
+  is reversed anywhere as a bidi substitute.
+- Adjacent discipline confirmed while testing: `paint()` reuses the
+  picture cache until the layout preamble consumes revisions, so
+  select-then-paint steps must re-run layout like real frames; the
+  tests do. Intra-char bytes never reach mapping (selection clamps
+  down to char boundaries first).
+- Evidence: 7 tests in
+  `crates/incular-widgets/tests/editable_text_bidi.rs` (RTL edges
+  under all alignments, RTL partial span with fail-first sliver,
+  mixed partial spans, run-edge affinities, RTL/mixed pointer
+  mapping, RTL wrapping with mounted width determinism,
+  ligature/combining cluster snaps). The `text_align` ledger record
+  cites the direction evidence. Limitation: no constructible
+  single-range case yields disjoint visual segments in this
+  shaper's output, so merging is covered by exact contiguous
+  bounds; selectable-text edge clicks keep the approximate
+  fallback path.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

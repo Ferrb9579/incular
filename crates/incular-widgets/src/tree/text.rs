@@ -866,6 +866,10 @@ pub(super) fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
         .find(|index| *index > offset)
         .unwrap_or(text.len())
 }
+/// Byte-to-x fallback for lines without shaped caret stops (genuinely
+/// empty or stop-free lines). Shaped lines resolve through
+/// `line_caret_x_for_affinity` first; this keeps the alignment offset
+/// for the degenerate case only and never substitutes for bidi geometry.
 pub(super) fn line_caret_x(line: &incular_text::TextLine, byte: usize) -> f32 {
     if byte >= line.caret_end {
         // Glyph x positions carry the alignment offset, so the end-of-line
@@ -909,6 +913,9 @@ pub(super) fn line_caret_x_for_affinity(
             |position| position.x,
         )
 }
+/// X-to-byte fallback reached only when a line carries no caret stops
+/// (empty lines) or by selectable-text clicks that predate stop-based
+/// mapping. Shaped pointer mapping goes through `caret_for_line_position`.
 pub(super) fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
     if x >= line.offset + line.width {
         return line.caret_end;
@@ -983,25 +990,46 @@ pub(super) fn selection_rects(
         .lines
         .iter()
         .enumerate()
-        .filter_map(|(index, line)| {
+        .flat_map(|(index, line)| {
             let start = selection.start.max(line.start);
             let end = selection.end.min(line.end);
-            (start < end
-                || (line.start == line.end
-                    && selection.start <= line.start
-                    && selection.end >= line.end))
-                .then(|| {
-                    Rect::from_origin_size(
-                        Offset::new(
-                            line_caret_x(line, start) - scroll_x + 8.,
-                            index as f32 * layout.metrics.line_height - scroll_y + top,
-                        ),
-                        Size::new(
-                            (line_caret_x(line, end) - line_caret_x(line, start)).max(1.),
-                            layout.metrics.line_height,
-                        ),
-                    )
-                })
+            // Project the shaped cluster spans instead of mapping two byte
+            // edges: a logical range can cover several disjoint visual
+            // spans in mixed-direction text, and edge order flips in RTL.
+            // Clusters intersecting the range contribute whole; a range
+            // splitting a cluster (ligatures, combining marks) snaps to
+            // its edges, matching grapheme-granular editing.
+            let mut spans: Vec<(f32, f32)> = line
+                .clusters
+                .iter()
+                .filter(|span| span.start < end && start < span.end)
+                .map(|span| (span.left, span.right))
+                .collect();
+            if spans.is_empty()
+                && line.start == line.end
+                && selection.start <= line.start
+                && selection.end >= line.end
+            {
+                spans.push((line.offset, line.offset));
+            }
+            spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+            let mut merged: Vec<(f32, f32)> = Vec::with_capacity(spans.len());
+            for (left, right) in spans {
+                if let Some(last) = merged.last_mut()
+                    && left <= last.1
+                {
+                    last.1 = last.1.max(right);
+                } else {
+                    merged.push((left, right));
+                }
+            }
+            let y = index as f32 * layout.metrics.line_height - scroll_y + top;
+            merged.into_iter().map(move |(left, right)| {
+                Rect::from_origin_size(
+                    Offset::new(left - scroll_x + 8., y),
+                    Size::new((right - left).max(1.), layout.metrics.line_height),
+                )
+            })
         })
         .collect()
 }
