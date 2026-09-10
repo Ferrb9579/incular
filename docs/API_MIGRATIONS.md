@@ -40,6 +40,7 @@ when they return an explicit unsupported result.
 | controls radio/autocomplete `build(_theme)` | Custom/content composition ignores the argument. Unify themed/default/custom composition contracts; remove argument where no presentation needs it. | F; controls and Material galleries. |
 | `ButtonStyle::resolve_elevation(..., _theme)` | Elevation currently resolves solely from style/state. Remove unused theme parameter or make fallback policy real. | F; style resolution tests. |
 | `Stack::text_direction` | Removed. Stack alignment factors are absolute (left/right, not start/end), so direction never reached layout and the option was an accepted no-op. Use the absolute alignment you mean, or wrap directional content in `Directionality` and resolve the alignment before constructing the `Stack`. The `incular-layout::Stack` policy struct likewise drops the field. | B; `specs/stack_layout_properties.json`, `stack_layout.rs`/`layout_stack.rs`. |
+| `incular_layout::Table::alignment` | Removed. The field was set to `TOP_LEFT` by its only consumer and never read by `layout_table`; the public `Table` widget never exposed it. Cells render top-left in their slot; align content inside a cell instead. | C; `specs/collections_properties.json`, `tree_layout_painting.rs`. |
 
 ## Public fields and mutation ownership
 

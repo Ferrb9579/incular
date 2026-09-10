@@ -1132,7 +1132,7 @@ the table wins.
 | Sizing / constraints (11 types) | 35/35 | IntrinsicWidth step fields, PreferredSize public reach, ConstraintsTransformBox clip stored | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | FittedBox non-contain fits unverified | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | partial |
 | Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
-| Collections (Wrap/Table) | not inventoried | Wrap/Table not yet audited | none yet | open |
+| Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images | not inventoried | fit/alignment/replacement not yet audited | none yet | open |
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
 | Navigation scopes | not inventoried | none yet | none yet | open |
@@ -1159,6 +1159,28 @@ the table wins.
   combinations with exact insets, edge-beats-size, meaningful
   negative offsets with invalid-dimension drop, alignment rebuild),
   the stack ledger, and `docs/API_MIGRATIONS.md`.
+
+## W3 — Wrap and Table audit (same workstream, still open)
+
+- Geometry is correct: Wrap flows into bounded runs with item and
+  run spacing, main/run/cross alignment, RTL and vertical reversal,
+  and one intrinsic run when the main axis is unbounded; Table uses
+  max-content columns and row heights, floors `columns` at one,
+  fills ragged tails left to right, and reconfigures on a column
+  change. No production defect found in the layout math.
+- Fixed one stored-but-unread field: `incular_layout::Table.alignment`
+  was set to `TOP_LEFT` by its only consumer and read by nothing, so
+  it is removed following the compatibility policy (migration note).
+  Cells render top-left; per-cell alignment is the app's job.
+- Evidence: 17 tests in
+  `crates/incular-widgets/tests/wrap_table_layout.rs` (spacing,
+  run spacing, unequal children, main/run/cross alignment,
+  RTL/vertical reversal, unbounded main axis, keyed reorder,
+  builder parity, max-content geometry, ragged tails, column
+  reconfiguration, column floor with cell replacement, empty
+  table, hit and semantic geometry) plus
+  `specs/collections_properties.json` validated by
+  `tests/collections_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

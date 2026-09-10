@@ -1,0 +1,636 @@
+{
+  "schema_version": 2,
+  "family": "Collections",
+  "scope": "Public Wrap/Table options and their retained consumers in incular-widgets, delegating layout math to incular-layout. OverflowBar reuses Wrap but is a controls-presentation wrapper covered elsewhere. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "Wrap": {
+      "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+      "name": "wrap_builder_defaults_match_default_and_lowering"
+    },
+    "Table": {
+      "path": "crates/incular-widgets/tests/layout_table.rs",
+      "name": "table_builder_preserves_normalization_and_lowering"
+    }
+  },
+  "records": [
+    {
+      "symbol": "Wrap",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained in registration order; reversal is a layout-time visual transform",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; keyed reorder permutes identities while geometry follows the new registration order.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/wrap.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Wrap"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_keyed_reorder_permutes_identities"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "direction",
+      "default": "Horizontal",
+      "validation": "axis setter, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Direction selects the wrapping main axis in layout_wrap.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_vertical_direction_reverses_runs"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "alignment",
+      "default": "Start",
+      "validation": "enum setter, no normalization; distributes leftover main space inside a run",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Per-run main distribution runs through wrap_distribution in layout_wrap.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_main_alignment_distributes_leftover"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "spacing",
+      "default": "0",
+      "validation": "floored at zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Spacing separates items within a run and participates in the run-fit decision.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_flows_into_runs_with_spacing"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "run_alignment",
+      "default": "Start",
+      "validation": "enum setter, no normalization; distributes leftover cross space between runs",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Run distribution runs through wrap_distribution over the cross remainder.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_run_alignment_distributes_extra_cross_space"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "run_spacing",
+      "default": "0",
+      "validation": "floored at zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Run spacing separates runs on the cross axis.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_run_spacing_separates_runs"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "cross_axis_alignment",
+      "default": "Start",
+      "validation": "enum setter, no normalization; places each child within its run on the cross axis",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Per-child cross placement uses the run's cross extent.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_cross_alignment_places_unequal_heights"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "text_direction",
+      "default": "Ltr",
+      "validation": "option setter; Rtl reverses visual item order on horizontal runs",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Direction selects reversal in layout_wrap, unlike the removed Stack option.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_text_direction_reverses_visual_order"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Wrap",
+      "option": "vertical_direction",
+      "default": "Down",
+      "validation": "enum setter, no normalization; Up reverses vertical runs and horizontal cross order",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/wrap.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Wrap"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Wrap"
+      },
+      "comparison": {
+        "prose": "Vertical reversal is consumed by layout_wrap for vertical runs.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_wrap"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "wrap_vertical_direction_reverses_runs"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Table",
+      "option": "columns",
+      "default": "1",
+      "validation": "floored at one by builder, constructor, and lowering; zero behaves as one",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/table.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Table"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Table"
+      },
+      "comparison": {
+        "prose": "layout_table floors columns at one and uses it for row/column indexing.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_table"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "table_columns_floor_at_one_and_cells_replace"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "table_columns_change_reconfigures_rows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Table",
+      "option": "column_spacing",
+      "default": "0",
+      "validation": "floored at zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/table.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Table"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Table"
+      },
+      "comparison": {
+        "prose": "Column spacing advances the cell cursor after each max-content column.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_table"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/tree_layout_painting.rs",
+          "name": "table_uses_max_content_cell_sizes_and_row_major_offsets"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Table",
+      "option": "row_spacing",
+      "default": "0",
+      "validation": "floored at zero by builder and setter",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/table.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Table"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Table"
+      },
+      "comparison": {
+        "prose": "Row spacing advances the row cursor after each max-content row height.",
+        "refs": [
+          {
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "layout_table"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_container_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/tree_layout_painting.rs",
+          "name": "table_uses_max_content_cell_sizes_and_row_major_offsets"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Table",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained in row-major order; an empty table reports zero size",
+      "conversion": {
+        "path": "crates/incular-widgets/src/layout/table.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Table"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Table"
+      },
+      "comparison": {
+        "prose": "Child edges reconcile through the generic element update; ragged tails fill left to right.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/table.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Table"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "table_ragged_tail_fills_left_to_right"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wrap_table_layout.rs",
+          "name": "table_empty_has_zero_size"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

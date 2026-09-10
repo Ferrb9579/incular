@@ -188,7 +188,6 @@ impl WidgetTree {
                     columns,
                     column_spacing,
                     row_spacing,
-                    alignment: Alignment::TOP_LEFT,
                 };
                 let result = incular_layout::layout_table(constraints, &cells, config);
                 (

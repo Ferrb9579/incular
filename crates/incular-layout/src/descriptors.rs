@@ -243,12 +243,15 @@ impl Wrap {
     }
 }
 
+/// Table layout policy: fixed column count with max-content column widths
+/// and max-content row heights. Cells always render top-left within their
+/// slot; there is no per-cell alignment because the widget API exposes
+/// none, and a stored-but-unread alignment field would be a no-op.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Table {
     pub columns: usize,
     pub column_spacing: f32,
     pub row_spacing: f32,
-    pub alignment: Alignment,
 }
 
 impl Default for Table {
@@ -264,7 +267,6 @@ impl Table {
             columns,
             column_spacing: 0.0,
             row_spacing: 0.0,
-            alignment: Alignment::TOP_LEFT,
         }
     }
 }
