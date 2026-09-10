@@ -21,6 +21,16 @@ impl GestureCallbacks {
             || self.focus_node.is_some()
     }
 
+    /// Whether this listener services keyboard-derived semantic
+    /// increment/decrement. Explicit semantic callbacks execute
+    /// independently of this flag; it governs only the keyboard
+    /// fallback, and never keyboard dispatch itself. Advertisement
+    /// and execution share this predicate so they cannot disagree.
+    #[must_use]
+    pub fn services_semantic_keys(&self) -> bool {
+        self.has_keyboard_listener() && self.include_semantics
+    }
+
     /// Dispatches one keyboard event through the listener callbacks. The
     /// shortcut dispatcher is nearest-scope behavior and gets first refusal;
     /// the generic callback then gets the next opportunity before the

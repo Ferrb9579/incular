@@ -1726,6 +1726,27 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   old identical-output test is replaced, and the focus ledger record
   now names the real semantic consumer.
 
+## W3 — Semantic-action execution agreement (same workstream, still open)
+
+- Advertisement and execution shared only a name: with the flag off
+  and no explicit callback, nothing was advertised but the keyboard
+  fallback still executed. Both now read one predicate,
+  `GestureCallbacks::services_semantic_keys`, owned by the gestures
+  crate: the executability arm and the semantic fallback walk, which
+  shares the ancestor traversal with plain key routing through a
+  per-caller filter. Explicit callbacks keep their independent fast
+  path on both sides, and plain keys serve every listener
+  unfiltered. No parallel checks were added.
+- Evidence: 6 runtime tests in
+  `crates/incular-runtime/tests/semantic_action_dispatch.rs`
+  (fallback delivery enabled, withdrawal disabled with fail-first
+  against the unfiltered walk, explicit-callback independence,
+  `CallbackShortcuts` neither advertising nor executing, child and
+  sibling preservation across a mounted flag toggle with keys
+  intact, mounted callback-plus-flag replacement). The focus ledger
+  `include_semantics` record cites the shared predicate and the
+  execution evidence.
+
 ## W3 — EditableText validation and alignment audit (same workstream, still open)
 
 - Validation funnel holds: `EditableText` fields are private with

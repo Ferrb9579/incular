@@ -53,11 +53,27 @@ impl WidgetTree {
     /// when no listener consumes the event.
     #[must_use]
     pub fn dispatch_keyboard(&self, focused: Option<ElementId>, event: KeyboardEvent) -> bool {
+        self.dispatch_keyboard_where(focused, event, |_| true)
+    }
+
+    /// Shared ancestor walk behind keyboard dispatch. The `serve`
+    /// predicate selects which listeners may handle the event: plain key
+    /// routing serves every listener, while the semantic increment and
+    /// decrement fallback serves only listeners sharing the advertisement
+    /// predicate, so execution cannot outrun what semantics advertises.
+    #[must_use]
+    pub(super) fn dispatch_keyboard_where(
+        &self,
+        focused: Option<ElementId>,
+        event: KeyboardEvent,
+        mut serve: impl FnMut(&incular_gestures::GestureCallbacks) -> bool,
+    ) -> bool {
         let mut current = focused;
         while let Some(id) = current {
             if let Some(element) = self.elements.get(id.0)
                 && let WidgetKind::Gesture { callbacks, .. } = element.widget.kind()
                 && callbacks.has_keyboard_listener()
+                && serve(callbacks)
                 && callbacks.handle_keyboard(event.clone())
             {
                 return true;
@@ -77,9 +93,10 @@ impl WidgetTree {
         } else {
             incular_core::Code::ArrowLeft
         };
-        self.dispatch_keyboard(
+        self.dispatch_keyboard_where(
             Some(element),
             KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::Unidentified), code),
+            incular_gestures::GestureCallbacks::services_semantic_keys,
         )
     }
 

@@ -1214,7 +1214,7 @@
       "symbol": "KeyboardListener",
       "option": "include_semantics",
       "default": true,
-      "validation": "bool setter governing exactly the listener's own keyboard affordance: withdrawing it removes Increment/Decrement executability from the listener node while child nodes, sibling nodes, and key dispatch keep working, with no layout or picture work scheduled",
+      "validation": "bool setter governing exactly the listener's own keyboard affordance: withdrawing it removes Increment/Decrement advertisement and execution through the keyboard fallback, while explicit semantic callbacks execute independently and child nodes, sibling nodes, and key dispatch keep working",
       "conversion": {
         "path": "crates/incular-widgets/src/focus_keyboard.rs",
         "kind": "trait_impl",
@@ -1229,7 +1229,7 @@
         "name": "Gesture"
       },
       "comparison": {
-        "prose": "The flag participates in rebuild identity through WidgetKind equality, and gates the listener arm of increment/decrement executability: a listener services those actions through key dispatch even without a bound semantic callback, and opting out withdraws exactly that advertisement. Child collection never reads the flag.",
+        "prose": "The flag participates in rebuild identity through WidgetKind equality. Advertisement and execution share GestureCallbacks::services_semantic_keys: the executability arm reads it, and the semantic increment/decrement fallback dispatches through the shared ancestor walk filtered by it, so execution cannot outrun advertisement. Explicit callbacks bypass both through the supports fast path and runtime direct dispatch. Plain key routing serves every listener unfiltered. Child collection never reads the flag.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/widget/structure.rs",
@@ -1241,6 +1241,24 @@
             "path": "crates/incular-widgets/src/tree/semantics.rs",
             "kind": "function",
             "name": "semantic_action_is_executable"
+          },
+          {
+            "path": "crates/incular-gestures/src/keyboard.rs",
+            "kind": "method",
+            "owner": "GestureCallbacks",
+            "name": "services_semantic_keys"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/focus.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_keyboard_where"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/focus.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_semantic_increment"
           }
         ]
       },
@@ -1274,6 +1292,30 @@
         {
           "path": "crates/incular-widgets/tests/pointer_focus_wrappers.rs",
           "name": "keyboard_listener_include_semantics_governs_listener_affordance"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "semantic_increment_uses_keyboard_fallback_when_enabled"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "semantic_increment_withdrawn_with_flag_disabled"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "explicit_increment_callback_executes_with_flag_disabled"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "callback_shortcuts_node_neither_advertises_nor_executes"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "child_actions_and_sibling_survive_flag_toggle"
+        },
+        {
+          "path": "crates/incular-runtime/tests/semantic_action_dispatch.rs",
+          "name": "mounted_callback_and_flag_replacement"
         }
       ],
       "status": "implemented"

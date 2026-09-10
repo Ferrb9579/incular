@@ -410,11 +410,11 @@ pub(super) fn semantic_action_is_executable(
             // dispatch even without a bound semantic callback. The affordance
             // belongs to the listener's own node: opting out via
             // include_semantics withdraws exactly this advertisement while
-            // child semantics and keyboard dispatch keep working.
+            // child semantics and keyboard dispatch keep working. Execution
+            // shares the same predicate through the dispatch walk.
             matches!(
                 kind,
-                WidgetKind::Gesture { callbacks, .. }
-                    if callbacks.has_keyboard_listener() && callbacks.include_semantics
+                WidgetKind::Gesture { callbacks, .. } if callbacks.services_semantic_keys()
             )
         }
     }
