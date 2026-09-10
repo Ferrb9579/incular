@@ -30,6 +30,26 @@ fn controller_notifies_listeners_and_applies_deltas() {
 }
 
 #[test]
+fn reentrant_mutation_during_notify_terminates_without_panic() {
+    // Listeners run after the controller releases its state borrow
+    // (cloned out beforehand), so a listener that edits terminates
+    // instead of tripping the borrow guard.
+    let controller = TextEditingController::with_text("hi");
+    let fired = Rc::new(Cell::new(0));
+    let observed = fired.clone();
+    let inner = controller.clone();
+    let _token = controller.add_listener(move |value| {
+        observed.set(observed.get() + 1);
+        if !value.text.ends_with('!') {
+            inner.set_text(format!("{}!", value.text));
+        }
+    });
+    controller.set_text("go");
+    assert_eq!(controller.text(), "go!");
+    assert_eq!(fired.get(), 2);
+}
+
+#[test]
 fn deletion_moves_by_codepoint_not_by_byte() {
     let controller = TextEditingController::with_text("a🙂");
     controller.delete_backward();

@@ -1641,6 +1641,34 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `tests/editable_text_ledger.rs` with missing/stale/unresolved
   negatives.
 
+## W3 — EditableText interaction and controller replacement (same workstream, still open)
+
+- No tree-level reentrancy vector found on inspection: submit reads
+  the element through an immutable borrow and invokes `Fn(String)`
+  with no tree access; caret/focus paths clone the controller
+  handle before mutating; `reset_caret` notifies nothing, so the
+  listener-clone-then-notify hardening lives in
+  `TextEditingController::update`, covered by a reentrant
+  `add_listener`-during-notify regression (2 notifications,
+  terminates). Native IME claims stay limited to CPU-side dispatch
+  gating through `InputEvent::Ime`, not platform behavior.
+- Controller replacement detaches the old controller: content and
+  visual revisions are polled per retained entry, so later edits to
+  the previous controller never reach the new presentation.
+  Pointer focus resets the caret to the click point, so selection
+  assertions select after mount, not before.
+- Evidence: 6 tree tests in
+  `crates/incular-widgets/tests/editable_text_interaction.rs`
+  (enabled/read-only gates, controller replacement, submit
+  replacement, hints while focused with focus survival,
+  selection-only versus content revisions, caret point mapping),
+  6 dispatch tests in
+  `crates/incular-runtime/tests/text_input_gating.rs` (disabled
+  rejects edits/submit, read-only selects without mutating,
+  single-line Enter submits while multiline inserts, Done/Newline
+  actions, IME preedit/commit gating, cut/paste gating), and the
+  reentrancy case in `crates/incular-text/tests/editing.rs`.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

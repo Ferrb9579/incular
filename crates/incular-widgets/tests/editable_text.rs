@@ -42,16 +42,6 @@ fn semantic_id(tree: &mut WidgetTree, id: ElementId) -> incular_semantics::Seman
     tree.semantic_node_for_element(id).expect("semantic node")
 }
 
-fn glyph_count(list: &DisplayList) -> usize {
-    list.commands()
-        .iter()
-        .filter_map(|command| match command {
-            PaintCommand::GlyphRun { run, .. } => Some(run.glyphs.len()),
-            _ => None,
-        })
-        .sum()
-}
-
 #[test]
 fn multiline_tracks_max_lines_with_last_setter_winning() {
     let controller = TextEditingController::new();

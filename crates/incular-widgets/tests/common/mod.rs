@@ -164,3 +164,12 @@ pub(super) fn rrect_origins(list: &DisplayList) -> Vec<Offset> {
 pub(super) fn box_(key: u64) -> Widget {
     Widget::box_(Size::new(10., 10.), Color::WHITE).with_key(key)
 }
+pub(super) fn glyph_count(list: &DisplayList) -> usize {
+    list.commands()
+        .iter()
+        .filter_map(|command| match command {
+            PaintCommand::GlyphRun { run, .. } => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .sum()
+}
