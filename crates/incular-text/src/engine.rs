@@ -41,6 +41,44 @@ pub struct TextClusterSpan {
     pub right: f32,
 }
 
+impl TextLine {
+    /// Visual x-intervals covered by a logical byte range on this line.
+    ///
+    /// Four granularities meet here and are not interchangeable: the
+    /// range arrives in UTF-8 bytes (clamped to char boundaries
+    /// upstream, so mid-char bytes never arrive); shaping clusters are
+    /// the coverage granularity (a range splitting a cluster snaps to
+    /// its edges, matching grapheme-granular editing); visual order
+    /// comes from the stored spans, never from re-sorting bytes or
+    /// glyphs downstream. Touching spans merge; genuinely disjoint
+    /// spans stay separate. An empty line covered by the range yields
+    /// its caret point.
+    #[must_use]
+    pub fn selection_spans(&self, start: usize, end: usize) -> Vec<(f32, f32)> {
+        let mut spans: Vec<(f32, f32)> = self
+            .clusters
+            .iter()
+            .filter(|span| span.start < end && start < span.end)
+            .map(|span| (span.left, span.right))
+            .collect();
+        if spans.is_empty() && self.start == self.end && start <= self.start && self.end <= end {
+            spans.push((self.offset, self.offset));
+        }
+        spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut merged: Vec<(f32, f32)> = Vec::with_capacity(spans.len());
+        for (left, right) in spans {
+            if let Some(last) = merged.last_mut()
+                && left <= last.1
+            {
+                last.1 = last.1.max(right);
+            } else {
+                merged.push((left, right));
+            }
+        }
+        merged
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TextLine {
     pub runs: Arc<[Arc<GlyphRun>]>,

@@ -351,10 +351,84 @@ fn rtl_wrapping_and_width_change_stay_consistent() {
 }
 
 #[test]
+fn collapsed_selection_paints_no_highlight() {
+    let highlight = Color::rgba(0, 255, 0, 255);
+    let controller = TextEditingController::with_text("hello");
+    let (mut tree, root) = mount_field(controller.clone(), |field| {
+        field.selection_color(highlight).size(Size::new(200., 32.))
+    });
+    layout_tight(&mut tree, 200., 32.);
+    tree.set_focused(root, true, Instant::now())
+        .expect("focus field");
+    select(&controller, 2, 2);
+    relayout(&mut tree, 200., 32.);
+    assert!(
+        colored_rects(&tree.paint(), highlight).is_empty(),
+        "a collapsed selection highlights nothing"
+    );
+}
+
+#[test]
+fn newline_only_selection_paints_no_highlight() {
+    // Selecting just the line break covers no visible cluster on
+    // either line; the caret still lands at the next line start.
+    let highlight = Color::rgba(0, 255, 0, 255);
+    let cursor = Color::rgba(255, 0, 0, 255);
+    let controller = TextEditingController::with_text("a\nb");
+    let (mut tree, root) = mount_field(controller.clone(), |field| {
+        field
+            .multiline(true)
+            .selection_color(highlight)
+            .cursor_color(cursor)
+            .size(Size::new(200., 64.))
+    });
+    layout_tight(&mut tree, 200., 64.);
+    tree.set_focused(root, true, Instant::now())
+        .expect("focus field");
+    select(&controller, 1, 2);
+    relayout(&mut tree, 200., 64.);
+    let painted = tree.paint();
+    assert!(
+        colored_rects(&painted, highlight).is_empty(),
+        "the invisible break highlights nothing"
+    );
+    assert_eq!(
+        colored_rects(&painted, cursor).len(),
+        1,
+        "the caret still shows"
+    );
+}
+
+#[test]
+fn joiner_only_selection_paints_no_highlight() {
+    // U+200D shapes no cluster of its own: selecting only the joiner
+    // covers nothing visible, while surrounding selections still span it.
+    let highlight = Color::rgba(0, 255, 0, 255);
+    let controller = TextEditingController::with_text("a\u{200D}b");
+    let (mut tree, root) = mount_field(controller.clone(), |field| {
+        field.selection_color(highlight).size(Size::new(200., 32.))
+    });
+    layout_tight(&mut tree, 200., 32.);
+    tree.set_focused(root, true, Instant::now())
+        .expect("focus field");
+    select(&controller, 1, 4);
+    relayout(&mut tree, 200., 32.);
+    assert!(
+        colored_rects(&tree.paint(), highlight).is_empty(),
+        "the invisible joiner highlights nothing"
+    );
+    select(&controller, 0, 5);
+    relayout(&mut tree, 200., 32.);
+    let rects = colored_rects(&tree.paint(), highlight);
+    assert_eq!(rects.len(), 1);
+    assert!(rects[0].size.width > 5.);
+}
+
+#[test]
 fn ligature_and_combining_carets_snap_to_cluster_edges() {
     // U+FB01 is one char in three bytes: intra-char bytes never reach
     // caret mapping because selection clamps down to char boundaries.
-    let controller = TextEditingController::with_text("ﬁsh");
+    let controller = TextEditingController::with_text("\u{FB01}sh");
     controller.set_selection(TextSelection { base: 1, extent: 1 });
     assert_eq!(controller.selection().extent, 0);
     controller.set_selection(TextSelection { base: 2, extent: 2 });
@@ -364,7 +438,7 @@ fn ligature_and_combining_carets_snap_to_cluster_edges() {
     // (byte 1): the mapping has stops only at cluster edges, so the
     // mid-grapheme caret resolves to the cluster edge.
     let cursor = Color::rgba(255, 0, 0, 255);
-    let controller = TextEditingController::with_text("éx");
+    let controller = TextEditingController::with_text("e\u{301}x");
     let (mut tree, root) = mount_field(controller.clone(), |field| {
         field
             .text_align(TextAlign::Start)

@@ -132,6 +132,10 @@ impl TextSelection {
         TextRange::new(self.start(), self.end())
     }
 
+    /// Clamps both edges into the text at UTF-8 char boundaries,
+    /// snapping down. Char boundaries are deliberately not grapheme
+    /// boundaries: a mid-grapheme edge survives clamping and the caret
+    /// mapping below resolves it to the shaping-cluster edge instead.
     #[must_use]
     pub fn clamp_to(self, text: &str) -> Self {
         let base = nearest_char_boundary(text, self.base.min(text.len()));

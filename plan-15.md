@@ -1890,6 +1890,31 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   changes). The action ledger hover record now names the retained
   path and execution evidence.
 
+## W3 — Bidi and cluster selection distinctions (same workstream, still open)
+
+- Boundary levels are now explicit where each is enforced:
+  selections clamp to UTF-8 char boundaries (`clamp_to`, snapping
+  down); shaping clusters are the coverage granularity
+  (`TextClusterSpan`, projected by `TextLine::selection_spans`);
+  visual positions come from caret stops and stored spans, never
+  from re-sorted bytes or glyphs. Mid-grapheme edges survive
+  clamping and resolve to cluster edges in mapping.
+- Shaped output tiles contiguously: the mixed-direction fixture's
+  spans join edge-to-edge in visual order, so disjoint visuals are
+  absent from shaping, not lost in extraction; the merge still
+  preserves genuine gaps, proven by synthetic span tests labeled
+  as algorithm coverage. Newline-only and invisible-joiner
+  selections highlight nothing (sane, pinned); collapsed
+  selections highlight nothing; intra-char bytes never reach
+  mapping. No multi-grapheme cluster arises in this environment
+  (Latin ligatures split per char, lam-alef per grapheme), so that
+  limitation is documented, not claimed.
+- Evidence: `crates/incular-text/tests/selection_spans.rs`
+  (synthetic disjoint/empty merge plus shaped tiling) and 3 new
+  paint tests in `editable_text_bidi.rs` (collapsed, newline-only,
+  joiner-only). Non-ASCII fixtures use explicit escapes so editors
+  cannot normalize them.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

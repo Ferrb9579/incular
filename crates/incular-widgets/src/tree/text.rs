@@ -993,43 +993,18 @@ pub(super) fn selection_rects(
         .flat_map(|(index, line)| {
             let start = selection.start.max(line.start);
             let end = selection.end.min(line.end);
-            // Project the shaped cluster spans instead of mapping two byte
-            // edges: a logical range can cover several disjoint visual
-            // spans in mixed-direction text, and edge order flips in RTL.
-            // Clusters intersecting the range contribute whole; a range
-            // splitting a cluster (ligatures, combining marks) snaps to
-            // its edges, matching grapheme-granular editing.
-            let mut spans: Vec<(f32, f32)> = line
-                .clusters
-                .iter()
-                .filter(|span| span.start < end && start < span.end)
-                .map(|span| (span.left, span.right))
-                .collect();
-            if spans.is_empty()
-                && line.start == line.end
-                && selection.start <= line.start
-                && selection.end >= line.end
-            {
-                spans.push((line.offset, line.offset));
-            }
-            spans.sort_by(|left, right| left.0.total_cmp(&right.0));
-            let mut merged: Vec<(f32, f32)> = Vec::with_capacity(spans.len());
-            for (left, right) in spans {
-                if let Some(last) = merged.last_mut()
-                    && left <= last.1
-                {
-                    last.1 = last.1.max(right);
-                } else {
-                    merged.push((left, right));
-                }
-            }
+            // Direction geometry lives in Text: project the stored
+            // cluster spans and frame each visual segment. This keeps
+            // paint, hit testing, and selection areas on one policy.
             let y = index as f32 * layout.metrics.line_height - scroll_y + top;
-            merged.into_iter().map(move |(left, right)| {
-                Rect::from_origin_size(
-                    Offset::new(left - scroll_x + 8., y),
-                    Size::new((right - left).max(1.), layout.metrics.line_height),
-                )
-            })
+            line.selection_spans(start, end)
+                .into_iter()
+                .map(move |(left, right)| {
+                    Rect::from_origin_size(
+                        Offset::new(left - scroll_x + 8., y),
+                        Size::new((right - left).max(1.), layout.metrics.line_height),
+                    )
+                })
         })
         .collect()
 }
