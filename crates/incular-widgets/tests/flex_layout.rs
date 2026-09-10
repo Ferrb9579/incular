@@ -387,6 +387,41 @@ fn flex_identical_reapplication_bails_out() {
 }
 
 #[test]
+fn flex_family_builders_match_fluent_construction() {
+    let child = || white_box(10., 10.);
+    assert_eq!(
+        Widget::from(Column::new([child()]).spacing(4.)),
+        Widget::from(
+            Column::builder()
+                .children(vec![child()])
+                .spacing(4.)
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(Flex::vertical([child()])),
+        Widget::from(
+            Flex::builder()
+                .direction(incular_config::Axis::Vertical)
+                .children(vec![child()])
+                .build()
+        )
+    );
+    assert_eq!(
+        Widget::from(Flexible::flex_factor(2, child())),
+        Widget::from(Flexible::builder().flex(2).child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(Expanded::flex_factor(3, child())),
+        Widget::from(Expanded::builder().flex(3).child(child()).build())
+    );
+    assert_eq!(
+        Widget::from(Spacer::flex_factor(2)),
+        Widget::from(Spacer::builder().flex(2).build())
+    );
+}
+
+#[test]
 fn flex_builder_matches_fluent_construction() {
     let fluent = Row::new([white_box(10., 10.)])
         .main_axis_alignment(MainAxisAlignment::Center)

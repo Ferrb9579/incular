@@ -52,12 +52,13 @@ impl TextLine {
     /// range arrives in UTF-8 bytes (clamped to char boundaries
     /// upstream, so mid-char bytes never arrive); shaping clusters are
     /// the coverage granularity (a range splitting a cluster expands
-    /// to the whole shaped cluster, including a multi-grapheme
-    /// ligature, whose interior graphemes have no visual edges to
-    /// resolve to); visual order comes from the stored spans, never
+    /// to the whole shaped cluster, since no visual edge exists
+    /// inside it); visual order comes from the stored spans, never
     /// from re-sorting bytes or glyphs downstream. Touching spans
     /// merge; genuinely disjoint spans stay separate. An empty line
-    /// covered by a nonempty range yields its caret point.
+    /// covered by a nonempty range yields its caret point. Observed
+    /// clusters here are char-or-finer, so wider-than-grapheme
+    /// clusters would follow the same rule untested.
     #[must_use]
     pub fn selection_spans(&self, start: usize, end: usize) -> Vec<(f32, f32)> {
         if start >= end {

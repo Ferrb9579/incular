@@ -389,6 +389,26 @@ fn indexed_stack_inactive_focus_leaves_membership() {
 }
 
 #[test]
+fn stack_builders_match_fluent_construction() {
+    let fluent = Stack::new([white_box(10., 10.)])
+        .alignment(Alignment::CENTER)
+        .fit(StackFit::Expand);
+    let built = Stack::builder()
+        .children(vec![white_box(10., 10.)])
+        .alignment(Alignment::CENTER)
+        .fit(StackFit::Expand)
+        .build();
+    assert_eq!(Widget::from(fluent), Widget::from(built));
+
+    let fluent_indexed = IndexedStack::new([white_box(10., 10.)]).index(1);
+    let built_indexed = IndexedStack::builder()
+        .children(vec![white_box(10., 10.)])
+        .index(1)
+        .build();
+    assert_eq!(Widget::from(fluent_indexed), Widget::from(built_indexed));
+}
+
+#[test]
 fn stack_keyed_reorder_and_removal() {
     let mut tree = WidgetTree::new();
     let root = tree

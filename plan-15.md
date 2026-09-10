@@ -2098,6 +2098,32 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   clamping, mounted updates with identical reapplication,
   constraint transforms).
 
+## W3 — Batch architecture review (same workstream, still open)
+
+- Corrected a stale fallback comment (selectable clicks no longer
+  use the walk) and narrowed an overbroad ligature claim to
+  observed granularity.
+- Validation lives once per layer and agrees everywhere checked:
+  flex factors floor at one, spacing and box factors at zero,
+  aspect ratios at epsilon, box dimensions at conversion, invalid
+  `Constraints`/`Size` construction panics loudly. Builders cannot
+  bypass rules (transforms mirror setters); OverflowBox minimums
+  stay raw and fail deferred at layout, unlike LimitedBox floors
+  — established asymmetry, documented, not papered over.
+  Row/Column/Flex share one retained kind with parity tests;
+  aliases (Center, IntrinsicWidth/Height, SizedOverflowBox
+  composition) resolve through the same policies.
+- Parent data compares field-wise and transfers through lowering
+  with invalidation proven by reallocation tests. Tests assert
+  measured geometry and dispatch, never bare field values.
+- No shared helper was extracted: the one-line floors are
+  consistent, and indirection would add no safety. No ledger
+  validator change was required; no new ledgers were added.
+- Visibly unresolved: `PreferredSize` unexported; Stack direction
+  inert by design; multi-grapheme clusters unobserved here;
+  paragraph-final coinciding stops pointer-unreachable;
+  select-all and overflow edge semantics as pinned.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

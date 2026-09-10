@@ -930,8 +930,8 @@ pub(super) fn line_caret_x_for_affinity(
         )
 }
 /// X-to-byte fallback reached only when a line carries no caret stops
-/// (empty lines) or by selectable-text clicks that predate stop-based
-/// mapping. Shaped pointer mapping goes through `caret_for_line_position`.
+/// (empty lines). All shaped pointer mapping goes through
+/// `caret_for_line_position`.
 pub(super) fn caret_for_line_x(line: &incular_text::TextLine, x: f32) -> usize {
     if x >= line.offset + line.width {
         return line.caret_end;
