@@ -1411,7 +1411,7 @@ fn fallback_path_under(world: Transform) -> Path {
 
 #[test]
 fn positive_uniform_scale_keeps_distinct_radii() {
-    let command = flatten_clip_under(Transform::scale(3.), |tree| distinct_rrect_clip(tree));
+    let command = flatten_clip_under(Transform::scale(3.), distinct_rrect_clip);
     let PaintCommand::PushClipRRect { rrect } = command else {
         panic!("positive uniform scale stays analytic, got {command:?}");
     };
@@ -1604,7 +1604,8 @@ fn fallback_path(list: &DisplayList) -> Arc<Path> {
 fn fallback_path_identity_stable_for_all_variants() {
     // Every variant that emits a path memoizes it: repeated unchanged
     // flattens keep one path identity (and one backend mesh).
-    let makers: [(&str, fn(&mut LayerTree) -> LayerId); 3] = [
+    type Maker = fn(&mut LayerTree) -> LayerId;
+    let makers: [(&str, Maker); 3] = [
         ("rect", |tree| {
             tree.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::new(60., 30.)))
         }),
@@ -1628,7 +1629,7 @@ fn fallback_path_identity_stable_for_all_variants() {
 
 #[test]
 fn fallback_replacement_on_move_and_geometry_change() {
-    let (mut tree, clip, shift) = fallback_scene(|tree| distinct_rrect_clip(tree));
+    let (mut tree, clip, shift) = fallback_scene(distinct_rrect_clip);
     let _ = tree.flatten();
     let before = fallback_path_id(&tree.flatten());
     // Moving re-resolves once: new identity, correct replacement shape.
@@ -1676,7 +1677,7 @@ fn fallback_replacement_on_move_and_geometry_change() {
 fn removing_clip_releases_fallback_cache() {
     // Only the layer memo and the flattened output hold the fallback
     // arc: removing the layer must release its ownership.
-    let (mut tree, clip, _) = fallback_scene(|tree| distinct_rrect_clip(tree));
+    let (mut tree, clip, _) = fallback_scene(distinct_rrect_clip);
     let list = tree.flatten();
     let retained = fallback_path(&list);
     assert_eq!(

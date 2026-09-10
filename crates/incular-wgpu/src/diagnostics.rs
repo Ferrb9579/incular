@@ -409,6 +409,14 @@ impl std::error::Error for RendererError {}
 /// the support boundary without rendering. Returns `None` for everything
 /// the backend handles, including stages that correctly pass through
 /// (disabled and zero-sigma backdrop filters).
+///
+/// Limits: this examines one command only, not whether a whole scene
+/// will execute. It ignores traversal context, so a stage under a fully
+/// clipped subtree still reports (lowering skips such stages instead of
+/// failing). It also ignores resource limits, which surface as their own
+/// errors. The conservative direction is deliberate: a reported command
+/// fails if reached, while an unreported command may still fail for
+/// unrelated reasons.
 #[must_use]
 pub fn unsupported_effect(command: &PaintCommand) -> Option<RendererError> {
     match command {

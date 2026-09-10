@@ -1507,6 +1507,29 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   rendered before changes outcome except previously-misrendered
   effect scenes, which now fail loudly.
 
+## W3 — Effect-error integration (same workstream, still open)
+
+- The predicate stays public as a capability query with documented
+  limits: one command only, no traversal context (a stage under a
+  fully-clipped subtree still reports while lowering skips it),
+  no resource limits, conservative direction. It is the lowering
+  arm's single decision site, so classification cannot disagree
+  with execution; no host pre-scans scenes with it yet.
+- Host handling verified at the reachable production boundary: a
+  runtime test registers real frame and capture waiters, fails
+  them through the exact call the desktop error branch makes, and
+  asserts typed errors with the backend message and no lingering
+  waiters — presentation success is never reported to them.
+  Retry-bypass is structural (errors never construct a
+  `FrameOutcome`, and the error branch never touches retry state),
+  traced rather than executed: no headless lowering seam exists,
+  exactly like every other lowering error and cache in the
+  backend, which likewise have zero direct tests.
+- GPU execution ran nowhere in-repo: tessellation tests are CPU
+  geometry, predicate tests are classification, and the waiter
+  test is host handling. Pixel presentation of masks and
+  backdrops remains unresolved pending backend execution.
+
 ## W3 — Linked-layer traversal (same workstream, still open)
 
 - Reproduced first: a target nested inside a linked follower
