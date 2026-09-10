@@ -243,6 +243,42 @@ impl WidgetTree {
         }
     }
 
+    /// The focus behavior carried by a detector element, if any. Hover
+    /// tracking resolves these through the same hit sets as mouse
+    /// regions so both lifecycles share one map and one diff.
+    fn focus_behavior_for(
+        &self,
+        element: ElementId,
+    ) -> Option<std::rc::Rc<incular_gestures::FocusBehavior>> {
+        match self
+            .elements
+            .get(element.0)
+            .map(|element| element.widget.kind())
+        {
+            Some(WidgetKind::Gesture { callbacks, .. }) => callbacks.focus_behavior.clone(),
+            _ => None,
+        }
+    }
+
+    /// Every detector element enclosing the point: detectors enter hit
+    /// testing through hovered descendants, so climb from the deepest
+    /// hit (raw hit lists only carry RawInput kinds). Nested detectors
+    /// all appear; an absorbing overlay keeps the detector behind it
+    /// out of the chain.
+    fn focus_behavior_elements(&self, point: Offset) -> Vec<ElementId> {
+        let mut tracked = Vec::new();
+        let mut current = self
+            .hit_test(point)
+            .and_then(|render| self.element_for_render(render));
+        while let Some(candidate) = current {
+            if self.focus_behavior_for(candidate).is_some() {
+                tracked.push(candidate);
+            }
+            current = self.parent(candidate);
+        }
+        tracked
+    }
+
     fn mouse_region_config(
         &self,
         element: ElementId,
@@ -365,23 +401,41 @@ impl WidgetTree {
         if event.phase == PointerPhase::Exit {
             let previous = self.mouse_hover.remove(&key).unwrap_or_default();
             let exit_callbacks = previous
-                .into_iter()
+                .iter()
                 .filter(|id| self.elements.contains(id.0))
                 .filter_map(|id| {
-                    self.mouse_region_config(id)
+                    self.mouse_region_config(*id)
                         .and_then(|(callbacks, ..)| callbacks.on_exit)
                 })
+                .collect::<Vec<_>>();
+            // Focus behaviors ride the same hover sets as mouse regions;
+            // leaving the window exits every tracked behavior.
+            let exit_behaviors = previous
+                .iter()
+                .filter(|id| self.elements.contains(id.0))
+                .filter_map(|id| self.focus_behavior_for(*id))
                 .collect::<Vec<_>>();
             for callback in exit_callbacks {
                 callback(event);
             }
+            for behavior in exit_behaviors {
+                behavior.mouse_exit();
+            }
             return;
         }
-        let next = self
+        // Mouse regions enter the hover sets directly; focus behaviors
+        // join through their hovered descendants so nested detectors all
+        // track without a second hover map.
+        let mut next = self
             .raw_hit_elements(event.position)
             .into_iter()
             .filter(|id| self.mouse_region_config(*id).is_some())
             .collect::<Vec<_>>();
+        for id in self.focus_behavior_elements(event.position) {
+            if !next.contains(&id) {
+                next.push(id);
+            }
+        }
         let previous = self
             .mouse_hover
             .insert(key, next.clone())
@@ -414,11 +468,25 @@ impl WidgetTree {
                     .and_then(|(callbacks, ..)| callbacks.on_enter)
             })
             .collect::<Vec<_>>();
+        let enter_behaviors = enters
+            .iter()
+            .filter_map(|id| self.focus_behavior_for(*id))
+            .collect::<Vec<_>>();
+        let exit_behaviors = exits
+            .iter()
+            .filter_map(|id| self.focus_behavior_for(*id))
+            .collect::<Vec<_>>();
         for callback in exit_callbacks {
             callback(event);
         }
+        for behavior in exit_behaviors {
+            behavior.mouse_exit();
+        }
         for callback in enter_callbacks {
             callback(event);
+        }
+        for behavior in enter_behaviors {
+            behavior.mouse_enter();
         }
         if event.phase == PointerPhase::Move && event.buttons == 0 {
             let hover_callbacks = next

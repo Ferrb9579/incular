@@ -1004,7 +1004,7 @@
       "symbol": "FocusableActionDetector",
       "option": "on_show_hover_highlight",
       "default": "none",
-      "validation": "stored on the focus behavior and compared by WidgetKind equality, but no tree driver calls mouse_enter today: hover highlights are unreachable through retained dispatch and proven only at the behavior owner",
+      "validation": "fires on hover enter/exit transitions tracked through the shared mouse-hover sets, on highlight-mode changes with a stationary pointer, and never spuriously on rebuilds; replacement callbacks learn only subsequent transitions like focus callbacks",
       "conversion": {
         "path": "crates/incular-widgets/src/focus_keyboard.rs",
         "kind": "trait_impl",
@@ -1019,7 +1019,7 @@
         "name": "Gesture"
       },
       "comparison": {
-        "prose": "Recorded as wired storage with an explicitly undriven tree path, not as tree behavior: FocusBehavior honors the callback when driven, and mouse_enter has no retained caller. Wiring hover dispatch would be new behavior, not an audit fix.",
+        "prose": "Hover presence rides the shared mouse-hover sets with regions (one map, one diff); detector elements join through hovered descendants. Rebuilds carry presence via restore_hovering, which also syncs derived visibility so the next exit still flips; replacement callbacks learn only subsequent transitions. Mode changes reach behaviors through their highlight subscriptions without pointer movement.",
         "refs": [
           {
             "path": "crates/incular-gestures/src/focus.rs",
@@ -1032,6 +1032,18 @@
             "kind": "method",
             "owner": "FocusBehavior",
             "name": "mouse_enter"
+          },
+          {
+            "path": "crates/incular-gestures/src/focus.rs",
+            "kind": "method",
+            "owner": "FocusBehavior",
+            "name": "restore_hovering"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
           }
         ]
       },
@@ -1043,6 +1055,14 @@
             "trait": "From",
             "target": "Widget",
             "source": "FocusableActionDetector"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_mouse_regions"
           }
         ],
         "reconciliation": [
@@ -1058,6 +1078,34 @@
         {
           "path": "crates/incular-gestures/tests/focus_highlight.rs",
           "name": "focus_behavior_hover_drives_hover_highlight_callbacks"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "hover_enter_move_exit_notifies_once_each"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "rebuild_while_hovered_replays_no_enter"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "callback_replacement_while_hovered_learns_only_transitions"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "disable_and_reenable_while_hovered"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "unmount_while_hovered_clears_tracking"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "nested_detectors_track_and_blocking_sibling_excludes"
+        },
+        {
+          "path": "crates/incular-widgets/tests/detector_hover.rs",
+          "name": "highlight_mode_change_notifies_stationary_pointer"
         }
       ],
       "status": "implemented"

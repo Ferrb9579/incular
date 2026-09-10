@@ -525,10 +525,14 @@ impl FocusBehavior {
         }
     }
 
-    /// Carries MouseRegion state over a retained widget update without
+    /// Carries hover presence over a retained widget update without
     /// replaying an enter callback for an already-hovered region.
+    /// Derived visibility syncs silently so the next exit still flips;
+    /// replacement callbacks keep learning only subsequent transitions.
     pub fn restore_hovering(&self, hovering: bool) {
         self.hovering.set(hovering);
+        self.hover_highlight_visible
+            .set(self.hover_highlight_visible());
     }
 
     fn handle_focus_change(&self) {

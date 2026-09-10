@@ -556,6 +556,29 @@ impl WidgetTree {
             }
             element.dirty.remove(DirtyFlags::BUILD);
         }
+        // Carry hover presence across a focus-behavior swap without
+        // replaying transitions: replacement callbacks learn only
+        // subsequent changes, matching focus-callback policy, while
+        // synchronous reads keep exposing current state.
+        if let (
+            WidgetKind::Gesture {
+                callbacks: old_callbacks,
+                ..
+            },
+            WidgetKind::Gesture {
+                callbacks: new_callbacks,
+                ..
+            },
+        ) = (old.kind(), widget.kind())
+            && let (Some(previous), Some(next)) = (
+                old_callbacks.focus_behavior.as_ref(),
+                new_callbacks.focus_behavior.as_ref(),
+            )
+            && !Rc::ptr_eq(previous, next)
+            && previous.is_hovering()
+        {
+            next.restore_hovering(true);
+        }
         let visibility_changed = matches!(
             (&old_kind, &new_kind),
             (RenderKind::Visibility { visible: before, .. },

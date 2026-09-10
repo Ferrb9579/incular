@@ -1866,6 +1866,30 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   `specs/action_wrappers_properties.json` (16 options) validated by
   `tests/action_wrappers_ledger.rs`.
 
+## W3 — Retained hover highlights (same workstream, still open)
+
+- Detector behaviors join the existing mouse-hover sets through
+  hovered descendants (one map, one diff, no second tracker, no
+  synthesized events); raw hit lists only carry `RawInput`, so
+  membership climbs from the deepest hit, which also keeps nested
+  detectors tracked and absorbing overlays exclusive. Window exit
+  and unmount follow the regions' silent-drop discipline, so a
+  remount re-enters instead of staying suppressed.
+- Rebuilds carry hover presence via the previously dead
+  `restore_hovering`, fixed at its owner to also sync derived
+  visibility (otherwise the next exit computed no flip and stayed
+  silent). Replacement callbacks learn only subsequent
+  transitions, consistent with focus callbacks; synchronous reads
+  expose current state. Disabling carries presence silently and the
+  next exit still notifies exactly once.
+- Evidence: 7 tests in
+  `crates/incular-widgets/tests/detector_hover.rs` through real
+  pointer dispatch (enter/move/exit, rebuild without duplicate
+  enter, replacement transitions-only, disable/re-enable, unmount
+  clearing, nesting plus blocking sibling, stationary mode
+  changes). The action ledger hover record now names the retained
+  path and execution evidence.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,
