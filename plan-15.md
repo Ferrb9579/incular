@@ -2029,6 +2029,29 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   reaches them); far-overflow clicks resolve to the nearest
   caret.
 
+## W3 — Stack, Positioned, and IndexedStack (same workstream, still open)
+
+- Conflict policy, established in `incular-layout` and pinned, not
+  changed: left wins over right, top wins over bottom; left+right
+  and top+bottom derive the algorithm size while explicit
+  width/height still bounds measurement (fixed children shrink,
+  never grow); renders keep measured size, which right/bottom
+  anchoring math does not reuse; negative and non-finite edges
+  drop to unset. Clip behavior stays with the clip ledger.
+- `Stack.text_direction` is retained but inert (absolute
+  alignment factors; nothing reads it): documented honestly, with
+  a mounted flip resolving identically. IndexedStack lays out
+  every child but paints, hits, traverses, and exposes semantics
+  for the indexed one only; focus resolution follows membership
+  while node flags stay untouched; out-of-range indexes hide
+  gracefully with the stack itself as the hit.
+- Evidence: 13 tests in
+  `crates/incular-widgets/tests/stack_layout.rs` (axis
+  combinations, conflicts, negatives, setter order,
+  builder parity, fit modes, alignment, direction flip,
+  indexed switching/semantics/focus/OOB, keyed reorder/removal,
+  identical reapplication) with independently derived positions.
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

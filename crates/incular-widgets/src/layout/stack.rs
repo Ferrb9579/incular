@@ -75,7 +75,9 @@ impl Stack {
         self
     }
 
-    /// Sets the text direction for resolving directional alignments.
+    /// Retains the text direction for API compatibility. Stack alignment
+    /// factors are absolute, so direction never alters layout; changing
+    /// it still rebuilds but resolves identically.
     #[must_use]
     pub fn text_direction(mut self, direction: TextDirection) -> Self {
         self.text_direction = Some(direction);
