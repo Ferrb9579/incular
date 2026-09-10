@@ -2052,6 +2052,28 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   indexed switching/semantics/focus/OOB, keyed reorder/removal,
   identical reapplication) with independently derived positions.
 
+## W3 — Row, Column, Flex, Expanded, and Flexible (same workstream, still open)
+
+- Flex factors floor at one at every entry point with no
+  divergence; spacing stays nonnegative and is shared before flex
+  allocation; unbounded main axes measure flex children
+  intrinsically. Tight fit forces allocations while loose fit
+  only bounds (fixed children shrink, never grow). Public
+  Row/Column APIs stay separate over one retained Flex kind.
+- Real defect fixed: cross-axis baseline alignment silently
+  behaved as start because render baselines never reached the
+  algorithm. The Flex arm now forwards them; fail-first verified.
+  Reversal flips child order only, never packing edges; overflow
+  hits stop at parent bounds while semantics follow laid-out
+  bounds.
+- Evidence: 13 tests in
+  `crates/incular-widgets/tests/flex_layout.rs` (finite versus
+  unbounded axes, tight/loose children, zero factors, spacing
+  with distribution, RTL/vertical reversal, mounted factor
+  changes with fresh agreement, baselines, overflow hit and
+  semantics, main-axis size, shared representation, builder
+  parity, identical reapplication).
+
 ## W4 — Navigation transactions and smaller runtime owners
 
 1. Replace parallel navigation vectors with a RouteEntry carrying identity,

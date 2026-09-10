@@ -66,11 +66,17 @@ impl WidgetTree {
                 for (child, (f, fit)) in children.iter().zip(&flex_meta) {
                     if *f == 0 || !main_max.is_finite() {
                         self.layout_render(*child, loose)?;
-                        let size = self
-                            .render_live(child, "retained render must remain live")
-                            .size;
+                        let render = self.render_live(child, "retained render must remain live");
+                        let size = render.size;
+                        // Baselines ride into the algorithm so
+                        // cross-axis baseline alignment resolves instead
+                        // of silently behaving as start.
+                        let mut flex_child = incular_layout::FlexChild::new(size);
+                        if let Some(baseline) = render.baseline {
+                            flex_child = flex_child.with_baseline(baseline);
+                        }
                         occupied_non_flex += flex.direction.main_extent(size);
-                        flex_children.push(incular_layout::FlexChild::new(size));
+                        flex_children.push(flex_child);
                     } else {
                         flex_children.push(incular_layout::FlexChild::flexible(
                             Size::ZERO,
@@ -110,10 +116,15 @@ impl WidgetTree {
                                 ),
                             };
                             self.layout_render(*child, child_constraints)?;
-                            let size = self
-                                .render_live(child, "retained render must remain live")
-                                .size;
-                            flex_children[i] = incular_layout::FlexChild::flexible(size, *f, *fit);
+                            let render =
+                                self.render_live(child, "retained render must remain live");
+                            let size = render.size;
+                            let mut flex_child =
+                                incular_layout::FlexChild::flexible(size, *f, *fit);
+                            if let Some(baseline) = render.baseline {
+                                flex_child = flex_child.with_baseline(baseline);
+                            }
+                            flex_children[i] = flex_child;
                         }
                     }
                 }
