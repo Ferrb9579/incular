@@ -959,6 +959,21 @@ code, "missing" means absent with no compensating path.
   windows share the scheduling contract), and a runtime presented/skipped
   accounting contract. Actual GPU presentation stays
   recorded as unverified. Same validation as above.
+- Terminal render errors settle the retry lifecycle explicitly:
+  `PresentationRetry::note_failed` clears obsolete retry debt and
+  backoff back to idle (not dormant — dormancy would park the window
+  until resize/unocclusion, blocking corrected content from rendering
+  on plain demand, while idle stays demand-eligible with nothing
+  auto-dispatched). It is wired into the normal-window generic error
+  branch only; the out-of-memory "renderer stopped" branch keeps its
+  existing semantics, and transient error arms already end the policy
+  lifetime by destroying the transient host, so neither needs it.
+  Evidence: an 8th `presentation_retry` test drives the full sequence
+  (retryable skip, dispatch, terminal error, repeated maintenance,
+  hide/restore, new demand) asserting no stale automatic retry
+  survives while demand stays eligible, alongside the runtime waiter
+  test asserting failed frames settle pending waiters with typed
+  errors and no presentation success.
 - W2 two-window GPU churn (live, opt-in): `incular-desktop/tests/
   two_window_resource_churn.rs` (harness=false, runs only when
   `INCULAR_DESKTOP_LIVE_TESTS` is exactly `1`, fails on any

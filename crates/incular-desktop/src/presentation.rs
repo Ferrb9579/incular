@@ -92,6 +92,16 @@ impl PresentationRetry {
         *self = Self::new();
     }
 
+    /// Settles a completed, non-retryable failure: clears obsolete retry
+    /// debt and backoff so no stale automatic retry survives the failure,
+    /// while later application demand stays eligible. This resets to idle,
+    /// not dormant — dormancy would park the window until an explicit
+    /// resize/unocclusion recovery event, blocking corrected content from
+    /// rendering on plain demand.
+    pub fn note_failed(&mut self) {
+        *self = Self::new();
+    }
+
     /// Armed retry deadline, if any. `Some` exactly while a retry is
     /// owed and undispatched; idle, dispatched, and dormant windows
     /// report `None`.
@@ -281,6 +291,10 @@ pub(crate) fn present_window(
         Err(error) => {
             eprintln!("Incular renderer error: {error}");
             application.fail_simulation_frame(id, error.to_string());
+            // Terminal failure, not a skippable attempt: drop any armed
+            // retry so the same content is not re-attempted automatically.
+            // Later demand re-renders from idle (see `note_failed`).
+            state.retry.note_failed();
             #[cfg(feature = "devtools")]
             devtools.push_frame(incular_devtools_protocol::TargetEvent::Log {
                 level: "error".into(),

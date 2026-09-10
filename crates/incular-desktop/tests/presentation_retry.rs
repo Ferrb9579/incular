@@ -290,3 +290,41 @@ fn normal_and_transient_windows_share_the_scheduling_contract() {
         (true, None)
     );
 }
+
+/// A terminal render error clears retry debt instead of arming a retry:
+/// no stale automatic retry survives the failure, and later demand stays
+/// eligible without needing a recovery event first.
+#[test]
+fn terminal_error_clears_retry_debt_while_demand_stays_eligible() {
+    let t0 = Instant::now();
+    let mut windows = vec![(PresentationRetry::new(), true)];
+
+    // 1. Retryable skip arms an immediate deadline.
+    windows[0]
+        .0
+        .note_outcome(&skipped(FrameSkipReason::AcquisitionTimeout), t0);
+    assert_eq!(windows[0].0.retry_at(), Some(t0));
+
+    // 2. Retry dispatch.
+    assert_eq!(maintenance(&mut windows, t0), (1, None));
+
+    // 3. Terminal render error: back to idle, nothing owed.
+    windows[0].0.note_failed();
+    assert_eq!(windows[0].0.retry_at(), None);
+
+    // 4. Repeated maintenance dispatches nothing and wakes never.
+    for _ in 0..5 {
+        assert_eq!(maintenance(&mut windows, t0), (0, None));
+    }
+
+    // 5. Hide/restore leaves no stale retry behind either.
+    windows[0].1 = false;
+    assert_eq!(maintenance(&mut windows, t0), (0, None));
+    windows[0].1 = true;
+    assert_eq!(maintenance(&mut windows, t0), (0, None));
+
+    // 6. New application demand stays eligible without an armed retry:
+    // idle answers due, but poll dispatches no automatic redraw.
+    assert!(windows[0].0.attempt_due(t0));
+    assert_eq!(maintenance(&mut windows, t0), (0, None));
+}
