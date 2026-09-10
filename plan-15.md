@@ -1398,6 +1398,28 @@ performance contracts pass. No arbitrary file-size threshold is the acceptance t
   kurbo's 4-segment floor allows observing it (full ellipses, not
   quarter-arcs).
 
+## W3 — Retained fallback paths (same workstream, still open)
+
+- Memoization now covers every clip variant that emits a path,
+  not just direct ClipPath stages: one private `ResolvedClipPath`
+  per layer holds at most the current resolution, with geometry
+  updates invalidating through their own update paths and removal
+  dropping the cache with the layer. No global map, no transform
+  history; tolerance derives from the world, so world equality
+  keeps the memo valid.
+- Identity stability is asserted per variant (rect, rrect, oval
+  fallbacks keep one path across unchanged flattens), replacement
+  on move and on geometry change produces correct new shapes,
+  removal releases ownership down to the flattened output's share
+  (strong-counted), and translation still emits analytic commands
+  for all three shapes.
+- Mesh-cache reuse is traced, not executed: the backend keys its
+  CPU path cache by path identity, so stable identities imply
+  cache hits by construction — but no headless lowering seam
+  exists to observe the counters, exactly like every other
+  lowering error and cache in the backend. Path-identity evidence
+  is executed; mesh-cache evidence is structural.
+
 ## W3 — ShaderMask/BackdropFilter slice (same workstream, still open)
 
 - Audited, no implementation change: the lifecycle proved sound.

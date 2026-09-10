@@ -1564,6 +1564,179 @@ fn fallback_keeps_curves_with_tolerance_subdivision() {
 /// A clip layer under a rotation (forcing the path fallback for every
 /// variant) with one picture child, returned with its clip id for
 /// removal and update tests.
+fn fallback_scene(make: impl FnOnce(&mut LayerTree) -> LayerId) -> (LayerTree, LayerId, LayerId) {
+    let mut tree = LayerTree::new();
+    let clip = make(&mut tree);
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(10., 10.)),
+    );
+    tree.set_children(clip, vec![picture]);
+    let shift = tree.create_transform(Transform::rotation(0.5));
+    tree.set_children(shift, vec![clip]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    (tree, clip, shift)
+}
+
+fn fallback_path_id(list: &DisplayList) -> PathId {
+    list.commands()
+        .iter()
+        .find_map(|command| match command {
+            PaintCommand::PushClipPath { path, .. } => Some(path.id()),
+            _ => None,
+        })
+        .expect("fallback path clip")
+}
+
+fn fallback_path(list: &DisplayList) -> Arc<Path> {
+    list.commands()
+        .iter()
+        .find_map(|command| match command {
+            PaintCommand::PushClipPath { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .expect("fallback path clip")
+}
+
+#[test]
+fn fallback_path_identity_stable_for_all_variants() {
+    // Every variant that emits a path memoizes it: repeated unchanged
+    // flattens keep one path identity (and one backend mesh).
+    let makers: [(&str, fn(&mut LayerTree) -> LayerId); 3] = [
+        ("rect", |tree| {
+            tree.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::new(60., 30.)))
+        }),
+        ("rrect", |tree| {
+            tree.create_clip_rrect(RRect::uniform(
+                Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+                8.,
+            ))
+        }),
+        ("oval", |tree| {
+            tree.create_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::new(40., 20.)))
+        }),
+    ];
+    for (name, make) in makers {
+        let (mut tree, _, _) = fallback_scene(make);
+        let first = fallback_path_id(&tree.flatten());
+        let second = fallback_path_id(&tree.flatten());
+        assert_eq!(first, second, "{name} fallback must keep one identity");
+    }
+}
+
+#[test]
+fn fallback_replacement_on_move_and_geometry_change() {
+    let (mut tree, clip, shift) = fallback_scene(|tree| distinct_rrect_clip(tree));
+    let _ = tree.flatten();
+    let before = fallback_path_id(&tree.flatten());
+    // Moving re-resolves once: new identity, correct replacement shape.
+    assert!(tree.update_transform(shift, Transform::rotation(0.7)));
+    let list = tree.flatten();
+    let moved = fallback_path(&list);
+    assert_ne!(moved.id(), before, "moved clip must re-resolve");
+    let bounds = moved.bounds().expect("nonempty replacement");
+    assert!(
+        moved.contains(
+            Offset::new(
+                bounds.origin.x + bounds.size.width * 0.5,
+                bounds.origin.y + bounds.size.height * 0.5
+            ),
+            FillRule::NonZero
+        ),
+        "replacement keeps its center"
+    );
+    // A geometry change invalidates the same way.
+    assert!(tree.update_clip_rrect(
+        clip,
+        RRect::uniform(
+            Rect::from_origin_size(Offset::ZERO, Size::new(20., 20.)),
+            4.,
+        )
+    ));
+    let list = tree.flatten();
+    let reshaped = fallback_path(&list);
+    assert_ne!(reshaped.id(), moved.id(), "geometry change must re-resolve");
+    // A rotated square has a square bounding box; rounded corners cut
+    // it strictly inside the unrounded 28.2 box (20 * (cos 0.7 + sin
+    // 0.7)) while rotation spreads it past the unrotated 20.
+    let bounds = reshaped.bounds().expect("nonempty replacement");
+    assert!(
+        (bounds.size.width - bounds.size.height).abs() < 0.01,
+        "rotation preserves squareness, got {bounds:?}"
+    );
+    assert!(
+        bounds.size.width > 20. && bounds.size.width < 28.2,
+        "replacement follows the new geometry, got {bounds:?}"
+    );
+}
+
+#[test]
+fn removing_clip_releases_fallback_cache() {
+    // Only the layer memo and the flattened output hold the fallback
+    // arc: removing the layer must release its ownership.
+    let (mut tree, clip, _) = fallback_scene(|tree| distinct_rrect_clip(tree));
+    let list = tree.flatten();
+    let retained = fallback_path(&list);
+    assert_eq!(
+        Arc::strong_count(&retained),
+        3,
+        "layer memo, flattened output, and this handle share the arc"
+    );
+    tree.remove(clip);
+    assert_eq!(
+        Arc::strong_count(&retained),
+        2,
+        "only the flattened output may retain the arc"
+    );
+    drop(list);
+    assert_eq!(
+        Arc::strong_count(&retained),
+        1,
+        "dropping the output releases the last share"
+    );
+}
+
+#[test]
+fn analytic_cases_remain_analytic() {
+    // Translation keeps every shape analytic: no variant may detour
+    // through the path memo.
+    let mut tree = LayerTree::new();
+    let rect = tree.create_clip_rect(Rect::from_origin_size(Offset::ZERO, Size::new(60., 30.)));
+    let rrect = tree.create_clip_rrect(RRect::uniform(
+        Rect::from_origin_size(Offset::ZERO, Size::new(40., 40.)),
+        8.,
+    ));
+    let oval = tree.create_clip_oval(Rect::from_origin_size(Offset::ZERO, Size::new(40., 20.)));
+    let picture = tree.create_picture(
+        DisplayList::new(),
+        Rect::from_origin_size(Offset::ZERO, Size::new(4., 4.)),
+    );
+    tree.set_children(rect, vec![picture]);
+    tree.set_children(rrect, vec![picture]);
+    tree.set_children(oval, vec![picture]);
+    let shift = tree.create_transform(Transform::translation(Offset::new(10., 5.)));
+    tree.set_children(shift, vec![rect, rrect, oval]);
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_children(root, vec![shift]);
+    tree.set_root(root);
+    let list = tree.flatten();
+    let mut kinds = list
+        .commands()
+        .iter()
+        .filter_map(|command| match command {
+            PaintCommand::PushClip { .. } => Some("rect"),
+            PaintCommand::PushClipRRect { .. } => Some("rrect"),
+            PaintCommand::PushClipOval { .. } => Some("oval"),
+            PaintCommand::PushClipPath { .. } => Some("path"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    kinds.sort_unstable();
+    assert_eq!(kinds, vec!["oval", "rect", "rrect"]);
+}
+
 #[test]
 fn clip_path_identity_stable_across_flattens() {
     // Static clips reuse one path identity (and one backend mesh) no
