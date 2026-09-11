@@ -1,0 +1,2395 @@
+{
+  "schema_version": 2,
+  "family": "ScrollGridSingle",
+  "scope": "Second scrolling group: single-child scrolling, grids, and animated lists (SingleChildScrollView, GridView with SliverGridDelegate, AnimatedList, AnimatedGrid, animated collection controller). Viewport clipping attaches unconditionally, so the removed per-view clip overrides are recorded in docs/API_MIGRATIONS.md, not here. Animated scroll positions stay internal; only structure controllers attach externally. Pages, sliver-only animated/reorderable lists, two-dimensional views, scrollbars, and physics internals belong to later groups. Single- versus multiple-viewport attachment stays a W5 gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "SingleChildScrollView": {
+      "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+      "name": "single_child_scroll_view_builder_defaults_match_new"
+    },
+    "GridView": {
+      "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+      "name": "grid_view_builder_defaults_match_new"
+    }
+  },
+  "records": [
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "child",
+      "default": "required, no default",
+      "validation": "child edge retained; optional padding wraps it before the scroll render",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "The single child lays out under scroll constraints and the viewport clips and translates it; replacement swaps attachment.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_axis_change_reflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization; mounted changes reflow the child",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "The direction selects the scroll main axis and the scrollable range follows the child extent along it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_axis_change_reflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "Reverse anchors the content end to the viewport end; padding still offsets the child inside the scrollable area.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_reverse_and_padding_anchor_end"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "padding",
+      "default": "none, no inner padding",
+      "validation": "strip_option setter; EdgeInsets carried verbatim around the child",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "Padding wraps the child before scrolling, so it grows the scrollable content extent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_reverse_and_padding_anchor_end"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; replacing the descriptor swaps attachment while the old handle keeps its own offset record",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "Replacement is by descriptor swap through the generic element update; the viewport follows the attached handle and the detached one no longer moves it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_controller_replacement_isolates_old"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SingleChildScrollView",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "strip_option setter; replacement swaps the policy the viewport reads for input",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "SingleChildScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Scroll"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; here replacement only changes which policy gates gesture input while programmatic jumps keep working.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "SingleChildScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/scrolling.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_scrolling_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "single_child_scroll_view_physics_replacement_changes_input"
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "name": "scroll_physics_survives_descriptor_lowering_and_controls_input"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained in declaration order through the Children strategy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Static children lay out in delegate-computed rows; only the item source differs from lazy strategies.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_count_lays_rows_and_cells"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "grid_delegate",
+      "default": "single-column delegate",
+      "validation": "delegate value carried verbatim; spacing floored at zero, aspect ratio kept positive, main extent optional with 1.0 floor",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The delegate owns column count, spacing, aspect, and optional fixed main extent; mounted delegate swaps reflow retained rows.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_delegate_change_reflows_columns"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_constructors_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization; mounted changes reflow rows into columns",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis; the delegate resolves counts against the new cross extent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_axis_reverse_and_shrink_wrap"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization; only observable with overflowing content",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_axis_reverse_and_shrink_wrap"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "shrink_wrap",
+      "default": "false",
+      "validation": "bool toggle, no normalization; cell extents resolve against the bounded cross extent first",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Without shrink-wrap the viewport fills its bounds; with it the viewport sizes to the delegate-resolved content.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_axis_reverse_and_shrink_wrap"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; replacing the descriptor swaps attachment while the old handle keeps its own offset record",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Replacement is by descriptor swap through the generic element update; the viewport follows the attached handle and the detached one no longer moves it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_controller_and_physics_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "padding",
+      "default": "none, no inner padding",
+      "validation": "strip_option setter; EdgeInsets carried verbatim into the padding sliver",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Padding wraps the grid sliver before the viewport, offsetting every row.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_padding_and_cache_lifetime"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "cache_extent",
+      "default": "none, shared sliver cache default applies",
+      "validation": "strip_option setter; floored at zero where the viewport resolves it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The cache window bounds materialized rows around the visible range; widening builds more rows and narrowing releases them with unmount accounting.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_padding_and_cache_lifetime"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "strip_option setter; replacement swaps the policy the viewport reads for input",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; here replacement only changes which policy gates gesture input while programmatic jumps keep working.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_controller_and_physics_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "extent",
+      "default": "n/a, constructor deriving the column count from a maximum tile extent",
+      "validation": "non-finite extents fall back to 1.0; count floors at one column",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand over the max-extent delegate; layout agrees with the equivalent count form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_constructors_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "count",
+      "default": "n/a, constructor fixing the cross-axis count with static children",
+      "validation": "count floored at one column",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand over the fixed-count delegate.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_count_lays_rows_and_cells"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_constructors_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "GridView",
+      "option": "builder",
+      "default": "n/a, constructor taking item count, delegate, and child builder closure",
+      "validation": "row-major lazy strategy carried verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "GridView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Lazy cells materialize per row through the retained grid render sliver; only the cache window is built.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "GridView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_constructors_agree"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "grid_view_padding_and_cache_lifetime"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "item_count",
+      "default": "required by constructors, no default",
+      "validation": "count seeds the animation collection controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The count initializes structure state; insert and remove mutate it while the builder supplies widgets.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_mounts_items_at_default_extent"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_collection_controller_tracks_structure"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "builder",
+      "default": "required by constructors, no default",
+      "validation": "Rc builder carried verbatim into the collection",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The builder supplies resting item widgets; animation and removed-item builders adapt it without replacing the source.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_mounts_items_at_default_extent"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "animated",
+      "default": "n/a, constructor taking an animation-aware item builder",
+      "validation": "builder receives the per-item animation handle alongside the index",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand; resting layout agrees with the plain builder form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_constructors_and_builders_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "with_animation_builder",
+      "default": "n/a, constructor alias for the animation-aware builder form",
+      "validation": "delegates verbatim to the same collection construction",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor alias; resting layout agrees with the other forms.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_constructors_and_builders_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "controller",
+      "default": "none, an owned collection controller is created at construction",
+      "validation": "replacing the descriptor swaps the attached structure controller while the old handle keeps its own entries",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The attached collection controller owns insert/remove structure; the scroll position itself stays internal to the animated list.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_controller_replacement_isolates_old"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_insert_and_remove_update_items"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "animation_builder",
+      "default": "none, resting items build without animation handles",
+      "validation": "Rc builder replacing the item source with animation-aware widgets",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure source swap; resting layout agrees with the plain builder form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_constructors_and_builders_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "removed_item_builder",
+      "default": "none, outgoing items keep their last built widget",
+      "validation": "optional Rc builder consulted for items animating out",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure source swap for the outgoing slot; resting layout agrees with the plain builder form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_constructors_and_builders_agree"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis; resting items lay out along it at the default item extent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization; only observable with overflowing content",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "stored policy read for gesture input; replacement swaps it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; here the stored policy only gates gesture acceptance.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedList",
+      "option": "cache_extent",
+      "default": "shared sliver cache default, floored at zero on set",
+      "validation": "extent.max(0.0) on set",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The cache window bounds materialization around the visible range.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedList"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "item_count",
+      "default": "required by constructors, no default",
+      "validation": "count seeds the animation collection controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The count initializes structure state; the delegate decides the grid arrangement.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_mounts_cells_and_delegate_change"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "delegate",
+      "default": "required by constructors, no default",
+      "validation": "delegate value carried verbatim into the grid collection",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Mounted delegate swaps reflow retained cells without rebuilding the collection.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_mounts_cells_and_delegate_change"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "builder",
+      "default": "required by constructors, no default",
+      "validation": "Rc builder carried verbatim into the collection",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The builder supplies cell widgets; unlike GridView rows the animated grid exposes cells directly.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_mounts_cells_and_delegate_change"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "animated",
+      "default": "n/a, constructor taking an animation-aware cell builder",
+      "validation": "builder receives the per-item animation handle alongside count, delegate, and index",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand; resting layout agrees with the plain builder form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "with_animation_builder",
+      "default": "n/a, constructor alias for the animation-aware builder form",
+      "validation": "delegates verbatim to the same collection construction",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor alias; resting layout agrees with the other forms.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "controller",
+      "default": "none, an owned collection controller is created at construction",
+      "validation": "replacing the descriptor swaps the attached structure controller while the old handle keeps its own entries",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The attached collection controller owns grid structure; edits through a detached handle never reach the viewport.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "animation_builder",
+      "default": "none, resting cells build without animation handles",
+      "validation": "Rc builder replacing the cell source with animation-aware widgets",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The animated-grid builder coverage rides with the constructor agreement test; resting layout is source-independent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "removed_item_builder",
+      "default": "none, outgoing cells keep their last built widget",
+      "validation": "optional Rc builder consulted for cells animating out",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Same outgoing-slot policy as the animated list; resting layout is source-independent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis for the grid collection; horizontal fills column-major.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "stored policy read for gesture input; replacement swaps it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; the stored policy only gates gesture acceptance.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedGrid",
+      "option": "cache_extent",
+      "default": "shared sliver cache default, floored at zero on set",
+      "validation": "extent.max(0.0) on set",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "AnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The cache window bounds materialization around the visible range.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "AnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_direction_reverse_cache_and_physics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedCollectionController",
+      "option": "item_count",
+      "default": "n/a, constructor parameter seeding structure state",
+      "validation": "count carried verbatim; insert and remove mutate it",
+      "comparison": {
+        "prose": "Structure ownership stays with the collection controller; viewports only read the resolved entries.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "method",
+            "owner": "AnimatedCollectionController",
+            "name": "new"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_collection_controller_tracks_structure"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_list_insert_and_remove_update_items"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "AnimatedCollectionController",
+      "option": "with_duration",
+      "default": "n/a, constructor pairing a count with an animation duration",
+      "validation": "duration carried verbatim alongside the seeded count",
+      "comparison": {
+        "prose": "Duration only tunes item animations; structure tracking matches the plain constructor.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "method",
+            "owner": "AnimatedCollectionController",
+            "name": "with_duration"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_collection_controller_tracks_structure"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

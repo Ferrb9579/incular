@@ -871,7 +871,6 @@ pub struct AnimatedList {
     reverse: bool,
     physics: Option<ScrollPhysics>,
     cache_extent: f32,
-    clip_behavior: Clip,
 }
 
 impl AnimatedList {
@@ -907,7 +906,6 @@ impl AnimatedList {
             reverse: false,
             physics: None,
             cache_extent: WidgetDefaults::DEFAULT.sliver_cache_extent,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -962,20 +960,13 @@ impl AnimatedList {
     }
 
     #[must_use]
-    pub fn clip_behavior(mut self, clip: Clip) -> Self {
-        self.clip_behavior = clip;
-        self
-    }
-
-    #[must_use]
     pub fn animation_controller(&self) -> AnimatedListController {
         self.collection.controller.clone()
     }
 
     fn viewport(&self, controller: &ScrollController) -> Widget {
-        // CustomScrollView no longer takes a clip override (viewport
-        // clipping is unconditional); the animated-list override stays with
-        // its own group until that group audits it.
+        // Viewport clipping is unconditional, so there is no clip
+        // override to forward here.
         let mut viewport = CustomScrollView::new(vec![Box::new(self.clone()) as Box<dyn Sliver>])
             .controller(controller.clone())
             .scroll_direction(self.scroll_direction)
@@ -1018,7 +1009,6 @@ pub struct AnimatedGrid {
     reverse: bool,
     physics: Option<ScrollPhysics>,
     cache_extent: f32,
-    clip_behavior: Clip,
 }
 
 impl AnimatedGrid {
@@ -1059,7 +1049,6 @@ impl AnimatedGrid {
             reverse: false,
             physics: None,
             cache_extent: WidgetDefaults::DEFAULT.sliver_cache_extent,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -1119,20 +1108,13 @@ impl AnimatedGrid {
     }
 
     #[must_use]
-    pub fn clip_behavior(mut self, clip: Clip) -> Self {
-        self.clip_behavior = clip;
-        self
-    }
-
-    #[must_use]
     pub fn animation_controller(&self) -> AnimatedGridController {
         self.collection.controller.clone()
     }
 
     fn viewport(&self, controller: &ScrollController) -> Widget {
-        // CustomScrollView no longer takes a clip override (viewport
-        // clipping is unconditional); the animated-list override stays with
-        // its own group until that group audits it.
+        // Viewport clipping is unconditional, so there is no clip
+        // override to forward here.
         let mut viewport = CustomScrollView::new(vec![Box::new(self.clone()) as Box<dyn Sliver>])
             .controller(controller.clone())
             .scroll_direction(self.scroll_direction)

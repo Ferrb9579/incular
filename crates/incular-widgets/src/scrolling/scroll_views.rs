@@ -15,8 +15,6 @@ pub struct SingleChildScrollView {
     controller: Option<ScrollController>,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
-    clip_behavior: Clip,
 }
 
 impl SingleChildScrollView {
@@ -30,7 +28,6 @@ impl SingleChildScrollView {
             padding: None,
             controller: None,
             physics: None,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -72,13 +69,6 @@ impl SingleChildScrollView {
     #[must_use]
     pub fn physics(mut self, physics: ScrollPhysics) -> Self {
         self.physics = Some(physics);
-        self
-    }
-
-    /// Sets clipping behavior.
-    #[must_use]
-    pub fn clip_behavior(mut self, clip: Clip) -> Self {
-        self.clip_behavior = clip;
         self
     }
 }
@@ -640,8 +630,6 @@ pub struct GridView {
     cache_extent: Option<f32>,
     #[builder(default, setter(strip_option))]
     physics: Option<ScrollPhysics>,
-    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
-    clip_behavior: Clip,
 }
 
 impl Default for GridView {
@@ -669,7 +657,6 @@ impl GridView {
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -724,7 +711,6 @@ impl GridView {
             padding: None,
             cache_extent: None,
             physics: None,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -778,13 +764,6 @@ impl GridView {
         } else {
             0.
         });
-        self
-    }
-
-    /// Sets clipping behavior at the viewport boundary.
-    #[must_use]
-    pub fn clip_behavior(mut self, clip: Clip) -> Self {
-        self.clip_behavior = clip;
         self
     }
 
@@ -848,7 +827,9 @@ impl From<GridView> for Widget {
                 reverse: value.reverse,
                 physics: value.physics.unwrap_or_default(),
                 cache_extent: value.cache_extent.unwrap_or(DEFAULT_SLIVER_CACHE_EXTENT),
-                clip_behavior: value.clip_behavior,
+                // Viewport clipping is unconditional; the per-view override
+                // never reached layout, so the shared default applies.
+                clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
                 shrink_wrap: value.shrink_wrap,
             },
             sliver,

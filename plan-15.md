@@ -1132,7 +1132,8 @@ the table wins.
 | Sizing / constraints (11 types) | 35/35 | none known | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | complete |
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
 | Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
-| Scrolling — grids/pages/animated/2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
+| Scrolling — grids/single-child/animated lists | 43/43 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_grid_single_properties.json`, `tests/scroll_grid_single_ledger.rs` | complete |
+| Scrolling — pages/sliver-only animated+reorderable/2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
@@ -1390,6 +1391,32 @@ the table wins.
   `tests/scroll_viewport_lists_ledger.rs`. W5 gaps recorded: one
   controller across unrelated viewports is unenforced, and variable-
   extent estimates converge only through measurement.
+
+## W3 — Scrolling grids, single-child, and animated lists (same workstream, still open)
+
+- Second group: `SingleChildScrollView`, `GridView` (with
+  `SliverGridDelegate`), `AnimatedList`, `AnimatedGrid`, and the
+  animated collection controller (43/43 options). Animated scroll
+  positions stay internal; only the structure controllers attach
+  externally, which replacement/isolation tests verify.
+- Audit removals: `SingleChildScrollView`/`GridView`/`AnimatedList`/
+  `AnimatedGrid` `clip_behavior` overrides never reached paint (the
+  retained viewport attaches its clip unconditionally; the single-child
+  override was not even forwarded), following the same trace as the
+  first group's removals. `PageView` keeps its override for its own
+  group. No examples, aliases, or other specifications referenced the
+  removed setters.
+- Verified: controller and physics replacement with old-handle
+  isolation, axis/reverse updates (reverse needs overflowing content),
+  delegate swaps reflowing retained rows/cells, fixed/prototype/
+  per-index extents, constructor agreement, shrink-wrap, padding,
+  cache-window materialization and release with unmount accounting,
+  insert/remove structure updates, and the unconditional viewport clip
+  (locked as current behavior for the follow-up `Clip::None` decision).
+- Evidence: 22 tests in
+  `crates/incular-widgets/tests/scroll_grid_single.rs` plus
+  `specs/scroll_grid_single_properties.json` /
+  `tests/scroll_grid_single_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

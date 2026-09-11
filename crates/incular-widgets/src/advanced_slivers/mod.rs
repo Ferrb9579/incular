@@ -14,7 +14,7 @@ use std::{
 };
 
 use incular_animation::AnimationController;
-use incular_config::{Axis, Clip, Constraints, WidgetDefaults};
+use incular_config::{Axis, Constraints, WidgetDefaults};
 use incular_scroll::{
     MeasuredExtentIndex, ScrollController, ScrollPhysics, SliverConstraints, SliverGeometry,
 };
