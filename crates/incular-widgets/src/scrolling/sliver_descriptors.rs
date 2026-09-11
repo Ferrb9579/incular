@@ -374,8 +374,6 @@ pub struct CustomScrollView {
     physics: Option<ScrollPhysics>,
     #[builder(default = WidgetDefaults::DEFAULT.sliver_cache_extent, setter(transform = |extent: f32| extent.max(0.0)))]
     cache_extent: f32,
-    #[builder(default = WidgetDefaults::DEFAULT.scroll_clip_behavior)]
-    clip_behavior: Clip,
 }
 
 impl Default for CustomScrollView {
@@ -395,7 +393,6 @@ impl CustomScrollView {
             reverse: false,
             physics: None,
             cache_extent: WidgetDefaults::DEFAULT.sliver_cache_extent,
-            clip_behavior: WidgetDefaults::DEFAULT.scroll_clip_behavior,
         }
     }
 
@@ -436,13 +433,6 @@ impl CustomScrollView {
         self
     }
 
-    /// Sets clipping behavior.
-    #[must_use]
-    pub fn clip_behavior(mut self, clip: Clip) -> Self {
-        self.clip_behavior = clip;
-        self
-    }
-
     #[must_use]
     pub fn is_reverse(&self) -> bool {
         self.reverse
@@ -471,17 +461,22 @@ impl From<CustomScrollView> for Widget {
             value.physics.unwrap_or_default(),
             value.cache_extent,
             false,
-            value.clip_behavior,
+            // Viewport clipping is unconditional; the per-view override
+            // never reached layout, so the shared default applies.
+            WidgetDefaults::DEFAULT.scroll_clip_behavior,
             Rc::new(SequenceViewportDelegate::new(render_slivers)),
         )
     }
 }
 
 /// Underlying scroll gesture and viewport coordinator.
+///
+/// The axis lives with the built viewport, not here: the builder receives
+/// only the controller, so a direction set on `Scrollable` could never
+/// reach layout.
 #[derive(Clone)]
 pub struct Scrollable {
     controller: Option<ScrollController>,
-    axis_direction: Axis,
     viewport_builder: Rc<dyn Fn(&ScrollController) -> Widget>,
 }
 
@@ -493,7 +488,6 @@ impl Scrollable {
     {
         Self {
             controller: None,
-            axis_direction: Axis::Vertical,
             viewport_builder: Rc::new(move |c| viewport_builder(c).into()),
         }
     }
@@ -501,12 +495,6 @@ impl Scrollable {
     #[must_use]
     pub fn controller(mut self, controller: ScrollController) -> Self {
         self.controller = Some(controller);
-        self
-    }
-
-    #[must_use]
-    pub fn axis_direction(mut self, axis: Axis) -> Self {
-        self.axis_direction = axis;
         self
     }
 }

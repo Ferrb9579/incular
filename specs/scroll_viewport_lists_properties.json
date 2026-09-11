@@ -1,0 +1,1458 @@
+{
+  "schema_version": 2,
+  "family": "ScrollViewportLists",
+  "scope": "Initial scrolling group: viewport configuration and ordinary list scrolling (Scrollable, Viewport, CustomScrollView, ListView, SliverList, restored ScrollController attachment). Offset ownership stays with ScrollController in incular-scroll; retained layout stays in Widgets. Grids, pages, animated lists, two-dimensional views, scrollbars, and physics internals belong to later groups. Removed dead options are recorded in docs/API_MIGRATIONS.md, not here: Scrollable::axis_direction never reached layout, and ListView/CustomScrollView clip overrides never reached paint (viewport clipping is unconditional). Viewport pins cache_extent to zero and exposes no reverse by design; CustomScrollView covers both. Single- versus multiple-viewport controller attachment is unenforced and stays a W5 attachment-policy gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "Viewport": {
+      "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+      "name": "viewport_builder_defaults_match_new"
+    },
+    "CustomScrollView": {
+      "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+      "name": "custom_scroll_view_builder_defaults_match_new"
+    },
+    "ListView": {
+      "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+      "name": "list_view_builder_defaults_match_new"
+    }
+  },
+  "records": [
+    {
+      "symbol": "Scrollable",
+      "option": "viewport_builder",
+      "default": "required, no default",
+      "validation": "Rc closure receiving the resolved controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Scrollable"
+      },
+      "comparison": {
+        "prose": "Lowering calls the builder with the attached or defaulted controller; the axis lives with the built viewport, which is why Scrollable carries no direction.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Scrollable"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "scrollable_builds_viewport_from_builder"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Scrollable",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; controller identity is shared by clone",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Scrollable"
+      },
+      "comparison": {
+        "prose": "The same handle drives the built viewport and the test side; attachment is by shared state, and one controller across unrelated viewports stays a W5 gap.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Scrollable"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "scrollable_builds_viewport_from_builder"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Viewport",
+      "option": "slivers",
+      "default": "empty",
+      "validation": "boxed Sliver trait objects in declaration order",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Viewport"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Viewport forwards its slivers to a CustomScrollView with cache pinned to zero; wider caches need CustomScrollView directly.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Viewport"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "viewport_axis_direction_lays_out_slivers"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Viewport",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; controller identity is shared by clone",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Viewport"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The attached controller becomes the viewport config controller that layout, paint, hit testing, and semantics all read.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Viewport"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "viewport_axis_direction_lays_out_slivers"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Viewport",
+      "option": "axis_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Viewport"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The axis forwards to the inner CustomScrollView direction and selects the layout main axis for every sliver.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "Viewport"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "viewport_axis_direction_lays_out_slivers"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "slivers",
+      "default": "empty",
+      "validation": "boxed Sliver trait objects in declaration order",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Each sliver builds its render sliver once per lowering with the resolved controller, direction, and reverse.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_cache_extent_changes_materialized_window"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; replacing the descriptor swaps attachment while the old handle keeps its own offset record",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Replacement is by descriptor swap through the generic element update; the viewport follows the attached handle and the detached one no longer moves it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_viewport_resize_retains_children_and_offset"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis read by layout, paint, hit testing, and semantics.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_horizontal_lays_columns_and_physics_gates_input"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization; only observable with overflowing content",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout; paint, hit testing, and scroll translation follow the same flag.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_reverse_anchors_trailing_edge"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "strip_option setter; replacement swaps the policy the viewport reads for input",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; here replacement only changes which policy gates gesture input while programmatic jumps keep working.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_horizontal_lays_columns_and_physics_gates_input"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "CustomScrollView",
+      "option": "cache_extent",
+      "default": "shared sliver cache default, floored at zero on set",
+      "validation": "extent.max(0.0) in both the fluent setter and the generated builder transform",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "CustomScrollView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The cache window bounds materialization around the visible range; widening builds more children and narrowing releases them with unmount accounting.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "CustomScrollView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_cache_extent_changes_materialized_window"
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "name": "million_item_sliver_list_materializes_only_viewport_and_cache"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained in declaration order through the Children strategy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Static children lower through the same single-sliver viewport as lazy strategies; only the item source differs.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_axis_change_reflows_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "scroll_direction",
+      "default": "vertical scroll direction default",
+      "validation": "axis value, no normalization; updates reflow laid-out children",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis; mounted changes re-resolve every child along the new main axis.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_axis_change_reflows_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization; only observable with overflowing content",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout; paint, hit testing, and scroll translation follow the same flag.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_reverse_change_moves_first_child_to_trailing_edge"
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "name": "reverse_scroll_starts_at_the_physical_trailing_edge"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "shrink_wrap",
+      "default": "false",
+      "validation": "bool toggle, no normalization; transitions re-resolve size without rebuilding items",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Without shrink-wrap the viewport fills its bounds; with it the viewport sizes to its content.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_shrink_wrap_transition_resizes_to_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; replacing the descriptor swaps attachment while the old handle keeps its own offset record",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Replacement is by descriptor swap through the generic element update; the viewport follows the attached handle and the detached one no longer moves it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_controller_replacement_isolates_old_controller"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "padding",
+      "default": "none, no inner padding",
+      "validation": "strip_option setter; EdgeInsets carried verbatim into the padding sliver",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Padding wraps the list sliver in a padding render sliver before the viewport, offsetting every child.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_padding_insets_content"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "cache_extent",
+      "default": "none, shared sliver cache default applies",
+      "validation": "strip_option setter; floored at zero where the viewport resolves it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The cache window bounds materialization around the visible range; widening builds more children and narrowing releases them.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_cache_extent_widens_materialized_window"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "physics",
+      "default": "none, clamping physics resolved at lowering",
+      "validation": "strip_option setter; replacement swaps the policy the viewport reads for input",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Physics internals belong to a later group; here replacement only changes which policy gates gesture input while programmatic jumps keep working.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_physics_replacement_changes_input"
+        },
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "name": "scroll_physics_survives_descriptor_lowering_and_controls_input"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "builder",
+      "default": "n/a, constructor taking item count and child builder closure",
+      "validation": "total count and Rc builder carried verbatim into the Builder strategy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Lazy items materialize on demand through the retained extent index; only the cache window is built.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_reverse_change_moves_first_child_to_trailing_edge"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "separated",
+      "default": "n/a, constructor interleaving item and separator builders",
+      "validation": "item_count maps to 2n-1 slots with even slots from the item builder and odd slots from the separator builder",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Separators are ordinary items of the same lazy strategy; an empty list builds nothing.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_separated_interleaves_items_and_separators"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "item_extent",
+      "default": "none, children measure intrinsically",
+      "validation": "finite extents floored at 1.0; setting it clears the extent builder and prototype",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "A fixed extent selects the fixed-extent render sliver with exact metrics and deep jumps; the three extent sources are mutually exclusive.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_reverse_change_moves_first_child_to_trailing_edge"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "prototype_item",
+      "default": "none, children measure intrinsically",
+      "validation": "measured main-extent hint floored at 1.0, falling back to the lazy default without a measurable prototype; setting it clears the other extent sources",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "A prototype selects the fixed-extent render sliver measured from the prototype; every child takes that extent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_prototype_item_measures_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListView",
+      "option": "item_extent_builder",
+      "default": "none, default estimates seed the extent index",
+      "validation": "Rc builder consulted for unmeasured items; measured items feed back and the measured index stays internal to the retained sliver",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The builder seeds per-index estimates so scroll metrics are exact before full measurement; setting it clears the other extent sources.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "list_view_item_extent_builder_makes_metrics_exact"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverList",
+      "option": "builder",
+      "default": "n/a, constructor taking item count and child builder closure",
+      "validation": "count and Rc builder carried verbatim into the variable-extent render sliver",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The sliver contributes a variable-extent render sliver to whatever viewport hosts it; axis and reverse come from the host config, not the sliver.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "viewport_axis_direction_lays_out_slivers"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_viewport_lists.rs",
+          "name": "custom_scroll_view_cache_extent_changes_materialized_window"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ScrollController",
+      "option": "restored",
+      "default": "n/a, constructor binding a restoration scope and key",
+      "validation": "pending offset read from the backend at bind time; a second binding replaces the first; nothing is written until a position changes",
+      "comparison": {
+        "prose": "Restoration ownership stays with the controller in incular-scroll; the viewport only reads the resolved offset through its config.",
+        "refs": [
+          {
+            "path": "crates/incular-scroll/src/controller.rs",
+            "kind": "method",
+            "owner": "ScrollController",
+            "name": "bind_restoration"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/tree_scrolling_slivers.rs",
+          "name": "restored_sliver_list_offset_stays_viewport_bounded"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

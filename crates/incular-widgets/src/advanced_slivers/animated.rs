@@ -973,12 +973,14 @@ impl AnimatedList {
     }
 
     fn viewport(&self, controller: &ScrollController) -> Widget {
+        // CustomScrollView no longer takes a clip override (viewport
+        // clipping is unconditional); the animated-list override stays with
+        // its own group until that group audits it.
         let mut viewport = CustomScrollView::new(vec![Box::new(self.clone()) as Box<dyn Sliver>])
             .controller(controller.clone())
             .scroll_direction(self.scroll_direction)
             .reverse(self.reverse)
-            .cache_extent(self.cache_extent)
-            .clip_behavior(self.clip_behavior);
+            .cache_extent(self.cache_extent);
         if let Some(physics) = self.physics {
             viewport = viewport.physics(physics);
         }
@@ -1128,12 +1130,14 @@ impl AnimatedGrid {
     }
 
     fn viewport(&self, controller: &ScrollController) -> Widget {
+        // CustomScrollView no longer takes a clip override (viewport
+        // clipping is unconditional); the animated-list override stays with
+        // its own group until that group audits it.
         let mut viewport = CustomScrollView::new(vec![Box::new(self.clone()) as Box<dyn Sliver>])
             .controller(controller.clone())
             .scroll_direction(self.scroll_direction)
             .reverse(self.reverse)
-            .cache_extent(self.cache_extent)
-            .clip_behavior(self.clip_behavior);
+            .cache_extent(self.cache_extent);
         if let Some(physics) = self.physics {
             viewport = viewport.physics(physics);
         }

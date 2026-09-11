@@ -1131,7 +1131,8 @@ the table wins.
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
 | Sizing / constraints (11 types) | 35/35 | none known | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | complete |
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
-| Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
+| Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
+| Scrolling — grids/pages/animated/2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
@@ -1291,8 +1292,9 @@ the table wins.
   BackdropFilter (GPU pixel evidence separate), pointer blocking,
   focus wrappers, action wrappers, EditableText, Stack/Positioned/
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
-  aspect/fractional, Wrap/Table, images, and utilities. Still pending:
-  scrolling, overlays, navigation scopes, and platform wrappers.
+  aspect/fractional, Wrap/Table, images, utilities, and scrolling
+  viewports/lists. Still pending: remaining scrolling groups, overlays,
+  navigation scopes, and platform wrappers.
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1350,6 +1352,34 @@ the table wins.
   `crates/incular-widgets/tests/utility_coverage.rs` plus
   `specs/utility_properties.json` / `tests/utility_ledger.rs`
   recording all 32 exported options implemented.
+
+## W3 — Scrolling viewport and list coverage (same workstream, still open)
+
+- Initial coherent group: `Scrollable`, `Viewport`, `CustomScrollView`,
+  `ListView`, `SliverList`, and restored `ScrollController` attachment
+  (26/26 options). Offset ownership stays with the controller;
+  retained layout stays in Widgets.
+- Audit removals: `Scrollable::axis_direction` never reached layout
+  (the builder receives only the controller), and the
+  `ListView`/`CustomScrollView` `clip_behavior` overrides never reached
+  paint (the retained viewport attaches its clip unconditionally).
+  Viewport pins cache to zero and exposes no reverse by design;
+  `CustomScrollView` covers both. `SingleChildScrollView`/`GridView`/
+  animated lists keep their clip overrides for their own groups.
+- Verified: axis/reverse updates reflow and re-anchor (reverse needs
+  overflowing content to observe), padding, shrink-wrap transitions
+  without rebuilds, controller replacement with old-handle isolation,
+  physics replacement gating input only, cache-window materialization
+  and release, resize with retained children and offsets, and
+  paint/hit/semantics agreement after scrolling with retained pictures
+  replayed (`display_lists_reused` up, zero new item builds).
+- Evidence: 20 tests in
+  `crates/incular-widgets/tests/scroll_viewport_lists.rs` (reusing the
+  existing reverse/cache/restoration sliver regressions) plus
+  `specs/scroll_viewport_lists_properties.json` /
+  `tests/scroll_viewport_lists_ledger.rs`. W5 gaps recorded: one
+  controller across unrelated viewports is unenforced, and variable-
+  extent estimates converge only through measurement.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 
