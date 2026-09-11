@@ -1137,7 +1137,7 @@ the table wins.
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
 | Navigation scopes | not inventoried | none yet | none yet | open |
 | Platform wrappers | not inventoried | none yet | none yet | open |
-| Utilities (SafeArea/Offstage/SplitView/OverflowBar) | not inventoried | none yet | none yet | open |
+| Utilities (SafeArea/SplitView/OverflowBar) | 32/32 | none known | `specs/utility_properties.json`, `tests/utility_ledger.rs` | complete |
 
 ## W3 — Stack API honesty and positioning policy (same workstream, still open)
 
@@ -1291,8 +1291,8 @@ the table wins.
   BackdropFilter (GPU pixel evidence separate), pointer blocking,
   focus wrappers, action wrappers, EditableText, Stack/Positioned/
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
-  aspect/fractional, Wrap/Table, and images. Still pending: scrolling,
-  overlays, navigation scopes, platform wrappers, and utilities.
+  aspect/fractional, Wrap/Table, images, and utilities. Still pending:
+  scrolling, overlays, navigation scopes, and platform wrappers.
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1311,6 +1311,35 @@ the table wins.
   going inactive, removal and keyed reorder, out-of-range round trip,
   hidden text-controller edits applying on reselection, hidden
   selection-area subscriptions delivering).
+
+## W3 — Utility-family coverage (same workstream, still open)
+
+- SafeArea: `maintain_bottom_view_padding` was an accepted field that
+  never reached layout. The bottom edge now takes
+  max(safe, minimum, view) when set, and `set_environment` dirties
+  SafeArea renders on view-inset changes too (targeted, like safe
+  insets). Disabled edges keep only the minimum; nested SafeAreas
+  accumulate; padding offsets the origin while bottom insets shrink
+  the child area.
+- SplitView: the divider hit strip and the colored visual both
+  collapsed to zero on the cross axis, so the divider was grabbable
+  only on its exact midline and a colored divider was invisible. Both
+  now fill the cross axis through additional constraints (clamped by
+  ConstrainedBox enforcement, degrading to child size when
+  unbounded; explicit Container width/height must stay finite).
+  Siblings keep their geometry. Pan on the divider reports the
+  main-axis delta; the stateless view never moves itself. Fraction
+  shares bind only oversized panes under loose flex; out-of-range
+  fractions clamp to endpoint geometry.
+- OverflowBar: verified facade mapping with no production change —
+  spacing to Wrap spacing, overflow_spacing to run spacing,
+  overflow_alignment to cross alignment, with single-row and wrapped
+  transitions. No main-axis alignment option by design; Wrap covers
+  it (same precedent as Table cell alignment).
+- Evidence: 24 tests in
+  `crates/incular-widgets/tests/utility_coverage.rs` plus
+  `specs/utility_properties.json` / `tests/utility_ledger.rs`
+  recording all 32 exported options implemented.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

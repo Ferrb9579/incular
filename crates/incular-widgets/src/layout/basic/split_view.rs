@@ -1,6 +1,6 @@
 //! Dual-pane split-view layout primitives.
 
-use incular_config::{Alignment, Axis};
+use incular_config::{Alignment, Axis, Constraints};
 use incular_core::Color;
 use typed_builder::TypedBuilder;
 
@@ -179,19 +179,28 @@ impl From<SplitView> for Widget {
         let hit_thickness = view.divider_hit_extent.max(1.0);
         let visual_thickness = view.divider_visual_extent.min(hit_thickness).max(0.0);
 
+        // The divider spans the cross axis so the hit target covers
+        // the full pane height/width and a colored divider renders as
+        // a bar. The unbounded cross maximum clamps to the incoming
+        // extent through ConstrainedBox enforcement and degrades to
+        // the child size when the cross axis is unbounded. (Explicit
+        // Container width/height must stay finite, so the fill is
+        // expressed as additional constraints instead.)
+        let visual_constraints = if axis == Axis::Horizontal {
+            Constraints::new(visual_thickness, visual_thickness, 0.0, f32::INFINITY)
+        } else {
+            Constraints::new(0.0, f32::INFINITY, visual_thickness, visual_thickness)
+        };
+        let hit_constraints = if axis == Axis::Horizontal {
+            Constraints::new(hit_thickness, hit_thickness, 0.0, f32::INFINITY)
+        } else {
+            Constraints::new(0.0, f32::INFINITY, hit_thickness, hit_thickness)
+        };
         let divider_visual: Widget =
             if let Some(color) = view.divider_color.filter(|_| visual_thickness > 0.0) {
                 crate::Container::new()
-                    .width(if axis == Axis::Horizontal {
-                        visual_thickness
-                    } else {
-                        0.0
-                    })
-                    .height(if axis == Axis::Vertical {
-                        visual_thickness
-                    } else {
-                        0.0
-                    })
+                    .constraints(visual_constraints)
+                    .alignment(Alignment::CENTER)
                     .color(color)
                     .into()
             } else {
@@ -200,16 +209,7 @@ impl From<SplitView> for Widget {
 
         let divider = crate::GestureDetector::new(
             crate::Container::new()
-                .width(if axis == Axis::Horizontal {
-                    hit_thickness
-                } else {
-                    0.0
-                })
-                .height(if axis == Axis::Vertical {
-                    hit_thickness
-                } else {
-                    0.0
-                })
+                .constraints(hit_constraints)
                 .alignment(Alignment::CENTER)
                 .child(divider_visual),
         )
