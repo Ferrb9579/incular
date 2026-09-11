@@ -649,6 +649,10 @@
         },
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_mounted_fraction_change_moves_divider"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_fraction_clamps_to_unit_range"
         }
       ],
@@ -839,7 +843,7 @@
         "source": "SplitView"
       },
       "comparison": {
-        "prose": "The hit Container fills the cross axis through additional constraints while staying fixed on the main axis, so the divider is grabbable along its whole length.",
+        "prose": "The hit strip stays fixed on the main axis while its centered alignment expands into the enforced bounded cross extent, so the divider is grabbable along its whole length; unbounded parents shrink it to the child instead of failing.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
@@ -875,6 +879,14 @@
         },
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_constrained_cross_extent_bounds_divider"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_unbounded_cross_degrades_without_collapse"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_divider_thickness_sets_both_extents"
         }
       ],
@@ -893,7 +905,7 @@
         "source": "SplitView"
       },
       "comparison": {
-        "prose": "The visual bar fills the cross axis like the hit strip and centers on the main axis, so a colored divider renders instead of collapsing.",
+        "prose": "The visual bar expands into the enforced cross extent through the same centered alignment and centers on the main axis, so a colored divider renders instead of collapsing.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
@@ -981,7 +993,7 @@
         "source": "SplitView"
       },
       "comparison": {
-        "prose": "The detector reports main-axis pan deltas only; the stateless SplitView never moves itself, the owner rebuilds with a new position.",
+        "prose": "The detector reports main-axis pan deltas only; the stateless SplitView never moves itself, the owner rebuilds with a new position. Replacements apply to gestures started after the update; in-flight streams keep the recognizer cloned at down-time and a removed divider delivers nothing.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/interaction.rs",
@@ -1006,6 +1018,14 @@
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_pan_reports_main_axis_delta"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_callback_replacement_applies_to_new_gestures"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_removal_during_drag_delivers_nothing"
         }
       ],
       "status": "implemented"
@@ -1139,6 +1159,10 @@
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_unequal_panes_position_divider"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_first_extent_clamps_to_minimum"
         },
         {
@@ -1183,6 +1207,10 @@
         ]
       },
       "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_unequal_panes_position_divider"
+        },
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_from_end_positions_second_pane"
@@ -1313,6 +1341,10 @@
         ]
       },
       "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "split_view_mounted_fraction_change_moves_divider"
+        },
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "split_view_fraction_clamps_to_unit_range"

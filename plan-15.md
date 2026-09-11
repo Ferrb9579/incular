@@ -1331,13 +1331,16 @@ the table wins.
 - SplitView: the divider hit strip and the colored visual both
   collapsed to zero on the cross axis, so the divider was grabbable
   only on its exact midline and a colored divider was invisible. Both
-  now fill the cross axis through additional constraints (clamped by
-  ConstrainedBox enforcement, degrading to child size when
-  unbounded; explicit Container width/height must stay finite).
-  Siblings keep their geometry. Pan on the divider reports the
-  main-axis delta; the stateless view never moves itself. Fraction
-  shares bind only oversized panes under loose flex; out-of-range
-  fractions clamp to endpoint geometry.
+  now fill the cross axis: enforcement clamps the open maximum to the
+  incoming extent and the inner centered Align expands into it (finite
+  explicit sizes stay on the main axis only); unbounded parents shrink
+  the divider to its child instead of failing. Siblings keep their
+  geometry. Pan on the divider reports the main-axis delta; the
+  stateless view never moves itself. Callback replacements apply to
+  gestures started after the update while in-flight streams keep the
+  recognizer cloned at down-time, and removing the divider mid-drag
+  delivers nothing. Fraction shares bind only oversized panes under
+  loose flex; out-of-range fractions clamp to endpoint geometry.
 - OverflowBar: verified facade mapping with no production change —
   spacing to Wrap spacing, overflow_spacing to run spacing,
   overflow_alignment to cross alignment, with single-row and wrapped

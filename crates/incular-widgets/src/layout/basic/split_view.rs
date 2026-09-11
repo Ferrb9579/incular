@@ -179,13 +179,11 @@ impl From<SplitView> for Widget {
         let hit_thickness = view.divider_hit_extent.max(1.0);
         let visual_thickness = view.divider_visual_extent.min(hit_thickness).max(0.0);
 
-        // The divider spans the cross axis so the hit target covers
-        // the full pane height/width and a colored divider renders as
-        // a bar. The unbounded cross maximum clamps to the incoming
-        // extent through ConstrainedBox enforcement and degrades to
-        // the child size when the cross axis is unbounded. (Explicit
-        // Container width/height must stay finite, so the fill is
-        // expressed as additional constraints instead.)
+        // The divider fills the cross axis through its centered
+        // alignment: enforcement clamps the open maximum to the incoming
+        // extent and the inner Align expands into it, shrinking to the
+        // child when unbounded. Explicit sizes stay finite, so the fill
+        // is expressed as additional constraints.
         let visual_constraints = if axis == Axis::Horizontal {
             Constraints::new(visual_thickness, visual_thickness, 0.0, f32::INFINITY)
         } else {
