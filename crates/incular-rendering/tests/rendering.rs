@@ -888,6 +888,47 @@ fn retained_layers_compose_affines_for_world_bounds() {
 }
 
 #[test]
+fn leader_publication_passes_and_counts_are_measured_per_frame() {
+    // Empty scene: the pass still runs its walks, but nothing publishes.
+    let mut tree = LayerTree::new();
+    let root = tree.create_transform(Transform::IDENTITY);
+    tree.set_root(root);
+    let _ = tree.flatten();
+    let after_first = tree.diagnostics();
+    assert_eq!(after_first.leader_publish_passes, 1);
+    assert_eq!(after_first.leaders_published, 0);
+
+    // One normal frame with a live leader: exactly one pass publishes it.
+    let mut tree = LayerTree::new();
+    let link = LayerLink::new();
+    let leader = tree.create_leader(link.clone(), Size::new(60., 30.));
+    tree.set_root(leader);
+    let _ = tree.flatten();
+    assert!(link.is_linked());
+    let framed = tree.diagnostics();
+    assert_eq!(framed.leader_publish_passes, 1);
+    assert_eq!(framed.leaders_published, 1);
+
+    // Repeated unchanged frames recompute unconditionally: same pass, same
+    // publication, every time. This is the measured cost input for the W3
+    // phase-costs decision (see plan-15.md): two linear walks plus one
+    // chain fold per leader, per pass, with nothing cached.
+    for _ in 0..3 {
+        let _ = tree.flatten();
+    }
+    let repeated = tree.diagnostics();
+    assert_eq!(repeated.leader_publish_passes, 4);
+    assert_eq!(repeated.leaders_published, 4);
+
+    // The pre-semantics republish is the same pass through the same
+    // counter, so one full frame accounts two passes (semantics, paint).
+    tree.publish_leader_links();
+    let republished = tree.diagnostics();
+    assert_eq!(republished.leader_publish_passes, 5);
+    assert_eq!(republished.leaders_published, 5);
+}
+
+#[test]
 fn removing_leader_layer_releases_its_link() {
     let mut tree = LayerTree::new();
     let link = LayerLink::new();

@@ -41,6 +41,12 @@ pub struct CompositorDiagnostics {
     pub clip_updates: u64,
     pub layers_culled: u64,
     pub opacity_updates: u64,
+    /// Leader-publication passes executed (every `flatten` and every
+    /// pre-semantics republish runs one, unconditionally).
+    pub leader_publish_passes: u64,
+    /// Leaders successfully published across those passes (cumulative, so
+    /// per-pass work is the delta over a known frame window).
+    pub leaders_published: u64,
 }
 
 /// A picture placement observed while flattening. All rectangles here are in
@@ -1513,7 +1519,7 @@ impl LayerTree {
     /// runs pre-paint). Same pass `flatten` runs, so follower visibility
     /// reflects this frame's layout instead of the previous paint;
     /// genuinely hidden leaders still stay unpublished. Idempotent.
-    pub fn publish_leader_links(&self) {
+    pub fn publish_leader_links(&mut self) {
         if let Some(root) = self.root {
             self.clear_link_states(root);
             self.publish_resolved_leaders(root);
@@ -1527,7 +1533,10 @@ impl LayerTree {
     /// so chains and cycles always terminate; the first resolvable
     /// leader per link wins and anything culled or cyclic stays
     /// unpublished for its followers to treat as unlinked.
-    fn publish_resolved_leaders(&self, root: LayerId) {
+    fn publish_resolved_leaders(&mut self, root: LayerId) {
+        // Counted even when no leaders exist: the two layer walks above
+        // still ran, so the pass cost is real regardless.
+        self.diagnostics.leader_publish_passes += 1;
         let mut parents = HashMap::new();
         let mut leaders = Vec::new();
         self.collect_publish_state(root, &mut parents, &mut leaders);
@@ -1535,9 +1544,11 @@ impl LayerTree {
             return;
         }
         let mut states = HashMap::new();
+        let mut published = 0;
         for index in 0..leaders.len() {
-            self.ensure_published(index, &leaders, &parents, &mut states);
+            published += self.ensure_published(index, &leaders, &parents, &mut states) as u64;
         }
+        self.diagnostics.leaders_published += published;
     }
     fn collect_publish_state(
         &self,

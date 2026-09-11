@@ -1558,6 +1558,79 @@ the table wins.
   `specs/platform_wrappers_properties.json` /
   `tests/platform_wrappers_ledger.rs`.
 
+## W3 — Phase costs: leader publication and exit reconciliation (same workstream, still open)
+
+- Measured: `CompositorDiagnostics::{leader_publish_passes,
+  leaders_published}` count publication work per pass. The regression
+  `leader_publication_passes_and_counts_are_measured_per_frame`
+  (`crates/incular-rendering/tests/rendering.rs`) pins the numbers: an
+  empty flatten runs 1 pass with 0 publications; a live leader flattens
+  as 1 pass with 1 publication; three repeated unchanged flattens add
+  exactly 3 passes and 3 publications; the explicit pre-semantics
+  republish adds 1 and 1 through the same counter. Publication
+  recomputes unconditionally, and one full frame accounts two passes
+  (`update_semantics`, then paint via `flatten`).
+- Cost model: one pass is a clear walk plus a collect walk over the
+  layer tree (both linear in layer count) plus one ancestor-chain fold
+  with follower projection per leader. The pass is idempotent; nothing
+  is cached between passes.
+- Decision: recomputation stays; no complexity is added to eliminate
+  the second pass. Publication validity spans layer topology
+  (mount/unmount), transforms and clips (composite), visibility, and
+  cross-tree link winners (first in paint order, cycle-guarded) — none
+  of which the semantics phase owns. Paint also runs standalone
+  (tests and embedders call `tree.paint()` without `update_semantics`),
+  so `flatten` must always be able to publish itself. Sharing one
+  prepared projection across composite, semantics, and paint (two
+  crates) would need a validity token covering topology, transforms,
+  visibility, and link publications — more synchronized state than the
+  linear recomputation it would save. The pre-semantics publish stays
+  because semantics runs pre-paint while follower gating reads
+  publication (the Package `808539b` defect class).
+- Public boundary: only `LayerTree::publish_leader_links` changes
+  (`&self` to `&mut self`, for the counters; behavior identical), noted
+  in `docs/API_MIGRATIONS.md`. New tree/wheel internals stay
+  crate-internal (`controller_revision`, `refresh_wheel_ranges`,
+  `wheel_scroll_revision`). Barrier, wheel, and draggable fixes change
+  no other public signatures; `reset()` now reports genuine change per
+  its docs.
+- Exit reconciliation against the W3 workstream
+  (`complete retained property contracts`):
+  - Exported-option coverage: 26 ledger families, 584 records, 0
+    `unresolved`, 0 `intentionally_unsupported`. The ledger validator
+    enforces an exact-set match with source discovery in both
+    directions, and every implemented record carries named regressions
+    plus resolving references.
+  - Behavioral evidence: new suites pin the four packages (barrier
+    ownership, 13 wheel tests, 14 draggable-sheet tests, 1
+    publication-measurement test); existing suites are referenced, not
+    duplicated.
+  - Unresolved options: none inside the ledgers. The only open status
+    row is physics internals (no ledger; retained tests only). It is
+    not moved into W4 — it is not navigation-related — and stays open
+    for W5 transition work or a later W3 slice. Deliberate design
+    locks are recorded as contracts, not silence: no looping wheel
+    delegate (bounds clamp), wheel selection callback-only (no
+    retained scroll actions), draggable snap handles caller-owned
+    (dropping supersedes).
+  - Necessary phase scheduling: frames run layout, composite,
+    semantics, then paint (`run_frame_at`); wheel windows refresh from
+    the controller revision in the layout prologue like slivers; reset
+    and actuator reports resolve synchronously.
+  - Validation bypasses: the only allows are
+    `#![allow(clippy::float_cmp)]` in the new float-asserting
+    integration tests, matching the existing convention. No checks are
+    skipped: every package ran fmt, workspace check,
+    `cargo test-constrained`, strict Clippy, focused suites, ledgers,
+    and warning-denied rustdoc.
+  - W3/W4 line: W3 keeps the veil-ownership split, scope/storage/
+    restoration property contracts, and phase scheduling above. W4
+    keeps route transactions and identity (RouteEntry, observers,
+    guarded-pop checks), the navigation-crate descriptors
+    (`RouteSettings`, `OverlayEntry`, `Dialog`, `BottomSheet`,
+    navigation `ModalBarrier`), and runtime owner mapping. No uncovered
+    widget property was moved into W4 for being navigation-adjacent.
+
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 
 - Ledger: `specs/visibility_properties.json` records all nine exported
