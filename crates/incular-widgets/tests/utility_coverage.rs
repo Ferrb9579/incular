@@ -357,6 +357,84 @@ fn safe_area_tracks_padding_and_safe_margin_not_occlusion() {
 }
 
 #[test]
+fn safe_area_resolve_with_padding_matches_retained() {
+    // The environment-aware standalone path applies the same policy as
+    // retained construction in every snapshot, including under occlusion
+    // (which never participates in either path).
+    for environment in [keyboard_hidden(), keyboard_shown()] {
+        for maintain in [false, true] {
+            let mut retained_tree = WidgetTree::new();
+            retained_tree.set_environment(environment.clone());
+            let retained = retained_tree
+                .mount(
+                    SafeArea::new(box_(50., 50.))
+                        .maintain_bottom_view_padding(maintain)
+                        .into(),
+                )
+                .expect("mount");
+            tight(&mut retained_tree, retained, FRAME, FRAME);
+            let retained_height = child_height(&retained_tree, retained);
+
+            let mut resolved_tree = WidgetTree::new();
+            let resolved = resolved_tree
+                .mount(
+                    SafeArea::new(box_(50., 50.))
+                        .maintain_bottom_view_padding(maintain)
+                        .resolve_with_padding(environment.safe_insets, environment.view_padding),
+                )
+                .expect("mount");
+            tight(&mut resolved_tree, resolved, FRAME, FRAME);
+            assert_eq!(
+                child_height(&resolved_tree, resolved),
+                retained_height,
+                "maintain={maintain} shown={}",
+                environment.view_insets.bottom > 0.
+            );
+        }
+    }
+}
+
+#[test]
+fn safe_area_resolve_ignores_maintenance_by_contract() {
+    // The explicit-insets path has no persistent signal to keep, so the
+    // flag is a documented no-op there rather than a silent half-policy.
+    for maintain in [false, true] {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                SafeArea::new(box_(50., 50.))
+                    .maintain_bottom_view_padding(maintain)
+                    .resolve(EdgeInsets::only(0., 0., 0., 10.)),
+            )
+            .expect("mount");
+        tight(&mut tree, root, FRAME, FRAME);
+        assert_eq!(child_height(&tree, root), FRAME - 10.);
+    }
+}
+
+#[test]
+fn safe_area_resolve_applies_outer_level_only() {
+    // Standalone resolution lowers one descriptor to Padding; a nested
+    // SafeArea child stays a retained descriptor and reads whatever
+    // ambient environment the mounting tree provides (zero here), so only
+    // the outer 20px applies. Callers compose levels explicitly instead
+    // of expecting recursive resolution of opaque children.
+    let environment = keyboard_shown();
+    let nested = SafeArea::new(SafeArea::new(box_(50., 50.)).maintain_bottom_view_padding(true))
+        .maintain_bottom_view_padding(true);
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(nested.resolve_with_padding(environment.safe_insets, environment.view_padding))
+        .expect("mount");
+    tight(&mut tree, root, 400., 400.);
+    let mut id = root;
+    while let Some([only]) = tree.children(id) {
+        id = *only;
+    }
+    assert_eq!(bounds(&tree, id).1.height, 400. - PERSISTENT_BOTTOM);
+}
+
+#[test]
 fn split_view_builder_defaults_match_constructors() {
     // SplitView carries an Rc callback so it has no structural equality;
     // parity is proven geometrically: the generated builder with defaults

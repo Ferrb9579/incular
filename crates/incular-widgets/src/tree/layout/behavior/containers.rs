@@ -329,40 +329,17 @@ impl WidgetTree {
                 bottom,
                 maintain_bottom_view_padding,
             } => {
-                let ambient = self.environment.safe_insets.normalized();
-                // A maintained bottom edge keeps the persistent
-                // obstruction margin, which the shell reports separately
-                // from transient occlusion and never reduces under it.
-                // The keyboard height is not persistent padding: keyboard
-                // avoidance belongs to the padded parent, not SafeArea.
-                // Disabled edges stay at their minimum regardless.
-                let persistent_bottom = if maintain_bottom_view_padding {
-                    self.environment.view_padding.normalized().bottom.max(0.0)
-                } else {
-                    0.0
-                };
-                let insets = EdgeInsets::only(
-                    if left {
-                        ambient.left.max(minimum.left)
-                    } else {
-                        minimum.left
-                    },
-                    if top {
-                        ambient.top.max(minimum.top)
-                    } else {
-                        minimum.top
-                    },
-                    if right {
-                        ambient.right.max(minimum.right)
-                    } else {
-                        minimum.right
-                    },
-                    if bottom {
-                        ambient.bottom.max(minimum.bottom).max(persistent_bottom)
-                    } else {
-                        minimum.bottom
-                    },
-                );
+                // One shared policy feeds every construction path; the
+                // retained arm only supplies the ambient signals.
+                let insets = crate::SafeAreaPolicy {
+                    minimum,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    maintain_bottom_view_padding,
+                }
+                .padding(self.environment.safe_insets, self.environment.view_padding);
                 let child_constraints = constraints.deflate(insets.horizontal(), insets.vertical());
                 if let Some(&child) = children.first() {
                     self.layout_render(child, child_constraints)?;

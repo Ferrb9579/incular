@@ -1327,9 +1327,19 @@ the table wins.
   no per-SafeArea history, so mounting under occlusion works — and
   occlusion changes no longer dirty SafeArea. Disabled edges keep
   only the minimum; nested SafeAreas accumulate from the same
-  snapshot. `SystemEnvironmentPreferences` carries the same trio with
+  snapshot.   `SystemEnvironmentPreferences` carries the same trio with
   reset-to-default semantics; the runtime change mask tracks the new
   signal.
+- SafeArea construction paths are unified: one shared
+  `SafeAreaPolicy::padding` feeds retained layout, the
+  explicit-insets `resolve` (documented narrower contract: maintenance
+  needs the persistent signal, so it has no effect there), and the new
+  environment-aware `resolve_with_padding`. The runtime
+  `BuildContext::safe_area` helper now applies the same policy and
+  records the safe margin always plus view padding only when the
+  descriptor maintains its bottom edge; occlusion never participates.
+  Nesting accumulates by design on every path, so callers scope edges
+  explicitly with `sides` instead.
 - SplitView: the divider hit strip and the colored visual both
   collapsed to zero on the cross axis, so the divider was grabbable
   only on its exact midline and a colored divider was invisible. Both

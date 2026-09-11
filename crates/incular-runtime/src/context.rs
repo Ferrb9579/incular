@@ -2,7 +2,7 @@ use crate::application_shell::ApplicationShellService;
 use crate::application_types::WindowError;
 use crate::environment::{
     BUILD_SCOPE, ENV_ALL, ENV_BRIGHTNESS, ENV_DIRECTION, ENV_LOCALE, ENV_SAFE_INSETS, ENV_SCALE,
-    ENV_TEXT_SCALE, ENV_VIEWPORT, ENV_WINDOW_FOCUS, install_focus_scope_watch,
+    ENV_TEXT_SCALE, ENV_VIEW_PADDING, ENV_VIEWPORT, ENV_WINDOW_FOCUS, install_focus_scope_watch,
 };
 use crate::file_dialogs::FileDialogService;
 use crate::frame::Runtime;
@@ -278,11 +278,27 @@ impl BuildContext {
         self.record_environment(crate::environment::ENV_VIEW_INSETS);
         self.environment.borrow().view_insets
     }
+    /// Persistent system-obstruction margin, independent of transient
+    /// occlusion. Maintained `SafeArea` bottom edges read this alongside
+    /// the safe margin.
+    #[must_use]
+    pub fn view_padding(&self) -> incular_config::EdgeInsets {
+        self.record_environment(ENV_VIEW_PADDING);
+        self.environment.borrow().view_padding
+    }
     /// Resolves `SafeArea` from the authoritative logical insets while
-    /// recording only that environment dependency.
+    /// recording only the dependencies it reads: the safe margin always,
+    /// plus the persistent view padding when the descriptor maintains its
+    /// bottom edge. This applies the same policy as retained
+    /// construction; transient occlusion never participates.
     #[must_use]
     pub fn safe_area(&self, safe_area: incular_widgets::SafeArea) -> Widget {
-        safe_area.resolve(self.safe_insets())
+        let safe = self.safe_insets();
+        if safe_area.maintains_bottom_view_padding() {
+            safe_area.resolve_with_padding(safe, self.view_padding())
+        } else {
+            safe_area.resolve(safe)
+        }
     }
     #[must_use]
     pub fn brightness(&self) -> incular_config::Brightness {

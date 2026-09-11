@@ -211,6 +211,7 @@ pub use raw_tooltip::{
     TooltipTriggerMode, TooltipVisibility,
 };
 pub use safe_area::SafeArea;
+pub(crate) use safe_area::SafeAreaPolicy;
 pub use scrolling::{
     CustomScrollView, DecoratedSliver, GridView, ListBody, ListView, NestedScrollView,
     NotificationListener, PageController, PageView, PinnedHeaderSliver,

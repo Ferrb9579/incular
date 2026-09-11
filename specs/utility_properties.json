@@ -366,6 +366,12 @@
             "kind": "method",
             "owner": "WidgetTree",
             "name": "set_environment"
+          },
+          {
+            "path": "crates/incular-widgets/src/safe_area.rs",
+            "kind": "method",
+            "owner": "SafeArea",
+            "name": "resolve_with_padding"
           }
         ]
       },
@@ -411,6 +417,18 @@
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
           "name": "safe_area_tracks_padding_and_safe_margin_not_occlusion"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_resolve_with_padding_matches_retained"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_resolve_ignores_maintenance_by_contract"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_resolve_applies_outer_level_only"
         }
       ],
       "status": "implemented"
