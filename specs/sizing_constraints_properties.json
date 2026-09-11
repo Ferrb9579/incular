@@ -1124,7 +1124,7 @@
       "symbol": "IntrinsicWidth",
       "option": "step_width",
       "default": "none (exact intrinsic width)",
-      "validation": "stored, no normalization; retained configuration without a distinct retained reader",
+      "validation": "finite positive steps round the measured width up to a multiple (ceil); zero, negative, and non-finite steps leave the extent unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
         "kind": "trait_impl",
@@ -1139,24 +1139,48 @@
         "name": "Unconstrained"
       },
       "comparison": {
-        "prose": "IntrinsicWidth lowers to UnconstrainedBox; the step fields are accepted but no reader consumes them, so this is stored configuration without behavior rather than a rounding contract.",
+        "prose": "round_intrinsic_step runs in the retained Unconstrained arm before parent constraining, so a stepped box never shrinks below the child intrinsic size.",
         "refs": [
           {
-            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
-            "kind": "trait_impl",
-            "trait": "From",
-            "target": "Widget",
-            "source": "IntrinsicWidth"
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "round_intrinsic_step"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "intrinsic_width_step_rounds_measured_width"
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "intrinsic_step_ignores_invalid_values"
+        }
+      ]
     },
     {
       "symbol": "IntrinsicWidth",
       "option": "step_height",
       "default": "none",
-      "validation": "stored, no normalization; no retained reader consumes it",
+      "validation": "finite positive steps round the measured height up to a multiple (ceil); invalid steps leave the extent unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
         "kind": "trait_impl",
@@ -1171,18 +1195,32 @@
         "name": "Unconstrained"
       },
       "comparison": {
-        "prose": "Stored configuration without behavior, same as step_width.",
+        "prose": "Shares round_intrinsic_step with step_width.",
         "refs": [
           {
-            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
-            "kind": "trait_impl",
-            "trait": "From",
-            "target": "Widget",
-            "source": "IntrinsicWidth"
+            "path": "crates/incular-layout/src/algorithms.rs",
+            "kind": "function",
+            "name": "round_intrinsic_step"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/core.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_core_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "intrinsic_step_ignores_invalid_values"
+        }
+      ]
     },
     {
       "symbol": "IntrinsicWidth",
@@ -1523,7 +1561,7 @@
       "symbol": "ConstraintsTransformBox",
       "option": "clip_behavior",
       "default": "None",
-      "validation": "enum setter, no normalization; retained on the wrapper but not lowered through the transform builder",
+      "validation": "enum setter, no normalization; routed through the existing ClipRect attachment, Clip::None adds no layer",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
         "kind": "trait_impl",
@@ -1538,7 +1576,7 @@
         "name": "LayoutBuilder"
       },
       "comparison": {
-        "prose": "The clip value is stored on the descriptor but the composed LayoutBuilder/ConstrainedBox chain never applies it, so it is stored configuration without a clip path.",
+        "prose": "Non-None clip behaviors wrap the transformed layout in the shared ClipRect compositor layer, reusing the clip ledger's execution path rather than a paint-time clip.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
@@ -1546,10 +1584,32 @@
             "trait": "From",
             "target": "Widget",
             "source": "ConstraintsTransformBox"
+          },
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "update_from_kind"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "update_from_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "constraint_transform_box_routes_clip_behavior"
+        }
+      ]
     },
     {
       "symbol": "ConstraintsTransformBox",

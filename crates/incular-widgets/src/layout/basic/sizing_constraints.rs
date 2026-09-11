@@ -312,10 +312,17 @@ impl From<OverflowBox> for Widget {
 }
 
 /// Allows its child to size naturally without parent constraints.
+///
+/// `step_width`/`step_height` are not part of the public surface; the
+/// intrinsic wrappers set them so measured extents round up to a step.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct UnconstrainedBox {
     #[builder(default, setter(strip_option))]
     constrained_axis: Option<Axis>,
+    #[builder(default, setter(skip))]
+    step_width: Option<f32>,
+    #[builder(default, setter(skip))]
+    step_height: Option<f32>,
     #[builder(setter(into))]
     child: Widget,
 }
@@ -326,6 +333,8 @@ impl UnconstrainedBox {
     pub fn new(child: impl Into<Widget>) -> Self {
         Self {
             constrained_axis: None,
+            step_width: None,
+            step_height: None,
             child: child.into(),
         }
     }
@@ -336,12 +345,23 @@ impl UnconstrainedBox {
         self.constrained_axis = Some(axis);
         self
     }
+
+    /// Sets intrinsic step rounding on the measured child extent. Used by
+    /// the intrinsic wrappers; not part of the public UnconstrainedBox API.
+    #[must_use]
+    pub(super) fn steps(mut self, step_width: Option<f32>, step_height: Option<f32>) -> Self {
+        self.step_width = step_width;
+        self.step_height = step_height;
+        self
+    }
 }
 
 impl From<UnconstrainedBox> for Widget {
     fn from(value: UnconstrainedBox) -> Self {
         Widget::from_kind(WidgetKind::Unconstrained {
             constrained_axis: value.constrained_axis,
+            step_width: value.step_width,
+            step_height: value.step_height,
             child: value.child,
         })
     }
@@ -412,7 +432,9 @@ impl IntrinsicWidth {
 
 impl From<IntrinsicWidth> for Widget {
     fn from(value: IntrinsicWidth) -> Self {
-        UnconstrainedBox::new(value.child).into()
+        UnconstrainedBox::new(value.child)
+            .steps(value.step_width, value.step_height)
+            .into()
     }
 }
 
@@ -514,11 +536,22 @@ impl From<ConstraintsTransformBox> for Widget {
         let transform = value.transform;
         let child = value.child;
         let alignment = value.alignment;
-        LayoutBuilder::new(move |_, incoming| {
+        let clip_behavior = value.clip_behavior;
+        let layout: Widget = LayoutBuilder::new(move |_, incoming| {
             let child_constraints = transform(incoming);
-            ConstrainedBox::new(child_constraints, Align::new(alignment, child.clone())).into()
+            let inner: Widget =
+                ConstrainedBox::new(child_constraints, Align::new(alignment, child.clone())).into();
+            // Clip through the existing ClipRect attachment when requested;
+            // Clip::None stays unwrapped, so no redundant layer is added.
+            match clip_behavior {
+                Clip::None => inner,
+                behavior => crate::layout::ClipRect::new(inner)
+                    .clip_behavior(behavior)
+                    .into(),
+            }
         })
-        .into()
+        .into();
+        layout
     }
 }
 

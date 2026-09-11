@@ -384,6 +384,164 @@ fn unconstrained_and_intrinsic_aliases_measure_content() {
 }
 
 #[test]
+fn intrinsic_width_step_rounds_measured_width() {
+    // A 37px child with step_width 16 rounds its intrinsic width up to
+    // 48; its height is untouched.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IntrinsicWidth::new(white_box(37., 11.))
+                .step_width(16.)
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(500., 500.)))
+        .expect("layout");
+    assert_eq!(bounds_of(&tree, root), (0., 0., 48., 11.));
+}
+
+#[test]
+fn intrinsic_step_ignores_invalid_values() {
+    let child = || white_box(37., 11.);
+    // Zero, negative, and non-finite steps leave the extent unchanged;
+    // unbounded constraints do not change the derived size either.
+    for bad in [0., -4., f32::NAN, f32::INFINITY] {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                IntrinsicWidth::new(child())
+                    .step_width(bad)
+                    .step_height(bad)
+                    .into(),
+            )
+            .expect("mount");
+        tree.layout(Constraints::unbounded()).expect("layout");
+        assert_eq!(bounds_of(&tree, root), (0., 0., 37., 11.), "step {bad}");
+    }
+    // A child that is already a multiple is unchanged.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IntrinsicWidth::new(white_box(32., 11.))
+                .step_width(16.)
+                .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(500., 500.)))
+        .expect("layout");
+    assert_eq!(bounds_of(&tree, root).2, 32.);
+}
+
+#[test]
+fn intrinsic_width_step_builders_match_fluent_construction() {
+    let child = || white_box(10., 10.);
+    assert_eq!(
+        Widget::from(IntrinsicWidth::new(child()).step_width(8.).step_height(4.)),
+        Widget::from(
+            IntrinsicWidth::builder()
+                .step_width(8.)
+                .step_height(4.)
+                .child(child())
+                .build()
+        )
+    );
+}
+
+#[test]
+fn constraint_transform_box_routes_clip_behavior() {
+    use incular_config::Clip;
+    use incular_core::Rect;
+    use incular_rendering::PaintCommand;
+
+    let clip_rects = |tree: &mut WidgetTree| -> Vec<Rect> {
+        tree.paint()
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                PaintCommand::PushClip { rect } => Some(*rect),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let build = |clip| {
+        ConstraintsTransformBox::new(
+            |incoming| Constraints::tight(Size::new(incoming.max_width() / 2., 40.)),
+            white_box(10., 10.),
+        )
+        .clip_behavior(clip)
+    };
+    // Clip::None adds no layer.
+    let mut tree = WidgetTree::new();
+    tree.mount(build(Clip::None).into()).expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    assert!(clip_rects(&mut tree).is_empty(), "Clip::None adds no layer");
+
+    // A clipping behavior attaches one clip layer over the transformed
+    // child, not a second paint-time clip.
+    let mut tree = WidgetTree::new();
+    tree.mount(build(Clip::HardEdge).into()).expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    let clips = clip_rects(&mut tree);
+    assert_eq!(clips.len(), 1, "one clip layer, got {clips:?}");
+    assert_eq!(clips[0].size, Size::new(200., 200.));
+}
+
+#[test]
+fn fitted_box_all_fit_modes_project_independently() {
+    // A 40x20 child in a 100x100 fixed box. `element_bounds` folds the
+    // ancestor fit transform, so its world rect is the placement under
+    // that fit. sx = 2.5, sy = 5.
+    use incular_widgets::internal::ImageFit;
+    type Placement = (f32, f32, f32, f32);
+    let cases: &[(ImageFit, Placement)] = &[
+        // Fill stretch: 100x100.
+        (ImageFit::Fill, (0., 0., 100., 100.)),
+        // Contain min(2.5, 5) = 2.5 -> 100x50, centered vertically.
+        (ImageFit::Contain, (0., 25., 100., 50.)),
+        // Cover max(2.5, 5) = 5 -> 200x100, centered horizontally.
+        (ImageFit::Cover, (-50., 0., 200., 100.)),
+        (ImageFit::FitWidth, (0., 25., 100., 50.)),
+        (ImageFit::FitHeight, (-50., 0., 200., 100.)),
+        // None never scales: 40x20 centered.
+        (ImageFit::None, (30., 40., 40., 20.)),
+        // ScaleDown never upscales: same as None for a small source.
+        (ImageFit::ScaleDown, (30., 40., 40., 20.)),
+    ];
+    for (fit, expected) in cases {
+        let mut tree = WidgetTree::new();
+        let root = tree
+            .mount(
+                SizedBox::from_size(Size::new(100., 100.))
+                    .child(
+                        FittedBox::new(white_box(40., 20.))
+                            .fit(*fit)
+                            .alignment(Alignment::CENTER),
+                    )
+                    .into(),
+            )
+            .expect("mount");
+        layout_tight(&mut tree, 100., 100.);
+        // Descend until the deepest sole child (the fitted 40x20 box).
+        let mut inner = root;
+        while let Some(kids) = tree.children(inner) {
+            if kids.is_empty() {
+                break;
+            }
+            inner = kids[0];
+        }
+        let (x, y, w, h) = bounds_of(&tree, inner);
+        assert!(
+            (x - expected.0).abs() < 0.5
+                && (y - expected.1).abs() < 0.5
+                && (w - expected.2).abs() < 0.5
+                && (h - expected.3).abs() < 0.5,
+            "{fit:?}: got ({x}, {y}, {w}, {h}) want {expected:?}"
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "invalid constraints")]
 fn constrained_box_negative_panics_loudly() {
     // Invalid sizes fail at construction instead of normalizing

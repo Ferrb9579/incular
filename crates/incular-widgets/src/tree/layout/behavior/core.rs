@@ -168,14 +168,25 @@ impl WidgetTree {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }
             }
-            RenderKind::Unconstrained { constrained_axis } => {
+            RenderKind::Unconstrained {
+                constrained_axis,
+                step_width,
+                step_height,
+            } => {
                 let child_constraints = unconstrained_constraints(constraints, constrained_axis);
                 if let Some(&child) = children.first() {
                     self.layout_render(child, child_constraints)?;
-                    let size = self
+                    let measured = self
                         .render_live(child, "retained render must remain live")
                         .size;
-                    (constraints.constrain(size), vec![Offset::ZERO])
+                    // Intrinsic step rounding applies to the measured extent
+                    // before the parent constrains it, so a stepped box never
+                    // shrinks below the child's intrinsic size.
+                    let stepped = Size::new(
+                        incular_layout::round_intrinsic_step(measured.width, step_width),
+                        incular_layout::round_intrinsic_step(measured.height, step_height),
+                    );
+                    (constraints.constrain(stepped), vec![Offset::ZERO])
                 } else {
                     (constraints.constrain(Size::ZERO), Vec::new())
                 }

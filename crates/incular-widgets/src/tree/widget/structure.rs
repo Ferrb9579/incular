@@ -143,10 +143,14 @@ impl std::fmt::Debug for WidgetKind {
                 .finish(),
             Self::Unconstrained {
                 constrained_axis,
+                step_width,
+                step_height,
                 child,
             } => f
                 .debug_struct("UnconstrainedBox")
                 .field("constrained_axis", constrained_axis)
+                .field("step_width", step_width)
+                .field("step_height", step_height)
                 .field("child", child)
                 .finish(),
             Self::Fractional {
@@ -978,13 +982,17 @@ impl PartialEq for WidgetKind {
             (
                 Self::Unconstrained {
                     constrained_axis: a,
+                    step_width: sw,
+                    step_height: sh,
                     child: b,
                 },
                 Self::Unconstrained {
                     constrained_axis: c,
+                    step_width: tw,
+                    step_height: th,
                     child: d,
                 },
-            ) => a == c && b == d,
+            ) => a == c && sw == tw && sh == th && b == d,
             (
                 Self::Scroll {
                     controller: a,

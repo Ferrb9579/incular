@@ -27,9 +27,14 @@ pub(super) fn lower_layout(widget: &Widget) -> RenderKind {
             max_height: *max_height,
         },
         WidgetKind::Unconstrained {
-            constrained_axis, ..
+            constrained_axis,
+            step_width,
+            step_height,
+            ..
         } => RenderKind::Unconstrained {
             constrained_axis: *constrained_axis,
+            step_width: *step_width,
+            step_height: *step_height,
         },
         WidgetKind::Fractional {
             width_factor,

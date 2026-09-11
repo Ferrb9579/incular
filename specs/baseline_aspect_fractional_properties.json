@@ -375,7 +375,7 @@
       "symbol": "FittedBox",
       "option": "fit",
       "default": "Contain",
-      "validation": "enum setter, no normalization; box-fit geometry resolves through the rendering helper",
+      "validation": "enum setter, no normalization; every mode (Fill, Contain, Cover, FitWidth, FitHeight, None, ScaleDown) resolves an independent scale/offset",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/baseline_aspect_fractional.rs",
         "kind": "trait_impl",
@@ -411,6 +411,10 @@
         ]
       },
       "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_all_fit_modes_project_independently"
+        },
         {
           "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
           "name": "fitted_box_contain_centers"
@@ -460,6 +464,10 @@
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_all_fit_modes_project_independently"
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
           "name": "fitted_box_contain_centers"
         }
       ],
@@ -506,6 +514,10 @@
         ]
       },
       "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "fitted_box_all_fit_modes_project_independently"
+        },
         {
           "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
           "name": "fitted_box_contain_centers"

@@ -1129,8 +1129,8 @@ the table wins.
 | Stack / Positioned / IndexedStack | 18/18 | none known | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | complete |
 | Row / Column / Flex / Flexible / Expanded / Spacer | 36/36 | none known | `specs/flex_layout_properties.json`, `tests/flex_layout_ledger.rs` | complete |
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
-| Sizing / constraints (11 types) | 35/35 | IntrinsicWidth step fields, PreferredSize public reach, ConstraintsTransformBox clip stored | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
-| Baseline / AspectRatio / Fractional / Fitted | 10/10 | FittedBox non-contain fits unverified | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | partial |
+| Sizing / constraints (11 types) | 35/35 | PreferredSize public reach | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
+| Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
 | Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | tint is modulate, not full srcIn, on multi-color art | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
@@ -1250,6 +1250,26 @@ the table wins.
   ImageIcon tint, tint replacement), the color-filter helper coverage
   in `crates/incular-rendering/tests/rendering.rs`, and the live
   `crates/incular-desktop/tests/image_tint_execution.rs`.
+
+## W3 — Intrinsic steps and constraint-transform clipping (same workstream, still open)
+
+- `IntrinsicWidth.step_width`/`step_height` now round the measured
+  child extent up to a multiple at the measurement owner
+  (`round_intrinsic_step`, `ceil`), so a stepped box never shrinks
+  below the child's intrinsic size. Zero, negative, and non-finite
+  steps are no-ops; the step fields stay off the public builder via
+  `setter(skip)` so no new API is exposed.
+- `ConstraintsTransformBox.clip_behavior` now routes through the
+  existing `ClipRect` compositor attachment; `Clip::None` adds no
+  layer, so there is no duplicated paint-time clip.
+- Closed the FittedBox ledger gap: all seven fit modes (Fill,
+  Contain, Cover, FitWidth, FitHeight, None, ScaleDown) are asserted
+  with independently derived placement rects.
+- Evidence: 4 new tests in
+  `crates/incular-widgets/tests/layout_padding_sizing.rs` (step
+  rounding, invalid-step no-op, builder parity, transform-box clip,
+  all fit modes); the sizing and baseline ledgers record the
+  resolved options.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

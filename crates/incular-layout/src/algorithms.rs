@@ -440,6 +440,20 @@ where
     )
 }
 
+/// Rounds one intrinsic extent up to a multiple of `step`.
+///
+/// A step is usable only when it is finite and strictly positive; anything
+/// else (zero, negative, non-finite) leaves the extent unchanged. Rounding
+/// uses `ceil` so an intrinsic size never shrinks below what the child
+/// measured.
+#[must_use]
+pub fn round_intrinsic_step(extent: f32, step: Option<f32>) -> f32 {
+    match step {
+        Some(step) if step.is_finite() && step > 0.0 => (extent / step).ceil() * step,
+        _ => extent,
+    }
+}
+
 /// Fits a child to an aspect ratio while respecting both incoming bounds.
 #[must_use]
 pub fn layout_aspect_ratio<A>(constraints: Constraints, child: Size, config: A) -> LayoutResult
