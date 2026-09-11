@@ -1508,6 +1508,17 @@ impl LayerTree {
             self.clear_link_states(*child);
         }
     }
+    /// Republishes leader links from current layer state for readers that
+    /// run before `flatten` (notably semantic collection, which the frame
+    /// runs pre-paint). Same pass `flatten` runs, so follower visibility
+    /// reflects this frame's layout instead of the previous paint;
+    /// genuinely hidden leaders still stay unpublished. Idempotent.
+    pub fn publish_leader_links(&self) {
+        if let Some(root) = self.root {
+            self.clear_link_states(root);
+            self.publish_resolved_leaders(root);
+        }
+    }
     /// Publishes every reachable leader in dependency order: a leader
     /// nested under linked followers resolves through the same follower
     /// projection the flatten walk uses, so nested publications land in

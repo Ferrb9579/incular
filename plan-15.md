@@ -1439,9 +1439,19 @@ the table wins.
   fallback in `semantic_value`, so rich tooltips never exposed their
   plain text; empty messages now fall through. Clearing an explicit
   semantic override suppresses rather than reverting, locked as the
-  contract. Follow-up (not this package): follower-wrapped custom
-  tooltip content paints and hit-tests but stays out of the semantic
-  walk while the follower reports hidden — portal popups are unaffected.
+  contract.
+- Defect fixed: follower-wrapped custom tooltip content painted and
+  hit-tested while the semantic walk culled it as hidden. The content
+  was incorrectly classified: the follower gate reads compositor
+  leader publication, which previously happened only inside paint,
+  while the frame runs semantics pre-paint. `update_semantics` now
+  republishes leader links from current layer state first (new
+  `Compositor::publish_leader_links`, the same pass `flatten` runs),
+  so paint, hit testing, and semantics agree through the normal frame
+  sequence. The gate itself is unchanged — unlinked, culled, and
+  singular-chain followers still stay out — and no second visibility
+  flag was added. Content semantics are distinct from trigger
+  descriptions in the ledger.
 - Evidence: 17 tests in
   `crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs` (reusing
   the barrier/anchor/partition/clock regressions) plus

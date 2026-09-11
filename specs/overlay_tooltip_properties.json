@@ -733,13 +733,19 @@
         "source": "RawTooltip"
       },
       "comparison": {
-        "prose": "Custom content drives the overlay and paints when shown.",
+        "prose": "Custom content drives the overlay and paints when shown. Content semantics are distinct from the trigger description: the content node is exposed only while the follower resolves, which collection guarantees by publishing leader links first; the trigger text is always exposed.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/retained.rs",
             "kind": "method",
             "owner": "WidgetTree",
             "name": "transient_surfaces"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
           }
         ]
       },
@@ -752,12 +758,40 @@
             "target": "Widget",
             "source": "RawTooltip"
           }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
+          }
         ]
       },
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
           "name": "tooltip_constructors_agree"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_builder_content_agrees_across_paint_hit_semantics"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_builder_replacement_while_shown"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_anchor_movement_keeps_content_exposed"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_owner_unmount_clears_content_everywhere"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_content_beside_neighboring_roots_without_duplication"
         }
       ],
       "status": "implemented"
@@ -775,13 +809,19 @@
         "source": "RawTooltip"
       },
       "comparison": {
-        "prose": "Pure constructor alias with identical behavior.",
+        "prose": "Pure constructor alias with identical behavior, including the content-versus-trigger semantic distinction.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/retained.rs",
             "kind": "method",
             "owner": "WidgetTree",
             "name": "transient_surfaces"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
           }
         ]
       },
@@ -794,12 +834,24 @@
             "target": "Widget",
             "source": "RawTooltip"
           }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
+          }
         ]
       },
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
           "name": "tooltip_constructors_agree"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_builder_content_agrees_across_paint_hit_semantics"
         }
       ],
       "status": "implemented"
@@ -967,13 +1019,19 @@
         "source": "RawTooltip"
       },
       "comparison": {
-        "prose": "Mounted swaps replace the overlay source with the same effect as the content setter.",
+        "prose": "Mounted swaps replace the overlay source with the same effect as the content setter; the replacement content paints and is exposed while the old text leaves paint and semantics together.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",
             "kind": "method",
             "owner": "WidgetTree",
             "name": "update_existing_inner"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
           }
         ]
       },
@@ -994,12 +1052,24 @@
             "owner": "WidgetTree",
             "name": "update_existing_inner"
           }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
+          }
         ]
       },
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
           "name": "tooltip_content_setters_update_message"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_builder_replacement_while_shown"
         }
       ],
       "status": "implemented"
@@ -1017,13 +1087,19 @@
         "source": "RawTooltip"
       },
       "comparison": {
-        "prose": "Same source swap as the sibling setter; the overlay shows builder content while visible.",
+        "prose": "Same source swap as the sibling setter; the overlay shows builder content while visible, painted and exposed together.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",
             "kind": "method",
             "owner": "WidgetTree",
             "name": "update_existing_inner"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
           }
         ]
       },
@@ -1044,12 +1120,24 @@
             "owner": "WidgetTree",
             "name": "update_existing_inner"
           }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
+          }
         ]
       },
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
           "name": "tooltip_content_setters_update_message"
+        },
+        {
+          "path": "crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs",
+          "name": "tooltip_builder_replacement_while_shown"
         }
       ],
       "status": "implemented"

@@ -46,6 +46,32 @@ fn mount_sized(tree: &mut WidgetTree, widget: Widget, w: f32, h: f32) -> Element
     root
 }
 
+/// Normal production frame order: layout, compositor, semantics, paint.
+/// Semantic collection must agree with paint and hit testing without
+/// requiring an extra paint first.
+fn frame(tree: &mut WidgetTree, w: f32, h: f32) {
+    tree.layout(Constraints::tight(Size::new(w, h)))
+        .expect("layout");
+    tree.update_compositor(Instant::now()).expect("compositor");
+    tree.update_semantics();
+    let _ = tree.paint();
+}
+
+fn padded_builder_tip(controller: RawTooltipController, top: f32) -> Widget {
+    Padding::new(
+        EdgeInsets::only(0., top, 0., 0.),
+        Widget::from(
+            RawTooltip::with_builder(
+                Text::new("Trigger"),
+                incular_widgets::TooltipComponentBuilder::new(|| Text::new("Custom help").into()),
+            )
+            .controller(controller)
+            .trigger_mode(TooltipTriggerMode::Manual),
+        ),
+    )
+    .into()
+}
+
 fn find_box(tree: &WidgetTree, id: ElementId, size: Size) -> Option<ElementId> {
     if tree
         .element_bounds(id)
@@ -907,6 +933,194 @@ fn tooltip_semantics_options() {
         assert!(tree.semantics_debug_dump().contains("Trigger"));
         assert!(!descriptions(&mut tree).contains(&"Hi".to_string()));
     }
+}
+
+#[test]
+fn tooltip_builder_content_agrees_across_paint_hit_semantics() {
+    // The reported case, through the normal frame sequence: while shown,
+    // the builder content paints, answers hits, and is semantically
+    // exposed; while hidden, all three agree it is gone. The follower
+    // visibility gate stays in place — leader publication now happens
+    // before collection, so the content is classified from this frame's
+    // layout rather than the previous paint.
+    let controller = RawTooltipController::new();
+    let mut tree = WidgetTree::new();
+    tree.mount(padded_builder_tip(controller.clone(), 50.))
+        .expect("mount");
+    frame(&mut tree, 120., 120.);
+    let background = tree
+        .hit_test(Offset::new(10., 75.))
+        .and_then(|render| tree.element_for_render(render));
+    assert!(tree.transient_surfaces().is_empty());
+    assert_eq!(glyph_run_count(&mut tree), 1);
+    tree.update_semantics();
+    assert!(!tree.semantics_debug_dump().contains("Custom help"));
+
+    controller.show();
+    frame(&mut tree, 120., 120.);
+    assert_eq!(tree.transient_surfaces().len(), 1);
+    assert_eq!(glyph_run_count(&mut tree), 2);
+    let popup_hit = tree
+        .hit_test(Offset::new(10., 75.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_ne!(popup_hit, background);
+    assert!(popup_hit.is_some());
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(
+        dump.contains("Custom help"),
+        "shown content exposed:\n{dump}"
+    );
+    assert!(dump.contains("Trigger"));
+
+    controller.hide();
+    frame(&mut tree, 120., 120.);
+    assert!(tree.transient_surfaces().is_empty());
+    assert_eq!(glyph_run_count(&mut tree), 1);
+    assert_eq!(
+        tree.hit_test(Offset::new(10., 75.))
+            .and_then(|render| tree.element_for_render(render)),
+        background
+    );
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(!dump.contains("Custom help"));
+    assert!(dump.contains("Trigger"));
+}
+
+#[test]
+fn tooltip_builder_replacement_while_shown() {
+    let controller = RawTooltipController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(padded_builder_tip(controller.clone(), 50.))
+        .expect("mount");
+    frame(&mut tree, 120., 120.);
+    controller.show();
+    frame(&mut tree, 120., 120.);
+    assert_eq!(tree.transient_surfaces().len(), 1);
+
+    tree.update(
+        root,
+        Padding::new(
+            EdgeInsets::only(0., 50., 0., 0.),
+            Widget::from(
+                RawTooltip::with_builder(
+                    Text::new("Trigger"),
+                    incular_widgets::TooltipComponentBuilder::new(|| {
+                        Text::new("Replacement help").into()
+                    }),
+                )
+                .controller(controller.clone())
+                .trigger_mode(TooltipTriggerMode::Manual),
+            ),
+        )
+        .into(),
+    )
+    .expect("update");
+    frame(&mut tree, 120., 120.);
+    // One surface, new content painted and exposed, old text in neither.
+    // Three runs: the trigger plus the longer replacement wrapping into
+    // two runs at the same origin.
+    assert_eq!(tree.transient_surfaces().len(), 1);
+    assert_eq!(glyph_run_count(&mut tree), 3);
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(dump.contains("Replacement help"), ":\n{dump}");
+    assert!(!dump.contains("Custom help"));
+}
+
+#[test]
+fn tooltip_anchor_movement_keeps_content_exposed() {
+    let controller = RawTooltipController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(padded_builder_tip(controller.clone(), 50.))
+        .expect("mount");
+    frame(&mut tree, 120., 120.);
+    controller.show();
+    frame(&mut tree, 120., 120.);
+    let before = tooltip_glyphs(&mut tree).into_iter().nth(1);
+
+    // Moving the anchor re-resolves publication from the current layout:
+    // the content stays exposed and repaints at the new position with no
+    // stale geometry.
+    tree.update(root, padded_builder_tip(controller.clone(), 70.))
+        .expect("update");
+    frame(&mut tree, 120., 120.);
+    assert_eq!(tree.transient_surfaces().len(), 1);
+    let after = tooltip_glyphs(&mut tree).into_iter().nth(1);
+    assert_ne!(before, after);
+    assert_eq!(
+        after.expect("tooltip glyph").y,
+        before.expect("glyph").y + 20.
+    );
+    tree.update_semantics();
+    assert!(tree.semantics_debug_dump().contains("Custom help"));
+}
+
+#[test]
+fn tooltip_owner_unmount_clears_content_everywhere() {
+    let controller = RawTooltipController::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            incular_widgets::Container::with_child(padded_builder_tip(controller.clone(), 50.))
+                .into(),
+        )
+        .expect("mount");
+    frame(&mut tree, 120., 120.);
+    controller.show();
+    frame(&mut tree, 120., 120.);
+    assert_eq!(tree.transient_surfaces().len(), 1);
+
+    tree.update(
+        root,
+        incular_widgets::Container::with_child(Widget::box_(Size::new(120., 120.), Color::WHITE))
+            .into(),
+    )
+    .expect("unmount");
+    frame(&mut tree, 120., 120.);
+    // Registry, paint, and semantics agree: layer removal clears the
+    // owned publication, so no ghost content survives anywhere. The
+    // replacement box carries no text, so no runs remain at all.
+    assert!(tree.transient_surfaces().is_empty());
+    assert_eq!(glyph_run_count(&mut tree), 0);
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(!dump.contains("Custom help"));
+    assert!(!dump.contains("Trigger"));
+}
+
+#[test]
+fn tooltip_content_beside_neighboring_roots_without_duplication() {
+    // Sibling semantic roots share no parent; the tooltip content node
+    // appears exactly once alongside the neighbor, then leaves with hide.
+    let controller = RawTooltipController::new();
+    let mut tree = WidgetTree::new();
+    tree.mount(
+        incular_widgets::Stack::new([
+            padded_builder_tip(controller.clone(), 50.),
+            Widget::from(Text::new("neighbor")),
+        ])
+        .into(),
+    )
+    .expect("mount");
+    frame(&mut tree, 120., 120.);
+    controller.show();
+    frame(&mut tree, 120., 120.);
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(dump.contains("neighbor"), ":\n{dump}");
+    assert_eq!(dump.matches("Custom help").count(), 1, ":\n{dump}");
+    assert_eq!(dump.matches("neighbor").count(), 1, ":\n{dump}");
+
+    controller.hide();
+    frame(&mut tree, 120., 120.);
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    assert!(!dump.contains("Custom help"));
+    assert_eq!(dump.matches("neighbor").count(), 1, ":\n{dump}");
 }
 
 #[test]

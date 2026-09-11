@@ -11,6 +11,11 @@ pub(super) struct SemanticCollectionContext {
 impl WidgetTree {
     pub fn update_semantics(&mut self) {
         let _phase_guard = self.guard_phase_root(FramePhase::Semantics);
+        // Follower visibility gates on compositor leader publication, which
+        // otherwise happens only inside paint. Publish first so collection
+        // reflects this frame's layout instead of the previous paint; the
+        // gate itself is unchanged, so genuinely hidden content stays out.
+        self.compositor.publish_leader_links();
         #[cfg(feature = "devtools")]
         let trace = self
             .root
