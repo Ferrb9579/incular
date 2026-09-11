@@ -1219,16 +1219,15 @@ impl WidgetTree {
             .renders
             .iter()
             .filter_map(|(raw, render)| {
-                let (config, element) = match &render.object.kind {
+                let config = match &render.object.kind {
                     RenderKind::ListWheelScrollView { config }
-                    | RenderKind::ListWheelViewport { config } => {
-                        let element = self.element_for_render(RenderObjectId(raw))?;
-                        let element = self.elements.get(element.0)?;
-                        (config.clone(), element.wheel_scroll_revision)
-                    }
+                    | RenderKind::ListWheelViewport { config } => config,
                     _ => return None,
                 };
-                (element != config.controller_revision()).then_some(RenderObjectId(raw))
+                let element = self.element_for_render(RenderObjectId(raw))?;
+                let element = self.elements.get(element.0)?;
+                (element.wheel_scroll_revision != config.controller_revision())
+                    .then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
         for render in pending {

@@ -414,6 +414,12 @@ pub struct WheelChildLayout<T> {
 pub struct WheelLayout<T> {
     /// Viewport size used by the pass.
     pub size: Size,
+    /// Controller revision consumed by the pass, sampled immediately after
+    /// the offset read. Pre-read bumps from range clamping or deferred
+    /// jumps are represented in the window; later user-callback mutations
+    /// are not, so retained owners must acknowledge this stamp rather than
+    /// the live revision.
+    pub controller_revision: u64,
     /// Logical target range queried from the delegate.
     pub target_range: Range<usize>,
     /// Children in paint order.
@@ -707,6 +713,7 @@ impl<T> ListWheelViewport<T> {
             self.physics,
         );
         let scroll_offset = self.controller.offset();
+        let consumed_revision = self.controller.revision();
         let visible_height = size.height
             * self.projection.squeeze
             * if self.render_children_outside_viewport {
@@ -800,6 +807,7 @@ impl<T> ListWheelViewport<T> {
         self.report_selection_if_needed(selected_index);
         WheelLayout {
             size,
+            controller_revision: consumed_revision,
             target_range,
             children,
             selected_index,

@@ -494,7 +494,7 @@
         "name": "instantiate"
       },
       "comparison": {
-        "prose": "Offsets stay in Scroll: the tree polls the controller revision before layout (mirroring sliver refresh) and re-prepares on movement.",
+        "prose": "Offsets stay in Scroll: the tree polls the controller revision before layout (mirroring sliver refresh) and re-prepares on movement. The acknowledged stamp is the revision consumed by the prepared window, sampled at the offset read: pre-read clamping counts as consumed, while user-callback mutations during layout stay pending for the next prepare instead of being marked done.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",
@@ -526,6 +526,18 @@
         {
           "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
           "name": "wheel_retained_window_follows_controller_replacement_resize_and_removal"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_layout_stamps_consumed_revision_not_live_revision"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_callback_mutation_during_prepare_reconciles_next_layout"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_quiet_layouts_do_not_rebuild_items"
         }
       ],
       "status": "implemented"

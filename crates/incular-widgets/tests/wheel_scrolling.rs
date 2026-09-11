@@ -419,6 +419,104 @@ fn wheel_retained_window_follows_controller_replacement_resize_and_removal() {
 }
 
 #[test]
+fn wheel_layout_stamps_consumed_revision_not_live_revision() {
+    // The stamp is sampled at the offset read: pre-read clamping counts
+    // as consumed, while the selection callback below fires after it and
+    // must stay unacknowledged until the next prepare.
+    let controller = ScrollController::new();
+    let controller_for_callback = controller.clone();
+    let mut viewport = ListWheelViewport::new(
+        controller.clone(),
+        20.0,
+        WheelChildDelegate::children(numbered(12)),
+    );
+    viewport.set_selection_callback(
+        ChangeReportingBehavior::OnScrollUpdate,
+        Some(move |index| {
+            if index == 3 {
+                let _ = controller_for_callback.jump_to(80.0);
+            }
+        }),
+    );
+    let _ = viewport.layout(Size::new(100.0, 100.0));
+    assert!(controller.jump_to(60.0));
+    let consumed = controller.revision();
+    let layout = viewport.layout(Size::new(100.0, 100.0));
+    assert_eq!(layout.selected_index, Some(3));
+    assert_eq!(layout.controller_revision, consumed);
+    assert_eq!(controller.revision(), consumed + 1);
+    assert_eq!(controller.offset(), 80.0);
+}
+
+#[test]
+fn wheel_callback_mutation_during_prepare_reconciles_next_layout() {
+    // A real supported callback moves the controller mid-prepare. The
+    // prepared window represents the pre-jump revision, so the next
+    // layout must re-prepare; afterwards selection, visible window, and
+    // semantics all agree on the post-callback item.
+    let controller = ScrollController::new();
+    let controller_for_callback = controller.clone();
+    let mut viewport = ListWheelViewport::new(
+        controller.clone(),
+        20.0,
+        WheelChildDelegate::children(sized_children(12)),
+    );
+    viewport.set_selection_callback(
+        ChangeReportingBehavior::OnScrollUpdate,
+        Some(move |index| {
+            if index % 2 == 1 {
+                let _ = controller_for_callback.jump_to((index + 1) as f32 * 20.0);
+            }
+        }),
+    );
+    let mut tree = WidgetTree::new();
+    let _root = tree.mount(viewport.into()).expect("mount");
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
+        .expect("layout");
+    assert!(controller.jump_to(60.0));
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
+        .expect("layout");
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
+        .expect("layout");
+    tree.update_semantics();
+    assert_eq!(controller.offset(), 80.0);
+    let dump = tree.semantics_debug_dump();
+    assert!(dump.contains("Some(\"item4\")"), ":\n{dump}");
+    assert!(!dump.contains("Some(\"item0\")"), ":\n{dump}");
+    assert!(!dump.contains("Some(\"item1\")"), ":\n{dump}");
+    // Converged: a further quiet layout changes nothing.
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
+        .expect("layout");
+    tree.update_semantics();
+    assert_eq!(tree.semantics_debug_dump(), dump);
+}
+
+#[test]
+fn wheel_quiet_layouts_do_not_rebuild_items() {
+    let mut tree = WidgetTree::new();
+    mount(
+        &mut tree,
+        ListWheelViewport::new(
+            ScrollController::new(),
+            20.0,
+            WheelChildDelegate::children(sized_children(12)),
+        )
+        .into(),
+        100.0,
+        100.0,
+    );
+    tree.update_semantics();
+    let dump = tree.semantics_debug_dump();
+    let mounted = tree.diagnostics().items_mounted;
+    assert!(mounted > 0);
+    tree.layout(Constraints::tight(Size::new(100.0, 100.0)))
+        .expect("layout");
+    tree.update_semantics();
+    assert_eq!(tree.semantics_debug_dump(), dump);
+    assert_eq!(tree.diagnostics().items_mounted, mounted);
+}
+
+#[test]
 fn wheel_retained_semantics_expose_items_without_scroll_actions() {
     // The retained wheel exposes its visible item texts with no ScrollView
     // wrapper and no scroll actions: fixed-extent selection changes are
