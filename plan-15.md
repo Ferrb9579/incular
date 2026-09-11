@@ -1133,7 +1133,8 @@ the table wins.
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
 | Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
 | Scrolling — grids/single-child/animated lists | 43/43 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_grid_single_properties.json`, `tests/scroll_grid_single_ledger.rs` | complete |
-| Scrolling — pages/sliver-only animated+reorderable/2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
+| Scrolling — pages/sliver animated+reorderable | 32/32 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_pages_reorder_properties.json`, `tests/scroll_pages_reorder_ledger.rs` | complete |
+| Scrolling — 2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
@@ -1294,9 +1295,9 @@ the table wins.
   focus wrappers, action wrappers, EditableText, Stack/Positioned/
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
   aspect/fractional, Wrap/Table, images, utilities, scrolling
-  viewports/lists, scrolling grids/single/animated, and overlays. Still
-  pending: remaining scrolling groups, navigation scopes, and platform
-  wrappers.
+  viewports/lists, scrolling grids/single/animated, overlays, and
+  scrolling pages/reorder. Still pending: 2D/scrollbar/physics
+  internals, navigation scopes, and platform wrappers.
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1458,6 +1459,27 @@ the table wins.
   `specs/overlay_tooltip_properties.json` /
   `tests/overlay_tooltip_ledger.rs`. Native-host popup availability
   stays separate from neutral correctness.
+
+## W3 — Scrolling pages and reorderable/animated slivers (same workstream, still open)
+
+- Fourth group: `PageView`, `SliverAnimatedList`,
+  `SliverAnimatedGrid`, and `SliverReorderableList` with their
+  structure controllers (32/32 options). Sliver-only animated/
+  reorderable slivers fix their viewport to vertical non-reverse;
+  axis and reverse come from the hosting viewport, not the sliver.
+- Verified: controller replacement with old-handle isolation,
+  page/item identity across updates (reorder permutes retained
+  elements in place), insert/remove through the exit lifetime with
+  release from elements/semantics/hit testing together, reverse/axis
+  updates, viewport resize with retained offsets, snap settle versus
+  plain clamping, fraction floors, and unmount cleanup. Drag-path
+  reorder callbacks stay covered by the existing `reorderable` suite
+  and are referenced, not duplicated. No second scroll engine or
+  attachment model; the W5 multi-attachment gap stands.
+- Evidence: 18 tests in
+  `crates/incular-widgets/tests/scroll_pages_reorder.rs` plus
+  `specs/scroll_pages_reorder_properties.json` /
+  `tests/scroll_pages_reorder_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

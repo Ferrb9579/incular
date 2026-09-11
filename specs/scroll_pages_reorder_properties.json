@@ -1,0 +1,1582 @@
+{
+  "schema_version": 2,
+  "family": "ScrollPagesReorder",
+  "scope": "Fourth scrolling group: PageView, SliverAnimatedList with SliverAnimatedListController, SliverAnimatedGrid with SliverAnimatedGridController, and SliverReorderableList with SliverReorderController. Sliver-only animated/reorderable slivers fix their viewport to vertical non-reverse; axis and reverse come from the hosting viewport, not the sliver. Drag-path reorder callbacks are covered by the existing reorderable suite and referenced, not duplicated. Animation presentation stays separate from logical item identity; one controller across unrelated viewports stays a W5 gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "builder_parity": {
+    "PageView": {
+      "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+      "name": "page_view_builder_defaults_match_new"
+    }
+  },
+  "records": [
+    {
+      "symbol": "PageView",
+      "option": "children",
+      "default": "empty",
+      "validation": "child edges retained in declaration order through the Children strategy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Static pages lower through a fill-viewport sliver; each page fills the viewport extent.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_pages_fill_viewport"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_page_identity_survives_updates"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "controller",
+      "default": "none, a default controller is resolved at lowering",
+      "validation": "strip_option setter; replacing the descriptor swaps attachment while the old handle keeps its own offset record",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Replacement is by descriptor swap through the generic element update; pages are retained while the offset follows the attached handle.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_controller_replacement_isolates_old"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "scroll_direction",
+      "default": "horizontal page direction default",
+      "validation": "axis value, no normalization; mounted changes reflow pages",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The direction becomes the viewport config axis; retained pages reflow along it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_axis_change_reflows"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "reverse",
+      "default": "false",
+      "validation": "bool toggle, no normalization; only observable with overflowing content",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reverse anchors logical offset zero to the physical trailing edge in layout.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_reverse_change_anchors_trailing_edge"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "page_snapping",
+      "default": "true",
+      "validation": "bool toggle selecting page-snap versus plain clamping physics at lowering",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Snapping viewports settle mid-page offsets to boundaries; non-snapping ones keep programmatic positions. Physics internals belong to a later group.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_snapping_settles_and_releases"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "viewport_fraction",
+      "default": "1.0, degenerate inputs floor at 0.01",
+      "validation": "floored at 0.01 in both the fluent setter and the generated builder transform",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Each page sizes to the fraction of the viewport extent; updates resize retained pages in place.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_viewport_fraction_sizes_pages"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_page_identity_survives_updates"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "physics",
+      "default": "none, snap-or-clamp resolved from page_snapping at lowering",
+      "validation": "strip_option setter; an explicit policy overrides the snapping default",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Viewport resize retains the offset and widens the range while pages keep their identities.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_resize_retains_offset_and_pages"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_unmount_releases_pages"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PageView",
+      "option": "builder",
+      "default": "n/a, constructor taking page count and builder closure",
+      "validation": "count and Rc builder carried verbatim into the Builder strategy",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "PageView"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Lazy pages fill the viewport exactly like static children.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/scroll_views.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PageView"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "page_view_builder_matches_children"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedList",
+      "option": "item_count",
+      "default": "required by the constructor, no default",
+      "validation": "count seeds the owned animation controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The sliver contributes an animated-extent render sliver to its host viewport; axis and reverse come from the host.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_insert_tick_remove_releases"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedList",
+      "option": "builder",
+      "default": "required by the constructor, no default",
+      "validation": "Rc builder carried verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The builder supplies item widgets for both resting and animating entries.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_insert_tick_remove_releases"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedList",
+      "option": "controller",
+      "default": "none, an owned controller is created at construction",
+      "validation": "replacing the descriptor swaps the attached structure controller while the old handle keeps its own entries",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Inserts mount animating entries and removals keep outgoing items through their exit lifetime; past it the item releases from elements, semantics, and hit testing together.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_insert_tick_remove_releases"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_controller_replacement_isolates_old"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "item_count",
+      "default": "required by constructors, no default",
+      "validation": "count seeds the owned animation controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Inserts mount animating cells and settle on tick; replacement swaps the attached structure source.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_grid_insert_tick_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "delegate",
+      "default": "required by constructors, no default",
+      "validation": "delegate value carried verbatim into the grid collection",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The delegate decides the grid arrangement independently of the animation structure.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_grid_insert_tick_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "builder",
+      "default": "required by constructors, no default",
+      "validation": "Rc builder carried verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The builder supplies cell widgets for resting and animating entries alike.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_grid_insert_tick_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "animated",
+      "default": "n/a, constructor taking an animation-aware cell builder",
+      "validation": "builder receives the per-item animation handle",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand over the same grid collection.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "with_animation_builder",
+      "default": "n/a, constructor alias for the animation-aware builder form",
+      "validation": "delegates verbatim to the same collection construction",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Pure constructor alias.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "controller",
+      "default": "none, an owned collection controller is created at construction",
+      "validation": "replacing the descriptor swaps the attached structure controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The attached controller owns grid structure; edits through a detached handle never reach the viewport.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_grid_insert_tick_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "animation_builder",
+      "default": "none, resting cells build without animation handles",
+      "validation": "Rc builder replacing the cell source",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Resting layout agrees across builder forms; covered with the constructor agreement test.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedGrid",
+      "option": "removed_item_builder",
+      "default": "none, outgoing cells keep their last built widget",
+      "validation": "optional Rc builder consulted for cells animating out",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverAnimatedGrid"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Same outgoing-slot policy as the animated lists.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_slivers/animated.rs",
+            "kind": "trait_impl",
+            "trait": "Sliver",
+            "target": "SliverAnimatedGrid"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_grid_single.rs",
+          "name": "animated_grid_constructors_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "item_count",
+      "default": "required by the constructor, no default",
+      "validation": "count seeds the owned reorder controller",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The sliver contributes a reorderable render sliver to its host viewport; axis and reverse come from the host.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_reorder_permutes_identity"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "builder",
+      "default": "required by the constructor, no default",
+      "validation": "Rc builder receiving the logical item, so identity follows items across reorder",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Reorder permutes retained elements in place; the same element set moves slots.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_reorder_permutes_identity"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "controller",
+      "default": "none, an owned reorder controller is created at construction",
+      "validation": "replacing the descriptor swaps the attached order source",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The attached controller owns the order; edits through a detached handle never reach the viewport.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_existing_inner"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_extents_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "on_reorder",
+      "default": "none, no reorder callback",
+      "validation": "Rc callback invoked by completed drag reorder gestures",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Drag-path callbacks are covered by the existing reorderable suite; controller reorder here covers the state path.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/reorderable.rs",
+          "name": "box_reorderable_list_uses_listener_index_and_flutter_callback_conventions"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_reorder_permutes_identity"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "on_reorder_item",
+      "default": "none, no per-item reorder callback",
+      "validation": "Rc callback reporting post-removal indices for drag reorder",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "Drag-path callbacks are covered by the existing reorderable suite.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/reorderable.rs",
+          "name": "adjusted_on_reorder_item_reports_post_removal_index_and_same_drop_ends"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "on_reorder_start",
+      "default": "none, no drag-start callback",
+      "validation": "Rc callback invoked when a drag reorder starts",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "comparison": {
+        "prose": "Drag-path callbacks are covered by the existing reorderable suite.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/reorderable.rs",
+          "name": "box_reorderable_list_uses_listener_index_and_flutter_callback_conventions"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "on_reorder_end",
+      "default": "none, no drag-end callback",
+      "validation": "Rc callback invoked when a drag reorder ends",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "comparison": {
+        "prose": "Drag-path callbacks are covered by the existing reorderable suite.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/interaction.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "dispatch_device_gesture_in_window"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/reorderable.rs",
+          "name": "box_reorderable_list_uses_listener_index_and_flutter_callback_conventions"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "item_extent",
+      "default": "none, children measure intrinsically",
+      "validation": "finite extents floor at 1.0; setting it clears the other extent sources",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The three extent sources are mutually exclusive with last-setter-wins.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_extents_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "item_extent_builder",
+      "default": "none, default estimates seed the extent index",
+      "validation": "Rc builder consulted for unmeasured items",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "SliverViewport"
+      },
+      "comparison": {
+        "prose": "The three extent sources are mutually exclusive with last-setter-wins.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_extents_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderableList",
+      "option": "prototype_item",
+      "default": "none, children measure intrinsically",
+      "validation": "measured main-extent hint; setting it clears the other extent sources",
+      "conversion": {
+        "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+        "kind": "trait_impl",
+        "trait": "Sliver",
+        "target": "SliverReorderableList"
+      },
+      "comparison": {
+        "prose": "The three extent sources are mutually exclusive with last-setter-wins.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_extents_and_replacement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedListController",
+      "option": "item_count",
+      "default": "n/a, constructor parameter seeding structure state",
+      "validation": "count carried verbatim; insert grows it and remove settles it after the exit tick",
+      "comparison": {
+        "prose": "Structure ownership stays with the controller; the viewport only reads resolved entries.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+            "kind": "method",
+            "owner": "SliverAnimatedListController",
+            "name": "new"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_controller_tracks_structure"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_insert_tick_remove_releases"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverAnimatedListController",
+      "option": "with_duration",
+      "default": "n/a, constructor pairing a count with an animation duration",
+      "validation": "duration carried verbatim alongside the seeded count",
+      "comparison": {
+        "prose": "Duration only tunes item animations; structure tracking matches the plain constructor.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+            "kind": "method",
+            "owner": "SliverAnimatedListController",
+            "name": "with_duration"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_animated_list_controller_tracks_structure"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "SliverReorderController",
+      "option": "item_count",
+      "default": "n/a, constructor parameter seeding the order",
+      "validation": "identity order carried verbatim; set_item_count truncates or extends it",
+      "comparison": {
+        "prose": "Order ownership stays with the controller; the viewport only reads the resolved sequence.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/scrolling/sliver_lists.rs",
+            "kind": "method",
+            "owner": "SliverReorderController",
+            "name": "new"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/sliver.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_sliver_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorder_controller_tracks_order"
+        },
+        {
+          "path": "crates/incular-widgets/tests/scroll_pages_reorder.rs",
+          "name": "sliver_reorderable_list_reorder_permutes_identity"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}
+
+
