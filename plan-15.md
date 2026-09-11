@@ -1134,7 +1134,8 @@ the table wins.
 | Scrolling — viewport configuration and ordinary lists | 26/26 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_viewport_lists_properties.json`, `tests/scroll_viewport_lists_ledger.rs` | complete |
 | Scrolling — grids/single-child/animated lists | 43/43 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_grid_single_properties.json`, `tests/scroll_grid_single_ledger.rs` | complete |
 | Scrolling — pages/sliver animated+reorderable | 32/32 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_pages_reorder_properties.json`, `tests/scroll_pages_reorder_ledger.rs` | complete |
-| Scrolling — 2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
+| Scrolling — scrollbar/2D engine | 20/20 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_scrollbar_2d_properties.json`, `tests/scroll_scrollbar_2d_ledger.rs` | complete |
+| Scrolling — wheel/draggable-sheet/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
@@ -1296,8 +1297,9 @@ the table wins.
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
   aspect/fractional, Wrap/Table, images, utilities, scrolling
   viewports/lists, scrolling grids/single/animated, overlays, and
-  scrolling pages/reorder. Still pending: 2D/scrollbar/physics
-  internals, navigation scopes, and platform wrappers.
+  scrolling pages/reorder, and scrolling scrollbar/2D. Still pending:
+  wheel/draggable-sheet/physics internals, navigation scopes, and
+  platform wrappers.
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1480,6 +1482,35 @@ the table wins.
   `crates/incular-widgets/tests/scroll_pages_reorder.rs` plus
   `specs/scroll_pages_reorder_properties.json` /
   `tests/scroll_pages_reorder_ledger.rs`.
+
+## W3 — Scrolling scrollbar and 2D engine (same workstream, still open)
+
+- Fifth group: the retained overlay scrollbar, the standalone
+  `RawScrollbar`, and the two-dimensional engine (20/20 options).
+  Both scrollbar implementations share one geometry owner each
+  (`scrollbar_geometry` with `offset_for_thumb_top` in
+  `incular-scroll`; `RawScrollbar::geometry` for paint and input), so
+  no normalized-position formula is duplicated across painting and
+  input — verified by driving drags and track input from painted
+  geometry.
+- Contracts locked: paint-only controller mutations (style, thumb
+  visibility) apply on the next viewport repaint — the revision bump
+  is for reactive observation, not push invalidation; hover-reveal
+  hides the whole overlay until hovered while the viewport keeps hit
+  ownership; 2D deltas before layout consume nothing for lack of
+  extents; estimate constructors panic unless finite and positive.
+- Verified: thumb sizing/position under changing extents, drag and
+  track paging through `scrollbar_pointer`, controller replacement
+  isolation, all four orientations plus reversed contexts, empty
+  extents, viewport resize, diagonal behaviors (free/lock/weighted
+  with tie-breaking), independent per-axis clamps, reversed trailing
+  anchors, cache styles, measurement feedback, and cached repaint
+  with updated drag geometry.
+- Evidence: 13 tests in
+  `crates/incular-widgets/tests/scroll_scrollbar_2d.rs` (reusing the
+  existing raw-scrollbar and 2D regressions) plus
+  `specs/scroll_scrollbar_2d_properties.json` /
+  `tests/scroll_scrollbar_2d_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 
