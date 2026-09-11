@@ -1137,7 +1137,7 @@ the table wins.
 | Scrolling — scrollbar/2D engine | 20/20 | controller multi-attachment unenforced (W5 gap) | `specs/scroll_scrollbar_2d_properties.json`, `tests/scroll_scrollbar_2d_ledger.rs` | complete |
 | Scrolling — wheel fixed-extent engine | 22/22 | no looping delegate by design (bounds clamp); retained scroll actions absent (callback-only selection, locked as contract); controller multi-attachment unenforced (W5 gap) | `specs/wheel_scrolling_properties.json`, `tests/wheel_scrolling_ledger.rs` | complete |
 | Scrolling — draggable sheet | 15/15 | snap animations are caller-driven (dropping supersedes); controller multi-attachment unenforced (W5 gap) | `specs/draggable_sheet_properties.json`, `tests/draggable_sheet_ledger.rs` | complete |
-| Scrolling — physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
+| Scrolling — physics policy | 11/11 | snap velocity rule corrected in docs (fling strength above 120 rounds directionally; exact multiples stay); controller multi-attachment unenforced (W5 gap) | `specs/scroll_physics_properties.json`, `tests/scroll_physics_ledger.rs` | complete |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
@@ -1299,8 +1299,9 @@ the table wins.
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
   aspect/fractional, Wrap/Table, images, utilities, scrolling
   viewports/lists, scrolling grids/single/animated, overlays, and
-  scrolling pages/reorder, and scrolling scrollbar/2D. Still pending:
-  wheel/draggable-sheet/physics internals and the router/transaction
+  scrolling pages/reorder, and scrolling scrollbar/2D. Still pending
+  at the time: wheel/draggable-sheet/physics internals (since
+  inventoried; see the status table) and the router/transaction
   surface (W4).
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)

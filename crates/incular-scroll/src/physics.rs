@@ -225,8 +225,10 @@ impl ScrollPhysics {
     }
 
     /// Selects the deterministic page/fixed-item settle target from current
-    /// position and velocity. A positive velocity advances, a negative one
-    /// retreats; low velocity picks the nearest item.
+    /// position and velocity. Fling-strength velocity (above 120) rounds
+    /// away from rest in its direction, below -120 rounds back; slower
+    /// movement picks the nearest item. At an exact multiple the target
+    /// is the current position at any velocity.
     #[must_use]
     pub fn snap_target(self, position: f32, velocity: f32, min: f32, max: f32) -> f32 {
         self.snap_target_for_extent(position, velocity, min, max, 0.)

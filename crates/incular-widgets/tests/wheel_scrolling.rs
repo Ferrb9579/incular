@@ -341,6 +341,30 @@ fn wheel_physics_selection_survives_replacement() {
     assert_eq!(viewport.selected_item(), Some(4));
 }
 
+#[test]
+fn wheel_physics_swap_takes_effect_on_next_input() {
+    // Controllers retain no policy: each input resolves against the
+    // currently installed physics, so replacement is total, including
+    // across a retained viewport's lifetime.
+    let mut viewport = ListWheelViewport::new(
+        ScrollController::new(),
+        20.0,
+        WheelChildDelegate::children(numbered(8)),
+    );
+    let _ = viewport.layout(Size::new(100.0, 100.0));
+    let moved = viewport.apply_delta(30.0);
+    assert!(moved.accepted);
+
+    viewport.set_physics(ScrollPhysics::clamping().never_scrollable());
+    let refused = viewport.apply_delta(30.0);
+    assert!(!refused.accepted);
+    assert_eq!(refused.unconsumed, 30.0);
+
+    viewport.set_physics(ScrollPhysics::clamping());
+    let moved_again = viewport.apply_delta(30.0);
+    assert!(moved_again.accepted);
+}
+
 fn mount(tree: &mut WidgetTree, widget: Widget, width: f32, height: f32) {
     let _ = tree.mount(widget).expect("mount");
     tree.layout(Constraints::tight(Size::new(width, height)))

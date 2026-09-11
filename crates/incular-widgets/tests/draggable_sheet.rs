@@ -148,6 +148,30 @@ fn draggable_sheet_boundary_handoff_accounts_every_delta() {
 }
 
 #[test]
+fn draggable_sheet_inner_physics_swap_takes_effect_on_next_input() {
+    use incular_scroll::ScrollPhysics;
+
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    state.set_parent_height(400.0);
+    state.set_inner_extents(1_000.0, 200.0);
+    // Pin the sheet so input routes to the inner list.
+    assert!(state.set_size(1.0, false));
+    assert!(state.inner_controller().jump_to(100.0));
+
+    let scrolled = state.apply_user_offset(60.0);
+    assert!(approx(scrolled.inner_consumed, 60.0));
+
+    state.set_inner_physics(ScrollPhysics::clamping().never_scrollable());
+    let refused = state.apply_user_offset(60.0);
+    assert_eq!(refused.inner_consumed, 0.0);
+    assert!(approx(refused.unconsumed, 60.0));
+
+    state.set_inner_physics(ScrollPhysics::clamping());
+    let scrolled_again = state.apply_user_offset(60.0);
+    assert!(approx(scrolled_again.inner_consumed, 60.0));
+}
+
+#[test]
 fn draggable_sheet_snap_animation_interruption_starts_from_current() {
     let sheet = text_sheet("v1").extents(0.25, 1.0, 0.5);
     let controller = sheet.controller();
