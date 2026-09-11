@@ -433,6 +433,22 @@ fn intrinsic_step_ignores_invalid_values() {
 }
 
 #[test]
+fn intrinsic_step_stays_coherent_under_bounded_and_unbounded_parents() {
+    // A bounded parent clamps the stepped size through the normal
+    // constrain path; an unbounded parent keeps it verbatim.
+    let build = || IntrinsicWidth::new(white_box(37., 11.)).step_width(16.);
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(build().into()).expect("mount");
+    tree.layout(Constraints::tight(Size::new(40., 40.)))
+        .expect("layout");
+    assert_eq!(bounds_of(&tree, root), (0., 0., 40., 40.));
+    let mut tree = WidgetTree::new();
+    let root = tree.mount(build().into()).expect("mount");
+    tree.layout(Constraints::unbounded()).expect("layout");
+    assert_eq!(bounds_of(&tree, root), (0., 0., 48., 11.));
+}
+
+#[test]
 fn intrinsic_width_step_builders_match_fluent_construction() {
     let child = || white_box(10., 10.);
     assert_eq!(

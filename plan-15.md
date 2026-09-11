@@ -1261,7 +1261,10 @@ the table wins.
   (`round_intrinsic_step`, `ceil`), so a stepped box never shrinks
   below the child's intrinsic size. Zero, negative, and non-finite
   steps are no-ops; the step fields stay off the public builder via
-  `setter(skip)` so no new API is exposed.
+  `setter(skip)` so no new API is exposed. The quotient runs in
+  `f64` so tiny steps and large extents stay exact; unrepresentable
+  results saturate to `f32::MAX` (following `safe_add`), and bounded
+  parents clamp the stepped size through the normal constrain path.
 - `ConstraintsTransformBox.clip_behavior` now routes through the
   existing `ClipRect` compositor attachment; `Clip::None` adds no
   layer, so there is no duplicated paint-time clip.

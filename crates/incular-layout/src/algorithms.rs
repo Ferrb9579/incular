@@ -443,15 +443,26 @@ where
 /// Rounds one intrinsic extent up to a multiple of `step`.
 ///
 /// A step is usable only when it is finite and strictly positive; anything
-/// else (zero, negative, non-finite) leaves the extent unchanged. Rounding
-/// uses `ceil` so an intrinsic size never shrinks below what the child
-/// measured.
+/// else (zero, negative, non-finite) leaves the extent unchanged, as does a
+/// non-finite extent. The quotient runs in `f64` so very small steps and
+/// large extents divide exactly; a result outside representable layout
+/// bounds saturates to `f32::MAX`, following the same policy as the
+/// crate's saturating addition. Rounding uses `ceil` and the result is
+/// floored at zero, so an intrinsic size never shrinks below what the
+/// child measured and never goes negative.
 #[must_use]
 pub fn round_intrinsic_step(extent: f32, step: Option<f32>) -> f32 {
-    match step {
-        Some(step) if step.is_finite() && step > 0.0 => (extent / step).ceil() * step,
-        _ => extent,
+    let Some(step) = step else {
+        return extent;
+    };
+    if !step.is_finite() || step <= 0.0 || !extent.is_finite() {
+        return extent;
     }
+    let rounded = (f64::from(extent) / f64::from(step)).ceil() * f64::from(step);
+    if rounded.is_nan() {
+        return extent;
+    }
+    (rounded.min(f64::from(f32::MAX)) as f32).max(0.0)
 }
 
 /// Fits a child to an aspect ratio while respecting both incoming bounds.

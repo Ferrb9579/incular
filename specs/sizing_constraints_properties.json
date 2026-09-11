@@ -1173,6 +1173,30 @@
         {
           "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
           "name": "intrinsic_step_ignores_invalid_values"
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "intrinsic_step_stays_coherent_under_bounded_and_unbounded_parents"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "exact_multiples_are_unchanged"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "partial_extents_round_up"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "invalid_steps_leave_the_extent_unchanged"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "tiny_steps_do_not_grow_normal_extents"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "unrepresentable_results_saturate"
         }
       ]
     },
@@ -1219,6 +1243,30 @@
         {
           "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
           "name": "intrinsic_step_ignores_invalid_values"
+        },
+        {
+          "path": "crates/incular-widgets/tests/layout_padding_sizing.rs",
+          "name": "intrinsic_step_stays_coherent_under_bounded_and_unbounded_parents"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "exact_multiples_are_unchanged"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "partial_extents_round_up"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "invalid_steps_leave_the_extent_unchanged"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "tiny_steps_do_not_grow_normal_extents"
+        },
+        {
+          "path": "crates/incular-layout/tests/intrinsic_step.rs",
+          "name": "unrepresentable_results_saturate"
         }
       ]
     },
