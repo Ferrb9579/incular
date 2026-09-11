@@ -1129,7 +1129,7 @@ the table wins.
 | Stack / Positioned / IndexedStack | 18/18 | none known | `specs/stack_layout_properties.json`, `tests/stack_layout_ledger.rs` | complete |
 | Row / Column / Flex / Flexible / Expanded / Spacer | 36/36 | none known | `specs/flex_layout_properties.json`, `tests/flex_layout_ledger.rs` | complete |
 | Padding / Align / Center | 12/12 | none known | `specs/padding_alignment_properties.json`, `tests/padding_alignment_ledger.rs` | complete |
-| Sizing / constraints (11 types) | 35/35 | PreferredSize public reach | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | partial |
+| Sizing / constraints (11 types) | 35/35 | none known | `specs/sizing_constraints_properties.json`, `tests/sizing_constraints_ledger.rs` | complete |
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
 | Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
@@ -1270,6 +1270,23 @@ the table wins.
   rounding, invalid-step no-op, builder parity, transform-box clip,
   all fit modes); the sizing and baseline ledgers record the
   resolved options.
+
+## W3 — PreferredSize reachability (same workstream, still open)
+
+- `PreferredSize` was `pub` only inside the private `layout` module,
+  so the parity manifest's `incular::prelude::PreferredSize` claim
+  was unreachable. It is now exported from the widgets facade and the
+  `incular` prelude with a compile-level usage test that also checks
+  the lowered tight-constraints behavior and `preferred_size()`; the
+  sizing ledger records both options implemented. Flutter's
+  app-bar metadata protocol is explicitly not claimed.
+- Current W3 status after packages A–C: complete families are
+  Visibility, Transform, Clip/Opacity, Linked layers, ShaderMask/
+  BackdropFilter (GPU pixel evidence separate), pointer blocking,
+  focus wrappers, action wrappers, EditableText, Stack/Positioned/
+  IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
+  aspect/fractional, Wrap/Table, and images. Still pending: scrolling,
+  overlays, navigation scopes, platform wrappers, and utilities.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

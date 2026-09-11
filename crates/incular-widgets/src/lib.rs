@@ -168,8 +168,9 @@ pub use layout::{
     Column, ConstrainedBox, ConstraintsTransformBox, Container, CustomPaint, Expanded, FittedBox,
     Flex, Flexible, FractionalTranslation, FractionallySizedBox, IndexedStack, IntrinsicHeight,
     IntrinsicWidth, KeyedSubtree, LayoutBuilder, LimitedBox, NavigationToolbar, Offstage,
-    OverflowBar, OverflowBox, Padding, Positioned, RepaintBoundary, RotatedBox, Row, SizedBox,
-    SizedOverflowBox, Spacer, Stack, Table, TableCell, UnconstrainedBox, Visibility, Wrap,
+    OverflowBar, OverflowBox, Padding, Positioned, PreferredSize, RepaintBoundary, RotatedBox, Row,
+    SizedBox, SizedOverflowBox, Spacer, Stack, Table, TableCell, UnconstrainedBox, Visibility,
+    Wrap,
 };
 /// The navigation-scope dispatcher is kept under an explicit name so a future
 /// app-shell `BackButtonDispatcher` can coexist in this facade without a

@@ -19,6 +19,23 @@ fn public_facade_composes_scroll_gesture_and_navigation_features() {
 }
 
 #[test]
+fn facade_exposes_preferred_size_from_the_prelude() {
+    // PreferredSize is application-facing: it is re-exported by the widgets
+    // facade and the incular prelude, tightens its child to the preferred
+    // size, and exposes the preferred size for tooling.
+    let preferred = Size::new(72., 40.);
+    let widget: Widget =
+        PreferredSize::new(preferred, Widget::box_(Size::new(10., 10.), Color::WHITE)).into();
+    // PreferredSize composes into tight constraints on its child.
+    assert_eq!(widget.debug_type_name(), "ConstrainedBox");
+    assert_eq!(
+        PreferredSize::new(preferred, Widget::box_(Size::new(1., 1.), Color::WHITE))
+            .preferred_size(),
+        preferred
+    );
+}
+
+#[test]
 fn facade_exposes_the_extracted_subsystems() {
     let constraints = incular::config::Constraints::tight(Size::new(40., 20.));
     assert_eq!(constraints.min_width(), 40.);

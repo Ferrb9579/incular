@@ -1663,7 +1663,7 @@
       "symbol": "PreferredSize",
       "option": "preferred_size",
       "default": "required, no default",
-      "validation": "Size used verbatim as tight constraints; invalid sizes panic at Constraints::new",
+      "validation": "Size used verbatim as tight child constraints; invalid sizes panic at Constraints::new",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
         "kind": "trait_impl",
@@ -1678,7 +1678,7 @@
         "name": "Constrained"
       },
       "comparison": {
-        "prose": "PreferredSize lowers to a ConstrainedBox with tight bounds. The type is not re-exported from the Widgets facade, so it is unreachable by applications and deferred.",
+        "prose": "PreferredSize is application-facing: exported from the widgets facade and incular prelude, it lowers to a ConstrainedBox with tight bounds and exposes preferred_size() for tooling. No app-bar metadata protocol is claimed.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
@@ -1689,13 +1689,30 @@
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PreferredSize"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "tests/facade_surface.rs",
+          "name": "facade_exposes_preferred_size_from_the_prelude"
+        }
+      ]
     },
     {
       "symbol": "PreferredSize",
       "option": "child",
       "default": "required, no default",
-      "validation": "child edge retained verbatim",
+      "validation": "child edge retained verbatim and tightened to the preferred size",
       "conversion": {
         "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
         "kind": "trait_impl",
@@ -1710,7 +1727,7 @@
         "name": "Constrained"
       },
       "comparison": {
-        "prose": "Child edges reconcile through the generic element update; unreachable publicly until the type is exported.",
+        "prose": "Child edges reconcile through the generic element update after ConstrainedBox lowering; PreferredSize is publicly reachable.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",
@@ -1720,7 +1737,24 @@
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/layout/basic/sizing_constraints.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "PreferredSize"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "tests/facade_surface.rs",
+          "name": "facade_exposes_preferred_size_from_the_prelude"
+        }
+      ]
     }
   ]
 }

@@ -207,7 +207,7 @@ pub mod prelude {
         OrderedTraversalPolicy, Orientation, OrientationBuilder, OverflowBar, OverflowBox,
         OverlayPortal, Padding, PageController, PageStorage, PageStorageBucket,
         PageStorageIdentifier, PageStorageKey, PageView, PerformanceOverlay, PinnedHeaderSliver,
-        PopAttempt, PopScope, PopScopeController, Positioned, PositionedTransition,
+        PopAttempt, PopScope, PopScopeController, Positioned, PositionedTransition, PreferredSize,
         PrimaryScrollController, RadioGroup, Radius, RawAutocomplete, RawGestureDetector, RawImage,
         RawPointerEvent, RawRadio, RawScrollbar, RawScrollbarGeometry, RawScrollbarOrientation,
         RawScrollbarStyle, RawTooltip, RawTooltipBuilder, RawTooltipController,
