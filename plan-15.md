@@ -1139,8 +1139,8 @@ the table wins.
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
-| Navigation scopes | not inventoried | none yet | none yet | open |
-| Platform wrappers | not inventoried | none yet | none yet | open |
+| Navigation scopes (dispatch/scopes/storage/restoration/barrier) | 51/51 | barrier non-dismissible excludes whole subtree (follow-up noted) | `specs/navigation_scopes_properties.json`, `tests/navigation_scopes_ledger.rs` | complete |
+| Platform wrappers (menus/chrome) | 26/26 | router/transaction surface stays with W4 | `specs/platform_wrappers_properties.json`, `tests/platform_wrappers_ledger.rs` | complete |
 | Utilities (SafeArea/SplitView/OverflowBar) | 32/32 | none known | `specs/utility_properties.json`, `tests/utility_ledger.rs` | complete |
 
 ## W3 — Stack API honesty and positioning policy (same workstream, still open)
@@ -1298,8 +1298,8 @@ the table wins.
   aspect/fractional, Wrap/Table, images, utilities, scrolling
   viewports/lists, scrolling grids/single/animated, overlays, and
   scrolling pages/reorder, and scrolling scrollbar/2D. Still pending:
-  wheel/draggable-sheet/physics internals, navigation scopes, and
-  platform wrappers.
+  wheel/draggable-sheet/physics internals and the router/transaction
+  surface (W4).
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1511,6 +1511,42 @@ the table wins.
   existing raw-scrollbar and 2D regressions) plus
   `specs/scroll_scrollbar_2d_properties.json` /
   `tests/scroll_scrollbar_2d_ledger.rs`.
+
+## W3 — Navigation scopes and platform wrappers (same workstream, still open)
+
+- Scopes group (51/51 options): back dispatch, pop scopes, page
+  storage, restoration scopes, and the modal barrier. Router and
+  route-transaction types stay untouched with W4; only scope
+  property/lifecycle contracts are claimed here.
+- Defect fixed: `PopScopeController::new()` documented "may initially
+  pop" but derived `Default` gave `can_pop: false`, so fresh scopes
+  silently blocked. Fresh scopes now default to may-pop like the
+  sibling nested handler and the platform convention; blocking is
+  opt-in. Existing tests set the flag explicitly and still pass.
+- Verified: scope replacement retargeting dispatch, callback swaps,
+  unmount unregistration, fallback replacement and hierarchy order,
+  bucket/scope replacement updating descendants, barrier options with
+  merged-button semantics, and window-chrome replacement/unmount.
+  Legacy `on_pop` callbacks alone never claim ownership — a pop
+  handler is required — locked as contract.
+- Wrappers group (26/26): menu descriptors, the menu-bar
+  controller/binding lifecycle, and window chrome. Mounting publishes
+  the binding without native calls; the adapter attaches through
+  `connect()`; reconciliation reinstalls; unmount detaches once held
+  clones (which keep the lease alive by design) drop. Unbound or
+  unsupported operations report explicit `NoOpUnsupported`/build
+  errors; duplicate ids fail installs without partial state.
+- Open follow-up (not this package): a non-dismissible barrier
+  excludes its whole subtree — including child content — from
+  semantics, while its docs speak only of the dismiss action.
+  Recorded as observed contract, not redesigned here.
+- Evidence: 17 tests in
+  `crates/incular-widgets/tests/navigation_platform_scopes.rs`
+  (reusing the navigation/window-chrome suites) plus
+  `specs/navigation_scopes_properties.json` /
+  `tests/navigation_scopes_ledger.rs` and
+  `specs/platform_wrappers_properties.json` /
+  `tests/platform_wrappers_ledger.rs`.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

@@ -1,0 +1,1035 @@
+{
+  "schema_version": 2,
+  "family": "PlatformWrappers",
+  "scope": "Platform-facing widget wrapper contracts: platform menu descriptors and the menu-bar controller/binding lifecycle, plus window chrome regions. Neutral wrapper behavior is separated from native execution: unbound or unsupported operations report explicit NoOpUnsupported or build-error results, never silent success. Holding a binding clone keeps its mount lease (and native attachment) alive by design. Router/transaction redesign stays with W4. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "MenuItemId",
+      "option": "id",
+      "default": "required by the constructor, no default",
+      "validation": "string carried verbatim; duplicates are rejected at snapshot build",
+      "comparison": {
+        "prose": "Stable command identity across installs; callback-only changes keep it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_duplicate_ids_are_rejected"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuShortcut",
+      "option": "key",
+      "default": "required by the constructor, no default",
+      "validation": "key string carried verbatim",
+      "comparison": {
+        "prose": "Shortcut descriptors ride item metadata; native dispatch stays with the host.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuShortcut",
+      "option": "modifiers",
+      "default": "none, bare key",
+      "validation": "modifier set carried verbatim and combinable",
+      "comparison": {
+        "prose": "Modifier flags compose through union; containment checks membership.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "label",
+      "default": "required by the constructor, no default",
+      "validation": "label carried verbatim",
+      "comparison": {
+        "prose": "Labels render natively; selection routes to the retained callback.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "dispatch"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "id",
+      "default": "none, items without ids cannot be addressed",
+      "validation": "optional id carried verbatim",
+      "comparison": {
+        "prose": "Dispatch, open, and close resolve by id; unknown ids report Unknown.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "dispatch"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "tooltip",
+      "default": "none, no tooltip",
+      "validation": "tooltip carried verbatim",
+      "comparison": {
+        "prose": "Tooltip metadata rides the item snapshot for native display.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "shortcut",
+      "default": "none, no shortcut",
+      "validation": "shortcut descriptor carried verbatim",
+      "comparison": {
+        "prose": "Shortcut metadata rides the item snapshot for native display.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "on_selected",
+      "default": "none, selection reports nowhere",
+      "validation": "Rc callback retained by the controller snapshot",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "struct",
+        "name": "NoopPlatformMenuDelegate"
+      },
+      "comparison": {
+        "prose": "Selection invokes the retained closure through dispatch; reinstalls with identical snapshots still commit new callbacks.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "dispatch"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "enabled",
+      "default": "enabled unless disabled",
+      "validation": "bool toggle carried verbatim",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "struct",
+        "name": "NoopPlatformMenuDelegate"
+      },
+      "comparison": {
+        "prose": "Disabled items render inert natively while staying addressable.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItem",
+      "option": "disabled",
+      "default": "n/a, shorthand disabling the item",
+      "validation": "delegates verbatim to the enabled toggle",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "struct",
+        "name": "NoopPlatformMenuDelegate"
+      },
+      "comparison": {
+        "prose": "Pure shorthand with identical snapshot behavior.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuItemGroup",
+      "option": "items",
+      "default": "required by the constructor, no default",
+      "validation": "item edges retained in declaration order",
+      "comparison": {
+        "prose": "Groups flatten into the snapshot with stable command identity.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "label",
+      "default": "required by constructors, no default",
+      "validation": "label carried verbatim",
+      "comparison": {
+        "prose": "Top-level labels render natively; open and close callbacks attach per menu.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "entries",
+      "default": "required by the constructor, no default",
+      "validation": "entry edges retained in declaration order",
+      "comparison": {
+        "prose": "Entries flatten into snapshot nodes with generated paths for anonymous ids.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "with_items",
+      "default": "n/a, constructor for a flat item list",
+      "validation": "delegates verbatim to the same construction",
+      "comparison": {
+        "prose": "Pure constructor shorthand.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "id",
+      "default": "none, a generated path id applies",
+      "validation": "optional id carried verbatim; duplicates are rejected",
+      "comparison": {
+        "prose": "Explicit ids address submenus; duplicate ids fail the install with an error, never partial state.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_duplicate_ids_are_rejected"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "tooltip",
+      "default": "none, no tooltip",
+      "validation": "tooltip carried verbatim",
+      "comparison": {
+        "prose": "Tooltip metadata rides the menu snapshot for native display.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_descriptors"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "on_open",
+      "default": "none, opening reports nowhere",
+      "validation": "Rc callback retained by the controller snapshot",
+      "comparison": {
+        "prose": "Open and close callbacks dispatch through the retained controller like selections.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenu",
+      "option": "on_close",
+      "default": "none, closing reports nowhere",
+      "validation": "Rc callback retained by the controller snapshot",
+      "comparison": {
+        "prose": "Open and close callbacks dispatch through the retained controller like selections.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuBarController",
+      "option": "delegate",
+      "default": "required by the constructor, no default",
+      "validation": "delegate handle carried verbatim; unbound delegates report unsupported explicitly",
+      "comparison": {
+        "prose": "Install acquires, sets the handler, and sets menus in order; detach clears, unsets, and releases in order; every unbound call reports NoOpUnsupported.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          },
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "detach"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_unbound_reports_unsupported"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_controller_lifecycle_with_delegate"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuBar",
+      "option": "menus",
+      "default": "required by constructors, no default",
+      "validation": "menu edges retained in declaration order",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "method",
+        "owner": "PlatformMenuBar",
+        "name": "into_widget"
+      },
+      "comparison": {
+        "prose": "Mounting publishes the binding without native calls; the adapter attaches later through connect, which installs.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/retained.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "platform_menu_bindings"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBar",
+            "name": "into_widget"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_bar_widget_mount_update_unmount"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuBar",
+      "option": "child",
+      "default": "required by the constructor, no default",
+      "validation": "visual child edge retained under the menu scope",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "method",
+        "owner": "PlatformMenuBar",
+        "name": "into_widget"
+      },
+      "comparison": {
+        "prose": "The child renders normally; the menu scope only adds the retained binding.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/retained.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "platform_menu_bindings"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBar",
+            "name": "into_widget"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_bar_widget_mount_update_unmount"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuBar",
+      "option": "with_delegate",
+      "default": "n/a, constructor arriving with a bound delegate",
+      "validation": "delegate bound at construction; installs succeed without a later attach",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "method",
+        "owner": "PlatformMenuBar",
+        "name": "into_widget"
+      },
+      "comparison": {
+        "prose": "Bound bars install eagerly on mount; default bars wait for connect. Reconciling menus reinstalls through the bound delegate; unmounting detaches once the lease drops.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "install"
+          },
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBarController",
+            "name": "detach"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBar",
+            "name": "into_widget"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_bar_construction_paths"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_bar_widget_mount_update_unmount"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "PlatformMenuBar",
+      "option": "without_child",
+      "default": "n/a, constructor with no visual child",
+      "validation": "childless bars lower a shrink placeholder",
+      "conversion": {
+        "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+        "kind": "method",
+        "owner": "PlatformMenuBar",
+        "name": "into_widget"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand; binding behavior matches the child form.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/retained.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "platform_menu_bindings"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/platform_widgets/menu.rs",
+            "kind": "method",
+            "owner": "PlatformMenuBar",
+            "name": "into_widget"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "platform_menu_bar_construction_paths"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WindowDragRegion",
+      "option": "child",
+      "default": "required by the constructor, no default",
+      "validation": "child edge retained; annotation survives child swaps",
+      "conversion": {
+        "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "WindowDragRegion"
+      },
+      "comparison": {
+        "prose": "The region annotates retained hit testing transparently; unmounting clears the annotation.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "WindowDragRegion"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "window_chrome_child_replacement_and_unmount"
+        },
+        {
+          "path": "crates/incular-widgets/tests/window_chrome.rs",
+          "name": "window_drag_region_is_a_transparent_retained_hit_annotation"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WindowResizeRegion",
+      "option": "direction",
+      "default": "required by the constructor, no default",
+      "validation": "direction carried verbatim; every variant lowers",
+      "conversion": {
+        "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "WindowResizeRegion"
+      },
+      "comparison": {
+        "prose": "Nested resize wins over the outer drag region; all eight directions survive lowering.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "WindowResizeRegion"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "window_chrome_child_replacement_and_unmount"
+        },
+        {
+          "path": "crates/incular-widgets/tests/window_chrome.rs",
+          "name": "nested_resize_region_wins_over_outer_drag_region"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WindowResizeRegion",
+      "option": "child",
+      "default": "required by the constructor, no default",
+      "validation": "child edge retained under the resize annotation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "WindowResizeRegion"
+      },
+      "comparison": {
+        "prose": "The child renders normally inside the annotated region.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/app_shell/window_chrome.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "WindowResizeRegion"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/raw_input.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "window_interaction_at"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/window_chrome.rs",
+          "name": "every_resize_direction_survives_descriptor_lowering"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

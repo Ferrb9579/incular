@@ -18,9 +18,23 @@ struct PopScopeState {
 }
 
 /// Retained state owner for [`PopScope`].
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct PopScopeController {
     state: Rc<RefCell<PopScopeState>>,
+}
+
+impl Default for PopScopeController {
+    /// A fresh scope may pop, matching the constructor contract, the
+    /// sibling nested handler, and the platform convention: blocking is
+    /// opt-in through [`Self::set_can_pop`], never the silent default.
+    fn default() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(PopScopeState {
+                can_pop: true,
+                callback: None,
+            })),
+        }
+    }
 }
 
 impl PopScopeController {
