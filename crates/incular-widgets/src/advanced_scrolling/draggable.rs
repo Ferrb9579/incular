@@ -482,8 +482,11 @@ impl<T> DraggableScrollableSheet<T> {
     /// Sets the fractional extent bounds and initial value.
     #[must_use]
     pub fn extents(mut self, min: f32, max: f32, initial: f32) -> Self {
-        assert!(min.is_finite() && max.is_finite() && initial.is_finite());
-        assert!(min >= 0.0 && min <= max && max <= 1.0 && initial >= min && initial <= max);
+        // Extent validation lives with DraggableSheetExtent::new, the
+        // authoritative source consumed at mount. Validate here too so
+        // misconfiguration fails at configuration time under the same
+        // predicate instead of drifting into a second copy.
+        let _ = DraggableSheetExtent::new(min, max, initial, self.should_close_on_min_extent);
         self.min_child_size = min;
         self.max_child_size = max;
         self.initial_child_size = initial;
@@ -856,18 +859,25 @@ impl DraggableScrollableState {
 
     /// Resets the sheet to its initial extent and returns whether state changed.
     pub fn reset(&self) -> bool {
+        // The report covers every observable reset mutates: a cancelled
+        // activity, a moved inner position, cleared drag/change flags, and
+        // the extent itself. Pixel height alone is not a change signal: it
+        // merely reflects the parent height, so consulting it reports true
+        // for pristine sheets and false for inner-only movement.
+        let had_activity = self.activity_generation().is_some();
         self.cancel_activity();
         let before = self.extent();
-        let _ = self.inner_controller().jump_to(0.0);
+        let inner_moved = self.inner_controller().jump_to(0.0);
+        // Clear the drag/change flags after restoring the extent: the
+        // restore itself flips has_changed through the shared setter, but
+        // a reset returns to pristine flags by contract.
+        let size_changed = self.set_size_internal(before.initial_size, false);
         {
             let mut state = self.state.borrow_mut();
             state.extent.has_dragged = false;
             state.extent.has_changed = false;
         }
-        let changed =
-            before.current_size != self.extent().initial_size || before.current_pixels() != 0.0;
-        let size_changed = self.set_size_internal(self.extent().initial_size, false);
-        changed || size_changed
+        had_activity || inner_moved || size_changed || before.has_dragged || before.has_changed
     }
 
     fn set_size_internal(&self, size: f32, user_drag: bool) -> bool {

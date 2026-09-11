@@ -1,0 +1,617 @@
+{
+  "schema_version": 2,
+  "family": "DraggableSheet",
+  "scope": "Seventh scrolling group: the draggable sheet extent model, its configured sheet, and its mounted state. The &mut self state setters (parent height, inner extents/physics, parent controllers, listeners, actuator) and activity tokens are exercised behaviorally; the ledger tracks constructor inputs and fluent Self-returning options per its discovery rule. Extent validation is centralized at DraggableSheetExtent::new; snap animations are caller-driven handles where dropping supersedes. One controller across unrelated sheets stays a W5 gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "DraggableSheetExtent",
+      "option": "min_size",
+      "default": "required, fractional lower bound within 0..=1",
+      "validation": "negative minima and minima above the maximum are rejected",
+      "comparison": {
+        "prose": "Single authoritative predicate owned by the extent constructor; the sheet builder validates through it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableSheet",
+            "name": "extents"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_rejects_min_above_max"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_extent_owner_rejects_negative_min"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableSheetExtent",
+      "option": "max_size",
+      "default": "required, fractional upper bound within 0..=1",
+      "validation": "maxima above one or below the minimum are rejected",
+      "comparison": {
+        "prose": "Pixel conversion scales through max_size, so fractions and pixels share one source instead of synchronized copies.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetExtent",
+            "name": "size_to_pixels"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_rejects_max_above_one"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableSheetExtent",
+      "option": "initial_size",
+      "default": "required, starting fraction within the bounds",
+      "validation": "out-of-range initials are rejected; reset restores this value with pristine flags",
+      "comparison": {
+        "prose": "Reset reports genuine change (cancelled activity, moved inner position, cleared flags, moved extent) instead of consulting pixel height.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "reset"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "reset"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_rejects_initial_above_max"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_reset_reports_genuine_change"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableSheetExtent",
+      "option": "should_close_on_min_extent",
+      "default": "required, close-on-minimum notification behavior",
+      "validation": "carried verbatim into every extent notification",
+      "comparison": {
+        "prose": "Pure notification payload alongside min/max/extent/initial values.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "set_size"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "set_size"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_notifications_carry_full_state_and_unsubscribe"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableSheet",
+      "option": "builder",
+      "default": "required, child factory over the inner scroll controller",
+      "validation": "builder swaps rebuild the mounted child; identical builders keep it",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "DraggableScrollableSheet"
+      },
+      "comparison": {
+        "prose": "Child replacement publishes new content and semantics while the fractional size survives the swap.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ],
+        "semantics": [
+          {
+            "path": "crates/incular-widgets/src/tree/semantics.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "update_semantics"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_retained_replacement_geometry_hit_and_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableSheet",
+      "option": "extents",
+      "default": "0.25 minimum, 1.0 maximum, 0.5 initial",
+      "validation": "validated through the extent owner at configuration time; mounted replacement clamps live size",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "DraggableScrollableSheet"
+      },
+      "comparison": {
+        "prose": "Defaults equal the explicit spelling; mounted updates preserve drag flags and pixel scale while clamping.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ],
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_builder_defaults_match_explicit_configuration"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_retained_replacement_geometry_hit_and_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableSheet",
+      "option": "expand",
+      "default": "expanded, the sheet fills unused parent space",
+      "validation": "expansion fills the viewport height; fitted sheets wrap the fractional child height",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "DraggableScrollableSheet"
+      },
+      "comparison": {
+        "prose": "Retained layout reads the flag every pass; the fractional model is untouched by it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableSheet",
+            "name": "expands"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableSheet",
+            "name": "expands"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_expansion_policy_controls_retained_height"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableSheet",
+      "option": "should_close_on_min_extent",
+      "default": "close on minimum",
+      "validation": "carried into the extent model and every notification",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "DraggableScrollableSheet"
+      },
+      "comparison": {
+        "prose": "Configuration-time flag with the same predicate as the extent owner.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "set_size"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "set_size"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_notifications_carry_full_state_and_unsubscribe"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableSheet",
+      "option": "snap",
+      "default": "disabled, releases settle without snapping",
+      "validation": "out-of-range sizes drop; survivors sort and dedup; velocity picks directionally, rest picks nearest",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "DraggableScrollableSheet"
+      },
+      "comparison": {
+        "prose": "Min/max anchor the point set implicitly; animations start from the live size and dropping a handle supersedes it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "snap_target"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "snap_now"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_snap_filters_sorts_and_dedups"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_snap_animation_interruption_starts_from_current"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "min_child_size",
+      "default": "required, fractional lower bound",
+      "validation": "drags at the minimum hand off to the inner list and parents instead of resizing",
+      "comparison": {
+        "prose": "Boundary handoff accounts every delta across sheet, inner, parent, and unconsumed portions exactly once.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_boundary_handoff_accounts_every_delta"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "max_child_size",
+      "default": "required, fractional upper bound",
+      "validation": "pinned sheets hand opening drags to the inner list; pixel scale derives from it",
+      "comparison": {
+        "prose": "Fractions stay authoritative: pixels convert through max_size on demand, never as stored copies.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "apply_user_offset"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/tree/painting.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "hit_test"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_boundary_handoff_accounts_every_delta"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_retained_replacement_geometry_hit_and_semantics"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "initial_child_size",
+      "default": "required, starting and reset fraction",
+      "validation": "mount starts here; reset restores here with pristine flags",
+      "comparison": {
+        "prose": "Mount and reset share the initial value; replacement preserves the live size instead of re-applying it.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "reset"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_reset_reports_genuine_change"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "should_close_on_min_extent",
+      "default": "required, close-on-minimum notification behavior",
+      "validation": "survives mounted replacement alongside the live size",
+      "comparison": {
+        "prose": "Reconfiguration carries the flag into the rebuilt extent model verbatim.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_notifications_carry_full_state_and_unsubscribe"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "snap",
+      "default": "required, snap configuration snapshot",
+      "validation": "replacement swaps the snap set; activity tokens guard drag sequences",
+      "comparison": {
+        "prose": "Start/cancel tokens bracket activity; dropping mounted state detaches its controller even mid-activity.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "start_activity"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableState",
+            "name": "snap_now"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_snap_animation_interruption_starts_from_current"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_activity_lifecycle_and_unmount_detach"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "DraggableScrollableState",
+      "option": "controller",
+      "default": "required, handle attached at mount",
+      "validation": "replacement detaches the old handle and attaches the new one; unmount detaches; detached paths report explicitly",
+      "comparison": {
+        "prose": "Weak-lease attachment like the platform bindings: held clones keep nothing alive, drops detach, and detached calls fail instead of succeeding silently.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableScrollableController",
+            "name": "is_attached"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
+            "kind": "method",
+            "owner": "DraggableSheetConfig",
+            "name": "update_mounted_state"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_activity_lifecycle_and_unmount_detach"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_detached_controller_paths_stay_explicit"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_retained_replacement_geometry_hit_and_semantics"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}
