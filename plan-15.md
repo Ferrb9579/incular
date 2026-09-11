@@ -1133,7 +1133,7 @@ the table wins.
 | Baseline / AspectRatio / Fractional / Fitted | 10/10 | none known | `specs/baseline_aspect_fractional_properties.json`, `tests/baseline_aspect_fractional_ledger.rs` | complete |
 | Scrolling (ScrollView/RawScrollbar/Reorderable/slivers) | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
-| Images (Image/RawImage/ImageIcon) | 19/19 | tint is modulate, not full srcIn, on multi-color art | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
+| Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
 | Navigation scopes | not inventoried | none yet | none yet | open |
 | Platform wrappers | not inventoried | none yet | none yet | open |
@@ -1233,23 +1233,26 @@ the table wins.
   it threads through `WidgetKind`/`RenderKind` and is layout-only, so
   the decoded handle is never duplicated and identical reapplication
   still bails out.
-- Tint reuses the retained color-matrix layer with a new
-  `ColorFilter::modulate` at its owner (no ShaderMask shortcut):
-  component-wise over straight RGBA, preserving alpha. `RawImage.color`
-  and `ImageIcon.color` now wrap the image in that layer; the decoded
-  source identity is unchanged on tint changes. Real-GPU execution is
-  proven by a live native pixel regression that captures the center
-  pixel as exactly `[255, 0, 0, 255]` for opaque white tinted red.
-- Documented limitation: a straight-alpha 4x5 matrix cannot output a
-  source-independent constant color, so the tint modulates rather than
-  fully flattening multi-color art; it is exact for single-color mask
-  art (the intended icon case).
-- Evidence: 5 new neutral tests in
-  `crates/incular-widgets/tests/image_layout.rs` (scale mapping and
-  invalidity, scale layout-only without re-decode, RawImage tint layer,
-  ImageIcon tint, tint replacement), the color-filter helper coverage
-  in `crates/incular-rendering/tests/rendering.rs`, and the live
-  `crates/incular-desktop/tests/image_tint_execution.rs`.
+- Tint is a constant-color recolor (`R' = tint.r`, `G' = tint.g`,
+  `B' = tint.b`, `A' = source.a * tint.a` in straight RGBA),
+  expressed through the RGB bias column and alpha row of a 4x5 matrix
+  whose convention the WGSL shader and `ColorFilter::apply` share
+  (verified row-by-row). `RawImage.color` tints the decoded source;
+  `ImageIcon.color` is the flat icon recolor. Both reuse the retained
+  color-matrix layer (no ShaderMask shortcut); the decoded source
+  identity is unchanged on tint changes. `ColorFilter::modulate`
+  remains as an independent primitive for white-mask multiplication
+  only. The earlier "matrix cannot flatten" limitation is withdrawn:
+  it confused coefficients with biases.
+- Evidence: neutral CPU equations in
+  `crates/incular-rendering/tests/rendering.rs` (white/black/colored
+  flatten, transparent and partial-alpha gating), filter-identity
+  assertions in `crates/incular-widgets/tests/image_layout.rs`
+  (black/green/transparent/partial sources share one tint filter),
+  and live hardware pixels in
+  `crates/incular-desktop/tests/image_tint_execution.rs` (opaque
+  white/black/green flatten exactly, transparent shows the
+  background, both partial-alpha cases composite to computed values).
 
 ## W3 — Intrinsic steps and constraint-transform clipping (same workstream, still open)
 

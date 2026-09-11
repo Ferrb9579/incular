@@ -692,7 +692,7 @@
       "symbol": "RawImage",
       "option": "color",
       "default": "none",
-      "validation": "stored and forwarded as a ColorFilter::modulate layer over the image; the decoded handle is unchanged",
+      "validation": "stored and forwarded as a ColorFilter::tint layer over the decoded image; the decoded handle is unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/painting_effects/images.rs",
         "kind": "trait_impl",
@@ -707,13 +707,13 @@
         "name": "Image"
       },
       "comparison": {
-        "prose": "Tint reuses the retained color-matrix layer: component-wise modulate over straight RGBA. On single-color mask art it reproduces a flat recolor; on arbitrary multi-color art it modulates (a straight-alpha 4x5 matrix cannot output source-independent constant RGB). GPU execution verified by the live pixel test.",
+        "prose": "Tint contract: flat constant-color recolor (R' = tint.r, G' = tint.g, B' = tint.b, A' = source.a * tint.a in straight RGBA), reusing the retained color-matrix layer whose bias convention the shader and ColorFilter::apply share. Opaque white, black, and colored art all flatten; transparent sources stay transparent; partial alpha composites. Proven at neutral level and on hardware.",
         "refs": [
           {
             "path": "crates/incular-rendering/src/effects.rs",
             "kind": "method",
             "owner": "ColorFilter",
-            "name": "modulate"
+            "name": "tint"
           },
           {
             "path": "crates/incular-widgets/src/render_object/layers.rs",
@@ -741,15 +741,11 @@
         },
         {
           "path": "crates/incular-widgets/tests/image_layout.rs",
-          "name": "image_icon_tint_and_scale_default"
-        },
-        {
-          "path": "crates/incular-widgets/tests/image_layout.rs",
           "name": "tint_replacement_updates_the_retained_filter"
         },
         {
           "path": "crates/incular-rendering/tests/rendering.rs",
-          "name": "color_filter_helpers_cover_identity_alpha_and_common_adjustments"
+          "name": "color_filter_tint_matches_constant_color_equations"
         }
       ]
     },
@@ -948,7 +944,7 @@
       "symbol": "ImageIcon",
       "option": "color",
       "default": "none",
-      "validation": "stored and forwarded as a ColorFilter::modulate layer over the square image; the decoded handle is unchanged",
+      "validation": "stored and forwarded as a ColorFilter::tint layer over the square image; the decoded handle is unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/painting_effects/images.rs",
         "kind": "trait_impl",
@@ -963,13 +959,13 @@
         "name": "Image"
       },
       "comparison": {
-        "prose": "Shared with RawImage: ImageIcon wraps the image in the retained color-matrix layer, no second decoded image.",
+        "prose": "Icon recolor contract: flat constant-color tint matching srcIn blend behavior, sharing RawImage's color-matrix layer.",
         "refs": [
           {
             "path": "crates/incular-rendering/src/effects.rs",
             "kind": "method",
             "owner": "ColorFilter",
-            "name": "modulate"
+            "name": "tint"
           }
         ]
       },
@@ -988,6 +984,10 @@
         {
           "path": "crates/incular-widgets/tests/image_layout.rs",
           "name": "image_icon_tint_and_scale_default"
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "name": "color_filter_tint_matches_constant_color_equations"
         }
       ]
     }

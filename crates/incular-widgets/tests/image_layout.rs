@@ -19,6 +19,21 @@ fn handle(width: u32, height: u32) -> ImageHandle {
     ImageHandle::from_rgba8(width, height, pixels).expect("handle")
 }
 
+fn opaque(red: u8, green: u8, blue: u8) -> (u8, u8, u8, u8) {
+    (red, green, blue, 255)
+}
+
+fn rgba_handle(
+    width: u32,
+    height: u32,
+    (red, green, blue, alpha): (u8, u8, u8, u8),
+) -> ImageHandle {
+    let pixels: Vec<u8> = (0..width * height)
+        .flat_map(|_| [red, green, blue, alpha])
+        .collect();
+    ImageHandle::from_rgba8(width, height, pixels).expect("handle")
+}
+
 fn layout(
     build: impl FnOnce() -> Widget,
     constraints: Constraints,
@@ -366,6 +381,61 @@ fn raw_image_tint_uses_a_color_matrix_layer() {
             .iter()
             .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
     );
+
+    // The attached filter is exactly the constant-color tint, not a
+    // modulation: dark and colored sources flatten to the same filter.
+    for source in [opaque(255, 255, 255), opaque(0, 0, 0), opaque(0, 255, 0)] {
+        let mut tree = WidgetTree::new();
+        tree.mount(
+            RawImage::new()
+                .image(rgba_handle(2, 2, source))
+                .width(16.)
+                .height(16.)
+                .color(Color::rgba(255, 0, 0, 255))
+                .into(),
+        )
+        .expect("mount");
+        tree.layout(Constraints::loose(Size::new(16., 16.)))
+            .expect("layout");
+        let filter = tree
+            .paint()
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                PaintCommand::PushColorFilter { filter, .. } => Some(*filter),
+                _ => None,
+            })
+            .expect("tint filter for every source");
+        assert_eq!(
+            filter,
+            incular_rendering::ColorFilter::tint(Color::rgba(255, 0, 0, 255)),
+            "source {source:?} flattens through the same tint"
+        );
+    }
+
+    // Transparent and partially transparent sources keep the layer: the
+    // matrix gates coverage through alpha, so no special-casing applies.
+    for alpha in [0, 128] {
+        let mut tree = WidgetTree::new();
+        tree.mount(
+            RawImage::new()
+                .image(rgba_handle(2, 2, (255, 255, 255, alpha)))
+                .width(16.)
+                .height(16.)
+                .color(Color::rgba(255, 0, 0, 255))
+                .into(),
+        )
+        .expect("mount");
+        tree.layout(Constraints::loose(Size::new(16., 16.)))
+            .expect("layout");
+        assert!(
+            tree.paint()
+                .commands()
+                .iter()
+                .any(|command| matches!(command, PaintCommand::PushColorFilter { .. })),
+            "tint layer persists at alpha {alpha}"
+        );
+    }
 
     // No tint: no color-filter layer.
     let mut plain = WidgetTree::new();

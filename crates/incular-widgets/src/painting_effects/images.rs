@@ -113,11 +113,14 @@ impl From<RawImage> for Widget {
                     img = img.height(h);
                 }
                 let image: Widget = img.into();
-                // A tint reuses the retained color-matrix layer, so the
-                // decoded handle is unchanged and no second image is built.
+                // Tint contract: a flat constant-color recolor of the decoded
+                // source (opaque white, black, or colored art all flatten to
+                // the tint; coverage follows source alpha times tint alpha).
+                // It reuses the retained color-matrix layer, so the decoded
+                // handle is unchanged and no second image is built.
                 match value.color {
                     Some(color) => crate::ColorFiltered::new(
-                        incular_rendering::ColorFilter::modulate(color),
+                        incular_rendering::ColorFilter::tint(color),
                         image,
                     )
                     .into(),
@@ -176,12 +179,12 @@ impl From<ImageIcon> for Widget {
             .height(size)
             .fit(ImageFit::Contain)
             .into();
-        // Tint as a retained color-matrix layer, sharing RawImage's
-        // mechanism; the source handle is untouched.
+        // Icon recolor contract: a flat constant-color tint matching the
+        // `srcIn` blend behavior, sharing RawImage's color-matrix layer;
+        // the source handle is untouched.
         match value.color {
             Some(color) => {
-                crate::ColorFiltered::new(incular_rendering::ColorFilter::modulate(color), image)
-                    .into()
+                crate::ColorFiltered::new(incular_rendering::ColorFilter::tint(color), image).into()
             }
             None => image,
         }

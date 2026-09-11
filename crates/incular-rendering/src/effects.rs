@@ -283,17 +283,29 @@ impl ColorFilter {
             0.,
         ])
     }
-    /// Component-wise tint: every straight channel is multiplied by the
-    /// color's straight linear components, including alpha. On single-color
-    /// mask art (the intended image-tint case) this reproduces a flat
-    /// `srcIn` recolor while preserving coverage; on arbitrary multi-color
-    /// art it modulates rather than flattening, since a straight-alpha 4x5
-    /// matrix cannot output a source-independent constant RGB.
+    /// Component-wise modulation: every straight channel is multiplied by
+    /// the color's straight linear components, including alpha. This
+    /// recolors only white masks; it is not a flat tint (see [`Self::tint`]).
     #[must_use]
     pub fn modulate(color: Color) -> Self {
         let [red, green, blue, alpha] = color.to_linear_rgba();
         Self::matrix([
             red, 0., 0., 0., 0., 0., green, 0., 0., 0., 0., 0., blue, 0., 0., 0., 0., 0., alpha, 0.,
+        ])
+    }
+    /// Constant-color tint in straight RGBA: `R' = tint.r`, `G' = tint.g`,
+    /// `B' = tint.b`, `A' = source.a * tint.a`.
+    ///
+    /// A 4x5 matrix expresses this through the RGB bias column and the
+    /// alpha row's source-alpha coefficient; the shader and [`Self::apply`]
+    /// share that bias convention, so both agree. Transparent sources stay
+    /// transparent: zero source alpha yields zero straight RGB, and the
+    /// biased RGB is multiplied back by the zero alpha at output.
+    #[must_use]
+    pub fn tint(color: Color) -> Self {
+        let [red, green, blue, alpha] = color.to_linear_rgba();
+        Self::matrix([
+            0., 0., 0., 0., red, 0., 0., 0., 0., green, 0., 0., 0., 0., blue, 0., 0., 0., alpha, 0.,
         ])
     }
     /// Opacity changes alpha only; RGB remains straight and is premultiplied

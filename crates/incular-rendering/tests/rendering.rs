@@ -629,7 +629,8 @@ fn color_filter_helpers_cover_identity_alpha_and_common_adjustments() {
     assert_eq!(ColorFilter::opacity(0.).apply(sample), [0., 0., 0., 0.]);
     let transparent = ColorFilter::invert(1.).apply([1., 0.5, 0.25, 0.]);
     assert_eq!(transparent, [0., 0., 0., 0.]);
-    // Component-wise modulate keeps alpha and scales RGB by the tint.
+    // Component-wise modulate keeps alpha and scales RGB by the tint; it
+    // recolors white masks only, not arbitrary art.
     let red = Color::rgba(255, 0, 0, 255);
     assert_eq!(
         ColorFilter::modulate(red).apply([1., 1., 1., 1.]),
@@ -644,6 +645,41 @@ fn color_filter_helpers_cover_identity_alpha_and_common_adjustments() {
     for value in ColorFilter::matrix([f32::NAN; 20]).apply(sample) {
         assert!(value.is_finite());
     }
+}
+
+#[test]
+fn color_filter_tint_matches_constant_color_equations() {
+    fn close(actual: [f32; 4], expected: [f32; 4]) {
+        for (index, (got, want)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-5,
+                "channel {index}: got {actual:?}, want {expected:?}"
+            );
+        }
+    }
+    let red = Color::rgba(255, 0, 0, 255);
+    let tint = ColorFilter::tint(red);
+    // Opaque white, black, and colored sources all flatten to the tint:
+    // R' = tint.r, G' = tint.g, B' = tint.b, A' = source.a * tint.a.
+    close(tint.apply([1., 1., 1., 1.]), [1., 0., 0., 1.]);
+    close(tint.apply([0., 0., 0., 1.]), [1., 0., 0., 1.]);
+    close(tint.apply([0., 1., 0., 1.]), [1., 0., 0., 1.]);
+    // Transparent sources stay transparent: biased RGB is multiplied back
+    // by the zero alpha at output.
+    close(tint.apply([0., 0., 0., 0.]), [0., 0., 0., 0.]);
+    close(tint.apply([1., 1., 1., 0.]), [0., 0., 0., 0.]);
+    // Partially transparent source: RGB is the tint, alpha is scaled.
+    close(tint.apply([1., 1., 1., 0.5]), [1., 0., 0., 0.5]);
+    // Partially transparent tint scales both the flat RGB presence and
+    // the coverage: A' = source.a * tint.a.
+    let half_red = ColorFilter::tint(Color::rgba(255, 0, 0, 128));
+    let tinted = half_red.apply([1., 1., 1., 1.]);
+    let expected_alpha = Color::rgba(255, 0, 0, 128).to_linear_rgba()[3];
+    close(tinted, [1., 0., 0., expected_alpha]);
+    // A half-transparent colored source still flattens to the tint RGB;
+    // only coverage scales: A' = source.a * tint.a with alpha linear.
+    let half_source = half_red.apply([0., 0., 1., 0.5]);
+    close(half_source, [1., 0., 0., 0.5 * (128. / 255.)]);
 }
 
 #[test]
