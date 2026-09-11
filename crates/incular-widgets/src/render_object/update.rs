@@ -84,15 +84,20 @@ fn image_paint_only_change(old: &RenderKind, new: &RenderKind) -> bool {
                 image: old_image,
                 width: old_width,
                 height: old_height,
+                scale: old_scale,
                 ..
             },
             RenderKind::Image {
                 image: new_image,
                 width: new_width,
                 height: new_height,
+                scale: new_scale,
                 ..
             }
-        ) if old_image == new_image && old_width == new_width && old_height == new_height
+        ) if old_image == new_image
+            && old_width == new_width
+            && old_height == new_height
+            && old_scale == new_scale
     )
 }
 

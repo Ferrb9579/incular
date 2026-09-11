@@ -35,6 +35,7 @@ pub struct Image {
     image: ImageHandle,
     width: Option<f32>,
     height: Option<f32>,
+    scale: f32,
     fit: ImageFit,
     repeat: ImageRepeat,
     alignment: Alignment,
@@ -47,6 +48,7 @@ impl Image {
             image,
             width: None,
             height: None,
+            scale: 1.0,
             fit: ImageFit::Contain,
             repeat: ImageRepeat::NoRepeat,
             alignment: Alignment::CENTER,
@@ -65,6 +67,20 @@ impl Image {
     #[must_use]
     pub fn height(mut self, height: f32) -> Self {
         self.height = Some(height.max(0.0));
+        self
+    }
+    /// Sets the mapping from source pixels to intrinsic logical size: a
+    /// scale of `n` reports each `n` source pixels as one logical pixel, so
+    /// the intrinsic size is the decoded size divided by `n`. Values are
+    /// floored to a small positive epsilon; explicit width/height still win
+    /// when present. Scale never alters the source identity.
+    #[must_use]
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = if scale.is_finite() && scale > 0.0 {
+            scale.max(0.001)
+        } else {
+            1.0
+        };
         self
     }
     #[must_use]
@@ -101,6 +117,7 @@ impl From<Image> for Widget {
             value.image,
             value.width,
             value.height,
+            value.scale,
             value.fit,
             value.repeat,
             value.alignment,

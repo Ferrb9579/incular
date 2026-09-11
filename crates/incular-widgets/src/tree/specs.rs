@@ -256,6 +256,7 @@ pub(crate) enum WidgetKind {
         image: ImageHandle,
         width: Option<f32>,
         height: Option<f32>,
+        scale: f32,
         fit: ImageFit,
         repeat: ImageRepeat,
         alignment: Alignment,

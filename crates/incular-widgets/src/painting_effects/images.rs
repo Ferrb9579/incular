@@ -102,14 +102,27 @@ impl From<RawImage> for Widget {
     fn from(value: RawImage) -> Self {
         match value.image {
             Some(handle) => {
-                let mut img = Image::new(handle).fit(value.fit).repeat(value.repeat);
+                let mut img = Image::new(handle)
+                    .scale(value.scale)
+                    .fit(value.fit)
+                    .repeat(value.repeat);
                 if let Some(w) = value.width {
                     img = img.width(w);
                 }
                 if let Some(h) = value.height {
                     img = img.height(h);
                 }
-                img.into()
+                let image: Widget = img.into();
+                // A tint reuses the retained color-matrix layer, so the
+                // decoded handle is unchanged and no second image is built.
+                match value.color {
+                    Some(color) => crate::ColorFiltered::new(
+                        incular_rendering::ColorFilter::modulate(color),
+                        image,
+                    )
+                    .into(),
+                    None => image,
+                }
             }
             None => crate::layout::SizedBox::new()
                 .width(value.width.unwrap_or(0.0))
@@ -158,11 +171,20 @@ impl ImageIcon {
 impl From<ImageIcon> for Widget {
     fn from(value: ImageIcon) -> Self {
         let size = value.size.unwrap_or(24.0);
-        Image::new(value.image)
+        let image: Widget = Image::new(value.image)
             .width(size)
             .height(size)
             .fit(ImageFit::Contain)
-            .into()
+            .into();
+        // Tint as a retained color-matrix layer, sharing RawImage's
+        // mechanism; the source handle is untouched.
+        match value.color {
+            Some(color) => {
+                crate::ColorFiltered::new(incular_rendering::ColorFilter::modulate(color), image)
+                    .into()
+            }
+            None => image,
+        }
     }
 }
 

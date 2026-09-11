@@ -55,15 +55,22 @@ impl WidgetTree {
                 image,
                 width,
                 height,
+                scale,
                 ..
             } => {
+                // `scale` maps source pixels to intrinsic logical size:
+                // logical = decoded / scale. Explicit width/height win when
+                // present. The source handle is untouched, so scale changes
+                // never re-decode.
                 let intrinsic = image.decoded();
-                let ratio = intrinsic.width() as f32 / intrinsic.height() as f32;
+                let natural_w = intrinsic.width() as f32 / scale;
+                let natural_h = intrinsic.height() as f32 / scale;
+                let ratio = natural_w / natural_h;
                 let natural = match (width, height) {
                     (Some(w), Some(h)) => Size::new(w, h),
                     (Some(w), None) => Size::new(w, w / ratio),
                     (None, Some(h)) => Size::new(h * ratio, h),
-                    (None, None) => Size::new(intrinsic.width() as f32, intrinsic.height() as f32),
+                    (None, None) => Size::new(natural_w, natural_h),
                 };
                 (constraints.constrain(natural), Vec::new())
             }

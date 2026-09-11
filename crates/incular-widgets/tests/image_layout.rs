@@ -281,6 +281,194 @@ fn raw_image_lowering_matches_direct_image() {
 }
 
 #[test]
+fn scale_maps_source_pixels_to_intrinsic_size() {
+    // A 40x20 source at scale 2 reports 20x10 logical intrinsic size while
+    // the handle (and therefore image identity) is unchanged.
+    let shared = handle(40, 20);
+    let (tree, root) = layout(
+        || Image::new(shared.clone()).scale(2.).into(),
+        Constraints::loose(Size::new(100., 100.)),
+    );
+    assert_eq!(bounds(&tree, root), (0., 0., 20., 10.));
+    assert_eq!(root, tree.root().expect("root"));
+
+    // Explicit width still wins over scale; height derives from ratio.
+    let (tree, root) = layout(
+        || Image::new(shared.clone()).scale(2.).width(80.).into(),
+        Constraints::loose(Size::new(200., 200.)),
+    );
+    assert_eq!(bounds(&tree, root), (0., 0., 80., 40.));
+
+    // Invalid scale (zero, negative, non-finite) falls back to 1.
+    for bad in [0., -3., f32::NAN, f32::INFINITY] {
+        let (tree, root) = layout(
+            || Image::new(shared.clone()).scale(bad).into(),
+            Constraints::loose(Size::new(200., 200.)),
+        );
+        assert_eq!(bounds(&tree, root), (0., 0., 40., 20.), "scale {bad}");
+    }
+}
+
+#[test]
+fn raw_image_scale_lowers_without_rebuilding_source() {
+    use incular_widgets::RawImage;
+    let shared = handle(40, 20);
+    let built = RawImage::new().image(shared.clone()).scale(4.);
+    let direct = Image::new(shared.clone()).scale(4.);
+    assert_eq!(Widget::from(built), Widget::from(direct));
+
+    // Changing scale is layout-only: no new decoded image, the paint
+    // command keeps the same handle.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Image::new(shared.clone()).scale(1.).into())
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let before = image_commands(&tree.paint())[0].1;
+    assert_eq!(before.size, Size::new(40., 20.));
+
+    let layouts = tree.diagnostics().layouts;
+    tree.update(root, Image::new(shared.clone()).scale(2.).into())
+        .expect("rescale");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(image_commands(&tree.paint())[0].1.size, Size::new(20., 10.));
+    assert_eq!(tree.diagnostics().layouts, layouts + 1);
+}
+
+#[test]
+fn raw_image_tint_uses_a_color_matrix_layer() {
+    use incular_rendering::PaintCommand;
+    use incular_widgets::RawImage;
+
+    let mut tree = WidgetTree::new();
+    tree.mount(
+        RawImage::new()
+            .image(handle(8, 8))
+            .width(16.)
+            .height(16.)
+            .color(Color::rgba(255, 0, 0, 255))
+            .into(),
+    )
+    .expect("mount");
+    tree.layout(Constraints::loose(Size::new(16., 16.)))
+        .expect("layout");
+    // The tint is a retained color-filter layer, not a paint property, so
+    // it is visible in the compositor tree and the image command is intact.
+    assert!(
+        tree.compositor_debug_tree().contains("ColorFilter"),
+        "tint attaches a color-filter layer"
+    );
+    assert!(
+        tree.paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
+    );
+
+    // No tint: no color-filter layer.
+    let mut plain = WidgetTree::new();
+    plain
+        .mount(
+            RawImage::new()
+                .image(handle(8, 8))
+                .width(16.)
+                .height(16.)
+                .into(),
+        )
+        .expect("mount");
+    plain
+        .layout(Constraints::loose(Size::new(16., 16.)))
+        .expect("layout");
+    assert!(
+        !plain
+            .paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
+    );
+}
+
+#[test]
+fn image_icon_tint_and_scale_default() {
+    use incular_rendering::PaintCommand;
+    use incular_widgets::ImageIcon;
+    let shared = handle(24, 24);
+    // ImageIcon with tint wraps the square image in the color matrix.
+    let mut tree = WidgetTree::new();
+    tree.mount(
+        ImageIcon::new(shared.clone())
+            .size(32.)
+            .color(Color::rgba(0, 128, 255, 255))
+            .into(),
+    )
+    .expect("mount");
+    tree.layout(Constraints::loose(Size::new(32., 32.)))
+        .expect("layout");
+    assert!(
+        tree.paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
+    );
+    // Untinted ImageIcon stays a plain image.
+    let mut plain = WidgetTree::new();
+    plain
+        .mount(ImageIcon::new(shared).size(32.).into())
+        .expect("mount");
+    plain
+        .layout(Constraints::loose(Size::new(32., 32.)))
+        .expect("layout");
+    assert!(
+        !plain
+            .paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
+    );
+}
+
+#[test]
+fn tint_replacement_updates_the_retained_filter() {
+    use incular_rendering::PaintCommand;
+    use incular_widgets::RawImage;
+    let shared = handle(8, 8);
+    let build = |color| {
+        Widget::from(
+            RawImage::new()
+                .image(shared.clone())
+                .width(16.)
+                .height(16.)
+                .color(color),
+        )
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(build(Color::rgba(255, 0, 0, 255)))
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(16., 16.)))
+        .expect("layout");
+    let _ = tree.paint();
+    // Replacing the tint is compositor-only: the filter updates in place
+    // and the image command survives.
+    tree.update(root, build(Color::rgba(0, 0, 255, 255)))
+        .expect("replace tint");
+    tree.layout(Constraints::loose(Size::new(16., 16.)))
+        .expect("layout");
+    let changed = tree
+        .update_compositor(std::time::Instant::now())
+        .expect("compositor");
+    assert!(changed.0);
+    assert!(
+        tree.paint()
+            .commands()
+            .iter()
+            .any(|command| matches!(command, PaintCommand::PushColorFilter { .. }))
+    );
+}
+
+#[test]
 fn repeat_tiles_within_bounds() {
     // A 20x20 image in a 50x50 box repeats on both axes.
     let mut tree = WidgetTree::new();

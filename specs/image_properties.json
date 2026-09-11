@@ -195,6 +195,57 @@
     },
     {
       "symbol": "Image",
+      "option": "scale",
+      "default": "1.0",
+      "validation": "finite positive values kept (floored to 0.001); zero, negative, and non-finite fall back to 1.0; explicit width/height still win; the source handle is unchanged so scale never re-decodes",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/descriptors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "Image"
+      },
+      "retained_owner": {
+        "path": "crates/incular-widgets/src/tree/specs.rs",
+        "kind": "variant",
+        "owner": "WidgetKind",
+        "name": "Image"
+      },
+      "comparison": {
+        "prose": "Layout divides decoded pixel dimensions by scale to report intrinsic logical size; changing scale is layout-only and preserves the image identity.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/render_object/update.rs",
+            "kind": "method",
+            "owner": "RenderObjectPayload",
+            "name": "update_kind"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "scale_maps_source_pixels_to_intrinsic_size"
+        },
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "raw_image_scale_lowers_without_rebuilding_source"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "Image",
       "option": "fit",
       "default": "Contain",
       "validation": "enum setter, no normalization; resolution happens at paint through image_fit_rects",
@@ -583,7 +634,7 @@
       "symbol": "RawImage",
       "option": "scale",
       "default": "1.0, floored to 0.001 by builder and setter",
-      "validation": "stored and floored, but From<RawImage> never reads it: intrinsic scaling is not applied",
+      "validation": "floored to 0.001 by builder and setter; forwarded to Image::scale so intrinsic logical size is decoded/scale",
       "conversion": {
         "path": "crates/incular-widgets/src/painting_effects/images.rs",
         "kind": "trait_impl",
@@ -598,7 +649,7 @@
         "name": "Image"
       },
       "comparison": {
-        "prose": "Recorded as stored configuration without behavior: no retained path divides intrinsic dimensions by scale, so the option is unresolved rather than implemented.",
+        "prose": "RawImage forwards scale to the Image descriptor; the decoded handle is untouched, so scale changes are layout-only.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/painting_effects/images.rs",
@@ -606,16 +657,42 @@
             "trait": "From",
             "target": "Widget",
             "source": "RawImage"
+          },
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/tree/layout/behavior/text.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "layout_text_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "scale_maps_source_pixels_to_intrinsic_size"
+        },
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "raw_image_scale_lowers_without_rebuilding_source"
+        }
+      ]
     },
     {
       "symbol": "RawImage",
       "option": "color",
       "default": "none",
-      "validation": "stored but From<RawImage> never reads it: no tint is applied",
+      "validation": "stored and forwarded as a ColorFilter::modulate layer over the image; the decoded handle is unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/painting_effects/images.rs",
         "kind": "trait_impl",
@@ -630,18 +707,51 @@
         "name": "Image"
       },
       "comparison": {
-        "prose": "Recorded as stored configuration without behavior: the Image descriptor has no tint option, so color is unresolved.",
+        "prose": "Tint reuses the retained color-matrix layer: component-wise modulate over straight RGBA. On single-color mask art it reproduces a flat recolor; on arbitrary multi-color art it modulates (a straight-alpha 4x5 matrix cannot output source-independent constant RGB). GPU execution verified by the live pixel test.",
         "refs": [
           {
-            "path": "crates/incular-widgets/src/painting_effects/images.rs",
-            "kind": "trait_impl",
-            "trait": "From",
-            "target": "Widget",
-            "source": "RawImage"
+            "path": "crates/incular-rendering/src/effects.rs",
+            "kind": "method",
+            "owner": "ColorFilter",
+            "name": "modulate"
+          },
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "update_from_kind"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "update_from_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "raw_image_tint_uses_a_color_matrix_layer"
+        },
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_icon_tint_and_scale_default"
+        },
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "tint_replacement_updates_the_retained_filter"
+        },
+        {
+          "path": "crates/incular-rendering/tests/rendering.rs",
+          "name": "color_filter_helpers_cover_identity_alpha_and_common_adjustments"
+        }
+      ]
     },
     {
       "symbol": "RawImage",
@@ -838,7 +948,7 @@
       "symbol": "ImageIcon",
       "option": "color",
       "default": "none",
-      "validation": "stored but From<ImageIcon> never reads it: no tint is applied",
+      "validation": "stored and forwarded as a ColorFilter::modulate layer over the square image; the decoded handle is unchanged",
       "conversion": {
         "path": "crates/incular-widgets/src/painting_effects/images.rs",
         "kind": "trait_impl",
@@ -853,18 +963,33 @@
         "name": "Image"
       },
       "comparison": {
-        "prose": "Recorded as stored configuration without behavior: the Image descriptor has no tint option, so color is unresolved.",
+        "prose": "Shared with RawImage: ImageIcon wraps the image in the retained color-matrix layer, no second decoded image.",
         "refs": [
           {
-            "path": "crates/incular-widgets/src/painting_effects/images.rs",
-            "kind": "trait_impl",
-            "trait": "From",
-            "target": "Widget",
-            "source": "ImageIcon"
+            "path": "crates/incular-rendering/src/effects.rs",
+            "kind": "method",
+            "owner": "ColorFilter",
+            "name": "modulate"
           }
         ]
       },
-      "status": "unresolved"
+      "status": "implemented",
+      "consumers": {
+        "compositor": [
+          {
+            "path": "crates/incular-widgets/src/render_object/layers.rs",
+            "kind": "method",
+            "owner": "RenderLayers",
+            "name": "update_from_kind"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/image_layout.rs",
+          "name": "image_icon_tint_and_scale_default"
+        }
+      ]
     }
   ]
 }

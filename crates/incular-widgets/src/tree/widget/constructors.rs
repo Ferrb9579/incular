@@ -443,10 +443,12 @@ impl Widget {
         }
     }
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::tree) fn image(
         image: ImageHandle,
         width: Option<f32>,
         height: Option<f32>,
+        scale: f32,
         fit: ImageFit,
         repeat: ImageRepeat,
         alignment: Alignment,
@@ -458,6 +460,7 @@ impl Widget {
                 image,
                 width,
                 height,
+                scale,
                 fit,
                 repeat,
                 alignment,

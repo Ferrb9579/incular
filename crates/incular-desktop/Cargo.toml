@@ -81,3 +81,8 @@ harness = false
 name = "unsupported_effect_execution"
 path = "tests/unsupported_effect_execution.rs"
 harness = false
+
+[[test]]
+name = "image_tint_execution"
+path = "tests/image_tint_execution.rs"
+harness = false

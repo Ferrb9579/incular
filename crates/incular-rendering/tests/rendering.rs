@@ -629,6 +629,18 @@ fn color_filter_helpers_cover_identity_alpha_and_common_adjustments() {
     assert_eq!(ColorFilter::opacity(0.).apply(sample), [0., 0., 0., 0.]);
     let transparent = ColorFilter::invert(1.).apply([1., 0.5, 0.25, 0.]);
     assert_eq!(transparent, [0., 0., 0., 0.]);
+    // Component-wise modulate keeps alpha and scales RGB by the tint.
+    let red = Color::rgba(255, 0, 0, 255);
+    assert_eq!(
+        ColorFilter::modulate(red).apply([1., 1., 1., 1.]),
+        [1., 0., 0., 1.]
+    );
+    // Transparent source stays transparent: zero alpha gives zero straight
+    // RGB, so a modulate cannot resurrect dead coverage.
+    assert_eq!(
+        ColorFilter::modulate(Color::rgba(0, 255, 0, 255)).apply([0., 0., 0., 0.]),
+        [0., 0., 0., 0.]
+    );
     for value in ColorFilter::matrix([f32::NAN; 20]).apply(sample) {
         assert!(value.is_finite());
     }

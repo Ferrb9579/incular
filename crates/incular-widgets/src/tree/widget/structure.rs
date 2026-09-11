@@ -88,6 +88,7 @@ impl std::fmt::Debug for WidgetKind {
                 image,
                 width,
                 height,
+                scale,
                 fit,
                 repeat,
                 alignment,
@@ -97,6 +98,7 @@ impl std::fmt::Debug for WidgetKind {
                 .field("id", &image.id())
                 .field("width", width)
                 .field("height", height)
+                .field("scale", scale)
                 .field("fit", fit)
                 .field("repeat", repeat)
                 .field("alignment", alignment)
@@ -889,6 +891,7 @@ impl PartialEq for WidgetKind {
                     image: a,
                     width: b,
                     height: c,
+                    scale: s,
                     fit: d,
                     repeat: e,
                     alignment: k,
@@ -898,12 +901,13 @@ impl PartialEq for WidgetKind {
                     image: f,
                     width: g,
                     height: h,
+                    scale: t,
                     fit: i,
                     repeat: j,
                     alignment: l,
                     sampling: n,
                 },
-            ) => a == f && b == g && c == h && d == i && e == j && k == l && m == n,
+            ) => a == f && b == g && c == h && s == t && d == i && e == j && k == l && m == n,
             (Self::TextField(left), Self::TextField(right)) => left == right,
             (
                 Self::Padding {
