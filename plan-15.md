@@ -1109,11 +1109,13 @@ Exit: every exported option has a reviewed disposition and behavioral evidence;
 property changes schedule only necessary work; identity and deterministic
 performance contracts pass. No arbitrary file-size threshold is the acceptance test.
 
-## W3 — Current status (reconciled against public exports; W3 remains open)
+## W3 — Current status (reconciled against public exports; W3 complete)
 
 This table is the current status. The historical slice notes below are
 evidence, not a duplicate status; where they disagree with this table,
-the table wins.
+the table wins. The per-slice "still open" markers predate this
+reconciliation and refer to their slice's review state, not to remaining
+W3 scope: every family row below is inventoried and complete.
 
 | family | exported options inventoried | behavioral gaps | evidence | status |
 | --- | --- | --- | --- | --- |
@@ -1569,25 +1571,29 @@ the table wins.
   as 1 pass with 1 publication; three repeated unchanged flattens add
   exactly 3 passes and 3 publications; the explicit pre-semantics
   republish adds 1 and 1 through the same counter. Publication
-  recomputes unconditionally, and one full frame accounts two passes
-  (`update_semantics`, then paint via `flatten`).
-- Cost model: one pass is a clear walk plus a collect walk over the
-  layer tree (both linear in layer count) plus one ancestor-chain fold
-  with follower projection per leader. The pass is idempotent; nothing
-  is cached between passes.
-- Decision: recomputation stays; no complexity is added to eliminate
-  the second pass. Publication validity spans layer topology
-  (mount/unmount), transforms and clips (composite), visibility, and
-  cross-tree link winners (first in paint order, cycle-guarded) — none
-  of which the semantics phase owns. Paint also runs standalone
-  (tests and embedders call `tree.paint()` without `update_semantics`),
-  so `flatten` must always be able to publish itself. Sharing one
+  recomputes unconditionally, and a frame running both semantics and
+  paint accounts two passes (`update_semantics`, then paint via
+  `flatten`).
+- Cost shape, inspected not timed: one pass is a clear walk plus a
+  collect walk, each visiting every layer node a bounded number of
+  times, plus one ancestor-chain fold with follower projection per
+  leader (chain-depth work each, cycle-guarded). The counters above
+  measure passes and successful publications only; they establish no
+  timing claim. The pass is idempotent; nothing is cached between
+  passes.
+- Decision: recomputation stays; no evidence justifies a cache.
+  Publication validity spans layer topology (mount/unmount),
+  transforms and clips (composite), visibility, and cross-tree link
+  winners (first in paint order, cycle-guarded) — none of which the
+  semantics phase owns. Paint also runs standalone (tests and
+  embedders call `tree.paint()` without `update_semantics`), so
+  `flatten` must always be able to publish itself. Sharing one
   prepared projection across composite, semantics, and paint (two
   crates) would need a validity token covering topology, transforms,
   visibility, and link publications — more synchronized state than the
-  linear recomputation it would save. The pre-semantics publish stays
-  because semantics runs pre-paint while follower gating reads
-  publication (the Package `808539b` defect class).
+  repeat walks it would save. The pre-semantics publish stays because
+  semantics runs pre-paint while follower gating reads publication
+  (the Package `808539b` defect class).
 - Public boundary: only `LayerTree::publish_leader_links` changes
   (`&self` to `&mut self`, for the counters; behavior identical), noted
   in `docs/API_MIGRATIONS.md`. New tree/wheel internals stay
@@ -1596,24 +1602,45 @@ the table wins.
   no other public signatures; `reset()` now reports genuine change per
   its docs.
 - Exit reconciliation against the W3 workstream
-  (`complete retained property contracts`):
-  - Exported-option coverage: 26 ledger families, 584 records, 0
-    `unresolved`, 0 `intentionally_unsupported`. The ledger validator
-    enforces an exact-set match with source discovery in both
-    directions, and every implemented record carries named regressions
-    plus resolving references.
-  - Behavioral evidence: new suites pin the four packages (barrier
-    ownership, 13 wheel tests, 14 draggable-sheet tests, 1
-    publication-measurement test); existing suites are referenced, not
+  (`complete retained property contracts and reduce change fan-out`):
+  - Exported-option coverage: 27 ledger families, 595 records, 0
+    `unresolved`, 0 `intentionally_unsupported` record dispositions.
+    The ledger validator enforces an exact-set match with source
+    discovery in both directions, and every implemented record carries
+    named regressions plus resolving references. Physics policy was
+    the last uninventoried family and is now covered (11/11).
+  - Three separate quantities, not one claim: record dispositions
+    count option contracts (all implemented); inventory completeness
+    is the status table reconciled against public exports (every row
+    complete); implemented backend behavior is tracked separately —
+    ShaderMask/BackdropFilter GPU execution and pixel verification
+    stay `unresolved` in the shader/backdrop ledger's backend block
+    with typed-unsupported outcomes, which is W2/native scope, not
+    W3 record debt. Deferred design gaps are recorded as contracts,
+    not silence: no looping wheel delegate (bounds clamp), wheel
+    selection callback-only (no retained scroll actions), draggable
+    snap handles caller-owned (dropping supersedes), bouncing
+    positions transient in memory, multi-viewport attachment
+    unenforced (W5).
+  - Change fan-out reduced, not moved: reset commits then notifies
+    exactly once through the existing listener mechanism; wheel
+    prepares acknowledge the consumed stamp so quiet layouts rebuild
+    nothing (pinned by test); scrollbar geometry, SafeArea policy,
+    and extent validation each have one owner; dead clip/axis
+    overrides were removed rather than wrapped; this batch adds no
+    second registry, engine, or blanket reentrancy suppression, and
+    drops the `config.clone()` from the refresh scan.
+  - Behavioral evidence: new suites pin the eight packages (barrier
+    ownership, 16 wheel tests, 19 draggable-sheet tests, 1
+    publication-measurement test, 10 physics-audit tests plus
+    retained swap tests); existing suites are referenced, not
     duplicated.
-  - Unresolved options: none inside the ledgers. The only open status
-    row is physics internals (no ledger; retained tests only). It is
-    not moved into W4 — it is not navigation-related — and stays open
-    for W5 transition work or a later W3 slice. Deliberate design
-    locks are recorded as contracts, not silence: no looping wheel
-    delegate (bounds clamp), wheel selection callback-only (no
-    retained scroll actions), draggable snap handles caller-owned
-    (dropping supersedes).
+  - Verdict: W3 meets its exit criteria. Every status-table family is
+    inventoried with behavioral evidence, and fan-out reductions are
+    pinned by regression. Known remaining work belongs to other
+    workstreams and is not W3 debt: router/transaction surface (W4),
+    attachment policy and transitions (W5), GPU execution and pixel
+    verification (W2), per-host verification (W8).
   - Necessary phase scheduling: frames run layout, composite,
     semantics, then paint (`run_frame_at`); wheel windows refresh from
     the controller revision in the layout prologue like slivers; reset

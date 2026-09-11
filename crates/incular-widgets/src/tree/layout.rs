@@ -179,11 +179,9 @@ impl WidgetTree {
             .map(|child| (AdvancedChildKey::Wheel(child.index), child.child.clone()))
             .collect();
         self.reconcile_advanced_children(element_id, desired)?;
-        // Acknowledge the revision the prepared window was laid out from,
-        // not the live revision: user callbacks during layout (selection
-        // reports, measures) may have moved the controller past it, and
-        // that newer work must stay pending instead of being marked done.
-        // A missing element (unmounted mid-layout) skips the bookkeeping.
+        // Acknowledge the revision the window was laid out from, not the
+        // live revision: callbacks during layout may have moved the
+        // controller past it, and that newer work must stay pending.
         let consumed = layout.controller_revision;
         self.wheel_state_live_mut(id).layout = Some(layout);
         if let Some(element) = self.elements.get_mut(element_id.0) {

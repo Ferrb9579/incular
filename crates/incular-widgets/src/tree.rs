@@ -293,9 +293,7 @@ pub struct Element {
     sliver_delegate_revision: u64,
     sliver_scroll_revision: u64,
     /// Last consumed wheel-controller revision, mirroring
-    /// `sliver_scroll_revision`. A mounted wheel materializes its child
-    /// window from the shared controller offset, so an external jump,
-    /// settle, or drag must re-prepare the window on the next layout.
+    /// `sliver_scroll_revision`.
     wheel_scroll_revision: u64,
     layout_builder_constraints: Option<Constraints>,
     layout_builder_revision: u64,

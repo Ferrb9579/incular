@@ -868,9 +868,8 @@ impl DraggableScrollableState {
     pub fn reset(&self) -> bool {
         // The report covers every observable reset mutates: a cancelled
         // activity, a moved inner position, cleared drag/change flags, and
-        // the extent itself. Pixel height alone is not a change signal: it
-        // merely reflects the parent height, so consulting it reports true
-        // for pristine sheets and false for inner-only movement.
+        // the extent itself. Pixel height is not a change signal; it only
+        // reflects the parent height.
         let had_activity = self.activity_generation().is_some();
         self.cancel_activity();
         let before = self.extent();

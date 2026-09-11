@@ -1207,13 +1207,9 @@ impl WidgetTree {
     }
 
     /// Re-prepares mounted wheel windows whose shared controller moved
-    /// since the last materialization. This mirrors `refresh_sliver_ranges`
+    /// since the last materialization. Mirrors `refresh_sliver_ranges`
     /// without its delegate/cache nuance: every wheel child window derives
     /// from the controller offset, so any revision change invalidates it.
-    /// Without this, an externally driven jump, settle, or drag leaves the
-    /// retained window (and its semantics and hit testing) stale until an
-    /// unrelated rebuild, while the model already reports the new
-    /// selection.
     pub(super) fn refresh_wheel_ranges(&mut self) {
         let pending = self
             .renders

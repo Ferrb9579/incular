@@ -233,9 +233,8 @@ impl From<AnimatedModalBarrier> for Widget {
                     barrier = barrier.semantics(explicit);
                 }
             }
-            // Inner block hides the background child stacked beneath the
-            // veil; this is the explicit modal contract for content behind
-            // the barrier, not Button-style merging of the veil's own label.
+            // Inner block hides the background child beneath the veil: the
+            // modal contract for content behind the barrier.
             barrier = barrier.block_semantics();
 
             if let Some(child) = &child {
@@ -244,10 +243,8 @@ impl From<AnimatedModalBarrier> for Widget {
                 barrier
             }
         })
-        // Outer block hides preceding siblings *outside* the barrier at the
-        // parent stacking level. The veil block above only scopes the
-        // veil/child pair inside the builder; without this outer flag the
-        // modal fails to block background semantics entirely.
+        // Outer block hides preceding siblings outside the barrier. The
+        // veil block only scopes the veil/child pair inside the builder.
         .block_semantics()
     }
 }
