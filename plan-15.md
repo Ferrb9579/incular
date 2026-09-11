@@ -1136,7 +1136,7 @@ the table wins.
 | Scrolling — pages/sliver-only animated+reorderable/2D/scrollbar/physics internals | not inventoried | no ledger family; retained tests only | none yet | open |
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
-| Overlays (OverlayPortal/tooltips/transients) | not inventoried | none yet | none yet | open |
+| Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
 | Navigation scopes | not inventoried | none yet | none yet | open |
 | Platform wrappers | not inventoried | none yet | none yet | open |
 | Utilities (SafeArea/SplitView/OverflowBar) | 32/32 | none known | `specs/utility_properties.json`, `tests/utility_ledger.rs` | complete |
@@ -1293,9 +1293,10 @@ the table wins.
   BackdropFilter (GPU pixel evidence separate), pointer blocking,
   focus wrappers, action wrappers, EditableText, Stack/Positioned/
   IndexedStack, flex, padding/alignment, sizing/constraints, baseline/
-  aspect/fractional, Wrap/Table, images, utilities, and scrolling
-  viewports/lists. Still pending: remaining scrolling groups, overlays,
-  navigation scopes, and platform wrappers.
+  aspect/fractional, Wrap/Table, images, utilities, scrolling
+  viewports/lists, scrolling grids/single/animated, and overlays. Still
+  pending: remaining scrolling groups, navigation scopes, and platform
+  wrappers.
 
 ## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
 
@@ -1417,6 +1418,36 @@ the table wins.
   `crates/incular-widgets/tests/scroll_grid_single.rs` plus
   `specs/scroll_grid_single_properties.json` /
   `tests/scroll_grid_single_ledger.rs`.
+
+## W3 — Overlay and tooltip lifecycle (same workstream, still open)
+
+- Group: `OverlayPortal` (11 options), `RawTooltip` (39), and the
+  `RawTooltipController` attachment (1). Surfaces live in the existing
+  retained transient registry; dismissal is a controlled callback
+  contract — the production path reports closures without mutating
+  state, and the owner rebuilds hidden.
+- Verified: show/hide idempotence without leaks, content replacement
+  updating popups in place, anchor moves without child rebuilds, owner
+  unmount clearing registry/paint/hit/semantics together, nested
+  z-order with parent links, outside dismissal with reasons, popup
+  semantic exposure, controller replacement isolation, constructor and
+  setter agreement, trigger/enabled/duration behavior, pointer
+  dismissal without trigger refire, ignore-pointer passthrough, and
+  follower placement (below/above flip, offsets, anchor composition,
+  shared links) at paint time.
+- Defect fixed: an empty text message (`Some("")`) shadowed the rich
+  fallback in `semantic_value`, so rich tooltips never exposed their
+  plain text; empty messages now fall through. Clearing an explicit
+  semantic override suppresses rather than reverting, locked as the
+  contract. Follow-up (not this package): follower-wrapped custom
+  tooltip content paints and hit-tests but stays out of the semantic
+  walk while the follower reports hidden — portal popups are unaffected.
+- Evidence: 17 tests in
+  `crates/incular-widgets/tests/overlay_tooltip_lifecycle.rs` (reusing
+  the barrier/anchor/partition/clock regressions) plus
+  `specs/overlay_tooltip_properties.json` /
+  `tests/overlay_tooltip_ledger.rs`. Native-host popup availability
+  stays separate from neutral correctness.
 
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 

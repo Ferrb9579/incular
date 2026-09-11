@@ -1185,9 +1185,15 @@ impl RawTooltip {
         }
         let value = if self.semantics_explicit {
             self.semantics_tooltip.clone()
-        } else if let Some(message) = self.message.as_ref() {
-            Some(message.clone())
+        } else if let Some(message) = self
+            .message
+            .as_deref()
+            .filter(|message| !message.is_empty())
+        {
+            Some(message.to_owned())
         } else {
+            // An empty text message must not shadow the rich fallback:
+            // constructors store it as Some("") rather than None.
             self.rich_message.as_ref().map(RichText::plain_text)
         };
         value.filter(|value| !value.is_empty())
