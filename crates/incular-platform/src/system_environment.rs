@@ -22,7 +22,15 @@ pub struct SystemEnvironmentPreferences {
     pub input: Option<InputCapabilities>,
     /// Desktop platforms normally leave these unsupported (`None`), but the
     /// contract is explicit for shells with desktop safe/view insets.
+    ///
+    /// Inset ownership: `safe_insets` is the currently usable margin and the
+    /// shell reduces covered edges while transient UI obscures them;
+    /// `view_padding` is the persistent obstruction margin the shell never
+    /// reduces under occlusion; `view_insets` is the transient occlusion
+    /// itself (for example the keyboard). Maintained safe-area padding reads
+    /// `view_padding`, never `view_insets`.
     pub safe_insets: Option<EdgeInsets>,
+    pub view_padding: Option<EdgeInsets>,
     pub view_insets: Option<EdgeInsets>,
 }
 
@@ -38,6 +46,7 @@ impl SystemEnvironmentPreferences {
         environment.high_contrast = self.high_contrast.unwrap_or(defaults.high_contrast);
         environment.input = self.input.unwrap_or(defaults.input);
         environment.safe_insets = self.safe_insets.unwrap_or(defaults.safe_insets);
+        environment.view_padding = self.view_padding.unwrap_or(defaults.view_padding);
         environment.view_insets = self.view_insets.unwrap_or(defaults.view_insets);
     }
 }

@@ -330,12 +330,14 @@ impl WidgetTree {
                 maintain_bottom_view_padding,
             } => {
                 let ambient = self.environment.safe_insets.normalized();
-                // A maintained bottom edge also honors the keyboard/IME
-                // view inset, so showing the keyboard never collapses the
-                // bottom padding below the obscured height. Disabled edges
-                // stay at their minimum regardless.
-                let view_bottom = if maintain_bottom_view_padding {
-                    self.environment.view_insets.normalized().bottom.max(0.0)
+                // A maintained bottom edge keeps the persistent
+                // obstruction margin, which the shell reports separately
+                // from transient occlusion and never reduces under it.
+                // The keyboard height is not persistent padding: keyboard
+                // avoidance belongs to the padded parent, not SafeArea.
+                // Disabled edges stay at their minimum regardless.
+                let persistent_bottom = if maintain_bottom_view_padding {
+                    self.environment.view_padding.normalized().bottom.max(0.0)
                 } else {
                     0.0
                 };
@@ -356,7 +358,7 @@ impl WidgetTree {
                         minimum.right
                     },
                     if bottom {
-                        ambient.bottom.max(minimum.bottom).max(view_bottom)
+                        ambient.bottom.max(minimum.bottom).max(persistent_bottom)
                     } else {
                         minimum.bottom
                     },

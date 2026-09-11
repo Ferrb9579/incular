@@ -35,6 +35,8 @@ fn unsupported_values_reset_to_documented_runtime_defaults() {
         high_contrast: true,
         text_scale: 1.75,
         safe_insets: EdgeInsets::all(9.0),
+        view_padding: EdgeInsets::only(0., 0., 0., 7.0),
+        view_insets: EdgeInsets::only(0., 0., 0., 180.0),
         ..RuntimeEnvironment::default()
     };
 
@@ -45,6 +47,8 @@ fn unsupported_values_reset_to_documented_runtime_defaults() {
     assert_eq!(environment.high_contrast, defaults.high_contrast);
     assert_eq!(environment.text_scale, defaults.text_scale);
     assert_eq!(environment.safe_insets, defaults.safe_insets);
+    assert_eq!(environment.view_padding, defaults.view_padding);
+    assert_eq!(environment.view_insets, defaults.view_insets);
     assert_eq!(environment.locales, defaults.locales);
 }
 

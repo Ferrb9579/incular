@@ -64,10 +64,11 @@ impl WidgetTree {
 
     /// Sets the ambient runtime environment (safe insets, scaling, etc.) and invalidates layout if needed.
     pub fn set_environment(&mut self, environment: RuntimeEnvironment) -> bool {
-        // SafeArea also consumes view insets through
-        // maintain_bottom_view_padding, so those invalidate it too.
+        // Maintained SafeArea reads the persistent view padding, so it
+        // invalidates on that too. Transient view insets never reach
+        // SafeArea; keyboard avoidance belongs to the padded parent.
         let safe_area_changed = self.environment.safe_insets != environment.safe_insets
-            || self.environment.view_insets != environment.view_insets;
+            || self.environment.view_padding != environment.view_padding;
         super::context::update_runtime_environment(
             &self.dependency_root,
             &self.environment,

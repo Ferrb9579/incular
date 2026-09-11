@@ -74,7 +74,9 @@ impl SafeArea {
         self
     }
 
-    /// Sets whether to maintain bottom view padding when keyboard/IME is shown.
+    /// Keeps the persistent bottom obstruction margin while transient
+    /// occlusion (such as the keyboard) covers it. The maintained value
+    /// comes from the ambient view padding, never the occlusion height.
     #[must_use]
     pub fn maintain_bottom_view_padding(mut self, maintain: bool) -> Self {
         self.maintain_bottom_view_padding = maintain;
@@ -92,6 +94,10 @@ impl SafeArea {
     }
 
     /// Resolves against explicit insets for standalone use without a tree.
+    ///
+    /// The insets are the current safe margin. Without an ambient
+    /// environment there is no persistent view padding to keep, so
+    /// `maintain_bottom_view_padding` has no effect here.
     #[must_use]
     pub fn resolve(self, insets: EdgeInsets) -> Widget {
         let insets = insets.normalized();

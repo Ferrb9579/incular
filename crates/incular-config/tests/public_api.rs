@@ -45,6 +45,7 @@ fn environment_normalizes_only_invalid_input() {
         scale_factor: f64::NAN,
         text_scale: -1.,
         safe_insets: EdgeInsets::only(-1., 2., f32::NAN, 4.),
+        view_padding: EdgeInsets::only(0., -3., f32::INFINITY, 7.),
         locales: vec!["en-IN".parse().expect("valid ICU locale")],
         ..RuntimeEnvironment::default()
     }
@@ -52,6 +53,7 @@ fn environment_normalizes_only_invalid_input() {
     assert_eq!(environment.scale_factor, 1.);
     assert_eq!(environment.text_scale, 1.);
     assert_eq!(environment.safe_insets, EdgeInsets::only(0., 2., 0., 4.));
+    assert_eq!(environment.view_padding, EdgeInsets::only(0., 0., 0., 7.));
     assert_eq!(
         environment
             .primary_locale()

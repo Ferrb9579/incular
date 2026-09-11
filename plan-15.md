@@ -1314,13 +1314,20 @@ the table wins.
 
 ## W3 — Utility-family coverage (same workstream, still open)
 
-- SafeArea: `maintain_bottom_view_padding` was an accepted field that
-  never reached layout. The bottom edge now takes
-  max(safe, minimum, view) when set, and `set_environment` dirties
-  SafeArea renders on view-inset changes too (targeted, like safe
-  insets). Disabled edges keep only the minimum; nested SafeAreas
-  accumulate; padding offsets the origin while bottom insets shrink
-  the child area.
+- SafeArea inset ownership: `safe_insets` is the currently usable
+  margin (the shell reduces covered edges), `view_padding` is the new
+  persistent obstruction margin the shell never reduces under
+  occlusion, and `view_insets` is the transient occlusion itself
+  (keyboard avoidance consumes it directly, e.g. Scaffold). The
+  earlier committed behavior was wrong: it maintained the keyboard
+  height. A maintained bottom edge now takes
+  max(safe, minimum, view padding) from the current snapshot alone —
+  no per-SafeArea history, so mounting under occlusion works — and
+  occlusion changes no longer dirty SafeArea. Disabled edges keep
+  only the minimum; nested SafeAreas accumulate from the same
+  snapshot. `SystemEnvironmentPreferences` carries the same trio with
+  reset-to-default semantics; the runtime change mask tracks the new
+  signal.
 - SplitView: the divider hit strip and the colored visual both
   collapsed to zero on the cross axis, so the divider was grabbable
   only on its exact midline and a colored divider was invisible. Both

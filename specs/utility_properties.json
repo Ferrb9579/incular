@@ -333,7 +333,7 @@
       "symbol": "SafeArea",
       "option": "maintain_bottom_view_padding",
       "default": "false",
-      "validation": "bool toggle, no normalization; view inset floored at zero",
+      "validation": "bool toggle, no normalization; persistent margin floored at zero; transient occlusion never participates",
       "conversion": {
         "path": "crates/incular-widgets/src/safe_area.rs",
         "kind": "trait_impl",
@@ -348,8 +348,13 @@
         "name": "SafeArea"
       },
       "comparison": {
-        "prose": "When set, the bottom edge takes max(safe, minimum, view) so the keyboard never collapses it; view-inset changes dirty maintained SafeArea renders through set_environment.",
+        "prose": "When set, the bottom edge takes max(safe, minimum, persistent view padding) from the current snapshot alone; the occlusion height is never persistent padding, so keyboard avoidance stays with the padded parent and is counted once. View-padding and safe-margin changes dirty maintained SafeArea renders through set_environment; occlusion changes do not.",
         "refs": [
+          {
+            "path": "crates/incular-config/src/environment.rs",
+            "kind": "struct",
+            "name": "RuntimeEnvironment"
+          },
           {
             "path": "crates/incular-widgets/src/tree/layout/behavior/containers.rs",
             "kind": "method",
@@ -385,11 +390,27 @@
       "regressions": [
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
-          "name": "safe_area_maintain_bottom_view_padding_honors_view_insets"
+          "name": "safe_area_maintain_survives_keyboard_cycle"
         },
         {
           "path": "crates/incular-widgets/tests/utility_coverage.rs",
-          "name": "safe_area_view_insets_invalidate_layout"
+          "name": "safe_area_mounted_while_keyboard_shown_uses_snapshot"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_with_avoiding_parent_counts_occlusion_once"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_nested_maintained_accumulates_from_snapshot"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_disabled_bottom_and_minimum_ignore_maintenance"
+        },
+        {
+          "path": "crates/incular-widgets/tests/utility_coverage.rs",
+          "name": "safe_area_tracks_padding_and_safe_margin_not_occlusion"
         }
       ],
       "status": "implemented"

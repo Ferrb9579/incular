@@ -66,7 +66,24 @@ pub struct RuntimeEnvironment {
     pub scale_factor: f64,
     pub brightness: Brightness,
     pub text_scale: f32,
+    /// Currently usable display margin: system obstructions (notch, status
+    /// bar, home indicator) minus whatever is presently covered.
+    ///
+    /// The shell reduces these edges while transient UI covers them, so a
+    /// shown keyboard drives an obscured bottom edge toward zero. Widgets
+    /// must read the current snapshot on every layout; nothing here is
+    /// reconstructed from history.
     pub safe_insets: EdgeInsets,
+    /// Persistent system-obstruction margin, independent of transient
+    /// occlusion. Unlike [`Self::safe_insets`], the shell never reduces
+    /// these edges while the keyboard or another transient surface covers
+    /// them; they are the floor `SafeArea` keeps with
+    /// `maintain_bottom_view_padding`.
+    pub view_padding: EdgeInsets,
+    /// Currently obscured area, such as the keyboard: transient occlusion
+    /// the shell reports while it covers content. Keyboard avoidance (for
+    /// example the material Scaffold pad) consumes these edges directly;
+    /// they are never a substitute for [`Self::view_padding`].
     pub view_insets: EdgeInsets,
     /// Ordered locale preferences parsed and canonicalized by ICU4X.
     pub locales: Vec<Locale>,
@@ -98,6 +115,7 @@ impl Default for RuntimeEnvironment {
             brightness: defaults.brightness,
             text_scale: defaults.text_scale,
             safe_insets: EdgeInsets::ZERO,
+            view_padding: EdgeInsets::ZERO,
             view_insets: EdgeInsets::ZERO,
             locales: Vec::new(),
             text_direction: defaults.text_direction,
@@ -125,6 +143,7 @@ impl RuntimeEnvironment {
             1.0
         };
         self.safe_insets = self.safe_insets.normalized();
+        self.view_padding = self.view_padding.normalized();
         self.view_insets = self.view_insets.normalized();
         if let Some(locale) = self.primary_locale() {
             self.text_direction = LocaleResolver::text_direction(locale);

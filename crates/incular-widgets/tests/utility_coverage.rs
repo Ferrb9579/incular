@@ -34,12 +34,24 @@ fn bounds(tree: &WidgetTree, id: ElementId) -> (Offset, Size) {
     (rect.origin, rect.size)
 }
 
-fn environment_with(safe: EdgeInsets, view: EdgeInsets) -> RuntimeEnvironment {
+/// Builds an ambient snapshot from the three owned inset signals: the
+/// currently usable margin, the persistent obstruction margin, and the
+/// transient occlusion (for example the keyboard).
+fn environment_with(
+    safe: EdgeInsets,
+    padding: EdgeInsets,
+    occlusion: EdgeInsets,
+) -> RuntimeEnvironment {
     RuntimeEnvironment {
         safe_insets: safe,
-        view_insets: view,
+        view_padding: padding,
+        view_insets: occlusion,
         ..RuntimeEnvironment::default()
     }
+}
+
+fn bottom_only(value: f32) -> EdgeInsets {
+    EdgeInsets::only(0., 0., 0., value)
 }
 
 #[test]
@@ -54,6 +66,7 @@ fn safe_area_applies_all_edges() {
     let mut tree = WidgetTree::new();
     tree.set_environment(environment_with(
         EdgeInsets::only(10., 20., 30., 40.),
+        EdgeInsets::ZERO,
         EdgeInsets::ZERO,
     ));
     let root = tree
@@ -71,6 +84,7 @@ fn safe_area_disabled_edges_fall_to_minimum() {
     let mut tree = WidgetTree::new();
     tree.set_environment(environment_with(
         EdgeInsets::only(10., 20., 30., 40.),
+        EdgeInsets::ZERO,
         EdgeInsets::ZERO,
     ));
     let root = tree
@@ -92,6 +106,7 @@ fn safe_area_minimum_raises_padding() {
     tree.set_environment(environment_with(
         EdgeInsets::only(10., 20., 30., 40.),
         EdgeInsets::ZERO,
+        EdgeInsets::ZERO,
     ));
     let root = tree
         .mount(
@@ -111,6 +126,7 @@ fn safe_area_nested_accumulates() {
     tree.set_environment(environment_with(
         EdgeInsets::only(10., 20., 30., 40.),
         EdgeInsets::ZERO,
+        EdgeInsets::ZERO,
     ));
     let root = tree
         .mount(SafeArea::new(SafeArea::new(box_(50., 50.))).into())
@@ -123,48 +139,180 @@ fn safe_area_nested_accumulates() {
     assert_eq!(size, Size::new(220., 180.));
 }
 
-#[test]
-fn safe_area_maintain_bottom_view_padding_honors_view_insets() {
-    let env = environment_with(
-        EdgeInsets::only(0., 0., 0., 10.),
-        EdgeInsets::only(0., 0., 0., 100.),
-    );
-    let mut plain = WidgetTree::new();
-    plain.set_environment(env.clone());
-    let root = plain
-        .mount(SafeArea::new(box_(50., 50.)).into())
-        .expect("mount");
-    tight(&mut plain, root, 200., 200.);
-    let (plain_origin, plain_size) = bounds(&plain, only_child(&plain, root));
+// A device with a 20px persistent home indicator and a 180px keyboard.
+// While the keyboard is shown the shell reports the usable bottom margin
+// as zero but keeps the persistent margin at 20.
+const PERSISTENT_BOTTOM: f32 = 20.;
+const KEYBOARD_HEIGHT: f32 = 180.;
+const FRAME: f32 = 200.;
 
+fn keyboard_hidden() -> RuntimeEnvironment {
+    environment_with(
+        bottom_only(PERSISTENT_BOTTOM),
+        bottom_only(PERSISTENT_BOTTOM),
+        EdgeInsets::ZERO,
+    )
+}
+
+fn keyboard_shown() -> RuntimeEnvironment {
+    environment_with(
+        EdgeInsets::ZERO,
+        bottom_only(PERSISTENT_BOTTOM),
+        bottom_only(KEYBOARD_HEIGHT),
+    )
+}
+
+fn child_height(tree: &WidgetTree, root: ElementId) -> f32 {
+    bounds(tree, only_child(tree, root)).1.height
+}
+
+#[test]
+fn safe_area_maintain_survives_keyboard_cycle() {
     let mut maintained = WidgetTree::new();
-    maintained.set_environment(env);
-    let root = maintained
+    maintained.set_environment(keyboard_hidden());
+    let kept = maintained
         .mount(
             SafeArea::new(box_(50., 50.))
                 .maintain_bottom_view_padding(true)
                 .into(),
         )
         .expect("mount");
-    tight(&mut maintained, root, 200., 200.);
-    let (kept_origin, kept_size) = bounds(&maintained, only_child(&maintained, root));
+    let mut plain = WidgetTree::new();
+    plain.set_environment(keyboard_hidden());
+    let unkept = plain
+        .mount(SafeArea::new(box_(50., 50.)).into())
+        .expect("mount");
 
-    // Padding offsets the top-left origin; the bottom inset shrinks the
-    // child area. Without the flag the keyboard inset is ignored; with it
-    // the bottom padding never drops below the obscured height.
-    assert_eq!(plain_origin, Offset::new(0., 0.));
-    assert_eq!(plain_size, Size::new(200., 190.));
-    assert_eq!(kept_origin, Offset::new(0., 0.));
-    assert_eq!(kept_size, Size::new(200., 100.));
+    // Hidden keyboard: both read the usable 20px margin.
+    tight(&mut maintained, kept, FRAME, FRAME);
+    tight(&mut plain, unkept, FRAME, FRAME);
+    assert_eq!(child_height(&maintained, kept), FRAME - PERSISTENT_BOTTOM);
+    assert_eq!(child_height(&plain, unkept), FRAME - PERSISTENT_BOTTOM);
+
+    // Shown keyboard: the usable margin collapses, but the maintained
+    // edge keeps the persistent 20px — never the 180px occlusion.
+    maintained.set_environment(keyboard_shown());
+    plain.set_environment(keyboard_shown());
+    tight(&mut maintained, kept, FRAME, FRAME);
+    tight(&mut plain, unkept, FRAME, FRAME);
+    assert_eq!(child_height(&maintained, kept), FRAME - PERSISTENT_BOTTOM);
+    assert_eq!(child_height(&plain, unkept), FRAME);
+
+    // Hidden again: both return to the usable margin.
+    maintained.set_environment(keyboard_hidden());
+    plain.set_environment(keyboard_hidden());
+    tight(&mut maintained, kept, FRAME, FRAME);
+    tight(&mut plain, unkept, FRAME, FRAME);
+    assert_eq!(child_height(&maintained, kept), FRAME - PERSISTENT_BOTTOM);
+    assert_eq!(child_height(&plain, unkept), FRAME - PERSISTENT_BOTTOM);
 }
 
 #[test]
-fn safe_area_view_insets_invalidate_layout() {
+fn safe_area_mounted_while_keyboard_shown_uses_snapshot() {
+    // No history is involved: a tree mounted under occlusion derives the
+    // same padding from the current snapshot alone.
+    let mut maintained = WidgetTree::new();
+    maintained.set_environment(keyboard_shown());
+    let kept = maintained
+        .mount(
+            SafeArea::new(box_(50., 50.))
+                .maintain_bottom_view_padding(true)
+                .into(),
+        )
+        .expect("mount");
+    tight(&mut maintained, kept, FRAME, FRAME);
+    assert_eq!(child_height(&maintained, kept), FRAME - PERSISTENT_BOTTOM);
+
+    let mut plain = WidgetTree::new();
+    plain.set_environment(keyboard_shown());
+    let unkept = plain
+        .mount(SafeArea::new(box_(50., 50.)).into())
+        .expect("mount");
+    tight(&mut plain, unkept, FRAME, FRAME);
+    assert_eq!(child_height(&plain, unkept), FRAME);
+}
+
+#[test]
+fn safe_area_with_avoiding_parent_counts_occlusion_once() {
+    // A Scaffold-style parent already pads the 180px occlusion; the
+    // maintained SafeArea adds only its persistent 20px on top.
+    for (maintain, expected) in [
+        (true, 400. - KEYBOARD_HEIGHT - PERSISTENT_BOTTOM),
+        (false, 400. - KEYBOARD_HEIGHT),
+    ] {
+        let mut tree = WidgetTree::new();
+        tree.set_environment(keyboard_shown());
+        let mut safe = SafeArea::new(box_(50., 50.));
+        if maintain {
+            safe = safe.maintain_bottom_view_padding(true);
+        }
+        let root = tree
+            .mount(incular_widgets::Padding::new(bottom_only(KEYBOARD_HEIGHT), safe).into())
+            .expect("mount");
+        tight(&mut tree, root, 400., 400.);
+        assert_eq!(child_height(&tree, only_child(&tree, root)), expected);
+    }
+}
+
+#[test]
+fn safe_area_nested_maintained_accumulates_from_snapshot() {
+    // Each layer keeps the full persistent margin from the same ambient
+    // snapshot; nothing is cached between layouts.
     let mut tree = WidgetTree::new();
-    tree.set_environment(environment_with(
-        EdgeInsets::only(0., 0., 0., 10.),
-        EdgeInsets::ZERO,
-    ));
+    tree.set_environment(keyboard_shown());
+    let root = tree
+        .mount(
+            SafeArea::new(SafeArea::new(box_(50., 50.)).maintain_bottom_view_padding(true))
+                .maintain_bottom_view_padding(true)
+                .into(),
+        )
+        .expect("mount");
+    tight(&mut tree, root, 400., 400.);
+    let inner = only_child(&tree, root);
+    assert_eq!(
+        bounds(&tree, only_child(&tree, inner)).1.height,
+        400. - 2. * PERSISTENT_BOTTOM
+    );
+}
+
+#[test]
+fn safe_area_disabled_bottom_and_minimum_ignore_maintenance() {
+    // A disabled bottom edge stays at its minimum even with maintenance.
+    let mut tree = WidgetTree::new();
+    tree.set_environment(keyboard_shown());
+    let root = tree
+        .mount(
+            SafeArea::new(box_(50., 50.))
+                .bottom(false)
+                .minimum(EdgeInsets::all(5.))
+                .maintain_bottom_view_padding(true)
+                .into(),
+        )
+        .expect("mount");
+    tight(&mut tree, root, FRAME, FRAME);
+    // The all-edges minimum pads top and bottom: 200 - 5 - 5.
+    assert_eq!(child_height(&tree, root), FRAME - 10.);
+
+    // A minimum above the persistent margin wins over maintenance.
+    let mut tree = WidgetTree::new();
+    tree.set_environment(keyboard_shown());
+    let root = tree
+        .mount(
+            SafeArea::new(box_(50., 50.))
+                .minimum(EdgeInsets::all(30.))
+                .maintain_bottom_view_padding(true)
+                .into(),
+        )
+        .expect("mount");
+    tight(&mut tree, root, FRAME, FRAME);
+    // Top and bottom both resolve to the 30px minimum: 200 - 30 - 30.
+    assert_eq!(child_height(&tree, root), FRAME - 60.);
+}
+
+#[test]
+fn safe_area_tracks_padding_and_safe_margin_not_occlusion() {
+    let mut tree = WidgetTree::new();
+    tree.set_environment(keyboard_shown());
     let root = tree
         .mount(
             SafeArea::new(box_(50., 50.))
@@ -172,20 +320,40 @@ fn safe_area_view_insets_invalidate_layout() {
                 .into(),
         )
         .expect("mount");
-    tight(&mut tree, root, 200., 200.);
-    let (before_origin, before_size) = bounds(&tree, only_child(&tree, root));
-    assert_eq!(before_origin, Offset::new(0., 0.));
-    assert_eq!(before_size, Size::new(200., 190.));
+    tight(&mut tree, root, FRAME, FRAME);
+    assert_eq!(child_height(&tree, root), FRAME - PERSISTENT_BOTTOM);
 
+    // Persistent margin 20 -> 30 with occlusion fixed: padding follows.
     let dirty = tree.set_environment(environment_with(
-        EdgeInsets::only(0., 0., 0., 10.),
-        EdgeInsets::only(0., 0., 0., 100.),
+        EdgeInsets::ZERO,
+        bottom_only(30.),
+        bottom_only(KEYBOARD_HEIGHT),
     ));
-    assert!(dirty, "view-inset change must dirty maintained SafeArea");
-    tight(&mut tree, root, 200., 200.);
-    let (after_origin, after_size) = bounds(&tree, only_child(&tree, root));
-    assert_eq!(after_origin, Offset::new(0., 0.));
-    assert_eq!(after_size, Size::new(200., 100.));
+    assert!(dirty, "view-padding change must dirty maintained SafeArea");
+    tight(&mut tree, root, FRAME, FRAME);
+    assert_eq!(child_height(&tree, root), FRAME - 30.);
+
+    // Occlusion 180 -> 100 with padding fixed: padding is unaffected, and
+    // the transient change alone dirties nothing in this tree.
+    let dirty = tree.set_environment(environment_with(
+        EdgeInsets::ZERO,
+        bottom_only(30.),
+        bottom_only(100.),
+    ));
+    assert!(!dirty, "occlusion alone must not dirty SafeArea");
+    tight(&mut tree, root, FRAME, FRAME);
+    assert_eq!(child_height(&tree, root), FRAME - 30.);
+
+    // Usable margin 0 -> 40 above the persistent 30: safe margin still
+    // participates in the maintained edge.
+    let dirty = tree.set_environment(environment_with(
+        bottom_only(40.),
+        bottom_only(30.),
+        bottom_only(100.),
+    ));
+    assert!(dirty, "safe-margin change must dirty SafeArea");
+    tight(&mut tree, root, FRAME, FRAME);
+    assert_eq!(child_height(&tree, root), FRAME - 40.);
 }
 
 #[test]

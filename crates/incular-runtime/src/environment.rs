@@ -35,15 +35,16 @@ pub(crate) const ENV_SCALE: u16 = 1 << 1;
 pub(crate) const ENV_BRIGHTNESS: u16 = 1 << 2;
 pub(crate) const ENV_TEXT_SCALE: u16 = 1 << 3;
 pub(crate) const ENV_SAFE_INSETS: u16 = 1 << 4;
-pub(crate) const ENV_VIEW_INSETS: u16 = 1 << 5;
-pub(crate) const ENV_LOCALE: u16 = 1 << 6;
-pub(crate) const ENV_DIRECTION: u16 = 1 << 7;
-pub(crate) const ENV_REDUCED_MOTION: u16 = 1 << 8;
-pub(crate) const ENV_INPUT: u16 = 1 << 9;
-pub(crate) const ENV_WINDOW_FOCUS: u16 = 1 << 10;
-pub(crate) const ENV_HIGH_CONTRAST: u16 = 1 << 11;
-pub(crate) const ENV_WINDOW_OCCLUSION: u16 = 1 << 12;
-pub(crate) const ENV_ALL: u16 = (1 << 13) - 1;
+pub(crate) const ENV_VIEW_PADDING: u16 = 1 << 5;
+pub(crate) const ENV_VIEW_INSETS: u16 = 1 << 6;
+pub(crate) const ENV_LOCALE: u16 = 1 << 7;
+pub(crate) const ENV_DIRECTION: u16 = 1 << 8;
+pub(crate) const ENV_REDUCED_MOTION: u16 = 1 << 9;
+pub(crate) const ENV_INPUT: u16 = 1 << 10;
+pub(crate) const ENV_WINDOW_FOCUS: u16 = 1 << 11;
+pub(crate) const ENV_HIGH_CONTRAST: u16 = 1 << 12;
+pub(crate) const ENV_WINDOW_OCCLUSION: u16 = 1 << 13;
+pub(crate) const ENV_ALL: u16 = (1 << 14) - 1;
 
 pub(crate) fn environment_change_mask(
     previous: &RuntimeEnvironment,
@@ -67,6 +68,9 @@ pub(crate) fn environment_change_mask(
     }
     if previous.safe_insets != next.safe_insets {
         mask |= ENV_SAFE_INSETS;
+    }
+    if previous.view_padding != next.view_padding {
+        mask |= ENV_VIEW_PADDING;
     }
     if previous.view_insets != next.view_insets {
         mask |= ENV_VIEW_INSETS;
