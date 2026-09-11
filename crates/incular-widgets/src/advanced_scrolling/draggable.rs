@@ -858,6 +858,13 @@ impl DraggableScrollableState {
     }
 
     /// Resets the sheet to its initial extent and returns whether state changed.
+    ///
+    /// Notification ordering: sheet-owned state commits silently first,
+    /// the inner position restores second (inner listeners observe the
+    /// already-committed sheet), and the sheet notifies last, exactly
+    /// once, iff the extent moved. No reset-owned state mutates after
+    /// callbacks begin, so reentrant drags survive and nested resets see
+    /// committed state.
     pub fn reset(&self) -> bool {
         // The report covers every observable reset mutates: a cancelled
         // activity, a moved inner position, cleared drag/change flags, and
@@ -867,50 +874,66 @@ impl DraggableScrollableState {
         let had_activity = self.activity_generation().is_some();
         self.cancel_activity();
         let before = self.extent();
-        let inner_moved = self.inner_controller().jump_to(0.0);
-        // Clear the drag/change flags after restoring the extent: the
-        // restore itself flips has_changed through the shared setter, but
-        // a reset returns to pristine flags by contract.
-        let size_changed = self.set_size_internal(before.initial_size, false);
+        let size_changed = self.commit_size(before.initial_size, false).is_some();
         {
             let mut state = self.state.borrow_mut();
             state.extent.has_dragged = false;
             state.extent.has_changed = false;
         }
+        let inner_moved = self.inner_controller().jump_to(0.0);
+        if size_changed {
+            self.dispatch_notification(DraggableScrollableNotification {
+                min_extent: before.min_size,
+                max_extent: before.max_size,
+                extent: before.initial_size,
+                initial_extent: before.initial_size,
+                should_close_on_min_extent: before.should_close_on_min_extent,
+                depth: 0,
+            });
+        }
         had_activity || inner_moved || size_changed || before.has_dragged || before.has_changed
     }
 
-    fn set_size_internal(&self, size: f32, user_drag: bool) -> bool {
-        let notification = {
-            let mut state = self.state.borrow_mut();
-            let next = size.clamp(state.extent.min_size, state.extent.max_size);
-            if (next - state.extent.current_size).abs() <= f32::EPSILON {
-                if user_drag {
-                    state.extent.has_dragged = true;
-                }
-                return false;
-            }
-            state.extent.current_size = next;
-            state.extent.has_changed = true;
+    fn commit_size(&self, size: f32, user_drag: bool) -> Option<DraggableScrollableNotification> {
+        let mut state = self.state.borrow_mut();
+        let next = size.clamp(state.extent.min_size, state.extent.max_size);
+        if (next - state.extent.current_size).abs() <= f32::EPSILON {
             if user_drag {
                 state.extent.has_dragged = true;
             }
-            DraggableScrollableNotification {
-                min_extent: state.extent.min_size,
-                max_extent: state.extent.max_size,
-                extent: state.extent.current_size,
-                initial_extent: state.extent.initial_size,
-                should_close_on_min_extent: state.extent.should_close_on_min_extent,
-                depth: 0,
-            }
-        };
+            return None;
+        }
+        state.extent.current_size = next;
+        state.extent.has_changed = true;
+        if user_drag {
+            state.extent.has_dragged = true;
+        }
+        Some(DraggableScrollableNotification {
+            min_extent: state.extent.min_size,
+            max_extent: state.extent.max_size,
+            extent: state.extent.current_size,
+            initial_extent: state.extent.initial_size,
+            should_close_on_min_extent: state.extent.should_close_on_min_extent,
+            depth: 0,
+        })
+    }
+
+    fn dispatch_notification(&self, notification: DraggableScrollableNotification) {
         let listeners = self.state.borrow().listeners.borrow().listeners.clone();
         for (_, listener) in listeners {
             if listener(notification) {
                 break;
             }
         }
-        true
+    }
+
+    fn set_size_internal(&self, size: f32, user_drag: bool) -> bool {
+        if let Some(notification) = self.commit_size(size, user_drag) {
+            self.dispatch_notification(notification);
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -216,6 +216,111 @@ fn draggable_sheet_reset_reports_genuine_change() {
 }
 
 #[test]
+fn draggable_sheet_reset_notifies_with_committed_state() {
+    // A reset listener must observe the final reset state, not the
+    // transient setter state: initial size with pristine flags.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    assert!(state.set_size(0.8, true));
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_for_listener = observed.clone();
+    let state_for_listener = state.clone();
+    let _subscription = state.add_notification_listener(move |notification| {
+        let extent = state_for_listener.extent();
+        observed_for_listener.borrow_mut().push((
+            notification.extent,
+            extent.current_size,
+            extent.has_dragged,
+            extent.has_changed,
+        ));
+        false
+    });
+    assert!(state.reset());
+    let seen = observed.borrow();
+    assert_eq!(seen.len(), 1);
+    assert!(approx(seen[0].0, 0.5));
+    assert!(approx(seen[0].1, 0.5));
+    assert!(
+        !seen[0].2,
+        "has_dragged must read cleared inside reset notify"
+    );
+    assert!(
+        !seen[0].3,
+        "has_changed must read cleared inside reset notify"
+    );
+    assert!(!state.extent().has_dragged);
+    assert!(!state.extent().has_changed);
+}
+
+#[test]
+fn draggable_sheet_reset_survives_reentrant_drag() {
+    // A listener drag during reset notification wins: the outer reset must
+    // not clear flags after callbacks have begun.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    assert!(state.set_size(0.8, true));
+    let state_for_listener = state.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        let _ = state_for_listener.set_size(0.9, true);
+        false
+    });
+    assert!(state.reset());
+    assert!(approx(state.extent().current_size, 0.9));
+    assert!(state.extent().has_dragged);
+    assert!(state.extent().has_changed);
+}
+
+#[test]
+fn draggable_sheet_reset_reentrant_reset_terminates_pristine() {
+    // A nested reset during reset notification sees committed state,
+    // reports no change, emits nothing, and leaves the outer reset intact.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    assert!(state.set_size(0.8, true));
+    let calls = Rc::new(RefCell::new(0));
+    let calls_for_listener = calls.clone();
+    let state_for_listener = state.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        *calls_for_listener.borrow_mut() += 1;
+        assert!(!state_for_listener.reset());
+        false
+    });
+    assert!(state.reset());
+    assert_eq!(*calls.borrow(), 1);
+    assert!(approx(state.extent().current_size, 0.5));
+    assert!(!state.extent().has_dragged);
+    assert!(!state.extent().has_changed);
+}
+
+#[test]
+fn draggable_sheet_reset_inner_listeners_observe_committed_sheet() {
+    // Ordering contract: the sheet commits silently first, the inner
+    // position restores second, the sheet notifies last. Inner-controller
+    // listeners therefore observe the already-committed sheet extent.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    state.set_inner_extents(1_000.0, 200.0);
+    assert!(state.set_size(0.8, true));
+    assert!(state.inner_controller().jump_to(50.0));
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let observed_for_listener = observed.clone();
+    let state_for_listener = state.clone();
+    let _subscription = state
+        .inner_controller()
+        .add_notification_listener(move |_| {
+            observed_for_listener
+                .borrow_mut()
+                .push(state_for_listener.extent().current_size);
+            false
+        });
+    assert!(state.reset());
+    let seen = observed.borrow();
+    assert_eq!(seen.len(), 1);
+    assert!(
+        approx(seen[0], 0.5),
+        "inner listeners must see the committed sheet, got {}",
+        seen[0]
+    );
+    assert_eq!(state.inner_controller().offset(), 0.0);
+}
+
+#[test]
 fn draggable_sheet_notifications_carry_full_state_and_unsubscribe() {
     let (state, _) = text_sheet("v1")
         .extents(0.25, 1.0, 0.5)
