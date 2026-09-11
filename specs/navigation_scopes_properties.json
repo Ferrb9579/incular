@@ -525,7 +525,7 @@
       "symbol": "AnimatedModalBarrier",
       "option": "dismissible",
       "default": "dismissible unless disabled",
-      "validation": "bool toggle gating pointer and semantic dismissal",
+      "validation": "bool toggle gating pointer and semantic dismissal; label and modal blocking are independent of it",
       "conversion": {
         "path": "crates/incular-widgets/src/navigation/barrier.rs",
         "kind": "trait_impl",
@@ -534,7 +534,7 @@
         "source": "AnimatedModalBarrier"
       },
       "comparison": {
-        "prose": "A non-dismissible barrier reports false without firing; dismissal stays disabled through the widget.",
+        "prose": "A non-dismissible barrier reports false without firing and withdraws Activate, but keeps its label node, still blocks preceding siblings, and still intercepts pointers without fallthrough.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",
@@ -559,6 +559,10 @@
         {
           "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
           "name": "animated_modal_barrier_options"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "animated_modal_barrier_semantic_ownership"
         }
       ],
       "status": "implemented"
@@ -601,6 +605,10 @@
         {
           "path": "crates/incular-widgets/tests/navigation_scopes.rs",
           "name": "animated_barrier_samples_animation_and_dismisses_from_the_configured_bridge"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "animated_modal_barrier_semantic_ownership"
         }
       ],
       "status": "implemented"
@@ -651,7 +659,7 @@
       "symbol": "AnimatedModalBarrier",
       "option": "semantics_label",
       "default": "none, no barrier label",
-      "validation": "label carried verbatim into the merged barrier node",
+      "validation": "label carried verbatim into the veil node; survives both dismissal flags",
       "conversion": {
         "path": "crates/incular-widgets/src/navigation/barrier.rs",
         "kind": "trait_impl",
@@ -660,7 +668,7 @@
         "source": "AnimatedModalBarrier"
       },
       "comparison": {
-        "prose": "The barrier merges into one Button node carrying the label, like Button merges its subtree.",
+        "prose": "The veil owns exactly one node: Button with Activate when semantic dismissal is enabled, else a neutral GenericContainer carrying the label. The background child is blocked behind the veil, not merged into the label.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/semantics.rs",
@@ -701,7 +709,7 @@
       "symbol": "AnimatedModalBarrier",
       "option": "barrier_semantics_dismissible",
       "default": "dismiss action exposed",
-      "validation": "bool toggle; disabling it excludes the whole barrier subtree from semantics",
+      "validation": "bool toggle gating only the Activate action; the label node and modal blocking survive it",
       "conversion": {
         "path": "crates/incular-widgets/src/navigation/barrier.rs",
         "kind": "trait_impl",
@@ -710,7 +718,7 @@
         "source": "AnimatedModalBarrier"
       },
       "comparison": {
-        "prose": "Observed boundary, locked as contract: a non-dismissible barrier contributes no nodes at all, including its child. Whether the label alone should survive is an open follow-up, not a silent assumption.",
+        "prose": "Resolved ownership: withdrawing semantic dismissal removes only Activate from the single veil node. The label stays, modal blocking stays, and exactly one element owns the callback while enabled. The earlier whole-subtree exclusion was a defect, not a contract.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/semantics.rs",
@@ -743,6 +751,10 @@
         {
           "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
           "name": "animated_modal_barrier_options"
+        },
+        {
+          "path": "crates/incular-widgets/tests/navigation_platform_scopes.rs",
+          "name": "animated_modal_barrier_semantic_ownership"
         }
       ],
       "status": "implemented"
@@ -760,7 +772,7 @@
         "source": "AnimatedModalBarrier"
       },
       "comparison": {
-        "prose": "The hint rides the same merged barrier node as the label.",
+        "prose": "The hint rides the same single veil node as the label.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/semantics.rs",
@@ -810,7 +822,7 @@
         "source": "AnimatedModalBarrier"
       },
       "comparison": {
-        "prose": "The child mounts and lays out normally; semantically it merges into the barrier node.",
+        "prose": "The child mounts and lays out normally behind the veil; semantically the veil blocks it as background content under the explicit modal contract.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/tree/reconciliation.rs",

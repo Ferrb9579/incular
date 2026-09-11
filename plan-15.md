@@ -1139,7 +1139,7 @@ the table wins.
 | Collections (Wrap/Table) | 13/13 | Table cell alignment has no widget option by design | `specs/collections_properties.json`, `tests/collections_ledger.rs` | complete |
 | Images (Image/RawImage/ImageIcon) | 19/19 | none known | `specs/image_properties.json`, `tests/image_ledger.rs` | complete |
 | Overlays (OverlayPortal/tooltips/transients) | 51/51 | follower custom-content semantics noted below | `specs/overlay_tooltip_properties.json`, `tests/overlay_tooltip_ledger.rs` | complete |
-| Navigation scopes (dispatch/scopes/storage/restoration/barrier) | 51/51 | barrier non-dismissible excludes whole subtree (follow-up noted) | `specs/navigation_scopes_properties.json`, `tests/navigation_scopes_ledger.rs` | complete |
+| Navigation scopes (dispatch/scopes/storage/restoration/barrier) | 51/51 | none known (barrier semantic ownership resolved: label survives dismissal flags, Activate needs both flags, modal blocking unconditional) | `specs/navigation_scopes_properties.json`, `tests/navigation_scopes_ledger.rs` | complete |
 | Platform wrappers (menus/chrome) | 26/26 | router/transaction surface stays with W4 | `specs/platform_wrappers_properties.json`, `tests/platform_wrappers_ledger.rs` | complete |
 | Utilities (SafeArea/SplitView/OverflowBar) | 32/32 | none known | `specs/utility_properties.json`, `tests/utility_ledger.rs` | complete |
 
@@ -1536,11 +1536,19 @@ the table wins.
   clones (which keep the lease alive by design) drop. Unbound or
   unsupported operations report explicit `NoOpUnsupported`/build
   errors; duplicate ids fail installs without partial state.
-- Open follow-up (not this package): a non-dismissible barrier
-  excludes its whole subtree — including child content — from
-  semantics, while its docs speak only of the dismiss action.
-  Recorded as observed contract, not redesigned here.
-- Evidence: 17 tests in
+- Resolved follow-up (barrier semantic ownership): three defects
+  fixed at the existing lowering owner. The block flag lived only on
+  the inner veil, so outer background siblings were never blocked —
+  the modal failed its core contract. Withdrawing either dismissal
+  flag also dropped the label node (role-less), and a dismissible
+  barrier without a label exposed no Activate at all. Now pointer
+  interception stays unconditional (opaque tap vs absorb), the veil
+  owns exactly one semantic node (Button+Activate iff `dismissible`
+  and `barrier_semantics_dismissible`, else neutral label carrier),
+  the inner veil block hides the background child, and a new outer
+  block on the builder root hides preceding outer siblings. Removing
+  dismissal removes only Activate — never the label or the blocking.
+- Evidence: 19 tests in
   `crates/incular-widgets/tests/navigation_platform_scopes.rs`
   (reusing the navigation/window-chrome suites) plus
   `specs/navigation_scopes_properties.json` /

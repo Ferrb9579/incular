@@ -17,8 +17,8 @@ use incular_widgets::{
     PageStorage, PageStorageBucket, PageStorageKey, PlatformMenu, PlatformMenuBar,
     PlatformMenuBarController, PlatformMenuDelegate, PlatformMenuEvent, PlatformMenuItem,
     PlatformMenuItemGroup, PlatformMenuShortcut, PlatformMenuUpdate, PopAttempt, PopScope,
-    PopScopeController, RootRestorationScope, ShortcutModifiers, Text, Widget, WindowDragRegion,
-    WindowResizeRegion, current_page_storage_bucket, current_restoration_scope,
+    PopScopeController, RootRestorationScope, ShortcutModifiers, Stack, Text, Widget,
+    WindowDragRegion, WindowResizeRegion, current_page_storage_bucket, current_restoration_scope,
     internal::WidgetTree,
 };
 use serde_json::{Value, json};
@@ -444,44 +444,242 @@ fn animated_modal_barrier_options() {
     let bridged = AnimatedModalBarrier::new().dismissal_handler(|| false);
     assert!(!bridged.dismiss());
 
-    // A dismissible barrier exposes one merged Button node carrying the
-    // label; like Button, the visual child subtree merges into it.
+    // All flag combinations over Stack([sibling, barrier]): the modal
+    // always blocks the preceding sibling, the label survives whenever
+    // present, and Activate appears exactly when pointer dismissal and
+    // the semantic-dismiss flag agree — independent of the label.
+    for (dismissible, semantics_dismissible, labeled) in [
+        (true, true, true),
+        (true, true, false),
+        (true, false, true),
+        (true, false, false),
+        (false, true, true),
+        (false, true, false),
+        (false, false, true),
+        (false, false, false),
+    ] {
+        let mut config = AnimatedModalBarrier::new().dismissible(dismissible);
+        config = config.barrier_semantics_dismissible(semantics_dismissible);
+        if labeled {
+            config = config
+                .semantics_label("Dismiss")
+                .semantics_on_tap_hint("Double tap");
+        }
+        let sibling: Widget = Text::new("sibling").into();
+        let stacked: Widget = Stack::new([sibling, config.into()]).into();
+        let mut tree = WidgetTree::new();
+        mount(&mut tree, stacked, 100., 40.);
+        tree.update_semantics();
+        let dump = tree.semantics_debug_dump();
+        assert!(
+            !dump.contains("sibling"),
+            "modal blocks preceding siblings ({dismissible},{semantics_dismissible},{labeled}):\n{dump}"
+        );
+        assert_eq!(
+            dump.contains("Dismiss"),
+            labeled,
+            "label survives dismissal flags ({dismissible},{semantics_dismissible},{labeled}):\n{dump}"
+        );
+        if labeled {
+            // The debug dump omits descriptions, so read the hint off the
+            // live node carrying the label.
+            let hinted = tree.semantics().iter().any(|(_, node)| {
+                node.label.as_deref() == Some("Dismiss")
+                    && node.description.as_deref() == Some("Double tap")
+            });
+            assert!(hinted, "hint rides the label node:\n{dump}");
+        }
+        assert_eq!(
+            dump.contains("Activate"),
+            dismissible && semantics_dismissible,
+            "semantic dismissal is gated by both flags:\n{dump}"
+        );
+        if dismissible && semantics_dismissible {
+            assert!(
+                dump.contains("Button"),
+                "dismissal node owns a Button role:\n{dump}"
+            );
+        } else if labeled {
+            assert!(
+                dump.contains("GenericContainer"),
+                "label-only node stays neutral:\n{dump}"
+            );
+        } else {
+            assert!(dump.is_empty(), "plain veil contributes no nodes:\n{dump}");
+        }
+    }
+
+    // The barrier's own background child stays hidden behind the veil in
+    // every mode; later siblings above the modal stay visible.
+    for dismissible in [true, false] {
+        let mut tree = WidgetTree::new();
+        mount(
+            &mut tree,
+            AnimatedModalBarrier::new()
+                .dismissible(dismissible)
+                .semantics_label("Dismiss")
+                .child(Text::new("behind"))
+                .into(),
+            100.,
+            40.,
+        );
+        tree.update_semantics();
+        let dump = tree.semantics_debug_dump();
+        assert!(dump.contains("Dismiss"), ":\n{dump}");
+        assert!(
+            !dump.contains("behind"),
+            "background child is blocked, not merged (dismissible={dismissible}):\n{dump}"
+        );
+    }
+    let sibling: Widget = Text::new("sibling").into();
+    let barrier: Widget = AnimatedModalBarrier::new()
+        .semantics_label("Dismiss")
+        .into();
+    let front: Widget = Text::new("front").into();
     let mut tree = WidgetTree::new();
     mount(
         &mut tree,
-        AnimatedModalBarrier::new()
-            .semantics_label("Dismiss")
-            .semantics_on_tap_hint("Double tap")
-            .child(Text::new("behind"))
-            .into(),
+        Stack::new([sibling, barrier, front]).into(),
         100.,
         40.,
     );
     tree.update_semantics();
     let dump = tree.semantics_debug_dump();
+    assert!(!dump.contains("sibling"), ":\n{dump}");
     assert!(dump.contains("Dismiss"), ":\n{dump}");
-    assert!(dump.contains("Activate"), ":\n{dump}");
     assert!(
-        !dump.contains("behind"),
-        "child merges into the barrier node:\n{dump}"
+        dump.contains("front"),
+        "later siblings stay visible:\n{dump}"
     );
+}
 
-    // A non-dismissible barrier contributes no semantic nodes at all —
-    // neither label, action, nor child. Pointer dismissal stays governed
-    // by dismissible; this documents the observed exclusion boundary.
+#[test]
+fn animated_modal_barrier_semantic_ownership() {
+    use incular_core::PointerPhase;
+    use incular_gestures::PointerEvent;
+    use incular_semantics::SemanticActionKind;
+    use incular_widgets::internal::ElementId;
+    use std::time::Instant;
+
+    fn activate_owners(tree: &WidgetTree, root: ElementId) -> Vec<ElementId> {
+        let mut owners = Vec::new();
+        let mut work = vec![root];
+        while let Some(element) = work.pop() {
+            if tree
+                .semantic_action_callback(element, SemanticActionKind::Activate)
+                .is_some()
+            {
+                owners.push(element);
+            }
+            if let Some(children) = tree.children(element) {
+                work.extend(children.iter().copied());
+            }
+        }
+        owners
+    }
+
+    fn tap(tree: &mut WidgetTree, x: f32, y: f32) {
+        for phase in [PointerPhase::Down, PointerPhase::Up] {
+            let _ = tree.dispatch_device_gesture_in_window(
+                9,
+                11,
+                PointerEvent {
+                    pointer: 5,
+                    position: incular_core::Offset::new(x, y),
+                    phase,
+                    time: Instant::now(),
+                },
+            );
+        }
+    }
+
+    // Exactly one node owns Activate when semantic dismissal is enabled;
+    // invoking it fires the configured callback, without a wrapper chain.
+    let fires = Rc::new(RefCell::new(0));
+    let observed = fires.clone();
     let mut tree = WidgetTree::new();
-    mount(
+    let root = mount(
         &mut tree,
         AnimatedModalBarrier::new()
             .semantics_label("Dismiss")
-            .barrier_semantics_dismissible(false)
-            .child(Text::new("behind"))
+            .on_dismiss(move || *observed.borrow_mut() += 1)
             .into(),
         100.,
         40.,
     );
     tree.update_semantics();
-    assert!(tree.semantics_debug_dump().is_empty());
+    let owners = activate_owners(&tree, root);
+    assert_eq!(owners.len(), 1, "one veil node owns Activate");
+    tree.semantic_action_callback(owners[0], SemanticActionKind::Activate)
+        .expect("owner carries the callback")();
+    assert_eq!(*fires.borrow(), 1);
+
+    // Pointer taps dismiss while enabled and never fall through: the
+    // locked veil still absorbs the gesture without firing.
+    tap(&mut tree, 50., 20.);
+    assert_eq!(*fires.borrow(), 2);
+    let locked_fires = Rc::new(RefCell::new(0));
+    let locked_observed = locked_fires.clone();
+    tree.update(
+        root,
+        AnimatedModalBarrier::new()
+            .dismissible(false)
+            .semantics_label("Dismiss")
+            .on_dismiss(move || *locked_observed.borrow_mut() += 1)
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
+    tree.update_semantics();
+    assert!(
+        activate_owners(&tree, root).is_empty(),
+        "mounted toggle withdraws the action"
+    );
+    assert!(
+        tree.hit_test(incular_core::Offset::new(50., 20.)).is_some(),
+        "locked veil still intercepts pointers"
+    );
+    tap(&mut tree, 50., 20.);
+    assert_eq!(*locked_fires.borrow(), 0);
+
+    // Callback replacement retargets both pointer and semantic dismissal
+    // to the newest closure; absence of any callback still dismisses
+    // silently through the same paths.
+    let first = Rc::new(RefCell::new(0));
+    let second = Rc::new(RefCell::new(0));
+    let mut tree = WidgetTree::new();
+    let root = mount(
+        &mut tree,
+        AnimatedModalBarrier::new()
+            .on_dismiss({
+                let first = first.clone();
+                move || *first.borrow_mut() += 1
+            })
+            .into(),
+        100.,
+        40.,
+    );
+    tree.update(
+        root,
+        AnimatedModalBarrier::new()
+            .on_dismiss({
+                let second = second.clone();
+                move || *second.borrow_mut() += 1
+            })
+            .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(100., 40.)))
+        .expect("layout");
+    tap(&mut tree, 50., 20.);
+    assert_eq!(*first.borrow(), 0);
+    assert_eq!(*second.borrow(), 1);
+    let owners = activate_owners(&tree, root);
+    assert_eq!(owners.len(), 1);
+    tree.semantic_action_callback(owners[0], SemanticActionKind::Activate)
+        .expect("replaced callback")();
+    assert_eq!(*second.borrow(), 2);
 }
 
 #[test]

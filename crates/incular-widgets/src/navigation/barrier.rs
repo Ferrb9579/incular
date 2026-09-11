@@ -1,7 +1,10 @@
 //! Animated modal barrier composition and semantics.
 
-use crate::{Animation, Color, Container, GestureDetector, HitTestBehavior, Semantics, Widget};
+use crate::{
+    Animation, Color, Container, ExplicitSemantics, GestureDetector, HitTestBehavior, Widget,
+};
 use incular_animation::{AnimationController, TweenValue};
+use incular_semantics::{SemanticActionKind, SemanticRole};
 use std::{cell::Cell, rc::Rc};
 
 /// A retained, animated modal barrier.
@@ -180,6 +183,10 @@ impl From<AnimatedModalBarrier> for Widget {
                 })
             };
 
+            // Pointer interception is unconditional: a dismissible barrier
+            // reports taps through an opaque detector, a locked barrier
+            // absorbs them. Either way nothing falls through to content
+            // behind the veil.
             let mut barrier: Widget = Container::new().color(color.value()).into();
             if dismissible {
                 barrier = GestureDetector::new(barrier)
@@ -193,21 +200,42 @@ impl From<AnimatedModalBarrier> for Widget {
                 barrier = Widget::absorb_pointer(true, barrier);
             }
 
-            if let Some(label) = &semantics_label
-                && semantics_dismissible
-            {
-                let mut semantics = Semantics::new(barrier).label(label.clone());
+            // Semantic ownership is split three ways. The label (with its
+            // tap hint) always gets a node when present, so removing
+            // dismissal never drops the name. The Activate dismissal action
+            // lives on that same veil node exactly when pointer dismissal
+            // and the semantic-dismiss flag agree; it never depends on the
+            // label existing. Modal blocking below is independent of both.
+            let semantic_dismiss = dismissible && semantics_dismissible;
+            if semantics_label.is_some() || semantic_dismiss {
+                let role = if semantic_dismiss {
+                    SemanticRole::Button
+                } else {
+                    SemanticRole::GenericContainer
+                };
+                let mut explicit = ExplicitSemantics::new(role);
+                if let Some(label) = &semantics_label {
+                    explicit = explicit.label(label.clone());
+                }
                 if let Some(hint) = &semantics_hint {
-                    semantics = semantics.description(hint.clone());
+                    explicit = explicit.description(hint.clone());
                 }
-                if dismissible {
-                    semantics = semantics.on_tap({
-                        let dismiss = dismiss.clone();
-                        move || dismiss()
-                    });
+                if semantic_dismiss {
+                    explicit = explicit.actions([SemanticActionKind::Activate]);
+                    barrier = barrier.semantics(explicit).with_semantic_callback(
+                        SemanticActionKind::Activate,
+                        {
+                            let dismiss = dismiss.clone();
+                            Rc::new(move || dismiss())
+                        },
+                    );
+                } else {
+                    barrier = barrier.semantics(explicit);
                 }
-                barrier = semantics.into();
             }
+            // Inner block hides the background child stacked beneath the
+            // veil; this is the explicit modal contract for content behind
+            // the barrier, not Button-style merging of the veil's own label.
             barrier = barrier.block_semantics();
 
             if let Some(child) = &child {
@@ -216,6 +244,11 @@ impl From<AnimatedModalBarrier> for Widget {
                 barrier
             }
         })
+        // Outer block hides preceding siblings *outside* the barrier at the
+        // parent stacking level. The veil block above only scopes the
+        // veil/child pair inside the builder; without this outer flag the
+        // modal fails to block background semantics entirely.
+        .block_semantics()
     }
 }
 
