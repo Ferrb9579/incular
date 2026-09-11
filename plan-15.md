@@ -1294,6 +1294,24 @@ the table wins.
   aspect/fractional, Wrap/Table, and images. Still pending: scrolling,
   overlays, navigation scopes, platform wrappers, and utilities.
 
+## W3 — IndexedStack inactive-child lifecycle (same workstream, still open)
+
+- Established contract, no production change: retention without
+  eligibility. An inactive child keeps its laid-out subtree, retained
+  identities, controller state, and node flags; focus membership,
+  keyboard resolution, pointer delivery, and semantic exposure follow
+  only the selected child. Index selection is separate from child
+  ownership: keyed reorder permutes identities while delivery follows
+  the index, removal degrades to the stack itself, and an out-of-range
+  index hides everything while measuring and restoring delivery when
+  valid again. Controller subscriptions belong to the retained
+  controller, so a geometry listener on a hidden area still fires.
+- Evidence: 5 new tests in
+  `crates/incular-widgets/tests/stack_layout.rs` (focused child
+  going inactive, removal and keyed reorder, out-of-range round trip,
+  hidden text-controller edits applying on reselection, hidden
+  selection-area subscriptions delivering).
+
 ## W3 — Retained property contracts (Visibility slice; W3 remains open)
 
 - Ledger: `specs/visibility_properties.json` records all nine exported

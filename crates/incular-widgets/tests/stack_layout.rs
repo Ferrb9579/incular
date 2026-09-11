@@ -555,6 +555,313 @@ fn indexed_stack_inactive_focus_leaves_membership() {
 }
 
 #[test]
+fn indexed_stack_focused_child_becoming_inactive_loses_delivery() {
+    // The established contract is retention without eligibility: the
+    // inactive child keeps its laid-out subtree and node flags, but focus
+    // membership, keyboard resolution, and pointer delivery follow only
+    // the selected child.
+    let node = FocusNode::new();
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([
+                Widget::from(Focus::new(white_box(40., 40.)).node(node.clone())),
+                white_box(40., 40.),
+            ])
+            .index(0)
+            .into(),
+        )
+        .expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    node.request_focus();
+    let focused = tree.focused_keyboard_element().expect("focused");
+    // Pointer delivery reaches the active child's subtree before the
+    // switch (the hit lands on the Focus element's box child).
+    let hit_before = tree
+        .hit_test(Offset::new(10., 10.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(
+        hit_before,
+        Some(tree.children(focused).expect("focus child")[0])
+    );
+
+    tree.update(
+        root,
+        IndexedStack::new([
+            Widget::from(Focus::new(white_box(40., 40.)).node(node.clone())),
+            white_box(40., 40.),
+        ])
+        .index(1)
+        .into(),
+    )
+    .expect("switch away");
+    layout_tight(&mut tree, 200., 200.);
+    // Membership and resolution leave; the node flag is untouched.
+    assert!(tree.focusable_elements().is_empty());
+    assert_eq!(tree.focused_keyboard_element(), None);
+    assert!(node.has_focus(), "node flag untouched by the switch");
+    // The hit now resolves to the newly selected child, not the
+    // retained-but-inactive one.
+    let kids = stack_kids(&tree, root);
+    let hit_after = tree
+        .hit_test(Offset::new(10., 10.))
+        .and_then(|render| tree.element_for_render(render));
+    assert_eq!(hit_after, Some(kids[1]));
+}
+
+#[test]
+fn indexed_stack_active_child_removal_and_keyed_reorder() {
+    // Removing or reordering the active child moves selection delivery to
+    // whatever the index now names; retained identities prove no child
+    // subtree is rebuilt by the index change itself.
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([
+                action(Size::new(60., 40.), Color::WHITE, ActionId(1)).with_key(1u64),
+                action(Size::new(30., 20.), Color::WHITE, ActionId(2)).with_key(2u64),
+            ])
+            .index(0)
+            .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let before = stack_kids(&tree, root);
+    let hit_action = |tree: &WidgetTree| {
+        let hit = tree.hit_test(Offset::new(10., 10.)).expect("hit");
+        tree.action_for_element(tree.element_for_render(hit).expect("element"))
+    };
+    assert_eq!(hit_action(&tree), Some(ActionId(1)));
+
+    // Keyed reorder: index 0 now names the previous second child, whose
+    // identity is retained.
+    tree.update(
+        root,
+        IndexedStack::new([
+            action(Size::new(30., 20.), Color::WHITE, ActionId(2)).with_key(2u64),
+            action(Size::new(60., 40.), Color::WHITE, ActionId(1)).with_key(1u64),
+        ])
+        .index(0)
+        .into(),
+    )
+    .expect("reorder");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let reordered = stack_kids(&tree, root);
+    assert_eq!(reordered, vec![before[1], before[0]]);
+    assert_eq!(hit_action(&tree), Some(ActionId(2)));
+
+    // Removing the active child: delivery follows the index to the
+    // survivor and the removed identity is gone.
+    tree.update(
+        root,
+        IndexedStack::new([action(Size::new(60., 40.), Color::WHITE, ActionId(1)).with_key(1u64)])
+            .index(1)
+            .into(),
+    )
+    .expect("remove active child");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let survivors = stack_kids(&tree, root);
+    assert_eq!(survivors, vec![before[0]]);
+    // Index 1 names nothing now: the stack itself resolves the hit.
+    let hit = tree.hit_test(Offset::new(10., 10.)).expect("stack hit");
+    assert_eq!(tree.element_for_render(hit), Some(root));
+}
+
+#[test]
+fn indexed_stack_out_of_range_then_valid_restores_delivery() {
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([
+                action(Size::new(60., 40.), Color::WHITE, ActionId(1)),
+                action(Size::new(30., 20.), Color::WHITE, ActionId(2)),
+            ])
+            .index(0)
+            .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let kids = stack_kids(&tree, root);
+    let hit_action = |tree: &WidgetTree| {
+        let hit = tree.hit_test(Offset::new(10., 10.)).expect("hit");
+        tree.action_for_element(tree.element_for_render(hit).expect("element"))
+    };
+    assert_eq!(hit_action(&tree), Some(ActionId(1)));
+
+    // Out of range hides every child but measures them and keeps identity.
+    tree.update(
+        root,
+        IndexedStack::new([
+            action(Size::new(60., 40.), Color::WHITE, ActionId(1)),
+            action(Size::new(30., 20.), Color::WHITE, ActionId(2)),
+        ])
+        .index(9)
+        .into(),
+    )
+    .expect("index out of range");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(stack_kids(&tree, root), kids);
+    assert!(tree.focusable_elements().is_empty());
+    tree.update_semantics();
+    assert!(tree.semantics_debug_dump().is_empty());
+
+    // Back in range: the same retained child delivers again.
+    tree.update(
+        root,
+        IndexedStack::new([
+            action(Size::new(60., 40.), Color::WHITE, ActionId(1)),
+            action(Size::new(30., 20.), Color::WHITE, ActionId(2)),
+        ])
+        .index(1)
+        .into(),
+    )
+    .expect("index back in range");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(stack_kids(&tree, root), kids);
+    assert_eq!(hit_action(&tree), Some(ActionId(2)));
+}
+
+#[test]
+fn indexed_stack_inactive_child_size_change_applies_on_selection() {
+    use incular_text::TextEditingController;
+    use incular_widgets::EditableText;
+
+    // An inactive text child keeps its controller live: edits apply to
+    // the retained subtree while hidden, and the new size is visible as
+    // soon as the index selects it again.
+    let controller = TextEditingController::with_text("hi");
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([
+                white_box(60., 40.),
+                Widget::from(EditableText::new(controller.clone()).multiline(true)),
+            ])
+            .index(1)
+            .into(),
+        )
+        .expect("mount");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    let kids = stack_kids(&tree, root);
+    let before = bounds_of(&tree, kids[1]).3;
+
+    tree.update(
+        root,
+        IndexedStack::new([
+            white_box(60., 40.),
+            Widget::from(EditableText::new(controller.clone()).multiline(true)),
+        ])
+        .index(0)
+        .into(),
+    )
+    .expect("hide editor");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    // Editing the hidden controller still mutates retained state.
+    controller.set_text("hi\nthere\nagain\nmore");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(stack_kids(&tree, root), kids);
+
+    tree.update(
+        root,
+        IndexedStack::new([
+            white_box(60., 40.),
+            Widget::from(EditableText::new(controller.clone()).multiline(true)),
+        ])
+        .index(1)
+        .into(),
+    )
+    .expect("show editor");
+    tree.layout(Constraints::loose(Size::new(200., 200.)))
+        .expect("layout");
+    assert_eq!(stack_kids(&tree, root), kids);
+    assert!(
+        bounds_of(&tree, kids[1]).3 > before,
+        "hidden edits grew the retained editor"
+    );
+    assert_eq!(controller.text(), "hi\nthere\nagain\nmore");
+}
+
+#[test]
+fn indexed_stack_inactive_child_keeps_subscriptions_live() {
+    use incular_text::{TextAlign, TextStyle};
+    use incular_widgets::{Column, SelectionAreaController};
+    use std::{cell::Cell, rc::Rc};
+
+    // Subscriptions belong to the retained controller, not to index
+    // selection: a geometry listener on an inactive child's area still
+    // fires when the selection changes programmatically while hidden.
+    let controller = SelectionAreaController::new();
+    let area_child = || {
+        Widget::selection_area(
+            controller.clone(),
+            Column::new(vec![Widget::selectable_text_styled(
+                "hidden text",
+                TextStyle::default(),
+                TextAlign::Start,
+            )])
+            .into(),
+        )
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            IndexedStack::new([white_box(60., 40.), area_child()])
+                .index(1)
+                .into(),
+        )
+        .expect("mount");
+    layout_tight(&mut tree, 200., 200.);
+    let notifications = Rc::new(Cell::new(0u32));
+    let observed = notifications.clone();
+    let _token = controller.add_geometry_listener(move |_| {
+        observed.set(observed.get() + 1);
+    });
+
+    // Hide the area, then drive a selection on its retained child.
+    tree.update(
+        root,
+        IndexedStack::new([white_box(60., 40.), area_child()])
+            .index(0)
+            .into(),
+    )
+    .expect("hide area");
+    layout_tight(&mut tree, 200., 200.);
+    let area = stack_kids(&tree, root)[1];
+    let column = tree.children(area).expect("area child")[0];
+    let label = tree.children(column).expect("column child")[0];
+    let origin = tree.element_bounds(label).expect("bounds").origin;
+    assert!(tree.selectable_text_set_selection(label, origin, false));
+    assert!(tree.selectable_text_set_selection(label, origin + Offset::new(30., 0.), true));
+    assert_eq!(
+        notifications.get(),
+        2,
+        "hidden child's subscription still delivers (down and extend)"
+    );
+    assert_eq!(controller.selected_text(), "hidd");
+
+    // Restoring the index keeps the same subscription delivering.
+    tree.update(
+        root,
+        IndexedStack::new([white_box(60., 40.), area_child()])
+            .index(1)
+            .into(),
+    )
+    .expect("show area");
+    layout_tight(&mut tree, 200., 200.);
+    assert!(tree.selectable_text_set_selection(label, origin, false));
+    assert_eq!(notifications.get(), 3);
+}
+
+#[test]
 fn stack_builders_match_fluent_construction() {
     let fluent = Stack::new([white_box(10., 10.)])
         .alignment(Alignment::CENTER)
