@@ -1,0 +1,862 @@
+{
+  "schema_version": 2,
+  "family": "WheelScrolling",
+  "scope": "Sixth scrolling group: fixed-extent cylindrical wheel viewports, their child delegates, projection math, and the fixed-extent controller. The &mut self viewport setters (projection, magnifier, opacity, rendering policy, physics, selection callback) are exercised behaviorally; the ledger tracks constructor inputs and fluent Self-returning options per its discovery rule. There is no looping delegate: bounds always clamp. Retained wheel windows re-prepare from the shared controller revision each layout (mirroring sliver refresh); selection changes are callback-only with no retained scroll actions. One controller across unrelated viewports stays a W5 gap. This ledger covers only this family; it does not claim whole-codebase completeness.",
+  "allowed_phases": [
+    "layout",
+    "paint",
+    "hit_test",
+    "semantics",
+    "reconciliation",
+    "lowering",
+    "conversion"
+  ],
+  "records": [
+    {
+      "symbol": "WheelChildDelegate",
+      "option": "children",
+      "default": "required, eager finite child list",
+      "validation": "finite eager delegate with an exact known count",
+      "comparison": {
+        "prose": "Eager lists and known-count builders share the same clamped layout path; a builder returning None terminates the queried range there.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelChildDelegate",
+            "name": "child_count"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_delegate_builder_known_unknown_and_empty"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelChildDelegate",
+      "option": "builder",
+      "default": "required, lazy source with an optional known count",
+      "validation": "None count is a lazy unknown tail with a huge range; Some count clamps like the eager list",
+      "comparison": {
+        "prose": "Unknown tails still round the selection and materialize the visible window; empty delegates select and lay out nothing.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelChildDelegate",
+            "name": "child_count"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_delegate_builder_known_unknown_and_empty"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "identity",
+      "default": "n/a, the multiplicative neutral element",
+      "validation": "identity times a transform is that transform, both orders",
+      "comparison": {
+        "prose": "Column-major matrices matching Flutter Matrix4 indexing; the exact matrix paints and hit-tests each child.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "multiply"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "inverse_transform_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "multiply",
+      "default": "n/a, column-vector composition",
+      "validation": "translation times its inverse roundtrips to identity within float tolerance",
+      "comparison": {
+        "prose": "One composition owner for the centered projection and magnifier chains.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "transform_for"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "translation",
+      "default": "n/a, constructor with x/y/z offsets",
+      "validation": "projects and inverse-projects a plane point by the offset",
+      "comparison": {
+        "prose": "Centering translations wrap the cylindrical projection and the magnifier scale.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "transform_for"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "inverse_transform_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "rotation_x",
+      "default": "n/a, constructor with a radian angle",
+      "validation": "vertical wheels rotate around x inside the cylindrical projection",
+      "comparison": {
+        "prose": "Horizontal wheels use rotation_y instead; the projection selects the axis.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "cylindrical_projection"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_bounds_clamp_and_settle_keeps_logical_and_visual_agreement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "rotation_y",
+      "default": "n/a, constructor with a radian angle",
+      "validation": "reserved for horizontal cylinder orientation inside the projection",
+      "comparison": {
+        "prose": "Same construction contract as rotation_x on the other axis; vertical layouts exercise rotation_x.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "cylindrical_projection"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "scale",
+      "default": "n/a, uniform scale constructor",
+      "validation": "magnified center transforms differ from plain ones at the same index",
+      "comparison": {
+        "prose": "The magnifier wraps the centered projection with this scale for the centered item only.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "transform_for"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_rendering_policy_magnifier_opacity_and_measure"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelMatrix",
+      "option": "cylindrical_projection",
+      "default": "n/a, Flutter-compatible radius/angle/perspective projection",
+      "validation": "centered children agree between logical selection, center angle, and center hit testing",
+      "comparison": {
+        "prose": "Paint and hit testing invert the exact same transform, so placement and picking cannot drift apart.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "transform_for"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ],
+        "hit_test": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelLayout",
+            "name": "hit_test"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_bounds_clamp_and_settle_keeps_logical_and_visual_agreement"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelProjection",
+      "option": "diameter_ratio",
+      "default": "2.0, Flutter default cylinder diameter",
+      "validation": "radius derives from viewport height; narrow cylinders cap the visible angle at PI/2",
+      "comparison": {
+        "prose": "Non-positive ratios are rejected at construction; the default matches Flutter.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "radius"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_rejects_non_positive_diameter_ratio"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelProjection",
+      "option": "perspective",
+      "default": "0.003, inside Flutter's safe 0..=0.01 range",
+      "validation": "non-positive and oversized perspectives are rejected at construction",
+      "comparison": {
+        "prose": "The projection entry feeds the homogeneous divisor used for paint culling and diagnostics.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "cylindrical_projection"
+          }
+        ]
+      },
+      "consumers": {
+        "paint": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelMatrix",
+            "name": "project_point"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelProjection",
+      "option": "off_axis_fraction",
+      "default": "0.0, centered cylinder",
+      "validation": "finite values shift the cylinder center horizontally in the transform",
+      "comparison": {
+        "prose": "Only finiteness is validated; the fraction recenters the projection without touching selection.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "transform_for"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "WheelProjection",
+      "option": "squeeze",
+      "default": "1.0, no layout-to-cylinder compression",
+      "validation": "angle mapping and top margin follow the validated factor",
+      "comparison": {
+        "prose": "Non-positive squeeze is rejected at construction; the factor compresses angles and the visible window together.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelProjection",
+            "name": "angle_for"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_matrix_and_projection_math"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelViewport",
+      "option": "controller",
+      "default": "required, shared ScrollController owning offset and activity",
+      "validation": "external jumps re-prepare the retained window; replacement retargets with old-handle isolation",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+        "kind": "method",
+        "owner": "WheelViewportConfig",
+        "name": "instantiate"
+      },
+      "comparison": {
+        "prose": "Offsets stay in Scroll: the tree polls the controller revision before layout (mirroring sliver refresh) and re-prepares on movement.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "refresh_wheel_ranges"
+          }
+        ]
+      },
+      "consumers": {
+        "reconciliation": [
+          {
+            "path": "crates/incular-widgets/src/tree/reconciliation.rs",
+            "kind": "method",
+            "owner": "WidgetTree",
+            "name": "refresh_wheel_ranges"
+          }
+        ],
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_retained_window_follows_controller_replacement_resize_and_removal"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelViewport",
+      "option": "item_extent",
+      "default": "required, positive fixed item pitch",
+      "validation": "non-positive extents are rejected; selection is the rounded offset divided by the extent",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+        "kind": "method",
+        "owner": "WheelViewportConfig",
+        "name": "instantiate"
+      },
+      "comparison": {
+        "prose": "Settling snaps the offset to the nearest multiple; the centered child, hit test, and rounded index agree there.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "settle"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_bounds_clamp_and_settle_keeps_logical_and_visual_agreement"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_rejects_non_positive_item_extent"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelViewport",
+      "option": "delegate",
+      "default": "required, eager or builder child source",
+      "validation": "known counts clamp; unknown tails stay huge; empty selects nothing; removal clamps the window",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+        "kind": "method",
+        "owner": "WheelViewportConfig",
+        "name": "instantiate"
+      },
+      "comparison": {
+        "prose": "No looping delegate exists: past-the-end jumps and deltas clamp to the final item with leftover reported as unconsumed.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "jump_to_item"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_delegate_builder_known_unknown_and_empty"
+        },
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_retained_window_follows_controller_replacement_resize_and_removal"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelViewport",
+      "option": "with_new_controller",
+      "default": "n/a, constructor allocating a fresh controller",
+      "validation": "fresh viewports start at the first item with a full scroll range after layout",
+      "conversion": {
+        "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+        "kind": "method",
+        "owner": "WheelViewportConfig",
+        "name": "instantiate"
+      },
+      "comparison": {
+        "prose": "Pure constructor shorthand over the controller option with identical layout behavior.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelViewport",
+            "name": "layout"
+          }
+        ]
+      },
+      "consumers": {
+        "lowering": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "WheelViewportConfig",
+            "name": "instantiate"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_scroll_view_wrapper_exposes_viewport_models"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelScrollView",
+      "option": "controller",
+      "default": "required, shared ScrollController",
+      "validation": "wrapper layouts and hit-tests through the same viewport model",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListWheelScrollView"
+      },
+      "comparison": {
+        "prose": "Convenience wrapper over the viewport with identical selection and projection behavior.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ],
+        "conversion": [
+          {
+            "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+            "kind": "trait_impl",
+            "trait": "From",
+            "target": "Widget",
+            "source": "ListWheelScrollView"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_scroll_view_wrapper_exposes_viewport_models"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelScrollView",
+      "option": "item_extent",
+      "default": "required, positive fixed item pitch",
+      "validation": "same fixed-extent contract as the viewport",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListWheelScrollView"
+      },
+      "comparison": {
+        "prose": "Delegates verbatim to the viewport model.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_scroll_view_wrapper_exposes_viewport_models"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "ListWheelScrollView",
+      "option": "delegate",
+      "default": "required, eager or builder child source",
+      "validation": "same delegate contract as the viewport",
+      "conversion": {
+        "path": "crates/incular-widgets/src/tree/widget/constructors.rs",
+        "kind": "trait_impl",
+        "trait": "From",
+        "target": "Widget",
+        "source": "ListWheelScrollView"
+      },
+      "comparison": {
+        "prose": "Delegates verbatim to the viewport model.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "ListWheelScrollView",
+            "name": "layout"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_scroll_view_wrapper_exposes_viewport_models"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FixedExtentScrollController",
+      "option": "initial_item",
+      "default": "required, reported until a wheel extent is established",
+      "validation": "pre-extent selection reports the initial item verbatim",
+      "comparison": {
+        "prose": "Thin fixed-extent facade over the shared controller; no second offset store.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "FixedExtentScrollController",
+            "name": "selected_item"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "FixedExtentScrollController",
+            "name": "selected_item"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_fixed_extent_controller_paths"
+        }
+      ],
+      "status": "implemented"
+    },
+    {
+      "symbol": "FixedExtentScrollController",
+      "option": "with_item_extent",
+      "default": "n/a, constructor recording an initial item with a known extent",
+      "validation": "defers the initial jump until the range exists instead of clamping it away",
+      "comparison": {
+        "prose": "Same deferred-jump path as viewport jump_to_item: pending offsets apply on the first extent update.",
+        "refs": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "FixedExtentScrollController",
+            "name": "jump_to_item"
+          }
+        ]
+      },
+      "consumers": {
+        "layout": [
+          {
+            "path": "crates/incular-widgets/src/advanced_scrolling/wheel.rs",
+            "kind": "method",
+            "owner": "FixedExtentScrollController",
+            "name": "selected_item"
+          }
+        ]
+      },
+      "regressions": [
+        {
+          "path": "crates/incular-widgets/tests/wheel_scrolling.rs",
+          "name": "wheel_fixed_extent_controller_paths"
+        }
+      ],
+      "status": "implemented"
+    }
+  ]
+}

@@ -259,6 +259,7 @@ impl WidgetTree {
             notification_subscriptions: Vec::new(),
             sliver_delegate_revision: 0,
             sliver_scroll_revision: 0,
+            wheel_scroll_revision: 0,
             layout_builder_constraints: None,
             layout_builder_revision: 0,
             build_context: build_context.clone(),
@@ -1198,6 +1199,36 @@ impl WidgetTree {
                                 config,
                             ))))
                 .then_some(RenderObjectId(raw))
+            })
+            .collect::<Vec<_>>();
+        for render in pending {
+            self.mark_render_dirty(render, DirtyFlags::LAYOUT, true);
+        }
+    }
+
+    /// Re-prepares mounted wheel windows whose shared controller moved
+    /// since the last materialization. This mirrors `refresh_sliver_ranges`
+    /// without its delegate/cache nuance: every wheel child window derives
+    /// from the controller offset, so any revision change invalidates it.
+    /// Without this, an externally driven jump, settle, or drag leaves the
+    /// retained window (and its semantics and hit testing) stale until an
+    /// unrelated rebuild, while the model already reports the new
+    /// selection.
+    pub(super) fn refresh_wheel_ranges(&mut self) {
+        let pending = self
+            .renders
+            .iter()
+            .filter_map(|(raw, render)| {
+                let (config, element) = match &render.object.kind {
+                    RenderKind::ListWheelScrollView { config }
+                    | RenderKind::ListWheelViewport { config } => {
+                        let element = self.element_for_render(RenderObjectId(raw))?;
+                        let element = self.elements.get(element.0)?;
+                        (config.clone(), element.wheel_scroll_revision)
+                    }
+                    _ => return None,
+                };
+                (element != config.controller_revision()).then_some(RenderObjectId(raw))
             })
             .collect::<Vec<_>>();
         for render in pending {

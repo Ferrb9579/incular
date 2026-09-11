@@ -854,6 +854,13 @@ impl<T> ListWheelViewport<T> {
 }
 
 impl<T: Clone> WheelViewportConfig<T> {
+    /// Revision of the shared scroll controller. The retained tree polls
+    /// this before layout (like sliver viewports) so an externally driven
+    /// jump, settle, or drag re-prepares the materialized child window.
+    pub(crate) fn controller_revision(&self) -> u64 {
+        self.controller.revision()
+    }
+
     pub(crate) fn instantiate(&self) -> ListWheelViewport<T> {
         ListWheelViewport {
             controller: self.controller.clone(),

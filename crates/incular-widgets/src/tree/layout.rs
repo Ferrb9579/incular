@@ -24,6 +24,7 @@ impl WidgetTree {
         self.apply_inherited_invalidations();
         self.refresh_text_fields();
         self.refresh_sliver_ranges();
+        self.refresh_wheel_ranges();
         self.refresh_stateful_layout_builders();
         if let Some(root) = self.root.and_then(|id| self.render_id(id)) {
             self.layout_render(root, constraints)?;
@@ -179,6 +180,23 @@ impl WidgetTree {
             .collect();
         self.reconcile_advanced_children(element_id, desired)?;
         self.wheel_state_live_mut(id).layout = Some(layout);
+        // Consume the controller revision the window was just prepared
+        // from, so `refresh_wheel_ranges` only fires on genuine movement.
+        // The render kind always carries the live config here; a missing
+        // element (unmounted mid-layout) simply skips the bookkeeping.
+        let revision = self
+            .renders
+            .get(id.0)
+            .and_then(|render| match &render.object.kind {
+                RenderKind::ListWheelScrollView { config }
+                | RenderKind::ListWheelViewport { config } => Some(config.controller_revision()),
+                _ => None,
+            });
+        if let Some(revision) = revision
+            && let Some(element) = self.elements.get_mut(element_id.0)
+        {
+            element.wheel_scroll_revision = revision;
+        }
         Ok(())
     }
 
