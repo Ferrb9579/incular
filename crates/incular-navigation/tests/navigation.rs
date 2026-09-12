@@ -362,6 +362,135 @@ fn restoration_truncates_invalid_tail_and_keeps_a_safe_root() {
 }
 
 #[test]
+fn mixed_stacks_keep_each_entry_metadata_associated() {
+    let registry = RouteRegistry::new();
+    let home = registry
+        .register_restorable("/home", restorable_page)
+        .unwrap();
+    let detail = registry
+        .register_restorable("/detail", restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(home, json!({ "name": "home" })).state(json!({ "tab": 1 })),
+        )
+        .unwrap();
+    navigator.push_page(Page::new("transient-dialog-route", page()));
+    // An ordinary top entry carries no metadata of its own.
+    assert!(navigator.current_restorable_route().is_none());
+    assert!(!navigator.set_current_restorable_state(json!({ "tab": 2 })));
+
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(detail, json!({ "name": "detail" }))
+                .state(json!({ "document": 42 })),
+        )
+        .unwrap();
+    assert_eq!(
+        navigator.current_restorable_route().unwrap().state,
+        json!({ "document": 42 })
+    );
+    assert!(navigator.set_current_restorable_state(json!({ "document": 43 })));
+
+    // Removing the top restorable entry exposes the ordinary middle entry
+    // without disturbing the bottom entry's stored state.
+    assert_eq!(navigator.pop().unwrap().name, "detail");
+    assert!(navigator.current_restorable_route().is_none());
+    assert_eq!(navigator.pop().unwrap().name, "transient-dialog-route");
+    assert_eq!(
+        navigator.current_restorable_route().unwrap().state,
+        json!({ "tab": 1 })
+    );
+
+    // The snapshot prefix stops at the first ordinary route, so only the
+    // bottom entry persists.
+    navigator.push_page(Page::new("another-transient", page()));
+    let snapshot = navigator.restoration_snapshot();
+    assert_eq!(snapshot.routes.len(), 1);
+    assert_eq!(snapshot.routes[0].state, json!({ "tab": 1 }));
+    assert_eq!(snapshot.active_route, Some(0));
+}
+
+#[test]
+fn replace_discards_the_replaced_entry_metadata_and_cleans_its_scope() {
+    let registry = RouteRegistry::new();
+    let document = registry
+        .register_restorable_with_scope_cleanup("/document", true, restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    let removed = Rc::new(RefCell::new(Vec::new()));
+    navigator.set_route_scope_cleanup({
+        let removed = Rc::clone(&removed);
+        move |key| removed.borrow_mut().push(key.to_string())
+    });
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(document, json!({ "name": "document" }))
+                .scope_key(RouteScopeKey::new("document-42").unwrap()),
+        )
+        .unwrap();
+    let previous = navigator
+        .replace(Route::new("settings", page()))
+        .expect("replace succeeds");
+    assert_eq!(previous.name, "document");
+    assert_eq!(&*removed.borrow(), &["document-42"]);
+    // The replacement entry is ordinary: no metadata survives the swap.
+    assert!(navigator.current_restorable_route().is_none());
+    assert!(!navigator.set_current_restorable_state(json!({ "x": 1 })));
+    // An empty snapshot reports no active route instead of underflowing.
+    let snapshot = navigator.restoration_snapshot();
+    assert!(snapshot.routes.is_empty());
+    assert_eq!(snapshot.active_route, None);
+}
+
+#[test]
+fn restored_entries_carry_metadata_into_later_snapshots() {
+    let registry = RouteRegistry::new();
+    let home = registry
+        .register_restorable("/home", restorable_page)
+        .unwrap();
+    let detail = registry
+        .register_restorable("/detail", restorable_page)
+        .unwrap();
+    let source = Navigator::new();
+    registry
+        .navigate_restorable(
+            &source,
+            RestorableRoute::new(home, json!({ "name": "home" })).state(json!({ "tab": 3 })),
+        )
+        .unwrap();
+    registry
+        .navigate_restorable(
+            &source,
+            RestorableRoute::new(detail, json!({ "name": "detail" }))
+                .state(json!({ "document": 7 })),
+        )
+        .unwrap();
+    let snapshot = source.restoration_snapshot();
+
+    let restored = Navigator::new();
+    let report = registry.restore_navigator(&restored, &snapshot);
+    assert_eq!(report.restored_routes, 2);
+    // Each restored entry kept its own metadata by position.
+    assert_eq!(restored.routes()[0].name, "home");
+    assert_eq!(
+        restored.current_restorable_route().unwrap().state,
+        json!({
+            "document": 7
+        })
+    );
+    let round_trip = restored.restoration_snapshot();
+    assert_eq!(round_trip.routes.len(), 2);
+    assert_eq!(round_trip.routes[0].state, json!({ "tab": 3 }));
+    assert_eq!(round_trip.routes[1].state, json!({ "document": 7 }));
+    assert_eq!(round_trip.active_route, Some(1));
+}
+
+#[test]
 fn snapshot_excludes_transient_routes_and_their_suffix() {
     let registry = RouteRegistry::new();
     let home = registry

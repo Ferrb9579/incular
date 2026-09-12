@@ -79,12 +79,21 @@ impl fmt::Debug for NavigatorObserver {
     }
 }
 
+/// One mounted route with its restoration and lifetime metadata.
+///
+/// The entry keeps a route and its metadata together so ordinary and
+/// restorable routes can interleave without positional zip bookkeeping.
+#[derive(Clone)]
+struct RouteEntry {
+    route: Route,
+    restorable: Option<RestorableRoute>,
+}
+
 #[derive(Default)]
 struct NavigatorState {
     next_id: u64,
     revision: u64,
-    routes: Vec<Route>,
-    restorable_routes: Vec<Option<RestorableRoute>>,
+    routes: Vec<RouteEntry>,
     route_scope_cleanup: Option<RouteScopeCleanup>,
     pop_guard: Option<PopGuard>,
     observers: Vec<std::rc::Weak<NavigatorObserverEntry>>,
@@ -154,12 +163,14 @@ impl Navigator {
     pub fn push(&self, mut route: Route) -> RouteId {
         let (id, previous, route) = {
             let mut state = self.state.borrow_mut();
-            let previous = state.routes.last().cloned();
+            let previous = state.routes.last().map(|entry| entry.route.clone());
             state.next_id = state.next_id.wrapping_add(1).max(1);
             route.id = RouteId(state.next_id);
             let id = route.id;
-            state.routes.push(route.clone());
-            state.restorable_routes.push(None);
+            state.routes.push(RouteEntry {
+                route: route.clone(),
+                restorable: None,
+            });
             state.revision = state.revision.wrapping_add(1);
             (id, previous, route)
         };
@@ -176,7 +187,7 @@ impl Navigator {
     pub(crate) fn push_registered_restorable(&self, page: Page, route: RestorableRoute) -> RouteId {
         let (id, previous, pushed) = {
             let mut state = self.state.borrow_mut();
-            let previous = state.routes.last().cloned();
+            let previous = state.routes.last().map(|entry| entry.route.clone());
             state.next_id = state.next_id.wrapping_add(1).max(1);
             let id = RouteId(state.next_id);
             let pushed = Route {
@@ -187,8 +198,10 @@ impl Navigator {
                 transition: RouteTransition::None,
                 presentation: RoutePresentation::default(),
             };
-            state.routes.push(pushed.clone());
-            state.restorable_routes.push(Some(route));
+            state.routes.push(RouteEntry {
+                route: pushed.clone(),
+                restorable: Some(route),
+            });
             state.revision = state.revision.wrapping_add(1);
             (id, previous, pushed)
         };
@@ -202,37 +215,39 @@ impl Navigator {
     pub(crate) fn replace_with_restored_routes(&self, routes: Vec<(Page, RestorableRoute)>) {
         debug_assert!(!routes.is_empty());
         let mut state = self.state.borrow_mut();
-        let mut next_routes = Vec::with_capacity(routes.len());
-        let mut next_restorable = Vec::with_capacity(routes.len());
+        let mut next = Vec::with_capacity(routes.len());
         for (page, route) in routes {
             state.next_id = state.next_id.wrapping_add(1).max(1);
-            next_routes.push(Route {
-                id: RouteId(state.next_id),
-                settings: RouteSettings::new(page.name.clone()),
-                name: page.name,
-                child: page.child,
-                transition: RouteTransition::None,
-                presentation: RoutePresentation::default(),
+            next.push(RouteEntry {
+                route: Route {
+                    id: RouteId(state.next_id),
+                    settings: RouteSettings::new(page.name.clone()),
+                    name: page.name,
+                    child: page.child,
+                    transition: RouteTransition::None,
+                    presentation: RoutePresentation::default(),
+                },
+                restorable: Some(route),
             });
-            next_restorable.push(Some(route));
         }
-        state.routes = next_routes;
-        state.restorable_routes = next_restorable;
+        state.routes = next;
         state.revision = state.revision.wrapping_add(1);
     }
 
     pub(crate) fn replace_with_fallback(&self, page: Page) {
         let mut state = self.state.borrow_mut();
         state.next_id = state.next_id.wrapping_add(1).max(1);
-        state.routes = vec![Route {
-            id: RouteId(state.next_id),
-            settings: RouteSettings::new(page.name.clone()),
-            name: page.name,
-            child: page.child,
-            transition: RouteTransition::None,
-            presentation: RoutePresentation::default(),
+        state.routes = vec![RouteEntry {
+            route: Route {
+                id: RouteId(state.next_id),
+                settings: RouteSettings::new(page.name.clone()),
+                name: page.name,
+                child: page.child,
+                transition: RouteTransition::None,
+                presentation: RoutePresentation::default(),
+            },
+            restorable: None,
         }];
-        state.restorable_routes = vec![None];
         state.revision = state.revision.wrapping_add(1);
     }
 
@@ -263,15 +278,16 @@ impl Navigator {
     pub fn restoration_snapshot(&self) -> NavigatorSnapshot {
         let state = self.state.borrow();
         let routes = state
-            .restorable_routes
+            .routes
             .iter()
+            .map(|entry| &entry.restorable)
             .take_while(|route| route.is_some())
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
         NavigatorSnapshot {
             format_version: NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
-            active_route: (!routes.is_empty()).then_some(routes.len() - 1),
+            active_route: routes.len().checked_sub(1),
             routes,
         }
     }
@@ -282,10 +298,9 @@ impl Navigator {
     pub fn current_restorable_route(&self) -> Option<RestorableRoute> {
         self.state
             .borrow()
-            .restorable_routes
+            .routes
             .last()
-            .cloned()
-            .flatten()
+            .and_then(|entry| entry.restorable.clone())
     }
 
     /// Replaces the serializable application state of the current registered
@@ -297,7 +312,10 @@ impl Navigator {
     /// becomes available to the next process session.
     pub fn set_current_restorable_state(&self, value: Value) -> bool {
         let mut state = self.state.borrow_mut();
-        let Some(Some(route)) = state.restorable_routes.last_mut() else {
+        let Some(entry) = state.routes.last_mut() else {
+            return false;
+        };
+        let Some(route) = entry.restorable.as_mut() else {
             return false;
         };
         if route.state == value {
@@ -312,36 +330,32 @@ impl Navigator {
     /// route positions, preserving their IDs while replacing child widgets.
     pub fn set_pages(&self, pages: impl IntoIterator<Item = Page>) {
         let mut state = self.state.borrow_mut();
-        let mut previous = std::mem::take(&mut state.routes)
-            .into_iter()
-            .zip(std::mem::take(&mut state.restorable_routes))
-            .collect::<Vec<_>>();
+        let mut previous = std::mem::take(&mut state.routes);
         let mut next = Vec::new();
-        let mut next_restorable = Vec::new();
         for page in pages {
             if let Some(index) = previous
                 .iter()
-                .position(|(route, _)| route.name == page.name)
+                .position(|entry| entry.route.name == page.name)
             {
-                let (mut route, restorable) = previous.remove(index);
-                route.child = page.child;
-                next.push(route);
-                next_restorable.push(restorable);
+                let mut entry = previous.remove(index);
+                entry.route.child = page.child;
+                next.push(entry);
             } else {
                 state.next_id = state.next_id.wrapping_add(1).max(1);
-                next.push(Route {
-                    id: RouteId(state.next_id),
-                    settings: RouteSettings::new(page.name.clone()),
-                    name: page.name,
-                    child: page.child,
-                    transition: RouteTransition::None,
-                    presentation: RoutePresentation::default(),
+                next.push(RouteEntry {
+                    route: Route {
+                        id: RouteId(state.next_id),
+                        settings: RouteSettings::new(page.name.clone()),
+                        name: page.name,
+                        child: page.child,
+                        transition: RouteTransition::None,
+                        presentation: RoutePresentation::default(),
+                    },
+                    restorable: None,
                 });
-                next_restorable.push(None);
             }
         }
         state.routes = next;
-        state.restorable_routes = next_restorable;
         state.revision = state.revision.wrapping_add(1);
     }
     /// Attempts a guarded pop. Unlike [`Self::pop`], this distinguishes an
@@ -351,7 +365,7 @@ impl Navigator {
         let (candidate, guard, revision) = {
             let state = self.state.borrow();
             (
-                state.routes.last().cloned(),
+                state.routes.last().map(|entry| entry.route.clone()),
                 state.pop_guard.clone(),
                 state.revision,
             )
@@ -365,22 +379,22 @@ impl Navigator {
         let (route, cleanup) = {
             let mut state = self.state.borrow_mut();
             if state.revision != revision
-                || state.routes.last().map(|route| route.id) != Some(candidate.id)
+                || state.routes.last().map(|entry| entry.route.id) != Some(candidate.id)
             {
                 return PopResult::Blocked;
             }
-            let route = state
+            let entry = state
                 .routes
                 .pop()
                 .expect("a non-empty guarded navigator must remain non-empty");
-            let restorable = state.restorable_routes.pop().flatten();
             state.revision = state.revision.wrapping_add(1);
-            let cleanup = restorable
+            let cleanup = entry
+                .restorable
                 .as_ref()
                 .filter(|route| route.removes_scope_on_pop())
                 .and_then(|route| route.scope_key.clone())
                 .zip(state.route_scope_cleanup.clone());
-            (route, cleanup)
+            (entry.route, cleanup)
         };
         if let Some((scope_key, cleanup)) = cleanup {
             cleanup(&scope_key);
@@ -404,7 +418,7 @@ impl Navigator {
         let (candidate, guard, revision) = {
             let state = self.state.borrow();
             (
-                state.routes.last().cloned(),
+                state.routes.last().map(|entry| entry.route.clone()),
                 state.pop_guard.clone(),
                 state.revision,
             )
@@ -419,7 +433,7 @@ impl Navigator {
         let (previous, route, cleanup) = {
             let mut state = self.state.borrow_mut();
             if state.revision != revision
-                || state.routes.last().map(|route| route.id) != Some(candidate.id)
+                || state.routes.last().map(|entry| entry.route.id) != Some(candidate.id)
             {
                 return None;
             }
@@ -427,18 +441,20 @@ impl Navigator {
                 .routes
                 .pop()
                 .expect("a non-empty guarded navigator must remain non-empty");
-            let restorable = state.restorable_routes.pop().flatten();
-            let cleanup = restorable
+            let cleanup = previous
+                .restorable
                 .as_ref()
                 .filter(|restorable| restorable.removes_scope_on_pop())
                 .and_then(|restorable| restorable.scope_key.clone())
                 .zip(state.route_scope_cleanup.clone());
             state.next_id = state.next_id.wrapping_add(1).max(1);
             route.id = RouteId(state.next_id);
-            state.routes.push(route.clone());
-            state.restorable_routes.push(None);
+            state.routes.push(RouteEntry {
+                route: route.clone(),
+                restorable: None,
+            });
             state.revision = state.revision.wrapping_add(1);
-            (previous, route, cleanup)
+            (previous.route, route, cleanup)
         };
         if let Some((scope_key, cleanup)) = cleanup {
             cleanup(&scope_key);
@@ -452,11 +468,20 @@ impl Navigator {
     }
     #[must_use]
     pub fn current(&self) -> Option<Route> {
-        self.state.borrow().routes.last().cloned()
+        self.state
+            .borrow()
+            .routes
+            .last()
+            .map(|entry| entry.route.clone())
     }
     #[must_use]
     pub fn routes(&self) -> Vec<Route> {
-        self.state.borrow().routes.clone()
+        self.state
+            .borrow()
+            .routes
+            .iter()
+            .map(|entry| entry.route.clone())
+            .collect()
     }
 
     /// Monotonic stack revision. Applications that bridge navigator state to
