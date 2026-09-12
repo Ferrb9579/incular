@@ -20,9 +20,31 @@ struct ActivationState {
 
 /// Cloneable application-scoped activation stream.
 ///
-/// Activations received before any listener exists remain buffered. Once a
-/// listener is present, every queued/native event is delivered exactly once to
-/// every listener live for that dispatch, in arrival order.
+/// Ownership and delivery contract:
+///
+/// - Identity: one activation is one [`ApplicationActivation`] value. There
+///   are no IDs and no deduplication: two equal values are two activations
+///   and both are delivered.
+/// - Queued: [`publish`](Self::publish) appends to a service-owned FIFO.
+///   Activations published before any listener exists (for example before
+///   the route bridge is installed) wait there; there is no second queue.
+/// - Delivered: exactly once per listener live for that event's snapshot,
+///   in arrival order. A listener publishing reentrantly enqueues behind
+///   the in-flight event. Delivery is synchronous fan-out, not the runtime
+///   request channel: native code pushes through
+///   `Application::handle_application_activation`, and the bridge forwards
+///   mapped URLs into the route provider, whose own listeners (such as the
+///   widgets router) apply them.
+/// - Acknowledged/retried/discarded: none. Listeners return nothing to
+///   acknowledge, nothing retries, and pending activations are never
+///   dropped by the service — they wait until a listener subscribes, even
+///   across bridge replacement or window closure, which this
+///   application-scoped service never observes.
+/// - Router installation and replacement: installing the route bridge
+///   subscribes and immediately drains whatever queued earlier.
+///   Replacing it (drop, then bridge again) leaves pending activations
+///   buffered for the new bridge; the old bridge delivers nothing
+///   further once its subscription dies.
 #[derive(Clone)]
 pub struct ApplicationActivationService {
     state: Rc<RefCell<ActivationState>>,
@@ -81,42 +103,68 @@ impl ApplicationActivationService {
     }
 }
 
-fn drain(state: &Rc<RefCell<ActivationState>>) {
-    {
-        let mut state = state.borrow_mut();
-        state
+/// Owns an in-progress activation drain. The guard is the sole authority
+/// releasing the drain: normal completion and unwinding both funnel
+/// through its `Drop`, so no delivery path resets the flag itself. On
+/// unwind it releases the flag but keeps the queue — undelivered
+/// activations stay buffered and resume on the next drain instead of
+/// blackholing. The `try_borrow_mut` only fails if a borrow is live at
+/// drop time; every borrow here is scoped to queue operations and never
+/// spans a callback, so a failed release merely defers to the next
+/// guard drop.
+struct DispatchGuard {
+    state: Rc<RefCell<ActivationState>>,
+}
+impl DispatchGuard {
+    fn acquire(state: &Rc<RefCell<ActivationState>>) -> Option<Self> {
+        let mut state_ref = state.borrow_mut();
+        state_ref
             .listeners
             .retain(|listener| listener.strong_count() != 0);
-        if state.dispatching || state.listeners.is_empty() || state.pending.is_empty() {
-            return;
+        if state_ref.dispatching || state_ref.listeners.is_empty() || state_ref.pending.is_empty() {
+            return None;
         }
-        state.dispatching = true;
+        state_ref.dispatching = true;
+        Some(Self {
+            state: state.clone(),
+        })
     }
+}
+impl Drop for DispatchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.try_borrow_mut() {
+            state.dispatching = false;
+        }
+    }
+}
+
+fn drain(state: &Rc<RefCell<ActivationState>>) {
+    let Some(_drain) = DispatchGuard::acquire(state) else {
+        return;
+    };
 
     loop {
-        let Some((activation, listeners)) = ({
+        let next = {
             let mut state = state.borrow_mut();
             state
                 .listeners
                 .retain(|listener| listener.strong_count() != 0);
             if state.listeners.is_empty() {
-                state.dispatching = false;
-                None
-            } else if let Some(activation) = state.pending.pop_front() {
-                Some((
+                return;
+            }
+            state.pending.pop_front().map(|activation| {
+                (
                     activation,
                     state
                         .listeners
                         .iter()
                         .filter_map(Weak::upgrade)
                         .collect::<Vec<_>>(),
-                ))
-            } else {
-                state.dispatching = false;
-                None
-            }
-        }) else {
-            break;
+                )
+            })
+        };
+        let Some((activation, listeners)) = next else {
+            return;
         };
         for listener in listeners {
             listener(activation.clone());

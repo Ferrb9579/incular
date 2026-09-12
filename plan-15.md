@@ -2672,8 +2672,11 @@ keyed child replacement at any stack position). Item 4 is partially covered (two
 event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
 keyed reorder, removal, restored routes, destructor reentrancy); remaining:
 deep-link delivery exactly once, focus-restoration ownership, route-scoped
-task ownership, acyclic back attachment, and reorder operation counts.
-Item 5 (runtime owners) is untouched. A bounded removal handoff for route
+task ownership. Back attachment is now acyclic-by-construction with typed
+rejection; reorder carries a deterministic large-permutation pin. Item 5
+(runtime owners) is untouched. Activation delivery (service queue as the
+only queue, exactly-once per live listener, no dedup, panic-safe drain)
+is audited with production-path tests. A bounded removal handoff for route
 tasks/subscriptions/focus has no target interface yet — no route-lifetime
 consumer exists outside the navigation crate — and is recorded in plan-19,
 not claimed. See plan-19 for the itemized remainder.

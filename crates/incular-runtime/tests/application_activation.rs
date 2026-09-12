@@ -148,6 +148,173 @@ fn deep_links_enter_the_existing_route_information_provider_path() {
     );
 }
 
+fn rambler_route(url: &str) -> Option<RouteInformation> {
+    let parsed = Url::parse(url).ok()?;
+    (parsed.scheme() == "rambler").then(|| RouteInformation::new(parsed.path()))
+}
+
+fn bridge_rambler(
+    application: &Application,
+) -> (
+    Rc<MemoryRouteInformationProvider>,
+    incular_runtime::ActivationRouteBridge,
+) {
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    (provider, bridge)
+}
+
+#[test]
+fn queued_activations_deliver_when_bridge_installs_later() {
+    let mut application = application();
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("first URL")]));
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/video",
+    )
+    .expect("second URL")]));
+    assert_eq!(application.activations().pending_count(), 2);
+
+    let (provider, bridge) = bridge_rambler(&application);
+    assert_eq!(application.activations().pending_count(), 0);
+    assert_eq!(provider.value().location(), "/video");
+    assert_eq!(bridge.delivered_routes(), 2);
+}
+
+#[test]
+fn bridge_replacement_redelivers_to_the_new_bridge_only() {
+    let mut application = application();
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("first URL")]));
+    let (provider, first) = bridge_rambler(&application);
+    assert_eq!(first.delivered_routes(), 1);
+    assert_eq!(provider.value().location(), "/audio");
+    drop(first);
+
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/video",
+    )
+    .expect("second URL")]));
+    assert_eq!(application.activations().pending_count(), 1);
+    assert_eq!(provider.value().location(), "/audio");
+    // Re-bridging onto the same provider delivers the buffered event to
+    // the new bridge only.
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let second = application.bridge_activation_routes(provider_trait, rambler_route);
+    assert_eq!(second.delivered_routes(), 1);
+    assert_eq!(provider.value().location(), "/video");
+    assert_eq!(application.activations().pending_count(), 0);
+}
+
+#[test]
+fn dropped_bridge_buffers_without_delivery() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let initial = provider.value().location().to_owned();
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    drop(bridge);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("URL")]));
+    // No bridge is installed: the provider is untouched and the event waits.
+    assert_eq!(provider.value().location(), initial);
+    assert_eq!(application.activations().pending_count(), 1);
+    // Re-bridging delivers the buffered activation exactly once.
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    assert_eq!(bridge.delivered_routes(), 1);
+    assert_eq!(provider.value().location(), "/audio");
+    assert_eq!(application.activations().pending_count(), 0);
+}
+
+#[test]
+fn repeated_equal_activations_both_deliver_without_dedup() {
+    let mut application = application();
+    let (provider, bridge) = bridge_rambler(&application);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen_for_listener = seen.clone();
+    let _subscription = provider.subscribe(Rc::new(move |information| {
+        seen_for_listener
+            .borrow_mut()
+            .push(information.location().to_owned());
+    }));
+    let url = || Url::parse("rambler://settings/audio").expect("URL");
+    application.handle_application_activation(ApplicationActivation::open_urls([url()]));
+    application.handle_application_activation(ApplicationActivation::open_urls([url()]));
+    assert_eq!(bridge.delivered_routes(), 2);
+    assert_eq!(&*seen.borrow(), &["/audio", "/audio"]);
+    assert_eq!(provider.value().location(), "/audio");
+}
+
+#[test]
+fn bridge_level_reentrancy_delivers_nested_activation_once() {
+    let mut application = application();
+    let activations = application.activations();
+    let (provider, bridge) = bridge_rambler(&application);
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let output = received.clone();
+    let nested = activations.clone();
+    let _subscription = activations.subscribe(move |activation| {
+        output.borrow_mut().push(activation.clone());
+        if activation == ApplicationActivation::Reopen {
+            nested.publish(ApplicationActivation::open_urls([Url::parse(
+                "rambler://settings/nested",
+            )
+            .expect("nested URL")]));
+        }
+    });
+    application.handle_application_activation(ApplicationActivation::Reopen);
+    assert_eq!(received.borrow().len(), 2);
+    assert_eq!(received.borrow()[0], ApplicationActivation::Reopen);
+    assert_eq!(
+        received.borrow()[1].urls()[0].as_str(),
+        "rambler://settings/nested"
+    );
+    assert_eq!(bridge.delivered_routes(), 1);
+    assert_eq!(provider.value().location(), "/nested");
+}
+
+#[test]
+fn panicking_listener_releases_dispatch_without_losing_queue() {
+    use std::panic::AssertUnwindSafe;
+
+    let mut application = application();
+    let activations = application.activations();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let output = received.clone();
+    let nested = activations.clone();
+    let _subscription = activations.subscribe(move |activation| {
+        output.borrow_mut().push(activation.clone());
+        if activation == ApplicationActivation::Reopen {
+            nested.publish(ApplicationActivation::open_files([PathBuf::from(
+                r"C:\capture\nested.ram",
+            )]));
+            panic!("listener failure");
+        }
+    });
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        application.handle_application_activation(ApplicationActivation::Reopen);
+    }));
+    assert!(outcome.is_err());
+    // The nested activation queued before the panic is not lost, and a
+    // later publish resumes delivery exactly once each, in order.
+    let nested_file = PathBuf::from(r"C:\capture\nested.ram");
+    let later_file = PathBuf::from(r"C:\capture\later.ram");
+    application
+        .handle_application_activation(ApplicationActivation::open_files([later_file.clone()]));
+    assert_eq!(received.borrow().len(), 3);
+    assert_eq!(received.borrow()[0], ApplicationActivation::Reopen);
+    assert_eq!(received.borrow()[1].documents()[0].path(), nested_file);
+    assert_eq!(received.borrow()[2].documents()[0].path(), later_file);
+}
+
 #[test]
 fn global_shortcut_registration_conflict_unregister_and_stable_ids_are_typed() {
     let mut application = application();

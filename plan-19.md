@@ -25,12 +25,25 @@ are preserved. Evidence:
 observer/cleanup navigation, keyed reorder, repeated names, duplicate rejection
 without mutation or events, retained IDs, removal/reinsertion, iterator
 mutation, metadata preservation, permanent cleanup, active-transition
-consistency, destructor reentrancy).
+consistency, destructor reentrancy, non-top child retirement, back-topology
+cycles/duplicates/dead children/deep chains, sheet FIFO drain with panic
+recovery, activation queued-before-install/replacement/closure/reentrancy/
+equal-payload delivery).
 
 Remaining: runtime ownership mapping; deep-link delivery exactly once; focus
-restoration and route-scoped task ownership; acyclic back attachment with typed
-rejection before mutation (BackDispatcher still rejects only a direct
-self-link); deterministic operation-count tests for reorder/churn.
+restoration and route-scoped task ownership.
+
+Done since: acyclic back attachment with typed rejection before mutation
+(acyclic-graph topology with reachability check; self, two-node, and longer
+cycles rejected; diamonds stay permitted; duplicates idempotent;
+detach/reattach, dead children, deep chains, and inactive branches pinned).
+Retired values drop outside borrows, including non-top replaced children via
+an explicit collection. Sheet notifications drain FIFO through a VecDeque with
+guard-owned release. Activation delivery audited production-path by
+production-path (queued-before-install, replacement, reentrancy, closure,
+repeated equal payloads): the service queue is the only queue, delivery is
+exactly-once per live listener with no dedup, and a dispatch guard releases
+the drain on listener panic without losing the queue.
 
 Removal-handoff finding (not implemented, not claimed): no route-lifetime
 consumer exists outside the navigation crate — nothing owns route-scoped
