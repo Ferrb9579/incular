@@ -11,26 +11,40 @@
 use std::{collections::HashMap, rc::Rc};
 
 use incular_navigation::{Navigator, RouteId};
-use incular_widgets::internal::ElementId;
+use incular_widgets::internal::{ElementId, WidgetTree};
 
 use super::frame::Runtime;
 
 /// Maps a mounted element to the route that owns it.
 ///
-/// The mount integration supplies this attribution; the state never guesses
-/// ownership, so an element without an owner is never restored. Route
-/// identities are navigator-scoped, so use one state per [`Navigator`].
-pub type RouteFocusOwner = Rc<dyn Fn(ElementId) -> Option<RouteId>>;
+/// The mount integration supplies this attribution from mounted structure
+/// (keys, scope containment); the state never guesses ownership, so an
+/// element without an owner is never restored. Route identities are
+/// navigator-scoped, so use one state per [`Navigator`].
+pub type RouteFocusOwner = Rc<dyn Fn(&WidgetTree, ElementId) -> Option<RouteId>>;
 
 /// Remembers which element was focused per route and restores it on return.
 ///
-/// Restore is fail-closed: the saved target is restored only while it
-/// remains mounted (generational identity — a reused arena slot with a new
-/// generation does not match), focusable, enabled, and owned by the
-/// reactivated route. Anything else — including a record for a route that
-/// never saved — resolves deterministically: an invalid target clears
-/// focus (no route inherits another route's focus, matching the
-/// unmounted-focus rule), while a missing record leaves focus untouched.
+/// Three record states, three restore behaviors:
+/// - No saved information (never saved, forgotten, or saved with nothing
+///   owned): restore leaves focus untouched, except for genuinely orphaned
+///   focus (see below).
+/// - Previously saved focus that is no longer eligible: the deterministic
+///   fallback clears focus, but only when current focus is itself orphaned —
+///   an invalid saved record never steals unrelated focus.
+/// - Focus currently owned by another route: saves reject it (a route
+///   records only its own focus) and restores leave it alone while its
+///   owner stays mounted.
+///
+/// Eligibility reuses the tree's authoritative focus rule instead of a
+/// parallel predicate: the target must be live in the arena (detached
+/// elements fail here, including reused slots whose generation changed)
+/// and a member of [`WidgetTree::focusable_elements`], which already
+/// encodes enabled state, `ExcludeFocus`, and inactive subtrees
+/// (`IndexedStack` non-indexed children, `descendants_are_focusable`).
+/// Hidden-but-mounted subtrees (`Visibility`, `Offstage`) stay eligible by
+/// framework design — they retain focus — while ownership comes from the
+/// [`RouteFocusOwner`] oracle.
 ///
 /// Route identity and element identity stay separate throughout: records
 /// are keyed by [`RouteId`], targets are [`ElementId`] values validated
@@ -45,7 +59,7 @@ pub struct RouteFocusState {
 
 impl RouteFocusState {
     /// Creates focus state attributing elements through `owner_of`.
-    pub fn new(owner_of: impl Fn(ElementId) -> Option<RouteId> + 'static) -> Self {
+    pub fn new(owner_of: impl Fn(&WidgetTree, ElementId) -> Option<RouteId> + 'static) -> Self {
         Self {
             saved: HashMap::new(),
             owner_of: Rc::new(owner_of),
@@ -53,33 +67,68 @@ impl RouteFocusState {
     }
 
     /// Records the currently focused element as `route`'s focus. Call when
-    /// `route` deactivates. A dead or absent focus records nothing to
-    /// restore, which later restores treat as no information.
+    /// `route` deactivates. Only focus owned by `route` is recorded: focus
+    /// owned elsewhere (or by nothing) records no information rather than
+    /// a foreign snapshot, so retained records never lie about ownership.
+    /// Absent and rejected records restore identically (orphan sweep), so
+    /// validation is record hygiene, not a second restore predicate.
     pub fn save_focused(&mut self, runtime: &Runtime, route: RouteId) {
-        let focused = runtime
-            .focused_element()
-            .filter(|id| runtime.tree().element_exists(*id));
+        let focused = runtime.focused_element().filter(|id| {
+            runtime.tree().element_exists(*id)
+                && (self.owner_of)(runtime.tree(), *id) == Some(route)
+        });
         self.saved.insert(route, focused);
     }
 
     /// Restores `route`'s saved focus into `runtime`. Call when `route`
-    /// reactivates.
-    pub fn restore_saved(&mut self, runtime: &mut Runtime, route: RouteId) {
-        let Some(saved) = self.saved.get(&route).copied().flatten() else {
-            // No record: no information, no action. A fresh route must not
-            // steal focus it never owned.
+    /// reactivates. A removed `route` restores nothing even with a leftover
+    /// record, so cleanup never depends on the host having forgotten first.
+    pub fn restore_saved(&mut self, runtime: &mut Runtime, navigator: &Navigator, route: RouteId) {
+        if navigator.lifetime_of(route).is_none() {
             return;
-        };
-        let usable = runtime.tree().element_exists(saved)
-            && runtime.tree().focusable_elements().contains(&saved)
-            && (self.owner_of)(saved) == Some(route);
-        if usable {
+        }
+        if let Some(saved) = self.saved.get(&route).copied().flatten()
+            && Self::eligible(runtime, &self.owner_of, route, saved)
+        {
             if runtime.focused_element() != Some(saved) {
                 runtime.set_focus(Some(saved));
             }
-        } else if runtime.focused_element().is_some() {
+            return;
+        }
+        if let Some(current) = runtime.focused_element()
+            && Self::orphaned(runtime, navigator, &self.owner_of, current)
+        {
             runtime.set_focus(None);
         }
+    }
+
+    /// Eligibility is the tree's own rule plus attribution: live, focusable
+    /// (hence enabled and in an active subtree), and owned by `route`.
+    fn eligible(
+        runtime: &Runtime,
+        owner_of: &RouteFocusOwner,
+        route: RouteId,
+        id: ElementId,
+    ) -> bool {
+        runtime.tree().element_exists(id)
+            && runtime.tree().focusable_elements().contains(&id)
+            && owner_of(runtime.tree(), id) == Some(route)
+    }
+
+    /// Orphaned focus has no live owner to keep it: a dead or unfocusable
+    /// target, or a target whose owning route is no longer mounted. Focus
+    /// owned by a mounted route — or by nothing attributable — is left
+    /// alone.
+    fn orphaned(
+        runtime: &Runtime,
+        navigator: &Navigator,
+        owner_of: &RouteFocusOwner,
+        id: ElementId,
+    ) -> bool {
+        !runtime.tree().element_exists(id)
+            || !runtime.tree().focusable_elements().contains(&id)
+            || owner_of(runtime.tree(), id)
+                .is_some_and(|owner| navigator.lifetime_of(owner).is_none())
     }
 
     /// Drops `route`'s record on permanent removal. A removed route never

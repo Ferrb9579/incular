@@ -1,6 +1,9 @@
 use super::*;
 use incular_navigation::{Navigator, Page, PageKey, RouteId};
-use incular_widgets::{Focus, FocusNode, internal::ElementId};
+use incular_widgets::{
+    Focus, FocusNode,
+    internal::{ElementId, Key},
+};
 
 fn focus_box(node: FocusNode) -> Widget {
     Focus::new(Widget::box_(Size::new(40., 40.), Color::WHITE))
@@ -50,7 +53,7 @@ fn two_focus_tree() -> (
         focus_box(node_b.clone()),
     ]));
     let make_state = move |ea: ElementId, eb: ElementId, ra: RouteId, rb: RouteId| {
-        RouteFocusState::new(move |id| {
+        RouteFocusState::new(move |_, id| {
             if id == ea {
                 Some(ra)
             } else if id == eb {
@@ -88,7 +91,7 @@ fn push_pop_saves_and_restores_route_focus() {
     // Popping back revalidates and restores A's element.
     navigator.pop();
     focus.forget(rb);
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), Some(ea));
     assert!(node_a.has_focus());
     assert!(!node_b.has_focus());
@@ -125,7 +128,7 @@ fn keyed_reorder_preserves_focus_records() {
         ])
         .unwrap();
     focus.save_focused(&runtime, ra);
-    focus.restore_saved(&mut runtime, rb);
+    focus.restore_saved(&mut runtime, &navigator, rb);
     assert_eq!(runtime.focused_element(), Some(ea));
     tab(&mut runtime);
     assert_eq!(runtime.focused_element(), Some(eb));
@@ -136,7 +139,7 @@ fn keyed_reorder_preserves_focus_records() {
         ])
         .unwrap();
     focus.save_focused(&runtime, rb);
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), Some(ea));
     assert!(node_a.has_focus());
 }
@@ -166,7 +169,7 @@ fn permanent_removal_forgets_and_never_restores() {
     focus.retain_mounted(&navigator);
     tab(&mut runtime);
     assert_eq!(runtime.focused_element(), Some(eb));
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), Some(eb));
     assert!(node_b.has_focus());
     let _ = node_a;
@@ -219,7 +222,7 @@ fn hidden_target_falls_back_to_clear() {
     let navigator = Navigator::new();
     let ra = push_route(&navigator, "a");
     let rb = push_route(&navigator, "b");
-    let mut focus = RouteFocusState::new(move |id| {
+    let mut focus = RouteFocusState::new(move |_, id| {
         if id == ea {
             Some(ra)
         } else if id == eb {
@@ -238,7 +241,7 @@ fn hidden_target_falls_back_to_clear() {
     assert_eq!(runtime.focused_element(), Some(eb));
     navigator.pop();
     focus.forget(rb);
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), None);
     assert!(!node_b.has_focus());
 }
@@ -292,7 +295,7 @@ fn stale_arena_generation_never_restores() {
     };
     tab(&mut runtime);
     assert_eq!(runtime.focused_element(), Some(stale));
-    let mut focus = RouteFocusState::new(move |id| {
+    let mut focus = RouteFocusState::new(move |_, id| {
         if id == stale {
             Some(ra)
         } else if id == eb {
@@ -319,10 +322,12 @@ fn stale_arena_generation_never_restores() {
     assert_ne!(live_replacement, stale);
     navigator.pop();
     focus.forget(rb);
-    focus.restore_saved(&mut runtime, ra);
-    // The live replacement is focusable but foreign to route A: no restore.
-    assert_eq!(runtime.focused_element(), None);
-    assert!(!node_new.has_focus());
+    focus.restore_saved(&mut runtime, &navigator, ra);
+    // The live replacement is focusable but attributable to no route: the
+    // stale id is never restored, and the unrelated current focus is left
+    // alone rather than cleared for a dead record.
+    assert_eq!(runtime.focused_element(), Some(live_replacement));
+    assert!(node_new.has_focus());
 }
 
 #[test]
@@ -347,7 +352,7 @@ fn disabled_target_falls_back_while_mounted() {
     assert_eq!(runtime.focused_element(), Some(eb));
     navigator.pop();
     focus.forget(rb);
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert!(runtime.tree().element_exists(ea));
     assert_eq!(runtime.focused_element(), None);
     assert!(!node_a.has_focus());
@@ -371,7 +376,7 @@ fn foreign_target_clears_instead_of_leaking() {
     focus.save_focused(&runtime, ra);
     navigator.pop();
     focus.forget(rb);
-    focus.restore_saved(&mut runtime, ra);
+    focus.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), None);
     assert!(!node_a.has_focus());
     assert!(!node_b.has_focus());
@@ -394,7 +399,7 @@ fn nested_navigators_keep_independent_focus_records() {
     tab(&mut runtime);
     let eb = runtime.focused_element().expect("tab reaches B");
     let mut outer_focus = make_state(ea, eb, oa, ob);
-    let mut inner_focus = RouteFocusState::new(move |id| if id == eb { Some(ia) } else { None });
+    let mut inner_focus = RouteFocusState::new(move |_, id| if id == eb { Some(ia) } else { None });
     tab(&mut runtime);
     assert_eq!(runtime.focused_element(), Some(ea));
     outer_focus.save_focused(&runtime, oa);
@@ -403,10 +408,10 @@ fn nested_navigators_keep_independent_focus_records() {
     inner_focus.save_focused(&runtime, ia);
     // Interleaved restores stay with their own navigator despite the id
     // collision: outer returns to A, inner returns to B.
-    outer_focus.restore_saved(&mut runtime, oa);
+    outer_focus.restore_saved(&mut runtime, &outer, oa);
     assert_eq!(runtime.focused_element(), Some(ea));
     assert!(node_a.has_focus());
-    inner_focus.restore_saved(&mut runtime, ia);
+    inner_focus.restore_saved(&mut runtime, &inner, ia);
     assert_eq!(runtime.focused_element(), Some(eb));
     assert!(node_b.has_focus());
 }
@@ -431,10 +436,221 @@ fn state_disposal_forgets_records() {
     tab(&mut runtime);
     assert_eq!(runtime.focused_element(), Some(eb));
     let mut fresh = make_state(ea, eb, ra, rb);
-    fresh.restore_saved(&mut runtime, ra);
+    fresh.restore_saved(&mut runtime, &navigator, ra);
     assert_eq!(runtime.focused_element(), Some(eb));
     assert!(node_b.has_focus());
     let _ = node_a;
+}
+
+#[test]
+fn save_rejects_foreign_focus_and_restore_preserves_unrelated() {
+    let (node_a, node_b, tree, make_state) = two_focus_tree();
+    let mut runtime = Runtime::new(tree).unwrap();
+    frame(&mut runtime);
+    let navigator = Navigator::new();
+    let ra = push_route(&navigator, "a");
+    let rb = push_route(&navigator, "b");
+    let ea = runtime.focused_element().expect("autofocus lands on A");
+    tab(&mut runtime);
+    let eb = runtime.focused_element().expect("tab reaches B");
+    let mut focus = make_state(ea, eb, ra, rb);
+    // Route A deactivates while focus sits on B's element: the mismatch
+    // records no information, so restoring A leaves B's focus untouched.
+    focus.save_focused(&runtime, ra);
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    focus.restore_saved(&mut runtime, &navigator, ra);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    assert!(node_a.has_focus());
+    // The contrast: saving while focus is route-owned records it, and a
+    // later restore hands it back.
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(eb));
+    focus.save_focused(&runtime, rb);
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    focus.restore_saved(&mut runtime, &navigator, rb);
+    assert_eq!(runtime.focused_element(), Some(eb));
+    assert!(node_b.has_focus());
+}
+
+#[test]
+fn hidden_but_mounted_target_restores() {
+    // Visibility with state retention keeps its subtree mounted and focus
+    // eligible by framework design: hiding is not detachment, so a saved
+    // hidden target restores rather than falling back.
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let visible = Signal::new(true);
+    let visible_for_builder = visible.clone();
+    let node_a_for_builder = node_a.clone();
+    let node_b_for_builder = node_b.clone();
+    let tree = Widget::from(incular_widgets::Column::new(vec![
+        focus_box(node_a.clone()).with_key(1_u64),
+        focus_box(node_b.clone()).with_key(2_u64),
+    ]));
+    let mut runtime = Runtime::new(tree).unwrap();
+    frame(&mut runtime);
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            incular_widgets::Column::new(vec![
+                incular_widgets::Visibility::new(focus_box(node_a_for_builder.clone()))
+                    .visible(visible_for_builder.get())
+                    .maintain_state(true)
+                    .into(),
+                focus_box(node_b_for_builder.clone()),
+            ])
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    for _ in 0..3 {
+        if node_a.has_focus() {
+            break;
+        }
+        tab(&mut runtime);
+    }
+    let ea = runtime.focused_element().expect("A focused");
+    tab(&mut runtime);
+    let eb = runtime.focused_element().expect("tab reaches B");
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    let navigator = Navigator::new();
+    let ra = push_route(&navigator, "a");
+    let rb = push_route(&navigator, "b");
+    let mut focus = RouteFocusState::new(move |_, id| {
+        if id == ea {
+            Some(ra)
+        } else if id == eb {
+            Some(rb)
+        } else {
+            None
+        }
+    });
+    focus.save_focused(&runtime, ra);
+    visible.set(false);
+    frame(&mut runtime);
+    assert!(runtime.tree().element_exists(ea));
+    navigator.pop();
+    focus.forget(rb);
+    focus.restore_saved(&mut runtime, &navigator, ra);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn inactive_indexed_stack_target_leaves_valid_focus() {
+    // An IndexedStack child outside the index loses focus membership while
+    // staying mounted: the saved record becomes ineligible, and the
+    // fallback must leave the other route's valid focus alone.
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let index = Signal::new(0_usize);
+    let index_for_builder = index.clone();
+    let node_a_for_builder = node_a.clone();
+    let node_b_for_builder = node_b.clone();
+    let tree = incular_widgets::IndexedStack::new(vec![
+        focus_box(node_a.clone()).with_key(1_u64),
+        focus_box(node_b.clone()).with_key(2_u64),
+    ])
+    .index(0)
+    .into();
+    let mut runtime = Runtime::new(tree).unwrap();
+    frame(&mut runtime);
+    let root = runtime.tree().root().expect("root");
+    runtime
+        .register_builder(root, move || {
+            incular_widgets::IndexedStack::new(vec![
+                focus_box(node_a_for_builder.clone()).with_key(1_u64),
+                focus_box(node_b_for_builder.clone()).with_key(2_u64),
+            ])
+            .index(index_for_builder.get())
+            .into()
+        })
+        .expect("builder registers");
+    frame(&mut runtime);
+    for _ in 0..3 {
+        if node_a.has_focus() {
+            break;
+        }
+        tab(&mut runtime);
+    }
+    let ea = runtime.focused_element().expect("A focused");
+    // B is mounted but inactive, so it is queryable yet unfocusable: read
+    // its identity from its key rather than by focusing it.
+    let eb = runtime
+        .tree()
+        .element_with_key(&Key::from(2_u64))
+        .expect("keyed B element");
+    assert_ne!(ea, eb);
+    let navigator = Navigator::new();
+    let ra = push_route(&navigator, "a");
+    let rb = push_route(&navigator, "b");
+    let mut focus = RouteFocusState::new(move |_, id| {
+        if id == ea {
+            Some(ra)
+        } else if id == eb {
+            Some(rb)
+        } else {
+            None
+        }
+    });
+    focus.save_focused(&runtime, ra);
+    index.set(1);
+    frame(&mut runtime);
+    assert!(runtime.tree().element_exists(ea));
+    assert!(!runtime.tree().focusable_elements().contains(&ea));
+    for _ in 0..3 {
+        if node_b.has_focus() {
+            break;
+        }
+        tab(&mut runtime);
+    }
+    assert_eq!(runtime.focused_element(), Some(eb));
+    // A's record is ineligible, but B's focus is owned by route B, which is
+    // still mounted: the fallback leaves it alone instead of clearing
+    // unrelated focus for the dead record.
+    focus.restore_saved(&mut runtime, &navigator, ra);
+    assert_eq!(runtime.focused_element(), Some(eb));
+    assert!(node_b.has_focus());
+}
+
+#[test]
+fn nested_invalid_record_preserves_outer_focus() {
+    let (node_a, node_b, tree, make_state) = two_focus_tree();
+    let mut runtime = Runtime::new(tree).unwrap();
+    frame(&mut runtime);
+    let outer = Navigator::new();
+    let inner = Navigator::new();
+    let oa = push_route(&outer, "outer-a");
+    let ob = push_route(&outer, "outer-b");
+    let ia = push_route(&inner, "inner-a");
+    let ea = runtime.focused_element().expect("autofocus lands on A");
+    tab(&mut runtime);
+    let eb = runtime.focused_element().expect("tab reaches B");
+    let mut outer_focus = make_state(ea, eb, oa, ob);
+    let mut inner_focus = RouteFocusState::new(move |_, id| if id == eb { Some(ia) } else { None });
+    // The inner route saves B's element, which is then disabled: the
+    // record is invalid, and the outer route's live focus must survive
+    // the inner restore.
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    outer_focus.save_focused(&runtime, oa);
+    tab(&mut runtime);
+    assert_eq!(runtime.focused_element(), Some(eb));
+    inner_focus.save_focused(&runtime, ia);
+    node_b.set_can_request_focus(false);
+    for _ in 0..3 {
+        if node_a.has_focus() {
+            break;
+        }
+        tab(&mut runtime);
+    }
+    assert_eq!(runtime.focused_element(), Some(ea));
+    inner_focus.restore_saved(&mut runtime, &inner, ia);
+    assert_eq!(runtime.focused_element(), Some(ea));
+    assert!(node_a.has_focus());
 }
 
 #[test]
@@ -450,7 +666,7 @@ fn restore_without_record_leaves_focus_untouched() {
     let eb = runtime.focused_element().expect("tab reaches B");
     let mut focus = make_state(ea, eb, ra, rb);
     // A route that never saved must not steal focus on activation.
-    focus.restore_saved(&mut runtime, rb);
+    focus.restore_saved(&mut runtime, &navigator, rb);
     assert_eq!(runtime.focused_element(), Some(eb));
     assert!(node_b.has_focus());
 }
