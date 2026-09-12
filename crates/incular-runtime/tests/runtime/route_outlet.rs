@@ -8,9 +8,10 @@ use incular_navigation::{
     ModalBarrier, Navigator, OverlayEntry, Page, PageKey, Route, RoutePresentation, RouteTransition,
 };
 use incular_widgets::{
-    Column, Focus, FocusNode, GestureDetector, SizedBox, Stack,
-    internal::{Key, OpacityController, TranslationController},
+    Column, Focus, FocusNode, GestureDetector, LayoutBuilder, SizedBox, Stack,
+    internal::{Key, OpacityController, TranslationController, TreeError},
 };
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn focus_child(node: &FocusNode) -> Widget {
     Focus::new(Widget::box_(Size::new(40., 40.), Color::WHITE))
@@ -1119,6 +1120,216 @@ fn outlet_transient_routes_never_bind() {
     let id = navigator.current().expect("route A").id;
     assert!(harness.outlet.borrow().route_task_scope(id).is_some());
     assert_eq!(harness.runtime.focused_element(), None);
+}
+
+fn two_focus_route(name: &str, first: &FocusNode, second: &FocusNode, color: Color) -> Page {
+    Page::new(
+        name,
+        Column::new(vec![
+            focus_widget(first, Widget::box_(Size::new(40., 40.), color)),
+            focus_widget(second, Widget::box_(Size::new(40., 40.), color)),
+        ]),
+    )
+}
+
+#[test]
+fn outlet_rebuild_failure_consumes_nothing() {
+    // Duplicate keys fail the explicit rebuild: the pending capture
+    // survives uncommitted, navigator and binding state stays exact, and
+    // recovery heals cleanly. (The failed update itself may leave partial
+    // tree state — update_existing is not transactional — so focus
+    // assertions wait for the healing present.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a1 = FocusNode::new();
+    let node_a2 = FocusNode::new();
+    navigator.push_page(two_focus_route_page("a", &node_a1, &node_a2));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a1);
+    let ra = navigator.current().expect("route A").id;
+    navigator.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    let error = match RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("duplicate keys must fail the rebuild"),
+    };
+    assert!(
+        matches!(error, TreeError::DuplicateKey { .. }),
+        "unexpected failure: {error:?}"
+    );
+    // Nothing consumed at the integration level: A still active and bound,
+    // and the bad route — alive in the navigator — was never bound.
+    // (Tree-level focus state is partial after a failed update; the heal
+    // below re-establishes it before asserting.)
+    let rb = navigator.current().expect("bad route pushed").id;
+    assert!(navigator.lifetime_of(ra).expect("A alive").is_live());
+    assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
+    assert!(navigator.lifetime_of(rb).expect("B alive").is_live());
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    // Recovery heals: popping the bad route and presenting remounts clean
+    // content, and focus moves freely again.
+    navigator.pop();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a2);
+    let ea2 = harness.runtime.focused_element().expect("A2 focused");
+    assert!(navigator.lifetime_of(rb).is_none());
+    // The dropped save never committed: disabling the current target (the
+    // node flag clears immediately, the runtime slot keeps it) and
+    // presenting must not resurrect the pre-failure focus through a stale
+    // record — the slot stays exactly where the user left it.
+    node_a2.set_can_request_focus(false);
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea2));
+}
+
+fn two_focus_route_page(name: &str, first: &FocusNode, second: &FocusNode) -> Page {
+    two_focus_route(name, first, second, RED)
+}
+
+#[test]
+fn outlet_frame_panic_retries_without_overwriting_save() {
+    // A builder panic unwinds through the frame with the pending capture
+    // intact: nothing commits, nothing binds, and the retry commits the
+    // original save. (The panic hook prints "builder boom" even though the
+    // harness catches it; the assertions below are what matter.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ra = navigator.current().expect("route A").id;
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new(move |_, _| {
+            if trip.take() {
+                panic!("builder boom");
+            }
+            focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+        }))]),
+    ));
+    let rb = navigator.current().expect("route B").id;
+    let outlet = harness.outlet.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        RouteOutlet::present_frame(
+            &outlet,
+            &mut harness.runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+    }));
+    let error = result.expect_err("builder panic unwinds the frame");
+    assert_eq!(error.downcast_ref::<&str>(), Some(&"builder boom"));
+    // Exact post-failure state: the failed frame committed nothing — B is
+    // alive but unbound — while established state holds.
+    assert!(navigator.lifetime_of(rb).expect("B alive").is_live());
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
+    // Recovery commits the kept capture: B binds, and the return restores
+    // A's original save (only the kept capture could supply it — the retry
+    // itself never re-saves, and no record existed before).
+    present(&mut harness);
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_some());
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_navigation_during_build_reconciles_mounted_snapshot() {
+    // A builder that navigates mid-frame: the frame presents whatever it
+    // mounted while the pending capture for the superseded target is
+    // abandoned untouched, then the fresh transition commits normally.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push_page(plain_page("c"));
+                }
+                focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    present(&mut harness);
+    // Mounted A and B with active C: no restore ran for a route whose
+    // content may not have mounted, and focus never moved.
+    assert_eq!(navigator.current().expect("navigated").name, "c");
+    assert!(node_a.has_focus());
+    let rb = navigator.routes()[1].id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(rb).is_some(),
+        "mounted routes bind even when their activation is abandoned"
+    );
+    present(&mut harness);
+    navigator.pop();
+    assert_eq!(navigator.current().expect("route B").name, "b");
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_removal_during_build_abandons_cleanly() {
+    // A builder that pops its own route mid-frame: the pending capture is
+    // abandoned, nothing commits for the removed route, and exact focus
+    // and binding state holds.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ra = navigator.current().expect("route A").id;
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.pop();
+                }
+                focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    let rb = navigator.current().expect("route B").id;
+    present(&mut harness);
+    assert_eq!(navigator.current().expect("back to A").id, ra);
+    assert!(navigator.lifetime_of(rb).is_none());
+    assert!(harness.outlet.borrow().route_task_scope(rb).is_none());
+    assert!(node_a.has_focus());
+    assert!(harness.outlet.borrow().route_task_scope(ra).is_some());
+    // The outlet stays healthy: ordinary navigation afterwards works.
+    navigator.push_page(plain_page("c"));
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
 }
 
 #[test]

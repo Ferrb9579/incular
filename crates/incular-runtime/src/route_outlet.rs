@@ -72,6 +72,18 @@ impl OutletPlacement {
     }
 }
 
+/// One uncommitted frame transition: the outgoing route whose focus was
+/// captured pre-frame, the incoming route to restore on success, and the
+/// captured focus itself. The save lives here — not in the records — until
+/// the frame presenting it commits, so failed attempts and navigation
+/// mid-frame can never disturb committed state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingTransition {
+    previous: Option<RouteId>,
+    incoming: Option<RouteId>,
+    saved: Option<ElementId>,
+}
+
 /// Mounts one [`Navigator`] as presentation-aware stack content.
 ///
 /// The outlet owns the integration state the navigator cannot: per-route
@@ -93,7 +105,11 @@ pub struct RouteOutlet {
     /// transitivity follows containment, so only direct children register.
     nested_roots: Rc<RefCell<Vec<Key>>>,
     task_parent: TaskScope,
-    last_active: Option<RouteId>,
+    /// Last successfully presented active route. Transitions capture
+    /// against this and advance it only on commit — never on failure.
+    presented: Option<RouteId>,
+    /// Uncommitted capture: `Some` while a frame transition is in flight.
+    pending: Option<PendingTransition>,
     namespace: u64,
     /// Monotonic tag counter. Freed tags are never reassigned (unlike the
     /// map length, which shrinks on removal), so element identity can never
@@ -157,7 +173,8 @@ impl RouteOutlet {
             tags,
             nested_roots,
             task_parent: task_parent.clone(),
-            last_active: None,
+            presented: None,
+            pending: None,
             namespace,
             tag_sequence: Cell::new(0),
             root_key: Key::String(format!("route-outlet-root-{namespace}")),
@@ -381,28 +398,30 @@ impl RouteOutlet {
             .map(|binding| binding.scope().clone())
     }
 
-    /// Presents one production frame through the outlet: rebuilds outlet
-    /// content, runs layout, then reconciles integration state with the
-    /// mounted tree. This is the supported recurring operation: the save
-    /// runs before the frame reconciles (rebuilding may unmount covered
-    /// content and the drain clears dead focus), while the restore runs
-    /// after layout when targets are eligible.
+    /// Presents one production frame through the outlet: captures any
+    /// pending transition, rebuilds outlet content, runs layout, then
+    /// commits the transition against the mounted tree. This is the
+    /// supported recurring operation: the save runs before the frame
+    /// reconciles (rebuilding may unmount covered content and the drain
+    /// clears dead focus), while the restore runs after layout when
+    /// targets are eligible.
     ///
     /// Takes the outlet shared (rather than `&mut self`) because the
     /// attached builder reenters it immutably while the frame runs; short
-    /// borrows never span the frame. A failed frame leaves transition
-    /// bookkeeping advanced, and the next frame retries restoration only
-    /// when it cannot displace valid focus.
+    /// borrows never span the frame. A rebuild or frame failure keeps the
+    /// pending capture for a safe retry instead of consuming the
+    /// activation, and navigation mid-frame abandons the stale capture
+    /// without touching committed records.
     pub fn present_frame(
         outlet: &Rc<RefCell<Self>>,
         runtime: &mut Runtime,
         constraints: Constraints,
     ) -> Result<(DisplayList, FrameStats), TreeError> {
-        let transitioned = {
+        {
             let mut outlet = outlet.borrow_mut();
             outlet.revision.set(outlet.revision.get().wrapping_add(1));
-            outlet.capture_transition(runtime)
-        };
+            outlet.capture_transition(runtime);
+        }
         // Rebuild outlet content explicitly before framing: reactive
         // dependencies alone cannot cover content the host descriptors
         // never mention, and an explicit rebuild keeps mounting ordered
@@ -419,25 +438,22 @@ impl RouteOutlet {
             }
         }
         let output = runtime.run_frame(constraints)?;
-        outlet
-            .borrow_mut()
-            .reconcile_presented(runtime, transitioned);
+        outlet.borrow_mut().reconcile_presented(runtime);
         Ok(output)
     }
 
     /// Reconciles integration state with live navigator state after a
-    /// frame: forgets records, bindings, and tags for unmounted routes,
-    /// saves the deactivated route's owned focus, binds newly mounted
-    /// routes, and restores the activated route's eligible focus (whose
-    /// targets mounted in the frame just presented). Manual-driving escape
-    /// hatch for custom hosts; prefer [`Self::present_frame`], whose
-    /// pre-frame capture also survives disposal-unmounts. Use one driver
-    /// per outlet.
+    /// frame: captures and commits transitions, forgets records, bindings,
+    /// and tags for unmounted routes, binds newly mounted routes, and
+    /// restores the activated route's eligible focus (whose targets mounted
+    /// in the frame just presented). Manual-driving escape hatch for custom
+    /// hosts; prefer [`Self::present_frame`], whose pre-frame capture also
+    /// survives disposal-unmounts. Use one driver per outlet.
     pub fn after_frame(&mut self, runtime: &mut Runtime) {
-        self.prune_unmounted();
-        let transitioned = self.capture_transition(runtime);
-        self.ensure_bindings();
-        self.restore_or_retry(runtime, transitioned);
+        self.capture_transition(runtime);
+        // Manual driving has no fallible step between capture and commit,
+        // so reconciliation commits immediately.
+        self.reconcile_presented(runtime);
     }
 
     /// Restores the active route's saved focus now, for content that
@@ -449,21 +465,60 @@ impl RouteOutlet {
         }
     }
 
-    /// Captures a pending transition: saves the deactivated route's owned
-    /// focus and advances the tracked active route. Returns whether the
-    /// active route changed.
-    fn capture_transition(&mut self, runtime: &Runtime) -> bool {
-        let active = self.navigator.current().map(|route| route.id);
-        let transitioned = self.last_active != active;
-        if transitioned {
-            if let Some(previous) = self.last_active
-                && self.navigator.lifetime_of(previous).is_some()
-            {
-                self.focus.save_focused(runtime, previous);
-            }
-            self.last_active = active;
+    /// Captures a pending transition when none is outstanding and the
+    /// active route moved since the last commit. The outgoing focus is
+    /// read once into the pending slot — never into the records — so a
+    /// later retry cannot overwrite it with intermediate focus, and
+    /// abandoning the capture drops it without touching committed state.
+    fn capture_transition(&mut self, runtime: &Runtime) {
+        if self.pending.is_some() {
+            return;
         }
-        transitioned
+        let active = self.navigator.current().map(|route| route.id);
+        if active == self.presented {
+            return;
+        }
+        let saved = self.presented.and_then(|previous| {
+            self.navigator
+                .lifetime_of(previous)
+                .is_some()
+                .then(|| self.focus.read_owned_focus(runtime, previous))
+                .flatten()
+        });
+        self.pending = Some(PendingTransition {
+            previous: self.presented,
+            incoming: active,
+            saved,
+        });
+    }
+
+    /// Commits the pending transition when the frame actually presented
+    /// it: the active route still matches the captured incoming route, so
+    /// the mounted content is the transition's own. Anything else —
+    /// navigation mid-frame, or a removed incoming route — abandons the
+    /// capture and re-captures fresh, leaving committed records alone.
+    /// Returns whether a transition committed.
+    fn commit_transition(&mut self, runtime: &mut Runtime) -> bool {
+        let active = self.navigator.current().map(|route| route.id);
+        let Some(pending) = self.pending.take() else {
+            return false;
+        };
+        if active != pending.incoming
+            || pending
+                .incoming
+                .is_some_and(|incoming| self.navigator.lifetime_of(incoming).is_none())
+        {
+            // Stale capture (already taken above): re-capture fresh for the
+            // route that actually won, without writing anything first.
+            self.capture_transition(runtime);
+            return false;
+        }
+        if let Some(previous) = pending.previous {
+            self.focus.commit_saved(previous, pending.saved);
+        }
+        self.presented = active;
+        self.pending = None;
+        true
     }
 
     /// Drops records, bindings, and tags for unmounted routes. Lifetime-end
@@ -493,9 +548,9 @@ impl RouteOutlet {
         }
     }
 
-    /// Restores on transitions; otherwise retries a pending restore only
-    /// when it cannot displace valid focus (deferred content may have
-    /// mounted or enabled through ordinary invalidation since).
+    /// Restores on committed transitions; otherwise retries a pending
+    /// restore only when it cannot displace valid focus (deferred content
+    /// may have mounted or enabled through ordinary invalidation since).
     fn restore_or_retry(&mut self, runtime: &mut Runtime, transitioned: bool) {
         let Some(id) = self.navigator.current().map(|route| route.id) else {
             return;
@@ -507,11 +562,12 @@ impl RouteOutlet {
         }
     }
 
-    /// Post-frame reconciliation for [`Self::present_frame`]: prune, bind,
-    /// then restore or retry without re-saving (the pre-frame capture owns
-    /// saving, so a disposal-unmounted target cannot overwrite its record
-    /// with nothing).
-    fn reconcile_presented(&mut self, runtime: &mut Runtime, transitioned: bool) {
+    /// Post-frame reconciliation: commit the pending transition against
+    /// the mounted snapshot, then prune, bind, and restore or retry. The
+    /// commit runs before pruning so a just-committed record for a route
+    /// removed mid-frame is dropped rather than resurrected.
+    fn reconcile_presented(&mut self, runtime: &mut Runtime) {
+        let transitioned = self.commit_transition(runtime);
         self.prune_unmounted();
         self.ensure_bindings();
         self.restore_or_retry(runtime, transitioned);

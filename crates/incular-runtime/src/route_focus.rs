@@ -79,11 +79,24 @@ impl RouteFocusState {
     /// Absent and rejected records restore identically (orphan sweep), so
     /// validation is record hygiene, not a second restore predicate.
     pub fn save_focused(&mut self, runtime: &Runtime, route: RouteId) {
-        let focused = runtime.focused_element().filter(|id| {
+        let focused = self.read_owned_focus(runtime, route);
+        self.saved.insert(route, focused);
+    }
+
+    /// Reads the currently focused element when owned by `route`, without
+    /// touching records. Transactional drivers capture through this and
+    /// commit through [`Self::commit_saved`], so a failed attempt never
+    /// disturbs committed state.
+    pub(crate) fn read_owned_focus(&self, runtime: &Runtime, route: RouteId) -> Option<ElementId> {
+        runtime.focused_element().filter(|id| {
             runtime.tree().element_exists(*id)
                 && (self.owner_of)(runtime.tree(), *id) == Some(route)
-        });
-        self.saved.insert(route, focused);
+        })
+    }
+
+    /// Commits a previously captured save into `route`'s record.
+    pub(crate) fn commit_saved(&mut self, route: RouteId, saved: Option<ElementId>) {
+        self.saved.insert(route, saved);
     }
 
     /// Restores `route`'s saved focus into `runtime`. Call when `route`
