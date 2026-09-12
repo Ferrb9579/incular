@@ -1,6 +1,26 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: planned. Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
+Status: in progress. Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
+
+Completed (navigator stack; BackDispatcher topology untouched): one private
+`RouteEntry` collection replaces the parallel routes/restorable_routes vectors,
+with metadata association pinned through mixed stacks, replacement, removal,
+and restoration; explicit `PageKey` identity with typed `DuplicatePageKey`
+rejection before mutation, atomic keyed reconciliation (iterator drains before
+any borrow; unkeyed pages mount anew), and one shared commit/effect path
+(cleanups before observer events, both after borrows end) for push, pop,
+replace, set_pages, and restoration. Guarded-pop candidate/revision checks are
+preserved. Evidence: `crates/incular-navigation/tests/navigation.rs` (observer
+sequences, reentrant observer/cleanup navigation, keyed reorder, repeated
+names, duplicate rejection without mutation or events, retained IDs,
+removal/reinsertion, iterator mutation, metadata preservation, permanent
+cleanup, active-transition consistency).
+
+Remaining: runtime ownership mapping; deep-link delivery exactly once; focus
+restoration and route-scoped task ownership; acyclic back attachment with typed
+rejection before mutation (BackDispatcher still rejects only a direct
+self-link); indexed key lookup with deterministic operation-count tests for
+reorder/churn (reconciliation is still linear search plus remove).
 
 Problem/evidence: navigator.rs has parallel routes/restorable_routes, independent
 push/active notifications and borrowed user iteration in set_pages. BackDispatcher

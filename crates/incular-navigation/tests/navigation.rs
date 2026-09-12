@@ -664,6 +664,289 @@ fn restored_entries_carry_metadata_into_later_snapshots() {
     assert_eq!(round_trip.active_route, Some(1));
 }
 
+fn event_log() -> (Rc<RefCell<Vec<String>>>, impl Fn(NavigationEvent) + Clone) {
+    let events = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = {
+        let events = Rc::clone(&events);
+        move |event| match event {
+            NavigationEvent::Pushed { route } => {
+                events.borrow_mut().push(format!("push:{}", route.name));
+            }
+            NavigationEvent::Popped { route } => {
+                events.borrow_mut().push(format!("pop:{}", route.name));
+            }
+            NavigationEvent::Replaced { previous, route } => events
+                .borrow_mut()
+                .push(format!("replace:{}:{}", previous.name, route.name)),
+            NavigationEvent::ActiveRouteChanged { previous, current } => {
+                events.borrow_mut().push(format!(
+                    "active:{}:{}",
+                    previous.map_or_else(|| "none".to_owned(), |route| route.name),
+                    current.map_or_else(|| "none".to_owned(), |route| route.name),
+                ));
+            }
+        }
+    };
+    (events, sink)
+}
+
+#[test]
+fn declarative_removal_drops_scopes_without_bridge_exactly_once() {
+    let registry = RouteRegistry::new();
+    let document = registry
+        .register_restorable_with_scope_cleanup("/document", true, restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    let removed = Rc::new(RefCell::new(Vec::new()));
+    navigator.set_route_scope_cleanup({
+        let removed = Rc::clone(&removed);
+        move |key| removed.borrow_mut().push(key.to_string())
+    });
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(document, json!({ "name": "document" }))
+                .scope_key(RouteScopeKey::new("document-42").unwrap()),
+        )
+        .unwrap();
+    // Declarative removal drops the entry without the pop-only bridge,
+    // and repeating the reconciliation cleans up nothing further.
+    navigator.set_pages([]).unwrap();
+    assert!(navigator.routes().is_empty());
+    assert!(removed.borrow().is_empty());
+    navigator.set_pages([]).unwrap();
+    assert!(removed.borrow().is_empty());
+}
+
+#[test]
+fn keyed_reorder_preserves_lifetime_metadata_and_skips_cleanup() {
+    fn keyed_page(key: &str, arguments: &Value) -> Result<Page, RestorableRouteBuildError> {
+        let name = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RestorableRouteBuildError::invalid_arguments("missing name"))?;
+        Ok(
+            Page::new(name, Widget::box_(Size::new(1., 1.), Color::WHITE))
+                .key(PageKey::new(key).unwrap()),
+        )
+    }
+    let registry = RouteRegistry::new();
+    let home = registry
+        .register_restorable_with_scope_cleanup("/home", true, |arguments| {
+            keyed_page("home", arguments)
+        })
+        .unwrap();
+    let detail = registry
+        .register_restorable_with_scope_cleanup("/detail", true, |arguments| {
+            keyed_page("detail", arguments)
+        })
+        .unwrap();
+    let navigator = Navigator::new();
+    let removed = Rc::new(RefCell::new(Vec::new()));
+    navigator.set_route_scope_cleanup({
+        let removed = Rc::clone(&removed);
+        move |key| removed.borrow_mut().push(key.to_string())
+    });
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(home, json!({ "name": "home" })).state(json!({ "tab": 1 })),
+        )
+        .unwrap();
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(detail, json!({ "name": "detail" }))
+                .state(json!({ "document": 2 })),
+        )
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+
+    // Reordering by key keeps both lifetimes and their metadata, with no
+    // scope cleanup: nothing was permanently popped.
+    navigator
+        .set_pages([
+            Page::new("detail", page()).key(PageKey::new("detail").unwrap()),
+            Page::new("home", page()).key(PageKey::new("home").unwrap()),
+        ])
+        .unwrap();
+    let reordered: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_eq!(reordered, vec![ids[1], ids[0]]);
+    assert!(removed.borrow().is_empty());
+    let snapshot = navigator.restoration_snapshot();
+    assert_eq!(snapshot.routes.len(), 2);
+    assert_eq!(snapshot.routes[0].state, json!({ "document": 2 }));
+    assert_eq!(snapshot.routes[1].state, json!({ "tab": 1 }));
+    assert_eq!(snapshot.active_route, Some(1));
+}
+
+#[test]
+fn reentrant_observer_push_during_pop_keeps_commit_order() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("home", page()));
+    navigator.push_page(Page::new("settings", page()));
+    let (events, sink) = event_log();
+    let _observer = navigator.observe({
+        let navigator = navigator.clone();
+        move |event| {
+            sink(event.clone());
+            if matches!(event, NavigationEvent::Popped { .. }) {
+                navigator.push_page(Page::new("interrupted", page()));
+            }
+        }
+    });
+    assert!(navigator.pop().is_some());
+    // The outer pop's events describe its own commit; the nested push
+    // dispatches fully inside the outer Popped delivery. Nothing panics
+    // and the final stack holds the nested route on the committed base.
+    assert_eq!(
+        *events.borrow(),
+        [
+            "pop:settings",
+            "push:interrupted",
+            "active:home:interrupted",
+            "active:settings:home",
+        ]
+        .map(str::to_owned)
+    );
+    assert_eq!(navigator.current().unwrap().name, "interrupted");
+}
+
+#[test]
+fn cleanup_callback_may_navigate_without_panic() {
+    let registry = RouteRegistry::new();
+    let document = registry
+        .register_restorable_with_scope_cleanup("/document", true, restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    let (events, sink) = event_log();
+    let _observer = navigator.observe(sink);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    navigator.set_route_scope_cleanup({
+        let log = Rc::clone(&log);
+        let navigator = navigator.clone();
+        move |key| {
+            log.borrow_mut().push(format!("cleanup:{}", key));
+            navigator.push_page(Page::new("followup", page()));
+        }
+    });
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(document, json!({ "name": "document" }))
+                .scope_key(RouteScopeKey::new("document-42").unwrap()),
+        )
+        .unwrap();
+    events.borrow_mut().clear();
+    navigator.pop();
+    // Cleanup runs before observer events; its nested push dispatches
+    // fully before the outer pop's events continue. The pop already
+    // committed, so the nested push observes the emptied stack.
+    assert_eq!(&*log.borrow(), &["cleanup:document-42"]);
+    assert_eq!(
+        *events.borrow(),
+        [
+            "push:followup",
+            "active:none:followup",
+            "pop:document",
+            "active:document:none",
+        ]
+        .map(str::to_owned)
+    );
+    assert_eq!(navigator.current().unwrap().name, "followup");
+}
+
+#[test]
+fn active_events_match_committed_transitions() {
+    let home = PageKey::new("home").unwrap();
+    let navigator = Navigator::new();
+    let (events, sink) = event_log();
+    let _observer = navigator.observe(sink);
+    navigator.push_page(Page::new("home", page()).key(home.clone()));
+    navigator.push_page(Page::new("details", page()));
+    navigator.replace(Route::new("settings", page()));
+    navigator.pop();
+    // Same-top reconciliation emits no active event; emptying the stack
+    // reports the transition to none.
+    navigator
+        .set_pages([Page::new("home", page()).key(home)])
+        .unwrap();
+    navigator.set_pages([]).unwrap();
+    assert_eq!(
+        *events.borrow(),
+        [
+            "push:home",
+            "active:none:home",
+            "push:details",
+            "active:home:details",
+            "replace:details:settings",
+            "active:details:settings",
+            "pop:settings",
+            "active:settings:home",
+            "active:home:none",
+        ]
+        .map(str::to_owned)
+    );
+}
+
+#[test]
+fn rejected_operations_produce_no_effects() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("home", page()).key(PageKey::new("home").unwrap()));
+    navigator.push_page(Page::new("editor", page()));
+    let (events, sink) = event_log();
+    let _observer = navigator.observe(sink);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    navigator.set_route_scope_cleanup({
+        let log = Rc::clone(&log);
+        move |key| log.borrow_mut().push(key.to_string())
+    });
+    let revision = navigator.revision();
+
+    // Denied pop: no mutation, no events, no cleanup.
+    navigator.set_pop_guard(|route| {
+        if route.name == "editor" {
+            PopDecision::Deny
+        } else {
+            PopDecision::Allow
+        }
+    });
+    assert!(matches!(navigator.maybe_pop(), PopResult::Blocked));
+    assert_eq!(navigator.current().unwrap().name, "editor");
+    assert_eq!(navigator.revision(), revision);
+    assert!(events.borrow().is_empty());
+    assert!(log.borrow().is_empty());
+
+    // Denied replace: same guarantees.
+    navigator.clear_pop_guard();
+    navigator.set_pop_guard(|_| PopDecision::Deny);
+    assert!(navigator.replace(Route::new("other", page())).is_none());
+    assert_eq!(navigator.current().unwrap().name, "editor");
+    assert_eq!(navigator.revision(), revision);
+    assert!(events.borrow().is_empty());
+    assert!(log.borrow().is_empty());
+    navigator.clear_pop_guard();
+
+    // Duplicate declarative keys: rejected before mutation or events.
+    let duplicate = navigator.set_pages([
+        Page::new("home", page()).key(PageKey::new("home").unwrap()),
+        Page::new("editor", page()).key(PageKey::new("home").unwrap()),
+    ]);
+    assert!(duplicate.is_err());
+    assert_eq!(navigator.current().unwrap().name, "editor");
+    assert_eq!(navigator.revision(), revision);
+    assert!(events.borrow().is_empty());
+    assert!(log.borrow().is_empty());
+
+    // Empty pop on a drained navigator: no events either.
+    navigator.pop();
+    navigator.pop();
+    events.borrow_mut().clear();
+    assert!(navigator.pop().is_none());
+    assert!(matches!(navigator.maybe_pop(), PopResult::Empty));
+    assert!(events.borrow().is_empty());
+}
+
 #[test]
 fn snapshot_excludes_transient_routes_and_their_suffix() {
     let registry = RouteRegistry::new();

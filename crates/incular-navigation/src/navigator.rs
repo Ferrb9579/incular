@@ -55,6 +55,19 @@ struct NavigatorObserverEntry {
     callback: Box<dyn Fn(NavigationEvent)>,
 }
 
+/// Effects owned by one committed stack mutation.
+///
+/// Collected while the state borrow is held, dispatched after it ends:
+/// scope cleanups first, then observer events in commit order. Reentrant
+/// navigation inside a cleanup or observer completes as a nested commit;
+/// nested effects dispatch before the outer dispatch continues, so
+/// committed transitions are never reordered.
+#[derive(Default)]
+struct CommitEffects {
+    cleanups: Vec<(RouteScopeKey, RouteScopeCleanup)>,
+    events: Vec<NavigationEvent>,
+}
+
 /// Lifetime token returned by [`Navigator::observe`].
 ///
 /// Keep the token for as long as events are wanted. Dropping the final token
@@ -173,10 +186,25 @@ impl Navigator {
         }
     }
 
-    fn notify_active_route(&self, previous: Option<Route>, current: Option<Route>) {
-        if previous.as_ref().map(|route| route.id) != current.as_ref().map(|route| route.id) {
-            self.notify(NavigationEvent::ActiveRouteChanged { previous, current });
+    fn dispatch_effects(&self, effects: CommitEffects) {
+        for (scope_key, cleanup) in effects.cleanups {
+            cleanup(&scope_key);
         }
+        for event in effects.events {
+            self.notify(event);
+        }
+    }
+
+    /// The active-route event for a committed top transition, if the top
+    /// route identity changed. Each event describes its own commit, so a
+    /// reentrant commit's events follow the outer commit's events without
+    /// restating them.
+    fn active_transition(
+        previous: Option<Route>,
+        current: Option<Route>,
+    ) -> Option<NavigationEvent> {
+        (previous.as_ref().map(|route| route.id) != current.as_ref().map(|route| route.id))
+            .then(|| NavigationEvent::ActiveRouteChanged { previous, current })
     }
 
     /// Installs a guard consulted before an explicit [`Self::pop`] or
@@ -217,10 +245,14 @@ impl Navigator {
             state.revision = state.revision.wrapping_add(1);
             (id, previous, route)
         };
-        self.notify(NavigationEvent::Pushed {
+        let mut effects = CommitEffects::default();
+        effects.events.push(NavigationEvent::Pushed {
             route: route.clone(),
         });
-        self.notify_active_route(previous, Some(route));
+        effects
+            .events
+            .extend(Self::active_transition(previous, Some(route)));
+        self.dispatch_effects(effects);
         id
     }
 
@@ -239,11 +271,43 @@ impl Navigator {
 
     pub(crate) fn replace_with_restored_routes(&self, routes: Vec<(Page, RestorableRoute)>) {
         debug_assert!(!routes.is_empty());
-        let mut state = self.state.borrow_mut();
-        let mut next = Vec::with_capacity(routes.len());
-        for (page, route) in routes {
+        let (previous, current) = {
+            let mut state = self.state.borrow_mut();
+            let previous = state.routes.last().map(|entry| entry.route.clone());
+            let mut next = Vec::with_capacity(routes.len());
+            for (page, route) in routes {
+                state.next_id = state.next_id.wrapping_add(1).max(1);
+                next.push(RouteEntry {
+                    route: Route {
+                        id: RouteId(state.next_id),
+                        settings: RouteSettings::new(page.name.clone()),
+                        name: page.name,
+                        child: page.child,
+                        transition: RouteTransition::None,
+                        presentation: RoutePresentation::default(),
+                    },
+                    restorable: Some(route),
+                    key: None,
+                });
+            }
+            state.routes = next;
+            state.revision = state.revision.wrapping_add(1);
+            let current = state.routes.last().map(|entry| entry.route.clone());
+            (previous, current)
+        };
+        let mut effects = CommitEffects::default();
+        effects
+            .events
+            .extend(Self::active_transition(previous, current));
+        self.dispatch_effects(effects);
+    }
+
+    pub(crate) fn replace_with_fallback(&self, page: Page) {
+        let (previous, current) = {
+            let mut state = self.state.borrow_mut();
+            let previous = state.routes.last().map(|entry| entry.route.clone());
             state.next_id = state.next_id.wrapping_add(1).max(1);
-            next.push(RouteEntry {
+            state.routes = vec![RouteEntry {
                 route: Route {
                     id: RouteId(state.next_id),
                     settings: RouteSettings::new(page.name.clone()),
@@ -252,30 +316,18 @@ impl Navigator {
                     transition: RouteTransition::None,
                     presentation: RoutePresentation::default(),
                 },
-                restorable: Some(route),
+                restorable: None,
                 key: None,
-            });
-        }
-        state.routes = next;
-        state.revision = state.revision.wrapping_add(1);
-    }
-
-    pub(crate) fn replace_with_fallback(&self, page: Page) {
-        let mut state = self.state.borrow_mut();
-        state.next_id = state.next_id.wrapping_add(1).max(1);
-        state.routes = vec![RouteEntry {
-            route: Route {
-                id: RouteId(state.next_id),
-                settings: RouteSettings::new(page.name.clone()),
-                name: page.name,
-                child: page.child,
-                transition: RouteTransition::None,
-                presentation: RoutePresentation::default(),
-            },
-            restorable: None,
-            key: None,
-        }];
-        state.revision = state.revision.wrapping_add(1);
+            }];
+            state.revision = state.revision.wrapping_add(1);
+            let current = state.routes.last().map(|entry| entry.route.clone());
+            (previous, current)
+        };
+        let mut effects = CommitEffects::default();
+        effects
+            .events
+            .extend(Self::active_transition(previous, current));
+        self.dispatch_effects(effects);
     }
 
     /// Installs a bridge that removes a route-specific restoration scope after
@@ -378,38 +430,51 @@ impl Navigator {
                 return Err(DuplicatePageKey { key: key.clone() });
             }
         }
-        let mut state = self.state.borrow_mut();
-        let mut previous = std::mem::take(&mut state.routes);
-        let mut next = Vec::with_capacity(pages.len());
-        for page in pages {
-            let claimed = match &page.key {
-                Some(key) => previous
-                    .iter()
-                    .position(|entry| entry.key.as_ref() == Some(key)),
-                None => None,
-            };
-            if let Some(index) = claimed {
-                let mut entry = previous.remove(index);
-                entry.route.child = page.child;
-                next.push(entry);
-            } else {
-                state.next_id = state.next_id.wrapping_add(1).max(1);
-                next.push(RouteEntry {
-                    route: Route {
-                        id: RouteId(state.next_id),
-                        settings: RouteSettings::new(page.name.clone()),
-                        name: page.name,
-                        child: page.child,
-                        transition: RouteTransition::None,
-                        presentation: RoutePresentation::default(),
-                    },
-                    restorable: None,
-                    key: page.key,
-                });
+        let (previous_top, current_top) = {
+            let mut state = self.state.borrow_mut();
+            let previous_top = state.routes.last().map(|entry| entry.route.clone());
+            let mut previous = std::mem::take(&mut state.routes);
+            let mut next = Vec::with_capacity(pages.len());
+            for page in pages {
+                let claimed = match &page.key {
+                    Some(key) => previous
+                        .iter()
+                        .position(|entry| entry.key.as_ref() == Some(key)),
+                    None => None,
+                };
+                if let Some(index) = claimed {
+                    let mut entry = previous.remove(index);
+                    entry.route.child = page.child;
+                    next.push(entry);
+                } else {
+                    state.next_id = state.next_id.wrapping_add(1).max(1);
+                    next.push(RouteEntry {
+                        route: Route {
+                            id: RouteId(state.next_id),
+                            settings: RouteSettings::new(page.name.clone()),
+                            name: page.name,
+                            child: page.child,
+                            transition: RouteTransition::None,
+                            presentation: RoutePresentation::default(),
+                        },
+                        restorable: None,
+                        key: page.key,
+                    });
+                }
             }
-        }
-        state.routes = next;
-        state.revision = state.revision.wrapping_add(1);
+            // Dropped entries release their restoration metadata here without
+            // the pop-only scope bridge: declarative reconciliation retains
+            // persisted scope data by design.
+            state.routes = next;
+            state.revision = state.revision.wrapping_add(1);
+            let current_top = state.routes.last().map(|entry| entry.route.clone());
+            (previous_top, current_top)
+        };
+        let mut effects = CommitEffects::default();
+        effects
+            .events
+            .extend(Self::active_transition(previous_top, current_top));
+        self.dispatch_effects(effects);
         Ok(())
     }
     /// Attempts a guarded pop. Unlike [`Self::pop`], this distinguishes an
@@ -450,14 +515,16 @@ impl Navigator {
                 .zip(state.route_scope_cleanup.clone());
             (entry.route, cleanup)
         };
-        if let Some((scope_key, cleanup)) = cleanup {
-            cleanup(&scope_key);
-        }
         let current = self.current();
-        self.notify(NavigationEvent::Popped {
+        let mut effects = CommitEffects::default();
+        effects.cleanups.extend(cleanup);
+        effects.events.push(NavigationEvent::Popped {
             route: route.clone(),
         });
-        self.notify_active_route(Some(route.clone()), current);
+        effects
+            .events
+            .extend(Self::active_transition(Some(route.clone()), current));
+        self.dispatch_effects(effects);
         PopResult::Popped(Box::new(route))
     }
     pub fn pop(&self) -> Option<Route> {
@@ -511,14 +578,16 @@ impl Navigator {
             state.revision = state.revision.wrapping_add(1);
             (previous.route, route, cleanup)
         };
-        if let Some((scope_key, cleanup)) = cleanup {
-            cleanup(&scope_key);
-        }
-        self.notify(NavigationEvent::Replaced {
+        let mut effects = CommitEffects::default();
+        effects.cleanups.extend(cleanup);
+        effects.events.push(NavigationEvent::Replaced {
             previous: previous.clone(),
             route: route.clone(),
         });
-        self.notify_active_route(Some(previous.clone()), Some(route));
+        effects
+            .events
+            .extend(Self::active_transition(Some(previous.clone()), Some(route)));
+        self.dispatch_effects(effects);
         Some(previous)
     }
     #[must_use]
