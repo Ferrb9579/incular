@@ -12,6 +12,16 @@
 //! content. Covered routes without retention unmount (disposal); retained
 //! ones stay mounted inert while invisible; only permanent removal ends
 //! lifetimes.
+//!
+//! Frame contract: a frame runs build, layout, composite, semantics, then
+//! paint, so restoration — which reconciles after the frame returns —
+//! cannot make that same frame's paint or semantics. The restore applies
+//! to the focus slot synchronously and flags follow-up work through the
+//! existing scheduler (`set_focus` marks another frame); the next frame
+//! then finalizes styling, semantics, and keyboard dispatch from restored
+//! focus. No unconditional extra frame runs: follow-up is flagged exactly
+//! when reconciliation changed focus, and deferred content converges
+//! through its own invalidation afterwards.
 
 use std::{
     cell::{Cell, RefCell},

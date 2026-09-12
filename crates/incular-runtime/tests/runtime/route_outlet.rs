@@ -40,6 +40,7 @@ fn frame(runtime: &mut Runtime) {
 const RED: Color = Color::rgba(255, 0, 0, 255);
 const GREEN: Color = Color::rgba(0, 255, 0, 255);
 const BLUE: Color = Color::rgba(0, 0, 255, 255);
+const YELLOW: Color = Color::rgba(255, 255, 0, 255);
 
 fn repaint(harness: &mut OutletHarness) -> DisplayList {
     harness
@@ -160,13 +161,14 @@ fn harness(navigator: &Navigator) -> OutletHarness {
 
 /// Presents one production cycle through the single supported operation:
 /// rebuild, frame, and reconcile in enforced order.
-fn present(harness: &mut OutletHarness) {
+fn present(harness: &mut OutletHarness) -> DisplayList {
     RouteOutlet::present_frame(
         &harness.outlet,
         &mut harness.runtime,
         Constraints::tight(Size::new(200., 200.)),
     )
-    .expect("present frame");
+    .expect("present frame")
+    .0
 }
 
 #[test]
@@ -767,6 +769,10 @@ fn outlet_incoming_autofocus_then_return_restores() {
         "the pre-reconcile save restores on return"
     );
     assert!(harness.runtime.focused_element().is_some());
+    assert!(
+        harness.runtime.frame_requested(),
+        "the return restore schedules its follow-up"
+    );
 }
 
 #[test]
@@ -789,6 +795,10 @@ fn outlet_deferred_enablement_converges_without_retries() {
     node_a.set_can_request_focus(true);
     present(&mut harness);
     assert!(node_a.has_focus());
+    assert!(
+        harness.runtime.frame_requested(),
+        "deferred restore schedules its follow-up"
+    );
 }
 
 /// Hosts an inner outlet inside outer route A's content: the inner
@@ -1330,6 +1340,79 @@ fn outlet_removal_during_build_abandons_cleanly() {
     navigator.pop();
     present(&mut harness);
     assert!(node_a.has_focus());
+}
+
+fn paints_focus_ring(commands: &[PaintCommand], color: Color) -> bool {
+    commands.iter().any(
+        |command| matches!(command, PaintCommand::Border { border, .. } if border.color == color),
+    )
+}
+
+fn semantics_marks_focused(runtime: &Runtime, label: &str) -> bool {
+    runtime
+        .tree()
+        .semantics_debug_dump()
+        .lines()
+        .any(|line| line.contains(label) && line.contains("focused=true"))
+}
+
+#[test]
+fn outlet_restore_schedules_followup_for_stale_visuals() {
+    // Frame contract: the presenting frame paints pre-restore focus while
+    // the restore flags follow-up work explicitly — never silently stale.
+    // Styling (focus ring), semantics (focused node), keyboard target
+    // (traversal origin), and slot converge on the follow-up frame.
+    use incular_widgets::internal::ActionSurface;
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_plain = FocusNode::new();
+    let node_b = FocusNode::new();
+    let surface_widget: Widget = ActionSurface::new("a-btn")
+        .size(Size::new(40., 40.))
+        .color(Color::TRANSPARENT)
+        .focused_color(YELLOW)
+        .into();
+    navigator.push_page(Page::new(
+        "a",
+        Column::new(vec![surface_widget, focus_child(&node_plain)]),
+    ));
+    present(&mut harness);
+    // Discover the surface through its ring (order-independent): tab until
+    // the focused styling paints.
+    for _ in 0..3 {
+        let _ = harness
+            .runtime
+            .handle_input(InputEvent::Key(key_down(Code::Tab)));
+        if paints_focus_ring(repaint(&mut harness).commands(), YELLOW) {
+            break;
+        }
+    }
+    let surface = harness.runtime.focused_element().expect("surface focused");
+    assert!(paints_focus_ring(repaint(&mut harness).commands(), YELLOW));
+    navigator.push_page(focus_page("b", &node_b));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    // The restoring frame paints pre-restore focus (no ring yet) and flags
+    // the follow-up explicitly.
+    let stale = present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(surface));
+    assert!(
+        harness.runtime.frame_requested(),
+        "restore schedules its follow-up"
+    );
+    assert!(
+        !paints_focus_ring(stale.commands(), YELLOW),
+        "presenting frame predates the restore"
+    );
+    assert!(!semantics_marks_focused(&harness.runtime, "a-btn"));
+    // The follow-up frame finalizes every focus-dependent output with no
+    // further navigation.
+    let fresh = present(&mut harness);
+    assert!(paints_focus_ring(fresh.commands(), YELLOW));
+    assert!(semantics_marks_focused(&harness.runtime, "a-btn"));
+    tab_until(&mut harness.runtime, &node_plain);
+    assert!(harness.runtime.focused_element().is_some());
 }
 
 #[test]
