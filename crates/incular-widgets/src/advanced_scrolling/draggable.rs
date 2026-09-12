@@ -15,6 +15,14 @@ use std::{
 use incular_scroll::{ScrollController, ScrollPhysics};
 
 /// A notification emitted whenever a sheet extent changes.
+///
+/// Notifications are historical committed events dispatched in commit
+/// order, like scroll notifications: each payload describes the change
+/// that just committed, and a later payload always supersedes an
+/// earlier one. Payloads are never delayed past newer events, so
+/// applying them in arrival order reconstructs the final state.
+/// Listeners needing the latest state read it from
+/// [`DraggableScrollableState::extent`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DraggableScrollableNotification {
     /// Configured minimum fractional extent.
@@ -859,10 +867,12 @@ impl DraggableScrollableState {
 
     /// Resets the sheet to its initial extent and returns whether state changed.
     ///
-    /// Notification ordering: sheet-owned state commits silently first,
-    /// the inner position restores second (inner listeners observe the
-    /// already-committed sheet), and the sheet notifies last, exactly
-    /// once, iff the extent moved. No reset-owned state mutates after
+    /// Notification ordering: the sheet commits, clears flags, and
+    /// notifies before the inner position restores, reusing the
+    /// notification returned by the commit. The reset payload therefore
+    /// precedes any reentrant events in commit order and can never arrive
+    /// delayed past newer state. Inner listeners observe the
+    /// already-committed sheet. No sheet-extent state mutates after
     /// callbacks begin, so reentrant drags survive and nested resets see
     /// committed state.
     pub fn reset(&self) -> bool {
@@ -873,23 +883,17 @@ impl DraggableScrollableState {
         let had_activity = self.activity_generation().is_some();
         self.cancel_activity();
         let before = self.extent();
-        let size_changed = self.commit_size(before.initial_size, false).is_some();
+        let notification = self.commit_size(before.initial_size, false);
         {
             let mut state = self.state.borrow_mut();
             state.extent.has_dragged = false;
             state.extent.has_changed = false;
         }
-        let inner_moved = self.inner_controller().jump_to(0.0);
-        if size_changed {
-            self.dispatch_notification(DraggableScrollableNotification {
-                min_extent: before.min_size,
-                max_extent: before.max_size,
-                extent: before.initial_size,
-                initial_extent: before.initial_size,
-                should_close_on_min_extent: before.should_close_on_min_extent,
-                depth: 0,
-            });
+        let size_changed = notification.is_some();
+        if let Some(notification) = notification {
+            self.dispatch_notification(notification);
         }
+        let inner_moved = self.inner_controller().jump_to(0.0);
         had_activity || inner_moved || size_changed || before.has_dragged || before.has_changed
     }
 

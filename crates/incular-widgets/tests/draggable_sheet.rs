@@ -315,9 +315,9 @@ fn draggable_sheet_reset_reentrant_reset_terminates_pristine() {
 
 #[test]
 fn draggable_sheet_reset_inner_listeners_observe_committed_sheet() {
-    // Ordering contract: the sheet commits silently first, the inner
-    // position restores second, the sheet notifies last. Inner-controller
-    // listeners therefore observe the already-committed sheet extent.
+    // Ordering contract: the sheet commits, clears flags, and notifies
+    // before the inner position restores. Inner-controller listeners
+    // therefore observe the already-committed sheet extent.
     let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
     state.set_inner_extents(1_000.0, 200.0);
     assert!(state.set_size(0.8, true));
@@ -341,6 +341,74 @@ fn draggable_sheet_reset_inner_listeners_observe_committed_sheet() {
         "inner listeners must see the committed sheet, got {}",
         seen[0]
     );
+    assert_eq!(state.inner_controller().offset(), 0.0);
+}
+
+#[test]
+fn draggable_sheet_reset_inner_listener_mutation_orders_events() {
+    // Resetting the inner position invokes an inner listener that drags
+    // the sheet. The reset payload (a historical committed event) must
+    // precede the reentrant payload in commit order — never arrive
+    // delayed past newer state — and the reentrant change and flags
+    // must survive.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    state.set_inner_extents(1_000.0, 200.0);
+    assert!(state.set_size(0.8, true));
+    assert!(state.inner_controller().jump_to(50.0));
+
+    let sheet_events = Rc::new(RefCell::new(Vec::new()));
+    let sheet_events_for_listener = sheet_events.clone();
+    let state_for_sheet_listener = state.clone();
+    let _sheet_subscription = state.add_notification_listener(move |notification| {
+        let extent = state_for_sheet_listener.extent();
+        sheet_events_for_listener.borrow_mut().push((
+            notification.extent,
+            extent.current_size,
+            extent.has_dragged,
+            extent.has_changed,
+        ));
+        false
+    });
+
+    let inner_seen = Rc::new(RefCell::new(Vec::new()));
+    let inner_seen_for_listener = inner_seen.clone();
+    let state_for_inner_listener = state.clone();
+    let _inner_subscription = state
+        .inner_controller()
+        .add_notification_listener(move |_| {
+            inner_seen_for_listener
+                .borrow_mut()
+                .push(state_for_inner_listener.extent().current_size);
+            let _ = state_for_inner_listener.set_size(0.9, true);
+            false
+        });
+
+    assert!(state.reset());
+
+    // Exact callback order: reset payload first, then the inner restore
+    // whose listener re-dragged the sheet.
+    let events = sheet_events.borrow();
+    assert_eq!(events.len(), 2);
+    assert!(approx(events[0].0, 0.5));
+    assert!(approx(events[0].1, 0.5));
+    assert!(!events[0].2);
+    assert!(!events[0].3);
+    assert!(approx(events[1].0, 0.9));
+    assert!(approx(events[1].1, 0.9));
+    assert!(events[1].2);
+    assert!(events[1].3);
+    let inner = inner_seen.borrow();
+    assert_eq!(inner.len(), 1);
+    assert!(
+        approx(inner[0], 0.5),
+        "inner listener must see the committed sheet, got {}",
+        inner[0]
+    );
+
+    // Reentrant change and flags survive; inner position restored.
+    assert!(approx(state.extent().current_size, 0.9));
+    assert!(state.extent().has_dragged);
+    assert!(state.extent().has_changed);
     assert_eq!(state.inner_controller().offset(), 0.0);
 }
 

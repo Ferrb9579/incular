@@ -471,7 +471,7 @@
       "default": "required, starting and reset fraction",
       "validation": "mount starts here; reset restores here with pristine flags",
       "comparison": {
-        "prose": "Mount and reset share the initial value; replacement preserves the live size instead of re-applying it. Reset commits sheet state silently first, restores the inner position second (inner listeners observe the committed sheet), and notifies last iff the extent moved; no reset-owned state mutates after callbacks begin, so reentrant drags survive and nested resets see committed state.",
+        "prose": "Mount and reset share the initial value; replacement preserves the live size instead of re-applying it. Reset commits, clears flags, and notifies with the commit's own payload before the inner position restores, so the reset event precedes any reentrant events in commit order and never arrives delayed past newer state (inner listeners still observe the committed sheet). No sheet-extent state mutates after callbacks begin, so reentrant drags survive and nested resets see committed state.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
@@ -511,6 +511,10 @@
         {
           "path": "crates/incular-widgets/tests/draggable_sheet.rs",
           "name": "draggable_sheet_reset_inner_listeners_observe_committed_sheet"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_reset_inner_listener_mutation_orders_events"
         }
       ],
       "status": "implemented"
