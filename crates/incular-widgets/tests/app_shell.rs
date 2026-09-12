@@ -1240,3 +1240,143 @@ fn router_restoration_failure_observers_can_claim_the_route() {
         ]
     );
 }
+
+#[test]
+fn router_reports_each_failed_attempt_once_then_recovers() {
+    // Restoration and provider fallback are separate attempts: each failure
+    // notifies exactly once, nothing commits, and the next valid route
+    // recovers normally.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    scope.set_json(
+        &restoration_key,
+        RouteInformation::new("/restore").to_json(),
+    );
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|configuration: String| {
+        (configuration == "/next")
+            .then_some(())
+            .ok_or_else(|| RouterError::message("route not served"))
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+
+    // One failure notification per attempt, no success notification, and the
+    // accepted layers are untouched: no delegate configuration, and the
+    // persisted scope still holds the seed no attempt committed.
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [
+            ("ParseFailed".to_owned(), Some("/restore".to_owned())),
+            ("ParseFailed".to_owned(), Some("/initial".to_owned())),
+        ]
+    );
+    assert_eq!(delegate.current_configuration(), None);
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/restore").to_json())
+    );
+
+    provider.set_value("/next");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/next"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/next").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow())[2..],
+        [
+            ("DelegateChanged".to_owned(), Some("/next".to_owned())),
+            (
+                "RouteInformationChanged".to_owned(),
+                Some("/next".to_owned())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn router_live_rejection_notifies_exactly_once() {
+    // A live platform route rejected by the delegate produces exactly one
+    // notification total: `receive_route_information` adds nothing on top of
+    // the `ParseFailed` that `apply_route` already emitted.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|configuration: String| {
+        (configuration != "/reject")
+            .then_some(())
+            .ok_or_else(|| RouterError::message("route not served"))
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/reject");
+
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [("ParseFailed".to_owned(), Some("/reject".to_owned()))]
+    );
+    assert!(matches!(
+        log.borrow()[0].error,
+        Some(RouterError::Delegate(_))
+    ));
+    // The previously accepted delegate configuration and persisted scope
+    // survive the rejection.
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/initial")
+    );
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/initial").to_json())
+    );
+}
+
+#[test]
+fn router_config_rejects_an_unpaired_provider_and_parser() {
+    // The missing-parser error path is unreachable at runtime because the
+    // pairing contract is enforced at construction: no notification path is
+    // needed for a configuration that cannot be built.
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    assert!(matches!(
+        RouterConfig::try_from_parts(Rc::new(delegate.clone()), Some(Rc::new(provider)), None,),
+        Err(RouterError::InvalidConfiguration(_))
+    ));
+    assert!(matches!(
+        RouterConfig::try_from_parts(
+            Rc::new(delegate),
+            None,
+            Some(Rc::new(StringRouteInformationParser)),
+        ),
+        Err(RouterError::InvalidConfiguration(_))
+    ));
+}

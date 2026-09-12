@@ -1172,9 +1172,31 @@ impl<T: 'static> RouterRuntime<T> {
         information: RouteInformation,
         kind: RouteApplyKind,
     ) {
+        // Every failure inside `apply_route` already notified exactly once;
+        // adding another notification here would double-report.
         let _ = Self::apply_route(runtime, information, kind);
     }
 
+    /// Applies one route attempt with exactly-once failure reporting.
+    ///
+    /// Every failed attempt notifies from inside this function, so
+    /// [`Self::receive_route_information`] never adds another notification:
+    ///
+    /// | Failure source           | Typed result                  | Notification (one per attempt)              |
+    /// |--------------------------|-------------------------------|-----------------------------------------------|
+    /// | Missing parser           | `Err(InvalidConfiguration)`   | none: unreachable — [`RouterConfig::try_from_parts`] rejects an unpaired provider/parser at construction |
+    /// | Parser rejection         | `Err(Parse(..))`              | `ParseFailed` with the route information      |
+    /// | Delegate rejection       | `Err(Delegate(..))`           | `ParseFailed` with the route information; the router commits nothing |
+    /// | Malformed persisted data | `Err(Restoration(..))`        | `ParseFailed` with no route information; the provider fallback is a separate attempt |
+    /// | Superseded transaction   | `Ok(())` with no commit       | none: not a failure — the winning transaction's commit notification is the single record |
+    ///
+    /// A rejection notifies without committing: no success notification
+    /// follows a failed attempt, and the accepted route, delegate
+    /// configuration, and persisted scope all survive until a later attempt
+    /// commits.  Delegate configuration and router state are distinct layers:
+    /// the delegate owns its atomicity (`BasicRouterDelegate` preserves the
+    /// previously accepted configuration), while current route and persisted
+    /// scope commit only through [`Self::commit_route`].
     fn apply_route(
         runtime: &Rc<RefCell<Self>>,
         information: RouteInformation,

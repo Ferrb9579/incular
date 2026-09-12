@@ -40,12 +40,23 @@ provider, live router delegate) with no deduplication and no second
 delivery engine. Restoration and builder failures report through typed
 `ParseFailed` notifications: malformed persisted routes notify (with no
 route information attached) and fall back to the provider, and rejected
-delegate routes notify without committing — each pinned with recovery.
-Remaining downstream gap, not claimed: platform-input failures are still
-swallowed inside `receive_route_information` (`let _` on the apply
-result), so a rejected live deep link is invisible beyond delegate
-stability — failure surfacing belongs to later W4 runtime-ownership/error
-work.
+delegate routes notify without the router committing — each pinned with
+recovery. Failure reporting is exactly-once per attempt from inside
+`apply_route` (error-path table on that function): parser and delegate
+rejections each emit one `ParseFailed` carrying the route information,
+restoration and provider-fallback attempts report independently, and
+`receive_route_information` deliberately adds nothing — its `let _`
+discards only the result, never a report. The earlier "swallowed
+platform failures" claim was wrong and is retracted. Two state layers
+stay distinct: the delegate owns its configuration atomicity
+(`BasicRouterDelegate` preserves the previously accepted configuration
+and emits nothing on rejection; custom delegates own their own
+atomicity), while router state (current route, persisted scope) commits
+only through `commit_route`. The missing-parser path is unreachable at
+runtime — `RouterConfig::try_from_parts` rejects an unpaired
+provider/parser at construction, pinned by test — and a superseded
+transaction reports `Ok` with no commit and no notification by design
+(the winning transaction's commit notification is the single record).
 
 Done since: acyclic back attachment with typed rejection before mutation
 (acyclic-graph topology with reachability check; self, two-node, and longer
