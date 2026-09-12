@@ -742,13 +742,14 @@ impl std::error::Error for BackAttachError {}
 /// Coordinates one navigator and its nested navigator descendants for a
 /// platform back action.
 ///
-/// The attachment topology is an acyclic graph: a child may be shared,
-/// but no directed cycle may exist. Each dispatcher owns no routes
-/// itself: a child navigator remains entirely independent. Applications
-/// attach children where their route hierarchy creates them, then mark
-/// the focused child active. Back travels through that active branch
-/// first and only reaches an ancestor when the child cannot pop. Because
-/// every active edge follows an attachment edge, an acyclic graph makes
+/// The attachment topology is an acyclic graph by design: a child may be
+/// shared because dispatch follows a single active chain, but no
+/// directed cycle may exist. Each dispatcher owns no routes itself: a
+/// child navigator remains entirely independent. Applications attach
+/// children where their route hierarchy creates them, then mark the
+/// focused child active. Back travels through that active branch first
+/// and only reaches an ancestor when the child cannot pop. Because every
+/// active edge follows an attachment edge, an acyclic graph makes
 /// dispatch descend strictly and always terminate.
 #[derive(Clone)]
 pub struct BackDispatcher {

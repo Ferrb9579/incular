@@ -37,11 +37,15 @@ Deep-link normal-operation contract closed: queued-before-install,
 replacement, disposal, reentrancy, identical URLs, unmapped URLs, and
 rejected parses are pinned end-to-end (activation service, bridge,
 provider, live router delegate) with no deduplication and no second
-delivery engine. Remaining downstream gap, not claimed: router
-parse/delegate failures are swallowed inside `receive_route_information`
-(`let _` on the apply result), so a rejected deep link is invisible
-beyond delegate stability — failure surfacing belongs to later W4
-runtime-ownership/error work.
+delivery engine. Restoration and builder failures report through typed
+`ParseFailed` notifications: malformed persisted routes notify (with no
+route information attached) and fall back to the provider, and rejected
+delegate routes notify without committing — each pinned with recovery.
+Remaining downstream gap, not claimed: platform-input failures are still
+swallowed inside `receive_route_information` (`let _` on the apply
+result), so a rejected live deep link is invisible beyond delegate
+stability — failure surfacing belongs to later W4 runtime-ownership/error
+work.
 
 Done since: acyclic back attachment with typed rejection before mutation
 (acyclic-graph topology with reachability check; self, two-node, and longer

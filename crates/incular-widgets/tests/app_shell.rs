@@ -6,11 +6,12 @@ use incular_widgets::{
     ApplicationBootstrapHost, ApplicationBootstrapSpec, AuxiliaryViewError, AuxiliaryViewHandle,
     AuxiliaryViewHost, AuxiliaryViewOutcome, AuxiliaryViewRequest, BasicRouterDelegate,
     ErrorWidget, MemoryRouteInformationProvider, MenuDispatchResult, MenuOwnerId,
-    NoopPlatformMenuDelegate, PlatformMenu, PlatformMenuBar, PlatformMenuBarController,
-    PlatformMenuDelegate, PlatformMenuEvent, PlatformMenuItem, PlatformMenuSnapshot,
-    PlatformMenuUpdate, RootBackButtonDispatcher, Router, RouterConfig, RouterDelegate, SizedBox,
-    StringRouteInformationParser, TitleController, TitleError, ViewAnchorController,
-    ViewController, ViewId, ViewLifecycle, ViewMetrics, Widget, WidgetsApp, WindowChromeSink,
+    NavigationNotificationKind, NoopPlatformMenuDelegate, PlatformMenu, PlatformMenuBar,
+    PlatformMenuBarController, PlatformMenuDelegate, PlatformMenuEvent, PlatformMenuItem,
+    PlatformMenuSnapshot, PlatformMenuUpdate, RootBackButtonDispatcher, RouteInformation, Router,
+    RouterConfig, RouterDelegate, RouterError, SizedBox, StringRouteInformationParser,
+    TitleController, TitleError, ViewAnchorController, ViewController, ViewId, ViewLifecycle,
+    ViewMetrics, Widget, WidgetsApp, WindowChromeSink,
 };
 
 #[derive(Default)]
@@ -79,6 +80,113 @@ fn router_parses_reports_restores_and_dispatches_back() {
             .next()
             .is_some()
     );
+}
+
+#[test]
+fn malformed_restored_route_notifies_and_falls_back_to_provider() {
+    // A malformed persisted route is reported through the typed
+    // notification channel instead of vanishing, while restoration stays
+    // partial: the provider fallback still applies and later routes
+    // recover normally.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    scope.set_json(&restoration_key, serde_json::json!({"location": 42}));
+    let provider = MemoryRouteInformationProvider::new("/fallback");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let notifications = Rc::new(RefCell::new(Vec::new()));
+    let notifications_for_listener = notifications.clone();
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications_for_listener.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+
+    // Exactly one failure notification, carrying the restoration error
+    // with no route information attached.
+    let failures: Vec<_> = notifications
+        .borrow()
+        .iter()
+        .filter(|notification| notification.kind == NavigationNotificationKind::ParseFailed)
+        .cloned()
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].route_information, None);
+    assert!(!failures[0].can_handle_pop);
+    assert!(matches!(
+        failures[0].error,
+        Some(RouterError::Restoration(_))
+    ));
+    // The delegate and persisted scope follow the provider fallback (the
+    // corrupt value heals forward instead of failing every launch), and
+    // the next valid route applies and recovers normally.
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/fallback")
+    );
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/fallback").to_json())
+    );
+    provider.set_value("/next");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/next"));
+    assert!(
+        notifications.borrow().iter().all(|notification| {
+            notification.kind != NavigationNotificationKind::ParseFailed
+                || notification.route_information.is_none()
+        }),
+        "only the malformed restore reports without route information"
+    );
+}
+
+#[test]
+fn rejected_delegate_route_notifies_without_committing() {
+    // A builder failure reaches observers as a typed ParseFailed while
+    // the router commits nothing: the next valid route still recovers
+    // normally through the same path.
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|configuration: String| {
+        (configuration != "/reject")
+            .then_some(())
+            .ok_or_else(|| RouterError::message("route not served"))
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let notifications = Rc::new(RefCell::new(Vec::new()));
+    let notifications_for_listener = notifications.clone();
+    let router = Router::from_config(config);
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications_for_listener.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    provider.set_value("/reject");
+    let failures: Vec<_> = notifications
+        .borrow()
+        .iter()
+        .filter(|notification| notification.kind == NavigationNotificationKind::ParseFailed)
+        .cloned()
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+        failures[0]
+            .route_information
+            .as_ref()
+            .map(|info| info.location()),
+        Some("/reject")
+    );
+    assert!(matches!(failures[0].error, Some(RouterError::Delegate(_))));
+    provider.set_value("/next");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/next"));
 }
 
 #[test]

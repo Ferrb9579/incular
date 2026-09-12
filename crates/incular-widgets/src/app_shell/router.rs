@@ -1087,10 +1087,28 @@ impl<T: 'static> RouterRuntime<T> {
 
         if let Some(restoration) = restoration
             && let Some(value) = restoration.scope.get_json(&restoration.key)
-            && let Ok(information) = RouteInformation::from_json(&value)
-            && Self::apply_route(runtime, information, RouteApplyKind::Restored).is_ok()
         {
-            return;
+            match RouteInformation::from_json(&value) {
+                Ok(information) => {
+                    if Self::apply_route(runtime, information, RouteApplyKind::Restored).is_ok() {
+                        return;
+                    }
+                }
+                // A malformed persisted value is reported rather than
+                // silently skipped, then falls through to the provider
+                // fallback below: partial restoration, not all-or-nothing.
+                Err(error) => {
+                    Self::notify(
+                        runtime,
+                        NavigationNotification {
+                            kind: NavigationNotificationKind::ParseFailed,
+                            route_information: None,
+                            can_handle_pop: false,
+                            error: Some(error),
+                        },
+                    );
+                }
+            }
         }
 
         if let (Some(provider), Some(_parser)) = (provider, parser) {
