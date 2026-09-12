@@ -518,6 +518,18 @@
         },
         {
           "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_panicking_listener_aborts_queue_and_releases_drain"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_removal_during_delivery_applies_next_event"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_finite_reentrant_burst_delivers_in_order"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
           "name": "draggable_sheet_two_listeners_observe_fifo_commit_order"
         },
         {

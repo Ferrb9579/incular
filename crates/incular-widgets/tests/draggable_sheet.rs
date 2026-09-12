@@ -13,8 +13,8 @@ use incular_config::Constraints;
 use incular_core::{Color, Offset, Size};
 use incular_scroll::ScrollController;
 use incular_widgets::{
-    DraggableScrollableActuator, DraggableScrollableController, DraggableScrollableSheet,
-    DraggableSheetExtent, Text, Widget,
+    DraggableNotificationSubscription, DraggableScrollableActuator, DraggableScrollableController,
+    DraggableScrollableSheet, DraggableSheetExtent, Text, Widget,
     internal::{ElementId, WidgetTree},
 };
 
@@ -541,6 +541,108 @@ fn draggable_sheet_notifications_carry_full_state_and_unsubscribe() {
     drop(_stopper);
     assert!(state.set_size(0.9, true));
     assert_eq!(*second.borrow(), 1);
+}
+
+#[test]
+fn draggable_sheet_panicking_listener_aborts_queue_and_releases_drain() {
+    use std::panic::AssertUnwindSafe;
+
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    let recorded = Rc::new(RefCell::new(Vec::new()));
+    let recorded_for_listener = recorded.clone();
+    let state_for_listener = state.clone();
+    // On the 0.7 payload only: queue a reentrant change, then panic. The
+    // nested commit survives (it committed before the panic) while the
+    // aborted pass's queued payload never delivers.
+    let _subscription = state.add_notification_listener(move |notification| {
+        recorded_for_listener.borrow_mut().push(notification.extent);
+        if approx(notification.extent, 0.7) {
+            let _ = state_for_listener.set_size(0.9, true);
+            panic!("listener failure");
+        }
+        false
+    });
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        state.set_size(0.7, true);
+    }));
+    assert!(outcome.is_err());
+    assert!(approx(state.extent().current_size, 0.9));
+    {
+        let events = recorded.borrow();
+        assert_eq!(events.len(), 1);
+        assert!(approx(events[0], 0.7));
+    }
+
+    // The drain released: a later update delivers normally through the
+    // same listener (which stays silent for non-0.7 payloads).
+    assert!(state.set_size(0.6, true));
+    {
+        let events = recorded.borrow();
+        assert_eq!(events.len(), 2);
+        assert!(approx(events[1], 0.6));
+    }
+    assert!(approx(state.extent().current_size, 0.6));
+}
+
+#[test]
+fn draggable_sheet_removal_during_delivery_applies_next_event() {
+    // Listener A removes B's subscription mid-delivery. B still receives
+    // the in-flight event (per-event snapshot) but nothing after it.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    let slot: Rc<RefCell<Option<DraggableNotificationSubscription>>> = Rc::new(RefCell::new(None));
+    let slot_for_a = slot.clone();
+    let _a = state.add_notification_listener(move |_| {
+        drop(slot_for_a.borrow_mut().take());
+        false
+    });
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen_for_b = seen.clone();
+    *slot.borrow_mut() = Some(state.add_notification_listener(move |notification| {
+        seen_for_b.borrow_mut().push(notification.extent);
+        false
+    }));
+    assert!(state.set_size(0.75, true));
+    assert_eq!(seen.borrow().len(), 1);
+    assert!(approx(seen.borrow()[0], 0.75));
+    assert!(state.set_size(0.6, true));
+    assert_eq!(seen.borrow().len(), 1);
+}
+
+#[test]
+fn draggable_sheet_finite_reentrant_burst_delivers_in_order() {
+    // Each delivery queues exactly one successor until the target: the
+    // drain emits the whole finite chain in commit order.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    let state_for_listener = state.clone();
+    let _chainer = state.add_notification_listener(move |notification| {
+        let next = if notification.extent < 0.65 {
+            Some(0.7)
+        } else if notification.extent < 0.75 {
+            Some(0.8)
+        } else if notification.extent < 0.85 {
+            Some(0.9)
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            let _ = state_for_listener.set_size(next, true);
+        }
+        false
+    });
+    let recorded = Rc::new(RefCell::new(Vec::new()));
+    let recorded_for_listener = recorded.clone();
+    let _recorder = state.add_notification_listener(move |notification| {
+        recorded_for_listener.borrow_mut().push(notification.extent);
+        false
+    });
+    assert!(state.set_size(0.6, true));
+    let events = recorded.borrow();
+    assert_eq!(events.len(), 4);
+    assert!(approx(events[0], 0.6));
+    assert!(approx(events[1], 0.7));
+    assert!(approx(events[2], 0.8));
+    assert!(approx(events[3], 0.9));
+    assert!(approx(state.extent().current_size, 0.9));
 }
 
 #[test]

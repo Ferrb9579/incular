@@ -8,6 +8,7 @@
 
 use std::{
     cell::RefCell,
+    collections::VecDeque,
     rc::{Rc, Weak},
     time::Duration,
 };
@@ -47,19 +48,36 @@ struct NotificationState {
     listeners: Vec<(u64, ExtentListener)>,
     next_id: u64,
     /// Committed payloads awaiting delivery, in commit order.
-    pending: Vec<DraggableScrollableNotification>,
+    pending: VecDeque<DraggableScrollableNotification>,
     /// Whether a drain loop owns delivery. Reentrant dispatches enqueue
     /// behind in-flight events and return; the outermost drain delivers
     /// everything FIFO, so every listener observes commit order.
     draining: bool,
 }
 
-/// Releases a stuck drain if a listener panics mid-delivery, so later
-/// dispatches recover instead of blackholing. Payloads queued by the
-/// aborted pass are dropped with it; borrows are never held across
-/// callbacks, so the release always succeeds.
+/// Owns an in-progress notification drain. The guard is the sole
+/// authority releasing the drain: normal completion and unwinding both
+/// funnel through its `Drop`, so no delivery path resets the flag
+/// itself. On unwind it also discards the aborted pass's queue. The
+/// `try_borrow_mut` only fails if a borrow is live at drop time, which
+/// cannot happen from in-module code — every borrow of the shared state
+/// is scoped to queue operations and never spans a callback — so a
+/// failed release merely defers to the next guard drop.
 struct DrainGuard {
     shared: Rc<RefCell<NotificationState>>,
+}
+impl DrainGuard {
+    /// Takes drain ownership unless another drain holds it.
+    fn acquire(shared: &Rc<RefCell<NotificationState>>) -> Option<Self> {
+        let mut notifications = shared.borrow_mut();
+        if notifications.draining {
+            return None;
+        }
+        notifications.draining = true;
+        Some(Self {
+            shared: shared.clone(),
+        })
+    }
 }
 impl Drop for DrainGuard {
     fn drop(&mut self) {
@@ -950,25 +968,19 @@ impl DraggableScrollableState {
 
     fn dispatch_notification(&self, notification: DraggableScrollableNotification) {
         let shared = self.state.borrow().listeners.clone();
-        {
-            let mut notifications = shared.borrow_mut();
-            notifications.pending.push(notification);
-            if notifications.draining {
-                return;
-            }
-            notifications.draining = true;
-        }
-        let _guard = DrainGuard {
-            shared: shared.clone(),
+        shared.borrow_mut().pending.push_back(notification);
+        let Some(_drain) = DrainGuard::acquire(&shared) else {
+            // A drain loop owns delivery and will reach this payload.
+            return;
         };
         loop {
             let (current, listeners) = {
                 let mut notifications = shared.borrow_mut();
-                if notifications.pending.is_empty() {
-                    notifications.draining = false;
+                let Some(current) = notifications.pending.pop_front() else {
+                    // Queue empty: return through the guard, which
+                    // releases the drain.
                     return;
-                }
-                let current = notifications.pending.remove(0);
+                };
                 let listeners = notifications.listeners.clone();
                 (current, listeners)
             };
