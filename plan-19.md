@@ -7,20 +7,36 @@ Completed (navigator stack; BackDispatcher topology untouched): one private
 with metadata association pinned through mixed stacks, replacement, removal,
 and restoration; explicit `PageKey` identity with typed `DuplicatePageKey`
 rejection before mutation, atomic keyed reconciliation (iterator drains before
-any borrow; unkeyed pages mount anew), and one shared commit/effect path
-(cleanups before observer events, both after borrows end) for push, pop,
-replace, set_pages, and restoration. Guarded-pop candidate/revision checks are
-preserved. Evidence: `crates/incular-navigation/tests/navigation.rs` (observer
-sequences, reentrant observer/cleanup navigation, keyed reorder, repeated
-names, duplicate rejection without mutation or events, retained IDs,
-removal/reinsertion, iterator mutation, metadata preservation, permanent
-cleanup, active-transition consistency).
+any borrow; unkeyed pages mount anew), same-key rename preserving unrelated
+metadata, topmost-wins for duplicate live claims, and transaction-local
+indexed lookup; one shared commit/effect path (cleanups before observer events,
+both after borrows end) for push, pop, replace, set_pages, and restoration;
+retirement of entries, replaced children, restored stacks, and replaced
+callback registrations outside borrows with destructor regressions proving no
+RefCell panic, committed-state observation, reentrant survival, and exact-once
+release. Events are historical nested delivery in commit order, pinned with two
+observers plus reentrant cleanup across all operations. Guarded-pop
+candidate/revision checks are preserved. Evidence:
+`crates/incular-navigation/tests/navigation.rs` (observer sequences, reentrant
+observer/cleanup navigation, keyed reorder, repeated names, duplicate rejection
+without mutation or events, retained IDs, removal/reinsertion, iterator
+mutation, metadata preservation, permanent cleanup, active-transition
+consistency, destructor reentrancy).
 
 Remaining: runtime ownership mapping; deep-link delivery exactly once; focus
 restoration and route-scoped task ownership; acyclic back attachment with typed
 rejection before mutation (BackDispatcher still rejects only a direct
-self-link); indexed key lookup with deterministic operation-count tests for
-reorder/churn (reconciliation is still linear search plus remove).
+self-link); deterministic operation-count tests for reorder/churn.
+
+Removal-handoff finding (not implemented, not claimed): no route-lifetime
+consumer exists outside the navigation crate — nothing owns route-scoped
+tasks, subscriptions, or focus by route lifetime in runtime, desktop, or
+widgets, and the restoration-scope bridge is pop-only by design. A bounded
+removal handoff therefore has no interface to target yet: it needs per-entry
+lifetime tokens observed by a runtime owner, affecting the set_pages removal,
+restore/fallback replacement, and pop/replace paths. Persisted restoration
+data intentionally survives declarative removal; that rule must not be read as
+lifecycle cleanup.
 
 Problem/evidence: navigator.rs has parallel routes/restorable_routes, independent
 push/active notifications and borrowed user iteration in set_pages. BackDispatcher

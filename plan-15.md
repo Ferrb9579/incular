@@ -2663,13 +2663,19 @@ mutable domain borrows, and no duplicated lifecycle engine.
 
 Progress (W4 not complete): items 1–3 are implemented — single `RouteEntry`
 storage, explicit `PageKey` identity with pre-mutation duplicate rejection,
-and a shared commit/effect path (cleanups before observer events, after
-borrows) for push/pop/replace/set_pages/restoration, with guarded-pop checks
-preserved. Item 4 is partially covered (observer sequences, reentrant
-guards/observers/cleanup, keyed reorder, removal, restored routes); remaining:
+same-key rename, topmost-wins duplicate claims, indexed lookup, and a shared
+commit/effect path (cleanups before observer events, after borrows) for
+push/pop/replace/set_pages/restoration, with guarded-pop checks preserved and
+retirement (entries, replaced children, restored stacks, callback
+registrations) outside borrows. Item 4 is partially covered (two-observer
+event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
+keyed reorder, removal, restored routes, destructor reentrancy); remaining:
 deep-link delivery exactly once, focus-restoration ownership, route-scoped
-task ownership, and acyclic back attachment. Item 5 (runtime owners) is
-untouched. See plan-19 for the itemized remainder.
+task ownership, acyclic back attachment, and reorder operation counts.
+Item 5 (runtime owners) is untouched. A bounded removal handoff for route
+tasks/subscriptions/focus has no target interface yet — no route-lifetime
+consumer exists outside the navigation crate — and is recorded in plan-19,
+not claimed. See plan-19 for the itemized remainder.
 
 ## W5 — Scroll and animation state transitions
 

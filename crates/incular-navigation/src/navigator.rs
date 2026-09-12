@@ -17,7 +17,10 @@ use super::{
 /// Events carry declarative route values, never internal arena handles. An
 /// observer is notified after the stack mutation has completed, so it may
 /// safely inspect the navigator or schedule application work from its
-/// callback.
+/// callback. Events are historical nested delivery: each describes its own
+/// commit in commit order, so under reentrant navigation a delivered
+/// event's current route need not equal the navigator's latest state.
+/// Observers needing the latest state read it from the navigator.
 #[derive(Clone)]
 pub enum NavigationEvent {
     /// A route was appended to the stack.

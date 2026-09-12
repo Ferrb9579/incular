@@ -1212,6 +1212,160 @@ fn replaced_cleanup_bridge_drops_outside_borrows() {
 }
 
 #[test]
+fn commit_effects_deliver_identical_order_to_all_observers() {
+    let navigator = Navigator::new();
+    let first = Rc::new(RefCell::new(Vec::<String>::new()));
+    let second = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = |events: Rc<RefCell<Vec<String>>>| {
+        move |event| match event {
+            NavigationEvent::Pushed { route } => {
+                events.borrow_mut().push(format!("push:{}", route.name));
+            }
+            NavigationEvent::Popped { route } => {
+                events.borrow_mut().push(format!("pop:{}", route.name));
+            }
+            NavigationEvent::Replaced { previous, route } => events
+                .borrow_mut()
+                .push(format!("replace:{}:{}", previous.name, route.name)),
+            NavigationEvent::ActiveRouteChanged { previous, current } => {
+                events.borrow_mut().push(format!(
+                    "active:{}:{}",
+                    previous.map_or_else(|| "none".to_owned(), |route| route.name),
+                    current.map_or_else(|| "none".to_owned(), |route| route.name),
+                ));
+            }
+        }
+    };
+    let _first = navigator.observe(sink(Rc::clone(&first)));
+    let _second = navigator.observe(sink(Rc::clone(&second)));
+
+    navigator.push_page(Page::new("home", page()).key(PageKey::new("home").unwrap()));
+    navigator.push_page(Page::new("details", page()).key(PageKey::new("details").unwrap()));
+    navigator.replace(Route::new("settings", page()));
+    navigator.pop();
+    // Declarative top change reports through the same shared path, while
+    // same-top reconciliation emits nothing; emptying the stack reports
+    // the transition to none.
+    navigator
+        .set_pages([Page::new("home", page()).key(PageKey::new("home").unwrap())])
+        .unwrap();
+    navigator.set_pages([]).unwrap();
+    let expected = [
+        "push:home",
+        "active:none:home",
+        "push:details",
+        "active:home:details",
+        "replace:details:settings",
+        "active:details:settings",
+        "pop:settings",
+        "active:settings:home",
+        "active:home:none",
+    ]
+    .map(str::to_owned);
+    assert_eq!(*first.borrow(), expected);
+    assert_eq!(*second.borrow(), expected);
+}
+
+#[test]
+fn restoration_replacement_notifies_both_observers_once() {
+    let registry = RouteRegistry::new();
+    let home = registry
+        .register_restorable("/home", restorable_page)
+        .unwrap();
+    let detail = registry
+        .register_restorable("/detail", restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("seed", page()));
+    let first = Rc::new(RefCell::new((0usize, 0usize)));
+    let second = Rc::new(RefCell::new((0usize, 0usize)));
+    let counter = |counts: Rc<RefCell<(usize, usize)>>| {
+        move |event| {
+            let mut counts = counts.borrow_mut();
+            match event {
+                NavigationEvent::ActiveRouteChanged { .. } => counts.0 += 1,
+                _ => counts.1 += 1,
+            }
+        }
+    };
+    let _first = navigator.observe(counter(Rc::clone(&first)));
+    let _second = navigator.observe(counter(Rc::clone(&second)));
+    let snapshot = NavigatorSnapshot {
+        format_version: NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
+        routes: vec![
+            RestorableRoute::new(home, json!({ "name": "home" })),
+            RestorableRoute::new(detail, json!({ "name": "detail" })),
+        ],
+        active_route: Some(1),
+    };
+    let report = registry.restore_navigator(&navigator, &snapshot);
+    assert_eq!(report.restored_routes, 2);
+    // Whole-stack replacement reports exactly one active transition to
+    // each observer, and no push events for the restored routes.
+    assert_eq!(*first.borrow(), (1, 0));
+    assert_eq!(*second.borrow(), (1, 0));
+    assert_eq!(navigator.current().unwrap().name, "detail");
+}
+
+#[test]
+fn reentrant_cleanup_orders_before_observer_events_for_both() {
+    let registry = RouteRegistry::new();
+    let document = registry
+        .register_restorable_with_scope_cleanup("/document", true, restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("home", page()));
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(document, json!({ "name": "document" }))
+                .scope_key(RouteScopeKey::new("document-42").unwrap()),
+        )
+        .unwrap();
+    let order = Rc::new(RefCell::new(Vec::<String>::new()));
+    let first = Rc::new(RefCell::new(Vec::<String>::new()));
+    let second = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = |events: Rc<RefCell<Vec<String>>>| {
+        move |event| match event {
+            NavigationEvent::Pushed { route } => {
+                events.borrow_mut().push(format!("push:{}", route.name));
+            }
+            NavigationEvent::Popped { route } => {
+                events.borrow_mut().push(format!("pop:{}", route.name));
+            }
+            NavigationEvent::ActiveRouteChanged { previous, current } => {
+                events.borrow_mut().push(format!(
+                    "active:{}:{}",
+                    previous.map_or_else(|| "none".to_owned(), |route| route.name),
+                    current.map_or_else(|| "none".to_owned(), |route| route.name),
+                ));
+            }
+            _ => {}
+        }
+    };
+    let _first = navigator.observe(sink(Rc::clone(&first)));
+    let _second = navigator.observe(sink(Rc::clone(&second)));
+    navigator.set_route_scope_cleanup({
+        let order = Rc::clone(&order);
+        let navigator = navigator.clone();
+        move |key| {
+            order.borrow_mut().push(format!("cleanup:{}", key));
+            navigator.push_page(Page::new("followup", page()));
+        }
+    });
+    navigator.pop();
+    // The reentrant cleanup push dispatches fully to both observers
+    // before the outer pop's events continue, in identical order.
+    let nested = ["push:followup", "active:home:followup"].map(str::to_owned);
+    let outer = ["pop:document", "active:document:home"].map(str::to_owned);
+    let expected: Vec<String> = nested.into_iter().chain(outer).collect();
+    assert_eq!(&*order.borrow(), &["cleanup:document-42"]);
+    assert_eq!(*first.borrow(), expected);
+    assert_eq!(*second.borrow(), expected);
+    assert_eq!(navigator.current().unwrap().name, "followup");
+}
+
+#[test]
 fn snapshot_excludes_transient_routes_and_their_suffix() {
     let registry = RouteRegistry::new();
     let home = registry
