@@ -8,7 +8,9 @@ use incular_runtime::{
     NativeGlobalShortcutOperation,
 };
 use incular_widgets::{
-    MemoryRouteInformationProvider, RouteInformation, RouteInformationProvider, Widget,
+    BasicRouterDelegate, ClosureRouteInformationParser, MemoryRouteInformationProvider,
+    RouteInformation, RouteInformationProvider, Router, RouterConfig, RouterDelegate, RouterError,
+    Widget,
 };
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use url::Url;
@@ -371,6 +373,189 @@ fn panicking_first_listener_skips_remaining_without_replay() {
     );
     assert_eq!(second_seen.borrow()[1].documents()[0].path(), later_file);
     assert_eq!(activations.pending_count(), 0);
+}
+
+fn live_string_router(
+    provider: &MemoryRouteInformationProvider,
+) -> (BasicRouterDelegate<String>, Widget) {
+    let delegate = BasicRouterDelegate::new(|| Widget::box_(Size::new(1.0, 1.0), Color::WHITE));
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        incular_widgets::StringRouteInformationParser,
+    );
+    let widget: Widget = Router::from_config(config).into_widget();
+    (delegate, widget)
+}
+
+#[test]
+fn deep_link_queued_before_bridge_reaches_live_router() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let (delegate, _router) = live_string_router(&provider);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("first URL")]));
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/video",
+    )
+    .expect("second URL")]));
+    assert_eq!(application.activations().pending_count(), 2);
+
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    // Buffered activations flow through the installed bridge into the
+    // live router in order, ending on the second route.
+    assert_eq!(bridge.delivered_routes(), 2);
+    assert_eq!(provider.value().location(), "/video");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/video"));
+    assert_eq!(application.activations().pending_count(), 0);
+}
+
+#[test]
+fn identical_deep_link_urls_apply_twice_through_router() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let (delegate, _router) = live_string_router(&provider);
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    let applications = Rc::new(RefCell::new(0u32));
+    let applications_for_delegate = applications.clone();
+    let _delegate_subscription = delegate.subscribe(Rc::new(move || {
+        *applications_for_delegate.borrow_mut() += 1;
+    }));
+    let url = || Url::parse("rambler://settings/audio").expect("URL");
+    application.handle_application_activation(ApplicationActivation::open_urls([url()]));
+    application.handle_application_activation(ApplicationActivation::open_urls([url()]));
+    // No deduplication anywhere in the chain: two activations, two
+    // provider writes, two router applications.
+    assert_eq!(bridge.delivered_routes(), 2);
+    assert_eq!(*applications.borrow(), 2);
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/audio"));
+}
+
+#[test]
+fn bridge_replacement_and_disposal_move_router_forward() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let (delegate, _router) = live_string_router(&provider);
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let first = application.bridge_activation_routes(provider_trait, rambler_route);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("first URL")]));
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/audio"));
+    drop(first);
+
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/video",
+    )
+    .expect("second URL")]));
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/audio"));
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let second = application.bridge_activation_routes(provider_trait, rambler_route);
+    assert_eq!(second.delivered_routes(), 1);
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/video"));
+
+    drop(second);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/closed",
+    )
+    .expect("third URL")]));
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/video"),
+        "disposed bridges route nothing further"
+    );
+    assert_eq!(application.activations().pending_count(), 1);
+}
+
+#[test]
+fn reentrant_activation_updates_router_in_order() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let (delegate, _router) = live_string_router(&provider);
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen_for_provider = seen.clone();
+    let _provider_subscription = provider.subscribe(Rc::new(move |information| {
+        seen_for_provider
+            .borrow_mut()
+            .push(information.location().to_owned());
+    }));
+    let activations = application.activations();
+    let nested = activations.clone();
+    let _activation_subscription = activations.subscribe(move |activation| {
+        if activation == ApplicationActivation::Reopen {
+            nested.publish(ApplicationActivation::open_urls([Url::parse(
+                "rambler://settings/nested",
+            )
+            .expect("nested URL")]));
+        }
+    });
+    application.handle_application_activation(ApplicationActivation::Reopen);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/final",
+    )
+    .expect("final URL")]));
+    // Reopen carries no URLs; the nested activation applies before the
+    // later one, and the router ends on the final route.
+    assert_eq!(&*seen.borrow(), &["/nested", "/final"]);
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/final"));
+    assert_eq!(bridge.delivered_routes(), 2);
+}
+
+#[test]
+fn unmapped_urls_leave_provider_and_router_alone() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let (delegate, _router) = live_string_router(&provider);
+    let before = delegate.current_configuration();
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "https://elsewhere.example/other",
+    )
+    .expect("foreign URL")]));
+    assert_eq!(bridge.delivered_routes(), 0);
+    assert_eq!(provider.value().location(), "/");
+    assert_eq!(delegate.current_configuration(), before);
+}
+
+#[test]
+fn rejected_route_parse_keeps_delegate_on_current_route() {
+    let mut application = application();
+    let provider = Rc::new(MemoryRouteInformationProvider::root());
+    let delegate = BasicRouterDelegate::new(|| Widget::box_(Size::new(1.0, 1.0), Color::WHITE));
+    let parser = ClosureRouteInformationParser::new(
+        |information: &RouteInformation| {
+            (information.location() != "/forbidden")
+                .then(|| information.location().to_owned())
+                .ok_or_else(|| RouterError::message("route not served"))
+        },
+        |configuration: &String| Ok(RouteInformation::new(configuration)),
+    );
+    let config = RouterConfig::with_provider_parser(delegate.clone(), (*provider).clone(), parser);
+    let _widget: Widget = Router::from_config(config).into_widget();
+    let provider_trait: Rc<dyn RouteInformationProvider> = provider.clone();
+    let bridge = application.bridge_activation_routes(provider_trait, rambler_route);
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/audio",
+    )
+    .expect("served URL")]));
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/audio"));
+    // The platform route records the rejected location, but the router
+    // contains the failure: the delegate keeps its current route.
+    application.handle_application_activation(ApplicationActivation::open_urls([Url::parse(
+        "rambler://settings/forbidden",
+    )
+    .expect("rejected URL")]));
+    assert_eq!(bridge.delivered_routes(), 2);
+    assert_eq!(provider.value().location(), "/forbidden");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/audio"));
 }
 
 #[test]

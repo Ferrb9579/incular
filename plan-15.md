@@ -2670,8 +2670,10 @@ retirement outside borrows (unmatched entries, restored stacks, replaced
 callback registrations, plus an explicit retired-children collection for
 keyed child replacement at any stack position). Item 4 is partially covered (two-observer
 event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
-keyed reorder, removal, restored routes, destructor reentrancy); remaining:
-deep-link delivery exactly once, focus-restoration ownership, route-scoped
+keyed reorder, removal, restored routes, destructor reentrancy, deep-link
+normal operation end-to-end); remaining: router failure surfacing for
+rejected deep links (swallowed in `receive_route_information`),
+focus-restoration ownership, route-scoped
 task ownership. Back attachment is now acyclic-by-construction with typed
 rejection; reorder carries a deterministic large-permutation pin. Item 5
 (runtime owners) is untouched. Activation delivery (service queue as the

@@ -30,8 +30,18 @@ cycles/duplicates/dead children/deep chains, sheet FIFO drain with panic
 recovery, activation queued-before-install/replacement/closure/reentrancy/
 equal-payload delivery).
 
-Remaining: runtime ownership mapping; deep-link delivery exactly once; focus
-restoration and route-scoped task ownership.
+Remaining: runtime ownership mapping; focus restoration and route-scoped
+task ownership.
+
+Deep-link normal-operation contract closed: queued-before-install,
+replacement, disposal, reentrancy, identical URLs, unmapped URLs, and
+rejected parses are pinned end-to-end (activation service, bridge,
+provider, live router delegate) with no deduplication and no second
+delivery engine. Remaining downstream gap, not claimed: router
+parse/delegate failures are swallowed inside `receive_route_information`
+(`let _` on the apply result), so a rejected deep link is invisible
+beyond delegate stability — failure surfacing belongs to later W4
+runtime-ownership/error work.
 
 Done since: acyclic back attachment with typed rejection before mutation
 (acyclic-graph topology with reachability check; self, two-node, and longer
