@@ -1627,3 +1627,282 @@ fn malformed_persisted_keys_are_rejected_by_serde() {
     }"#;
     assert!(serde_json::from_str::<NavigatorSnapshot>(malformed).is_err());
 }
+
+fn lifetime_counter(lifetime: &RouteLifetime) -> (RouteLifetimeSubscription, Rc<RefCell<usize>>) {
+    let ended = Rc::new(RefCell::new(0usize));
+    let ended_for_callback = ended.clone();
+    let subscription = lifetime.on_ended(move || {
+        *ended_for_callback.borrow_mut() += 1;
+    });
+    (subscription, ended)
+}
+
+#[test]
+fn route_lifetime_ends_exactly_once_on_pop() {
+    let navigator = Navigator::new();
+    let first = navigator.push(Page::new("first", page()).into());
+    let second = navigator.push(Page::new("second", page()).into());
+    let first_lifetime = navigator
+        .lifetime_of(first)
+        .expect("mounted route has a lifetime");
+    let second_lifetime = navigator
+        .lifetime_of(second)
+        .expect("mounted route has a lifetime");
+    assert!(first_lifetime.is_live());
+    assert!(second_lifetime.is_live());
+    let (_first_sub, first_ended) = lifetime_counter(&first_lifetime);
+    let (_second_sub, second_ended) = lifetime_counter(&second_lifetime);
+
+    navigator.pop();
+    assert!(!second_lifetime.is_live());
+    assert_eq!(*second_ended.borrow(), 1);
+    assert!(first_lifetime.is_live());
+    assert_eq!(*first_ended.borrow(), 0);
+    assert!(navigator.lifetime_of(second).is_none());
+
+    navigator.pop();
+    assert!(!first_lifetime.is_live());
+    assert_eq!(*first_ended.borrow(), 1);
+    // Popping an empty navigator ends nothing further.
+    assert!(navigator.pop().is_none());
+    assert_eq!(*first_ended.borrow(), 1);
+    assert_eq!(*second_ended.borrow(), 1);
+}
+
+#[test]
+fn route_lifetime_survives_keyed_reorder_and_retained_update() {
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("home", page()).key(key("home")),
+            Page::new("search", page()).key(key("search")),
+        ])
+        .unwrap();
+    let home_id = navigator.routes()[0].id;
+    let search_id = navigator.routes()[1].id;
+    let home_lifetime = navigator.lifetime_of(home_id).expect("home mounted");
+    let search_lifetime = navigator.lifetime_of(search_id).expect("search mounted");
+    let (_home_sub, home_ended) = lifetime_counter(&home_lifetime);
+    let (_search_sub, search_ended) = lifetime_counter(&search_lifetime);
+
+    // Reorder plus a retained rename/child update: identities — and their
+    // lifetimes — move with the entries instead of ending.
+    navigator
+        .set_pages([
+            Page::new("search!", page()).key(key("search")),
+            Page::new("home", page()).key(key("home")),
+        ])
+        .unwrap();
+    assert_eq!(navigator.routes()[0].id, search_id);
+    assert_eq!(navigator.routes()[1].id, home_id);
+    assert!(home_lifetime.is_live());
+    assert!(search_lifetime.is_live());
+    assert_eq!(*home_ended.borrow(), 0);
+    assert_eq!(*search_ended.borrow(), 0);
+    // The pre-reorder handles still track the entries: removing by key ends
+    // exactly the removed lifetime.
+    navigator
+        .set_pages([Page::new("home", page()).key(key("home"))])
+        .unwrap();
+    assert!(!search_lifetime.is_live());
+    assert_eq!(*search_ended.borrow(), 1);
+    assert!(home_lifetime.is_live());
+}
+
+#[test]
+fn route_lifetime_ends_on_replace_and_declarative_removal() {
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator.push(Page::new("first", page()).into());
+    let replaced_id = navigator.current().expect("top route").id;
+    let replaced_lifetime = navigator.lifetime_of(replaced_id).expect("mounted");
+    let (_replaced_sub, replaced_ended) = lifetime_counter(&replaced_lifetime);
+
+    navigator.replace(Route::new("second", page()));
+    assert!(!replaced_lifetime.is_live());
+    assert_eq!(*replaced_ended.borrow(), 1);
+    let current_lifetime = navigator
+        .lifetime_of(navigator.current().expect("top route").id)
+        .expect("replacement mounted");
+    assert!(current_lifetime.is_live());
+
+    // Declarative removal ends the lifetime through the same retirement
+    // path, while persisted restoration data stays retained: the scope
+    // bridge (pop-only by design) must not run for reconciliation.
+    let scope_cleanups = Rc::new(RefCell::new(0usize));
+    let scope_cleanups_for_bridge = scope_cleanups.clone();
+    navigator.set_route_scope_cleanup(move |_| {
+        *scope_cleanups_for_bridge.borrow_mut() += 1;
+    });
+    navigator
+        .set_pages([Page::new("gone", page()).key(key("gone"))])
+        .unwrap();
+    assert!(!current_lifetime.is_live());
+    assert_eq!(*scope_cleanups.borrow(), 0);
+}
+
+#[test]
+fn route_lifetime_ends_on_restored_stack_replacement() {
+    let registry = RouteRegistry::new();
+    let home = registry
+        .register_restorable("/home", restorable_page)
+        .unwrap();
+    let navigator = Navigator::new();
+    navigator.push(Page::new("transient", page()).into());
+    let transient_id = navigator.current().expect("top route").id;
+    let transient_lifetime = navigator.lifetime_of(transient_id).expect("mounted");
+    let (_transient_sub, transient_ended) = lifetime_counter(&transient_lifetime);
+
+    let snapshot = NavigatorSnapshot {
+        format_version: NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
+        active_route: Some(0),
+        routes: vec![RestorableRoute::new(home, json!({ "name": "home" }))],
+    };
+    let report = registry.restore_navigator(&navigator, &snapshot);
+    assert_eq!(report.restored_routes, 1);
+    assert!(!transient_lifetime.is_live());
+    assert_eq!(*transient_ended.borrow(), 1);
+}
+
+#[test]
+fn route_lifetime_ends_on_fallback_replacement() {
+    let registry = RouteRegistry::new();
+    let navigator = Navigator::new();
+    navigator.push(Page::new("stale", page()).into());
+    let stale_id = navigator.current().expect("top route").id;
+    let stale_lifetime = navigator.lifetime_of(stale_id).expect("mounted");
+    let (_stale_sub, stale_ended) = lifetime_counter(&stale_lifetime);
+
+    let missing = NavigatorSnapshot {
+        format_version: NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
+        active_route: None,
+        routes: Vec::new(),
+    };
+    let report =
+        registry.restore_navigator_or(&navigator, &missing, || Page::new("fallback", page()));
+    assert!(report.used_fallback);
+    assert!(!stale_lifetime.is_live());
+    assert_eq!(*stale_ended.borrow(), 1);
+    assert!(navigator.current().expect("fallback mounted").name == "fallback");
+}
+
+#[test]
+fn duplicate_page_key_leaves_lifetimes_untouched() {
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([Page::new("home", page()).key(key("home"))])
+        .unwrap();
+    let home_id = navigator.routes()[0].id;
+    let home_lifetime = navigator.lifetime_of(home_id).expect("mounted");
+    let (_home_sub, home_ended) = lifetime_counter(&home_lifetime);
+
+    let result = navigator.set_pages([
+        Page::new("home", page()).key(key("home")),
+        Page::new("clash", page()).key(key("home")),
+    ]);
+    assert!(result.is_err());
+    assert!(home_lifetime.is_live());
+    assert_eq!(*home_ended.borrow(), 0);
+    assert_eq!(navigator.routes().len(), 1);
+}
+
+#[test]
+fn reentrant_lifetime_callback_removes_safely() {
+    let navigator = Navigator::new();
+    navigator.push(Page::new("bottom", page()).into());
+    let middle = navigator.push(Page::new("middle", page()).into());
+    let top = navigator.push(Page::new("top", page()).into());
+    let middle_lifetime = navigator.lifetime_of(middle).expect("mounted");
+    let top_lifetime = navigator.lifetime_of(top).expect("mounted");
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let order_for_top = order.clone();
+    let order_for_middle = order.clone();
+    let reentrant = navigator.clone();
+    let (_top_sub, top_ended) = lifetime_counter(&top_lifetime);
+    let (_middle_sub, middle_ended) = lifetime_counter(&middle_lifetime);
+    // The top lifetime's own callback pops the middle reentrantly: nested
+    // effects dispatch first, each lifetime ends exactly once, and no
+    // borrow is live across either callback.
+    let _top_reentrant_sub = top_lifetime.on_ended(move || {
+        order_for_top.borrow_mut().push("top");
+        let _ = reentrant.pop();
+    });
+    let _middle_order_sub = middle_lifetime.on_ended(move || {
+        order_for_middle.borrow_mut().push("middle");
+    });
+
+    navigator.pop();
+    assert_eq!(*order.borrow(), ["top", "middle"]);
+    assert_eq!(*top_ended.borrow(), 1);
+    assert_eq!(*middle_ended.borrow(), 1);
+    assert!(!middle_lifetime.is_live());
+    assert_eq!(navigator.routes().len(), 1);
+}
+
+#[test]
+fn navigator_disposal_ends_mounted_lifetimes() {
+    let ended = Rc::new(RefCell::new(0usize));
+    let lifetimes = {
+        let navigator = Navigator::new();
+        navigator.push(Page::new("first", page()).into());
+        navigator.push(Page::new("second", page()).into());
+        let lifetimes: Vec<RouteLifetime> = navigator
+            .routes()
+            .iter()
+            .map(|route| navigator.lifetime_of(route.id).expect("mounted"))
+            .collect();
+        // Subscriptions keep only their callbacks, never the navigator:
+        // dropping every clone below must still dispose the state.
+        let mut subscriptions = Vec::new();
+        for lifetime in &lifetimes {
+            let ended_for_callback = ended.clone();
+            subscriptions.push(lifetime.on_ended(move || {
+                *ended_for_callback.borrow_mut() += 1;
+            }));
+        }
+        std::mem::forget(subscriptions);
+        assert!(lifetimes.iter().all(|lifetime| lifetime.is_live()));
+        lifetimes
+    };
+    // The navigator (and its single clone scope) is gone: disposal ended
+    // both lifetimes exactly once through the explicit disposal policy.
+    assert_eq!(*ended.borrow(), 2);
+    assert!(lifetimes.iter().all(|lifetime| !lifetime.is_live()));
+}
+
+#[test]
+fn event_route_snapshot_does_not_extend_mounted_lifetime() {
+    let navigator = Navigator::new();
+    navigator.push(Page::new("first", page()).into());
+    let top = navigator.push(Page::new("top", page()).into());
+    let top_lifetime = navigator.lifetime_of(top).expect("mounted");
+    let (_top_sub, top_ended) = lifetime_counter(&top_lifetime);
+    let popped = navigator.pop().expect("popped route");
+    assert_eq!(popped.id, top);
+
+    // The popped `Route` snapshot stays alive here, and the navigator goes
+    // away below; neither keeps the already-ended lifetime alive or
+    // re-triggers it.
+    drop(navigator);
+    assert_eq!(*top_ended.borrow(), 1);
+    assert!(!top_lifetime.is_live());
+    drop(popped);
+}
+
+#[test]
+fn late_lifetime_subscription_runs_immediately() {
+    let navigator = Navigator::new();
+    let id = navigator.push(Page::new("only", page()).into());
+    let lifetime = navigator.lifetime_of(id).expect("mounted");
+    navigator.pop();
+    assert!(!lifetime.is_live());
+
+    let ended = Rc::new(RefCell::new(0usize));
+    let ended_for_callback = ended.clone();
+    let _subscription = lifetime.on_ended(move || {
+        *ended_for_callback.borrow_mut() += 1;
+    });
+    assert_eq!(*ended.borrow(), 1);
+}

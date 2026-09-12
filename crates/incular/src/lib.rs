@@ -90,8 +90,9 @@ pub mod prelude {
         NavigatorObserver, NavigatorSnapshot, Overlay, OverlayEntry, Page, PageRouteBuilder,
         PopDecision, PopResult, RestorableNavigationError, RestorableRoute,
         RestorableRouteBuildError, RestorableRouteId, RestorableRouteIdError,
-        RestorableRouteRegistrationError, Route, RoutePresentation, RouteRegistry, RouteResult,
-        RouteScopeKey, RouteScopeKeyError, RouteSettings, RouteTransition,
+        RestorableRouteRegistrationError, Route, RouteLifetime, RouteLifetimeSubscription,
+        RoutePresentation, RouteRegistry, RouteResult, RouteScopeKey, RouteScopeKeyError,
+        RouteSettings, RouteTransition,
     };
     #[cfg(feature = "desktop")]
     pub use incular_platform::{

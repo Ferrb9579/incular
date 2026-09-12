@@ -10,7 +10,7 @@ mod route_data;
 
 pub use navigator::{
     BackAttachError, BackDispatchReport, BackDispatcher, DuplicatePageKey, NavigationEvent,
-    Navigator, NavigatorObserver, PopDecision, PopResult,
+    Navigator, NavigatorObserver, PopDecision, PopResult, RouteLifetime, RouteLifetimeSubscription,
 };
 pub use presentation::{
     BottomSheet, BottomSheetBuilder, Dialog, DialogBuilder, ModalBarrier, ModalBarrierBuilder,

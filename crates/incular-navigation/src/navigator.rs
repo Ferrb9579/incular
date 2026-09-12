@@ -68,16 +68,128 @@ struct NavigatorObserverEntry {
 /// Effects owned by one committed stack mutation.
 ///
 /// Collected while the state borrow is held, dispatched after it ends:
-/// scope cleanups first, then observer events in commit order. Reentrant
-/// navigation inside a cleanup or observer completes as a nested commit;
-/// nested effects dispatch before the outer dispatch continues, so
-/// committed transitions are never reordered. Events own route
-/// snapshots, so a retired value referenced by an in-flight event drops
-/// when the event does — still outside any borrow.
+/// scope cleanups first, then route-lifetime endings, then observer events
+/// in commit order. Reentrant navigation inside a cleanup, lifetime
+/// callback, or observer completes as a nested commit; nested effects
+/// dispatch before the outer dispatch continues, so committed transitions
+/// are never reordered. Events own route snapshots, so a retired value
+/// referenced by an in-flight event drops when the event does — still
+/// outside any borrow.
 #[derive(Default)]
 struct CommitEffects {
     cleanups: Vec<(RouteScopeKey, RouteScopeCleanup)>,
+    lifetimes: Vec<RouteLifetime>,
     events: Vec<NavigationEvent>,
+}
+
+/// Mounted-route liveness handle.
+///
+/// Each stack entry owns exactly one lifetime. Keyed reconciliation moves
+/// the entry — and its lifetime — so reorder and retained updates preserve
+/// identity; permanent removal ends it exactly once. The handle is
+/// deliberately neutral: it carries no task, focus, or widget types, so
+/// runtime owners can bind their own scopes to it without the navigation
+/// crate depending on them. Event snapshots retain [`Route`] values, never
+/// this handle, so observing a removed route cannot keep its mounted
+/// lifetime alive.
+#[derive(Clone)]
+pub struct RouteLifetime {
+    state: Rc<RefCell<RouteLifetimeState>>,
+}
+
+struct RouteLifetimeState {
+    ended: bool,
+    callbacks: Vec<std::rc::Weak<dyn Fn()>>,
+}
+
+type RouteLifetimeCallback = Rc<dyn Fn()>;
+
+/// Keeps one route-lifetime callback registered.
+///
+/// Dropping the subscription unregisters its callback; the lifetime itself
+/// is unaffected and still ends on removal.
+#[must_use]
+pub struct RouteLifetimeSubscription {
+    _callback: Option<RouteLifetimeCallback>,
+}
+
+impl RouteLifetime {
+    fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(RouteLifetimeState {
+                ended: false,
+                callbacks: Vec::new(),
+            })),
+        }
+    }
+
+    /// Returns whether the route is still mounted. Once ended, never live again.
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        !self.state.borrow().ended
+    }
+
+    /// Runs `callback` when the route is permanently removed, after the
+    /// navigator borrow ends. Callbacks of an already-ended lifetime run
+    /// immediately, so a late subscription cannot miss the signal.
+    pub fn on_ended(&self, callback: impl Fn() + 'static) -> RouteLifetimeSubscription {
+        let callback: RouteLifetimeCallback = Rc::new(callback);
+        let ended = {
+            let mut state = self.state.borrow_mut();
+            if state.ended {
+                true
+            } else {
+                state.callbacks.push(Rc::downgrade(&callback));
+                false
+            }
+        };
+        if ended {
+            callback();
+        }
+        RouteLifetimeSubscription {
+            _callback: Some(callback),
+        }
+    }
+
+    /// Ends the lifetime exactly once, invoking removal callbacks outside
+    /// any borrow. Reentrant removal completes as a nested commit first;
+    /// a second `end` is a no-op, so every removal path shares this call.
+    fn end(&self) {
+        let callbacks = {
+            let mut state = self.state.borrow_mut();
+            if state.ended {
+                return;
+            }
+            state.ended = true;
+            let live = state
+                .callbacks
+                .iter()
+                .filter_map(|callback| callback.upgrade())
+                .collect::<Vec<_>>();
+            state.callbacks.clear();
+            live
+        };
+        for callback in callbacks {
+            callback();
+        }
+    }
+}
+
+impl fmt::Debug for RouteLifetime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RouteLifetime")
+            .field("live", &self.is_live())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for RouteLifetimeSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RouteLifetimeSubscription")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Lifetime token returned by [`Navigator::observe`].
@@ -110,11 +222,14 @@ impl fmt::Debug for NavigatorObserver {
 /// restorable routes can interleave without positional zip bookkeeping.
 /// `key` records the declarative page key that claimed the entry, if any;
 /// entries pushed imperatively carry none unless their page supplied one.
+/// `lifetime` is the entry's mounted identity: keyed reuse moves it with
+/// the entry, and permanent removal ends it exactly once through `end`.
 #[derive(Clone)]
 struct RouteEntry {
     route: Route,
     restorable: Option<RestorableRoute>,
     key: Option<PageKey>,
+    lifetime: RouteLifetime,
 }
 
 /// A declarative page list rejected before touching navigator state.
@@ -151,6 +266,24 @@ struct NavigatorState {
     route_scope_cleanup: Option<RouteScopeCleanup>,
     pop_guard: Option<PopGuard>,
     observers: Vec<std::rc::Weak<NavigatorObserverEntry>>,
+}
+
+impl Drop for NavigatorState {
+    /// Explicit disposal policy: navigator disposal ends every mounted
+    /// lifetime exactly once, invoking removal callbacks. No navigator
+    /// clone can be live here — any clone keeps this state alive — so
+    /// callbacks observe disposal only through their own side effects,
+    /// never through the navigator.
+    fn drop(&mut self) {
+        let lifetimes: Vec<RouteLifetime> = self
+            .routes
+            .iter()
+            .map(|entry| entry.lifetime.clone())
+            .collect();
+        for lifetime in lifetimes {
+            lifetime.end();
+        }
+    }
 }
 
 type RouteScopeCleanup = Rc<dyn Fn(&RouteScopeKey)>;
@@ -201,6 +334,9 @@ impl Navigator {
     fn dispatch_effects(&self, effects: CommitEffects) {
         for (scope_key, cleanup) in effects.cleanups {
             cleanup(&scope_key);
+        }
+        for lifetime in effects.lifetimes {
+            lifetime.end();
         }
         for event in effects.events {
             self.notify(event);
@@ -265,6 +401,7 @@ impl Navigator {
                 route: route.clone(),
                 restorable,
                 key,
+                lifetime: RouteLifetime::new(),
             });
             state.revision = state.revision.wrapping_add(1);
             (id, previous, route)
@@ -314,6 +451,7 @@ impl Navigator {
                     },
                     restorable: Some(route),
                     key: None,
+                    lifetime: RouteLifetime::new(),
                 });
             }
             let retired = std::mem::replace(&mut state.routes, next);
@@ -321,8 +459,11 @@ impl Navigator {
             let current = state.routes.last().map(|entry| entry.route.clone());
             (previous, current, retired)
         };
-        drop(retired);
         let mut effects = CommitEffects::default();
+        effects
+            .lifetimes
+            .extend(retired.iter().map(|entry| entry.lifetime.clone()));
+        drop(retired);
         effects
             .events
             .extend(Self::active_transition(previous, current));
@@ -348,14 +489,18 @@ impl Navigator {
                     },
                     restorable: None,
                     key: None,
+                    lifetime: RouteLifetime::new(),
                 }],
             );
             state.revision = state.revision.wrapping_add(1);
             let current = state.routes.last().map(|entry| entry.route.clone());
             (previous, current, retired)
         };
-        drop(retired);
         let mut effects = CommitEffects::default();
+        effects
+            .lifetimes
+            .extend(retired.iter().map(|entry| entry.lifetime.clone()));
+        drop(retired);
         effects
             .events
             .extend(Self::active_transition(previous, current));
@@ -525,6 +670,7 @@ impl Navigator {
                         },
                         restorable: None,
                         key: page.key,
+                        lifetime: RouteLifetime::new(),
                     });
                 }
             }
@@ -537,9 +683,15 @@ impl Navigator {
             let current_top = state.routes.last().map(|entry| entry.route.clone());
             (previous_top, current_top, retired, retired_children)
         };
+        let mut effects = CommitEffects::default();
+        // Declarative removal ends lifetimes through the same retirement
+        // path as pop and replace — while persisted restoration data stays
+        // retained by design, independent of lifetime ending.
+        effects
+            .lifetimes
+            .extend(retired.iter().map(|entry| entry.lifetime.clone()));
         drop(retired);
         drop(retired_children);
-        let mut effects = CommitEffects::default();
         effects
             .events
             .extend(Self::active_transition(previous_top, current_top));
@@ -564,7 +716,7 @@ impl Navigator {
         if guard.is_some_and(|guard| guard(&candidate) == PopDecision::Deny) {
             return PopResult::Blocked;
         }
-        let (route, cleanup) = {
+        let (route, lifetime, cleanup) = {
             let mut state = self.state.borrow_mut();
             if state.revision != revision
                 || state.routes.last().map(|entry| entry.route.id) != Some(candidate.id)
@@ -582,11 +734,12 @@ impl Navigator {
                 .filter(|route| route.removes_scope_on_pop())
                 .and_then(|route| route.scope_key.clone())
                 .zip(state.route_scope_cleanup.clone());
-            (entry.route, cleanup)
+            (entry.route, entry.lifetime, cleanup)
         };
         let current = self.current();
         let mut effects = CommitEffects::default();
         effects.cleanups.extend(cleanup);
+        effects.lifetimes.push(lifetime);
         effects.events.push(NavigationEvent::Popped {
             route: route.clone(),
         });
@@ -620,7 +773,7 @@ impl Navigator {
         if guard.is_some_and(|guard| guard(&candidate) == PopDecision::Deny) {
             return None;
         }
-        let (previous, route, cleanup) = {
+        let (previous, previous_lifetime, route, cleanup) = {
             let mut state = self.state.borrow_mut();
             if state.revision != revision
                 || state.routes.last().map(|entry| entry.route.id) != Some(candidate.id)
@@ -643,12 +796,14 @@ impl Navigator {
                 route: route.clone(),
                 restorable: None,
                 key: None,
+                lifetime: RouteLifetime::new(),
             });
             state.revision = state.revision.wrapping_add(1);
-            (previous.route, route, cleanup)
+            (previous.route, previous.lifetime, route, cleanup)
         };
         let mut effects = CommitEffects::default();
         effects.cleanups.extend(cleanup);
+        effects.lifetimes.push(previous_lifetime);
         effects.events.push(NavigationEvent::Replaced {
             previous: previous.clone(),
             route: route.clone(),
@@ -658,6 +813,20 @@ impl Navigator {
             .extend(Self::active_transition(Some(previous.clone()), Some(route)));
         self.dispatch_effects(effects);
         Some(previous)
+    }
+    /// Returns the mounted lifetime for a live route id, if present.
+    ///
+    /// The handle tracks the entry, not the snapshot: keyed reuse keeps it
+    /// alive across reorder and retained updates, and permanent removal ends
+    /// it. Unknown or removed ids yield `None`.
+    #[must_use]
+    pub fn lifetime_of(&self, id: RouteId) -> Option<RouteLifetime> {
+        self.state
+            .borrow()
+            .routes
+            .iter()
+            .find(|entry| entry.route.id == id)
+            .map(|entry| entry.lifetime.clone())
     }
     #[must_use]
     pub fn current(&self) -> Option<Route> {
