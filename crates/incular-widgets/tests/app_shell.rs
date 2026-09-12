@@ -1361,6 +1361,296 @@ fn router_live_rejection_notifies_exactly_once() {
 }
 
 #[test]
+fn router_set_configuration_during_parse_is_adopted() {
+    // A parser callback applies an independent configuration while the outer
+    // route is in flight.  Delegate configuration, router state, persisted
+    // scope, and notifications must agree on the newer change — the older
+    // application commits nothing over it.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let delegate_for_parser = delegate.clone();
+    let parser = ClosureRouteInformationParser::new(
+        move |information: &RouteInformation| {
+            if information.location() == "/outer" {
+                delegate_for_parser.set_configuration("/inner".to_owned());
+            }
+            Ok(information.location().to_owned())
+        },
+        |configuration: &String| Ok(RouteInformation::new(configuration)),
+    );
+    delegate.on_set_new_route_path(|_: String| Ok(()));
+    let config = RouterConfig::with_provider_parser(delegate.clone(), provider.clone(), parser);
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/outer");
+
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/inner"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/inner").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [("DelegateChanged".to_owned(), Some("/inner".to_owned())),]
+    );
+
+    provider.set_value("/next");
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/next"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/next").to_json())
+    );
+}
+
+#[test]
+fn router_set_configuration_during_delegate_callback_is_adopted() {
+    // Same agreement through the delegate hook: the callback-triggered
+    // configuration wins, and the outer application neither overwrites it
+    // nor emits a second commit.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let delegate_for_callback = delegate.clone();
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/outer" {
+            delegate_for_callback.set_configuration("/inner".to_owned());
+        }
+        Ok(())
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/outer");
+
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/inner"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/inner").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [("DelegateChanged".to_owned(), Some("/inner".to_owned())),]
+    );
+}
+
+#[test]
+fn router_standalone_delegate_change_still_commits() {
+    // Guard against over-deferral: with no application open, a delegate
+    // change commits router state directly.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|_: String| Ok(()));
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    delegate.set_configuration("/direct".to_owned());
+
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/direct").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [("DelegateChanged".to_owned(), Some("/direct".to_owned())),]
+    );
+}
+
+#[test]
+fn router_nested_rejection_preserves_staged_reaction() {
+    // A staged independent change survives a nested failure in the same
+    // window: the failed attempt reports once and the staged route — not
+    // the outer one — is adopted.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let delegate_for_parser = delegate.clone();
+    let provider_for_parser = provider.clone();
+    let parser = ClosureRouteInformationParser::new(
+        move |information: &RouteInformation| {
+            if information.location() == "/outer" {
+                delegate_for_parser.set_configuration("/staged".to_owned());
+                provider_for_parser.set_value("/bad");
+            }
+            Ok(information.location().to_owned())
+        },
+        |configuration: &String| Ok(RouteInformation::new(configuration)),
+    );
+    delegate.on_set_new_route_path(|configuration: String| {
+        (configuration != "/bad")
+            .then_some(())
+            .ok_or_else(|| RouterError::message("route not served"))
+    });
+    let config = RouterConfig::with_provider_parser(delegate.clone(), provider.clone(), parser);
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/outer");
+
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/staged"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/staged").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [
+            ("DelegateChanged".to_owned(), Some("/staged".to_owned())),
+            ("ParseFailed".to_owned(), Some("/bad".to_owned())),
+        ]
+    );
+}
+
+#[test]
+fn router_restoration_intrusion_is_adopted_without_fallback() {
+    // A delegate change staged during the restoration application is adopted
+    // as the initial route; the provider fallback must not overwrite it.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    scope.set_json(
+        &restoration_key,
+        RouteInformation::new("/restore").to_json(),
+    );
+    let provider = MemoryRouteInformationProvider::new("/fallback");
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let delegate_for_callback = delegate.clone();
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/restore" {
+            delegate_for_callback.set_configuration("/intruder".to_owned());
+        }
+        Ok(())
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/intruder")
+    );
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/intruder").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [("DelegateChanged".to_owned(), Some("/intruder".to_owned())),]
+    );
+}
+
+#[test]
+fn basic_delegate_configuration_destructor_may_reenter() {
+    use std::cell::Cell;
+
+    #[derive(Clone)]
+    struct ReentrantConfig {
+        name: String,
+        delegate: Option<BasicRouterDelegate<ReentrantConfig>>,
+        armed: Rc<Cell<bool>>,
+    }
+    impl Drop for ReentrantConfig {
+        fn drop(&mut self) {
+            // Runs while the replaced configuration retires: the state
+            // borrow must already be released or this reentrant application
+            // panics.
+            if self.armed.take()
+                && let Some(delegate) = self.delegate.clone()
+            {
+                delegate.set_configuration(ReentrantConfig {
+                    name: "reentrant".to_owned(),
+                    delegate: None,
+                    armed: Rc::new(Cell::new(false)),
+                });
+            }
+        }
+    }
+
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|_: ReentrantConfig| Ok(()));
+    delegate.set_configuration(ReentrantConfig {
+        name: "first".to_owned(),
+        delegate: Some(delegate.clone()),
+        armed: Rc::new(Cell::new(true)),
+    });
+    delegate
+        .set_new_route_path(ReentrantConfig {
+            name: "second".to_owned(),
+            delegate: None,
+            armed: Rc::new(Cell::new(false)),
+        })
+        .expect("application succeeds");
+
+    // The retired configuration's destructor applied a newer one, which the
+    // superseded outer application left intact.
+    assert_eq!(
+        delegate
+            .current_configuration()
+            .as_ref()
+            .map(|config| config.name.as_str()),
+        Some("reentrant")
+    );
+}
+
+#[test]
 fn router_config_rejects_an_unpaired_provider_and_parser() {
     // The missing-parser error path is unreachable at runtime because the
     // pairing contract is enforced at construction: no notification path is

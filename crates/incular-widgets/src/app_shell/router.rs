@@ -16,7 +16,6 @@ use std::{
     fmt,
     rc::{Rc, Weak},
 };
-
 type RouteParser<T> = Rc<dyn Fn(&RouteInformation) -> Result<T, RouterError>>;
 type RouteRestorer<T> = Rc<dyn Fn(&T) -> Result<RouteInformation, RouterError>>;
 type SetRoutePath<T> = Rc<dyn Fn(T) -> Result<(), RouterError>>;
@@ -482,6 +481,14 @@ struct BasicDelegateState<T> {
 
 /// A small retained delegate useful for app shells that own their route state
 /// in a controller rather than implementing a bespoke delegate type.
+///
+/// Reentrancy contracts for the application-provided `T`:
+/// - `T::drop` may reenter the delegate: replaced configurations retire
+///   outside state borrows.
+/// - `T::clone` must not reenter the delegate: `current_configuration`
+///   clones under a state borrow because the source cannot be released
+///   mid-clone, while the route callback receives its copy outside borrows.
+///   Every other clone under a runtime borrow is a framework-owned type.
 #[derive(Clone)]
 pub struct BasicRouterDelegate<T: Clone + 'static> {
     state: Rc<RefCell<BasicDelegateState<T>>>,
@@ -521,9 +528,12 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
     /// Seeds the current configuration before the router is built.
     pub fn set_configuration(&self, configuration: T) {
         let mut state = self.state.borrow_mut();
-        state.configuration = Some(configuration);
         state.revision = state.revision.wrapping_add(1);
+        let previous = state.configuration.replace(configuration);
         drop(state);
+        // The replaced configuration drops outside the borrow: `T` is
+        // application-provided and its destructor may reenter the delegate.
+        drop(previous);
         self.notify();
     }
 
@@ -582,8 +592,12 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
             if state.revision != revision {
                 return Ok(());
             }
-            state.configuration = Some(configuration);
             state.revision = state.revision.wrapping_add(1);
+            let previous = state.configuration.replace(configuration);
+            drop(state);
+            // Retired outside the borrow for the same reason as in
+            // `set_configuration`: a `T` destructor may reenter.
+            drop(previous);
         }
         self.notify();
         Ok(())
@@ -1024,7 +1038,38 @@ struct RouterRuntime<T: 'static> {
     /// a newer commit preempts older operations.  Failed operations never
     /// bump it, so they preempt nothing.
     transaction: u64,
+    /// Allocates operation numbers, one per route application, at that
+    /// application's entry.  Numbers are never compared for commit rights
+    /// (only `transaction` grants those); they attribute delegate reactions
+    /// to the application whose window observed them.
+    next_operation: u64,
+    /// Operation currently invoking application code, if any.  Set for the
+    /// whole application body (parse, delegate hooks, commit, observers) and
+    /// restored on exit, so nested applications save and restore the outer
+    /// mark.  A set mark tells `delegate_changed` that its reaction belongs
+    /// to an open window and must be staged — never stealth-committed.
+    open_operation: Option<u64>,
+    /// Delegate reaction observed while an application is open, tagged by
+    /// that application.  The owning application commits or adopts it when
+    /// its window closes; foreign tags are left for their owner.
+    pending_delegate: Option<(u64, RouteInformation)>,
     subscriptions: Vec<SubscriptionKeepAlive>,
+}
+
+/// Restores the previously open operation when an application ends.  The
+/// guard owns no borrow, so dropping it during unwinding through an
+/// application-code panic only re-marks — it never touches live state.
+struct OpenOperationGuard<T: 'static> {
+    runtime: Weak<RefCell<RouterRuntime<T>>>,
+    previous: Option<u64>,
+}
+
+impl<T: 'static> Drop for OpenOperationGuard<T> {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            runtime.borrow_mut().open_operation = self.previous;
+        }
+    }
 }
 
 enum SubscriptionKeepAlive {
@@ -1063,6 +1108,9 @@ impl<T: 'static> RouterRuntime<T> {
             current: None,
             revision: Rc::new(Cell::new(0)),
             transaction: 0,
+            next_operation: 0,
+            open_operation: None,
+            pending_delegate: None,
             subscriptions: Vec::new(),
         }));
 
@@ -1197,19 +1245,38 @@ impl<T: 'static> RouterRuntime<T> {
     /// the delegate owns its atomicity (`BasicRouterDelegate` preserves the
     /// previously accepted configuration), while current route and persisted
     /// scope commit only through [`Self::commit_route`].
+    ///
+    /// A delegate reaction observed while this application is open is
+    /// reported immediately but staged for it: a matching reaction lets the
+    /// application complete normally, a divergent one is adopted silently
+    /// (its reaction already reported it), and reactions of failed or
+    /// preempted attempts are discarded.  This keeps one commit per route
+    /// without letting an ordinary notification suppress its completion.
     fn apply_route(
         runtime: &Rc<RefCell<Self>>,
         information: RouteInformation,
         kind: RouteApplyKind,
     ) -> Result<(), RouterError> {
         // Snapshot handles without bumping the transaction: only a commit
-        // owns the next number, so failed operations preempt nothing.
-        let (parser, delegate, transaction) = {
-            let state = runtime.borrow();
+        // owns the next number, so failed operations preempt nothing.  The
+        // operation mark spans the whole body (guard-restored, so panics
+        // cannot leak it): while set, `delegate_changed` stages instead of
+        // committing, which is what distinguishes this application's own
+        // notification from an independent change.
+        let (parser, delegate, transaction, operation, _open) = {
+            let mut state = runtime.borrow_mut();
+            let operation = state.next_operation;
+            state.next_operation = state.next_operation.wrapping_add(1);
+            let previous = state.open_operation.replace(operation);
             (
                 state.parser.clone(),
                 state.delegate.clone(),
                 state.transaction,
+                operation,
+                OpenOperationGuard {
+                    runtime: Rc::downgrade(runtime),
+                    previous,
+                },
             )
         };
         let parser = parser.ok_or_else(|| {
@@ -1232,6 +1299,12 @@ impl<T: 'static> RouterRuntime<T> {
                 return Err(error);
             }
         };
+        if let Some(adopted) =
+            Self::reconcile_staged_reaction(runtime, &information, transaction, operation)
+        {
+            Self::adopt_route(runtime, adopted, transaction);
+            return Ok(());
+        }
         if Self::is_superseded(runtime, transaction) {
             // A nested transaction committed while parsing: the older
             // operation reports success (a route is installed) but commits
@@ -1246,6 +1319,10 @@ impl<T: 'static> RouterRuntime<T> {
             RouteApplyKind::New => delegate.set_new_route_path(configuration),
         };
         if let Err(error) = result {
+            // The attempt failed: discard any reaction staged in its window
+            // so a later attempt never adopts a stale one.  The failure
+            // below stays the single report for this attempt.
+            Self::take_pending_delegate(runtime, operation);
             Self::notify(
                 runtime,
                 NavigationNotification {
@@ -1257,7 +1334,14 @@ impl<T: 'static> RouterRuntime<T> {
             );
             return Err(error);
         }
+        if let Some(adopted) =
+            Self::reconcile_staged_reaction(runtime, &information, transaction, operation)
+        {
+            Self::adopt_route(runtime, adopted, transaction);
+            return Ok(());
+        }
         if Self::is_superseded(runtime, transaction) {
+            Self::take_pending_delegate(runtime, operation);
             return Ok(());
         }
         Self::commit_route(
@@ -1272,6 +1356,61 @@ impl<T: 'static> RouterRuntime<T> {
             transaction,
         );
         Ok(())
+    }
+
+    /// Reconciles a delegate reaction staged while this application was open.
+    /// Returns the staged route when it diverges from the application's own
+    /// (the caller adopts it); a matching reaction — or none — means the
+    /// application proceeds.  A superseded application adopts nothing.
+    fn reconcile_staged_reaction(
+        runtime: &Rc<RefCell<Self>>,
+        information: &RouteInformation,
+        transaction: u64,
+        operation: u64,
+    ) -> Option<RouteInformation> {
+        let staged = Self::take_pending_delegate(runtime, operation)?;
+        if Self::is_superseded(runtime, transaction) || staged == *information {
+            return None;
+        }
+        Some(staged)
+    }
+
+    /// Takes this operation's staged delegate reaction, if any.  Foreign tags
+    /// belong to a live owner and are left alone.
+    fn take_pending_delegate(
+        runtime: &Rc<RefCell<Self>>,
+        operation: u64,
+    ) -> Option<RouteInformation> {
+        let mut state = runtime.borrow_mut();
+        match state.pending_delegate {
+            Some((tag, _)) if tag == operation => state
+                .pending_delegate
+                .take()
+                .map(|(_, information)| information),
+            _ => None,
+        }
+    }
+
+    /// Commits a staged divergent reaction without notifying: its reaction
+    /// already reported it through `delegate_changed`, so notifying again
+    /// would double-report.  Current route, persisted scope, and both
+    /// counters still follow the accepted change exactly like a commit.
+    fn adopt_route(runtime: &Rc<RefCell<Self>>, information: RouteInformation, transaction: u64) {
+        let (restoration, revision) = {
+            let mut state = runtime.borrow_mut();
+            if state.transaction != transaction {
+                return;
+            }
+            state.transaction = state.transaction.wrapping_add(1);
+            state.current = Some(information.clone());
+            (state.restoration.clone(), state.revision.clone())
+        };
+        if let Some(restoration) = restoration {
+            restoration
+                .scope
+                .set_json(&restoration.key, information.to_json());
+        }
+        revision.set(revision.get().wrapping_add(1));
     }
 
     /// Reports whether a newer transaction committed since `transaction` was
@@ -1327,9 +1466,13 @@ impl<T: 'static> RouterRuntime<T> {
         // The delegate query is application code and may reenter the router,
         // so it runs without any runtime borrow held; a nested commit meanwhile
         // makes this reaction stale before it even starts.
-        let (delegate, transaction) = {
+        let (delegate, transaction, open) = {
             let state = runtime.borrow();
-            (state.delegate.clone(), state.transaction)
+            (
+                state.delegate.clone(),
+                state.transaction,
+                state.open_operation,
+            )
         };
         let configuration = delegate.current_configuration();
         if Self::is_superseded(runtime, transaction) {
@@ -1379,16 +1522,39 @@ impl<T: 'static> RouterRuntime<T> {
                 if Self::is_superseded(runtime, transaction) {
                     return;
                 }
+                if let Some(operation) = open {
+                    // An application is open: this reaction belongs to its
+                    // window.  Report and stage it, but write no router
+                    // state — the owning application reconciles below, which
+                    // is what keeps one commit per route while letting the
+                    // ordinary notification complete through its own commit.
+                    // Newest wins: a later reaction in the same window
+                    // replaces the staged one.
+                    {
+                        let mut state = runtime.borrow_mut();
+                        state.pending_delegate = Some((operation, information.clone()));
+                    }
+                    Self::notify(
+                        runtime,
+                        NavigationNotification {
+                            kind: NavigationNotificationKind::DelegateChanged,
+                            route_information: Some(information),
+                            can_handle_pop: true,
+                            error: None,
+                        },
+                    );
+                    return;
+                }
                 if let Some(restoration) = restoration {
                     restoration
                         .scope
                         .set_json(&restoration.key, information.to_json());
                 }
                 {
-                    // This reaction never claims a transaction number: inside
-                    // an in-flight application the outer commit owns the
-                    // number, and standalone there is no contender.  Either
-                    // way the newest commit wins by time order.
+                    // Standalone, with no application open, there is no
+                    // contender: this reaction commits directly without
+                    // claiming a transaction number, and the newest commit
+                    // still wins by time order.
                     let mut state = runtime.borrow_mut();
                     state.current = Some(information.clone());
                 }
