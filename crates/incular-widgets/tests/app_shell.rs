@@ -851,3 +851,156 @@ fn view_controller_and_anchor_own_metrics_lifecycle_and_auxiliary_disposal() {
     assert!(anchor.detach());
     assert_eq!(host.disposed.borrow().len(), 1);
 }
+
+fn basic_delegate_with_counter() -> (BasicRouterDelegate<String>, Rc<RefCell<usize>>) {
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    let notifications = Rc::new(RefCell::new(0usize));
+    let notifications_for_listener = notifications.clone();
+    let subscription = delegate.subscribe(Rc::new(move || {
+        *notifications_for_listener.borrow_mut() += 1;
+    }));
+    // The subscription only keeps the listener alive while it is retained;
+    // leak it so delegate notifications keep flowing for the test body.
+    std::mem::forget(subscription);
+    (delegate, notifications)
+}
+
+#[test]
+fn basic_delegate_rejection_preserves_accepted_configuration() {
+    let (delegate, notifications) = basic_delegate_with_counter();
+    delegate.on_set_new_route_path(|configuration: String| {
+        (configuration != "/reject")
+            .then_some(())
+            .ok_or_else(|| RouterError::message("route not served"))
+    });
+    assert!(delegate.set_new_route_path("/accepted".to_owned()).is_ok());
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/accepted")
+    );
+    assert_eq!(*notifications.borrow(), 1);
+    assert!(delegate.set_new_route_path("/reject".to_owned()).is_err());
+    // Rejection is atomic: the previously accepted configuration survives
+    // and no success notification is emitted.
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/accepted")
+    );
+    assert_eq!(*notifications.borrow(), 1);
+    // The delegate still accepts later routes after a rejection.
+    assert!(delegate.set_new_route_path("/next".to_owned()).is_ok());
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/next"));
+    assert_eq!(*notifications.borrow(), 2);
+}
+
+#[test]
+fn basic_delegate_callback_may_replace_itself() {
+    let (delegate, notifications) = basic_delegate_with_counter();
+    let delegate_for_callback = delegate.clone();
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/swap" {
+            delegate_for_callback.on_set_new_route_path(|_: String| Ok(()));
+        }
+        Ok(())
+    });
+    // The old code held the registration borrow across the callback, so this
+    // reentrant replacement panicked with `already borrowed`.
+    assert!(delegate.set_new_route_path("/swap".to_owned()).is_ok());
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/swap"));
+    assert_eq!(*notifications.borrow(), 1);
+    assert!(delegate.set_new_route_path("/later".to_owned()).is_ok());
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/later"));
+    assert_eq!(*notifications.borrow(), 2);
+}
+
+#[test]
+fn basic_delegate_nested_success_wins_over_outer_application() {
+    let (delegate, notifications) = basic_delegate_with_counter();
+    let delegate_for_callback = delegate.clone();
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/outer" {
+            delegate_for_callback
+                .set_new_route_path("/inner".to_owned())
+                .expect("nested application succeeds");
+        }
+        Ok(())
+    });
+    assert!(delegate.set_new_route_path("/outer".to_owned()).is_ok());
+    // The nested commit is newer, so the outer acceptance must not overwrite
+    // it — and only the nested commit notifies.
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/inner"));
+    assert_eq!(*notifications.borrow(), 1);
+}
+
+#[test]
+fn basic_delegate_nested_rejection_leaves_outer_application_intact() {
+    let (delegate, notifications) = basic_delegate_with_counter();
+    let delegate_for_callback = delegate.clone();
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/outer" {
+            // The nested application fails; ignoring its error must not roll
+            // back anything because the nested attempt committed nothing.
+            let _ = delegate_for_callback.set_new_route_path("/bad".to_owned());
+            return Ok(());
+        }
+        Err(RouterError::message("route not served"))
+    });
+    assert!(delegate.set_new_route_path("/outer".to_owned()).is_ok());
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/outer"));
+    assert_eq!(*notifications.borrow(), 1);
+}
+
+#[test]
+fn basic_delegate_pop_callback_may_replace_itself() {
+    let (delegate, _) = basic_delegate_with_counter();
+    let delegate_for_callback = delegate.clone();
+    let second_called = Rc::new(RefCell::new(false));
+    let second_called_for_callback = second_called.clone();
+    delegate.on_pop_route(move || {
+        let second_called_for_callback = second_called_for_callback.clone();
+        delegate_for_callback.on_pop_route(move || {
+            *second_called_for_callback.borrow_mut() = true;
+            true
+        });
+        true
+    });
+    assert!(delegate.pop_route());
+    assert!(!*second_called.borrow());
+    // The replacement installed by the first callback serves the next pop.
+    assert!(delegate.pop_route());
+    assert!(*second_called.borrow());
+}
+
+#[test]
+fn basic_delegate_callback_replacement_retires_outside_the_borrow() {
+    struct ReentrantGuard {
+        delegate: BasicRouterDelegate<String>,
+    }
+    impl Drop for ReentrantGuard {
+        fn drop(&mut self) {
+            // Runs while the replaced callback is retired: registration must
+            // already be released or this reentrant install panics.
+            self.delegate
+                .on_set_new_route_path(|_: String| Err(RouterError::message("reentrant")));
+        }
+    }
+
+    let (delegate, notifications) = basic_delegate_with_counter();
+    let guard = Rc::new(ReentrantGuard {
+        delegate: delegate.clone(),
+    });
+    delegate.on_set_new_route_path({
+        let guard = guard.clone();
+        move |_: String| {
+            let _ = &guard;
+            Ok(())
+        }
+    });
+    drop(guard);
+    delegate.on_set_new_route_path(|_: String| Ok(()));
+    // The destructor ran after the replacement was stored, so its install is
+    // the one that sticks — deterministically, last writer wins.
+    assert!(delegate.set_new_route_path("/probe".to_owned()).is_err());
+    assert_eq!(delegate.current_configuration(), None);
+    assert_eq!(*notifications.borrow(), 0);
+}

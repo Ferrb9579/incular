@@ -474,6 +474,9 @@ pub trait RouterDelegate<T>: 'static {
 
 struct BasicDelegateState<T> {
     configuration: Option<T>,
+    /// Accepted-commit counter.  Each committed application bumps it, so an
+    /// outer application can detect a nested commit and must not overwrite it.
+    revision: u64,
     listeners: Vec<Weak<dyn Fn()>>,
 }
 
@@ -506,6 +509,7 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
         Self {
             state: Rc::new(RefCell::new(BasicDelegateState {
                 configuration: None,
+                revision: 0,
                 listeners: Vec::new(),
             })),
             builder: Rc::new(builder),
@@ -516,18 +520,27 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
 
     /// Seeds the current configuration before the router is built.
     pub fn set_configuration(&self, configuration: T) {
-        self.state.borrow_mut().configuration = Some(configuration);
+        let mut state = self.state.borrow_mut();
+        state.configuration = Some(configuration);
+        state.revision = state.revision.wrapping_add(1);
+        drop(state);
         self.notify();
     }
 
     /// Installs application logic invoked for new and initial route paths.
     pub fn on_set_new_route_path(&self, callback: impl Fn(T) -> Result<(), RouterError> + 'static) {
-        *self.set_path.borrow_mut() = Some(Rc::new(callback));
+        // Retire the replaced callback outside the registration borrow: its
+        // destructor is application code and may reenter registration.
+        let previous = self.set_path.borrow_mut().replace(Rc::new(callback));
+        drop(previous);
     }
 
     /// Installs the system-back callback.
     pub fn on_pop_route(&self, callback: impl Fn() -> bool + 'static) {
-        *self.pop.borrow_mut() = Some(Rc::new(callback));
+        // Retire the replaced callback outside the registration borrow: its
+        // destructor is application code and may reenter registration.
+        let previous = self.pop.borrow_mut().replace(Rc::new(callback));
+        drop(previous);
     }
 
     /// Notifies the router that the delegate's current configuration changed.
@@ -548,10 +561,29 @@ impl<T: Clone + 'static> BasicRouterDelegate<T> {
         }
     }
 
+    /// Applies one route, atomically from the caller's perspective.
+    ///
+    /// The callback handle is cloned before invocation so no registration
+    /// borrow spans application code, and the accepted revision is snapshotted
+    /// so a nested application is detected below.  A rejection leaves the
+    /// previously accepted configuration untouched and emits nothing.  When a
+    /// nested application committed meanwhile, the outer acceptance is
+    /// superseded: it still reports success (the callback accepted the route)
+    /// but must not overwrite the newer configuration — and there is no
+    /// rollback, which would erase the reentrant change.
     fn apply(&self, configuration: T) -> Result<(), RouterError> {
-        self.state.borrow_mut().configuration = Some(configuration.clone());
-        if let Some(callback) = self.set_path.borrow().as_ref() {
-            callback(configuration)?;
+        let callback = self.set_path.borrow().as_ref().cloned();
+        let revision = self.state.borrow().revision;
+        if let Some(callback) = callback {
+            callback(configuration.clone())?;
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            if state.revision != revision {
+                return Ok(());
+            }
+            state.configuration = Some(configuration);
+            state.revision = state.revision.wrapping_add(1);
         }
         self.notify();
         Ok(())
@@ -572,10 +604,10 @@ impl<T: Clone + 'static> RouterDelegate<T> for BasicRouterDelegate<T> {
     }
 
     fn pop_route(&self) -> bool {
-        self.pop
-            .borrow()
-            .as_ref()
-            .is_some_and(|callback| callback())
+        // Clone the handle first: the callback is application code and may
+        // replace the registration while it runs.
+        let callback = self.pop.borrow().as_ref().cloned();
+        callback.is_some_and(|callback| callback())
     }
 
     fn subscribe(&self, listener: RouterDelegateListener) -> RouterDelegateSubscription {
