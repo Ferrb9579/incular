@@ -316,6 +316,64 @@ fn panicking_listener_releases_dispatch_without_losing_queue() {
 }
 
 #[test]
+fn panicking_first_listener_skips_remaining_without_replay() {
+    use std::panic::AssertUnwindSafe;
+
+    let mut application = application();
+    let activations = application.activations();
+    let first_seen = Rc::new(RefCell::new(Vec::new()));
+    let second_seen = Rc::new(RefCell::new(Vec::new()));
+    let nested = activations.clone();
+    let _first = activations.subscribe({
+        let first_seen = first_seen.clone();
+        move |activation| {
+            first_seen.borrow_mut().push(activation.clone());
+            if activation == ApplicationActivation::Reopen {
+                nested.publish(ApplicationActivation::open_files([PathBuf::from(
+                    r"C:\capture\nested.ram",
+                )]));
+                panic!("first listener failure");
+            }
+        }
+    });
+    let _second = activations.subscribe({
+        let second_seen = second_seen.clone();
+        move |activation| {
+            second_seen.borrow_mut().push(activation);
+        }
+    });
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        application.handle_application_activation(ApplicationActivation::Reopen);
+    }));
+    assert!(outcome.is_err());
+    // The interrupted activation reached only its panicking listener: it
+    // is not replayed to the second listener. The queued activation is
+    // preserved.
+    assert_eq!(&*first_seen.borrow(), &[ApplicationActivation::Reopen]);
+    assert!(second_seen.borrow().is_empty());
+    assert_eq!(activations.pending_count(), 1);
+
+    // A subsequent publish resumes delivery: both listeners receive the
+    // queued and the new activation exactly once each, in order.
+    let later_file = PathBuf::from(r"C:\capture\later.ram");
+    application
+        .handle_application_activation(ApplicationActivation::open_files([later_file.clone()]));
+    assert_eq!(first_seen.borrow().len(), 3);
+    assert_eq!(
+        first_seen.borrow()[1].documents()[0].path(),
+        PathBuf::from(r"C:\capture\nested.ram")
+    );
+    assert_eq!(first_seen.borrow()[2].documents()[0].path(), later_file);
+    assert_eq!(second_seen.borrow().len(), 2);
+    assert_eq!(
+        second_seen.borrow()[0].documents()[0].path(),
+        PathBuf::from(r"C:\capture\nested.ram")
+    );
+    assert_eq!(second_seen.borrow()[1].documents()[0].path(), later_file);
+    assert_eq!(activations.pending_count(), 0);
+}
+
+#[test]
 fn global_shortcut_registration_conflict_unregister_and_stable_ids_are_typed() {
     let mut application = application();
     application.set_platform_capabilities(shortcut_capabilities(CapabilitySupport::Supported));

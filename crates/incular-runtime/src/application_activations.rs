@@ -12,10 +12,20 @@ use std::{
 /// Retained callback for application activations.
 pub type ApplicationActivationListener = Rc<dyn Fn(ApplicationActivation)>;
 
+#[derive(Default)]
 struct ActivationState {
     pending: VecDeque<ApplicationActivation>,
     listeners: Vec<Weak<dyn Fn(ApplicationActivation)>>,
-    dispatching: bool,
+}
+
+/// Delivery flag beside the queue. The flag lives in a `Cell`, not in
+/// the `RefCell`, so releasing a drain never needs a borrow and cannot
+/// fail. Queue borrows stay scoped to enqueue/dequeue/snapshot
+/// operations and never span a callback.
+#[derive(Default)]
+struct ActivationDrain {
+    queue: RefCell<ActivationState>,
+    active: Cell<bool>,
 }
 
 /// Cloneable application-scoped activation stream.
@@ -29,12 +39,18 @@ struct ActivationState {
 ///   Activations published before any listener exists (for example before
 ///   the route bridge is installed) wait there; there is no second queue.
 /// - Delivered: exactly once per listener live for that event's snapshot,
-///   in arrival order. A listener publishing reentrantly enqueues behind
-///   the in-flight event. Delivery is synchronous fan-out, not the runtime
-///   request channel: native code pushes through
+///   in arrival order, while delivery completes without listener failure.
+///   A listener publishing reentrantly enqueues behind the in-flight
+///   event. Delivery is synchronous fan-out, not the runtime request
+///   channel: native code pushes through
 ///   `Application::handle_application_activation`, and the bridge forwards
 ///   mapped URLs into the route provider, whose own listeners (such as the
 ///   widgets router) apply them.
+/// - Listener panic: delivery is not transactional. A panicking listener
+///   aborts its event's remaining deliveries — that event is not replayed
+///   to listeners that missed it, so exactly-once holds only for
+///   failure-free delivery. The queue itself is preserved and the drain
+///   releases, so a later publish resumes with the queued events first.
 /// - Acknowledged/retried/discarded: none. Listeners return nothing to
 ///   acknowledge, nothing retries, and pending activations are never
 ///   dropped by the service — they wait until a listener subscribes, even
@@ -45,26 +61,14 @@ struct ActivationState {
 ///   Replacing it (drop, then bridge again) leaves pending activations
 ///   buffered for the new bridge; the old bridge delivers nothing
 ///   further once its subscription dies.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ApplicationActivationService {
-    state: Rc<RefCell<ActivationState>>,
-}
-
-impl Default for ApplicationActivationService {
-    fn default() -> Self {
-        Self {
-            state: Rc::new(RefCell::new(ActivationState {
-                pending: VecDeque::new(),
-                listeners: Vec::new(),
-                dispatching: false,
-            })),
-        }
-    }
+    state: Rc<ActivationDrain>,
 }
 
 impl fmt::Debug for ApplicationActivationService {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.state.borrow();
+        let state = self.state.queue.borrow();
         formatter
             .debug_struct("ApplicationActivationService")
             .field("pending", &state.pending.len())
@@ -82,6 +86,7 @@ impl ApplicationActivationService {
     ) -> ApplicationActivationSubscription {
         let listener: ApplicationActivationListener = Rc::new(listener);
         self.state
+            .queue
             .borrow_mut()
             .listeners
             .push(Rc::downgrade(&listener));
@@ -93,69 +98,69 @@ impl ApplicationActivationService {
 
     #[doc(hidden)]
     pub fn publish(&self, activation: ApplicationActivation) {
-        self.state.borrow_mut().pending.push_back(activation);
+        self.state.queue.borrow_mut().pending.push_back(activation);
         drain(&self.state);
     }
 
     #[must_use]
     pub fn pending_count(&self) -> usize {
-        self.state.borrow().pending.len()
+        self.state.queue.borrow().pending.len()
     }
 }
 
-/// Owns an in-progress activation drain. The guard is the sole authority
-/// releasing the drain: normal completion and unwinding both funnel
-/// through its `Drop`, so no delivery path resets the flag itself. On
-/// unwind it releases the flag but keeps the queue — undelivered
-/// activations stay buffered and resume on the next drain instead of
-/// blackholing. The `try_borrow_mut` only fails if a borrow is live at
-/// drop time; every borrow here is scoped to queue operations and never
-/// spans a callback, so a failed release merely defers to the next
-/// guard drop.
+/// Owns an in-progress activation drain and is the sole authority
+/// releasing it. The flag release is infallible (`Cell::set`); the
+/// queue itself is left untouched, so undelivered activations stay
+/// buffered and resume on the next drain.
 struct DispatchGuard {
-    state: Rc<RefCell<ActivationState>>,
+    shared: Rc<ActivationDrain>,
 }
 impl DispatchGuard {
-    fn acquire(state: &Rc<RefCell<ActivationState>>) -> Option<Self> {
-        let mut state_ref = state.borrow_mut();
-        state_ref
-            .listeners
-            .retain(|listener| listener.strong_count() != 0);
-        if state_ref.dispatching || state_ref.listeners.is_empty() || state_ref.pending.is_empty() {
+    fn acquire(shared: &Rc<ActivationDrain>) -> Option<Self> {
+        if shared.active.get() {
             return None;
         }
-        state_ref.dispatching = true;
+        {
+            let mut queue = shared.queue.borrow_mut();
+            queue
+                .listeners
+                .retain(|listener| listener.strong_count() != 0);
+            if queue.listeners.is_empty() || queue.pending.is_empty() {
+                return None;
+            }
+        }
+        // No user code runs between the checks above and arming the flag,
+        // so no reentrant dispatch can interleave here.
+        shared.active.set(true);
         Some(Self {
-            state: state.clone(),
+            shared: shared.clone(),
         })
     }
 }
 impl Drop for DispatchGuard {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.state.try_borrow_mut() {
-            state.dispatching = false;
-        }
+        self.shared.active.set(false);
     }
 }
 
-fn drain(state: &Rc<RefCell<ActivationState>>) {
+fn drain(state: &Rc<ActivationDrain>) {
     let Some(_drain) = DispatchGuard::acquire(state) else {
         return;
     };
 
     loop {
         let next = {
-            let mut state = state.borrow_mut();
-            state
+            let mut queue = state.queue.borrow_mut();
+            queue
                 .listeners
                 .retain(|listener| listener.strong_count() != 0);
-            if state.listeners.is_empty() {
+            if queue.listeners.is_empty() {
                 return;
             }
-            state.pending.pop_front().map(|activation| {
+            queue.pending.pop_front().map(|activation| {
                 (
                     activation,
-                    state
+                    queue
                         .listeners
                         .iter()
                         .filter_map(Weak::upgrade)

@@ -585,6 +585,50 @@ fn draggable_sheet_panicking_listener_aborts_queue_and_releases_drain() {
 }
 
 #[test]
+fn draggable_sheet_panicking_first_listener_skips_remaining() {
+    use std::panic::AssertUnwindSafe;
+
+    // Like the activation drain, a panicking first listener denies the
+    // interrupted event to the second listener without replay. Unlike
+    // activations, the sheet's unwind policy discards the aborted pass's
+    // superseded payload instead of preserving it.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    let first_seen = Rc::new(RefCell::new(Vec::new()));
+    let second_seen = Rc::new(RefCell::new(Vec::new()));
+    let state_for_first = state.clone();
+    let _first = state.add_notification_listener({
+        let first_seen = first_seen.clone();
+        move |notification| {
+            first_seen.borrow_mut().push(notification.extent);
+            if approx(notification.extent, 0.7) {
+                let _ = state_for_first.set_size(0.9, true);
+                panic!("first listener failure");
+            }
+            false
+        }
+    });
+    let _second = state.add_notification_listener({
+        let second_seen = second_seen.clone();
+        move |notification| {
+            second_seen.borrow_mut().push(notification.extent);
+            false
+        }
+    });
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        state.set_size(0.7, true);
+    }));
+    assert!(outcome.is_err());
+    assert_eq!(first_seen.borrow().len(), 1);
+    assert!(approx(first_seen.borrow()[0], 0.7));
+    assert!(second_seen.borrow().is_empty());
+    // Recovery delivers only new commits; the aborted 0.9 never arrives.
+    assert!(state.set_size(0.6, true));
+    assert_eq!(second_seen.borrow().len(), 1);
+    assert!(approx(second_seen.borrow()[0], 0.6));
+    assert!(approx(state.extent().current_size, 0.6));
+}
+
+#[test]
 fn draggable_sheet_removal_during_delivery_applies_next_event() {
     // Listener A removes B's subscription mid-delivery. B still receives
     // the in-flight event (per-event snapshot) but nothing after it.

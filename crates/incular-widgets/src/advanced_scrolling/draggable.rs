@@ -7,7 +7,7 @@
 //! parent controllers exactly once.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     rc::{Rc, Weak},
     time::Duration,
@@ -24,7 +24,9 @@ use incular_scroll::{ScrollController, ScrollPhysics};
 /// A payload still describes its own commit, not the live state — a
 /// reentrant change may already have moved on by delivery time.
 /// Listeners needing the latest state read it from
-/// [`DraggableScrollableState::extent`].
+/// [`DraggableScrollableState::extent`]. A panicking listener aborts
+/// its event's remaining deliveries without replay; exactly-once holds
+/// only for failure-free delivery.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DraggableScrollableNotification {
     /// Configured minimum fractional extent.
@@ -49,31 +51,34 @@ struct NotificationState {
     next_id: u64,
     /// Committed payloads awaiting delivery, in commit order.
     pending: VecDeque<DraggableScrollableNotification>,
-    /// Whether a drain loop owns delivery. Reentrant dispatches enqueue
-    /// behind in-flight events and return; the outermost drain delivers
-    /// everything FIFO, so every listener observes commit order.
-    draining: bool,
 }
 
-/// Owns an in-progress notification drain. The guard is the sole
-/// authority releasing the drain: normal completion and unwinding both
-/// funnel through its `Drop`, so no delivery path resets the flag
-/// itself. On unwind it also discards the aborted pass's queue. The
-/// `try_borrow_mut` only fails if a borrow is live at drop time, which
-/// cannot happen from in-module code — every borrow of the shared state
-/// is scoped to queue operations and never spans a callback — so a
-/// failed release merely defers to the next guard drop.
+/// Delivery flag beside the queue. The flag lives in a `Cell`, not in
+/// the `RefCell`, so releasing a drain never needs a borrow and cannot
+/// fail. Queue borrows stay scoped to enqueue/dequeue/snapshot
+/// operations and never span a callback.
+#[derive(Default)]
+struct NotificationDrain {
+    queue: RefCell<NotificationState>,
+    active: Cell<bool>,
+}
+
+/// Owns an in-progress notification drain and is the sole authority
+/// releasing it. Normal completion and unwinding both funnel through
+/// `Drop`. The flag release is infallible (`Cell::set`); on unwind the
+/// queue is also cleared, discarding superseded sheet payloads. Queue
+/// borrows are scoped to non-callback code throughout this module, so
+/// no borrow can be live when the clear runs.
 struct DrainGuard {
-    shared: Rc<RefCell<NotificationState>>,
+    shared: Rc<NotificationDrain>,
 }
 impl DrainGuard {
     /// Takes drain ownership unless another drain holds it.
-    fn acquire(shared: &Rc<RefCell<NotificationState>>) -> Option<Self> {
-        let mut notifications = shared.borrow_mut();
-        if notifications.draining {
+    fn acquire(shared: &Rc<NotificationDrain>) -> Option<Self> {
+        if shared.active.get() {
             return None;
         }
-        notifications.draining = true;
+        shared.active.set(true);
         Some(Self {
             shared: shared.clone(),
         })
@@ -81,16 +86,14 @@ impl DrainGuard {
 }
 impl Drop for DrainGuard {
     fn drop(&mut self) {
-        if let Ok(mut notifications) = self.shared.try_borrow_mut() {
-            notifications.draining = false;
-            notifications.pending.clear();
-        }
+        self.shared.active.set(false);
+        self.shared.queue.borrow_mut().pending.clear();
     }
 }
 
 /// RAII subscription for sheet notifications.
 pub struct DraggableNotificationSubscription {
-    state: Weak<RefCell<NotificationState>>,
+    state: Weak<NotificationDrain>,
     id: u64,
 }
 
@@ -98,6 +101,7 @@ impl Drop for DraggableNotificationSubscription {
     fn drop(&mut self) {
         if let Some(state) = self.state.upgrade() {
             state
+                .queue
                 .borrow_mut()
                 .listeners
                 .retain(|(id, _)| *id != self.id);
@@ -672,7 +676,7 @@ struct SheetState {
     inner_controller: ScrollController,
     inner_physics: ScrollPhysics,
     parent_controllers: Vec<ScrollController>,
-    listeners: Rc<RefCell<NotificationState>>,
+    listeners: Rc<NotificationDrain>,
     actuator_subscription: Option<ActuatorSubscription>,
     activity: Option<SheetActivity>,
     next_activity: u64,
@@ -706,7 +710,7 @@ impl DraggableScrollableState {
             inner_controller: ScrollController::new(),
             inner_physics: ScrollPhysics::clamping(),
             parent_controllers: Vec::new(),
-            listeners: Rc::new(RefCell::new(NotificationState::default())),
+            listeners: Rc::new(NotificationDrain::default()),
             actuator_subscription: None,
             activity: None,
             next_activity: 0,
@@ -761,11 +765,11 @@ impl DraggableScrollableState {
         listener: impl Fn(DraggableScrollableNotification) -> bool + 'static,
     ) -> DraggableNotificationSubscription {
         let notifications = self.state.borrow().listeners.clone();
-        let mut state = notifications.borrow_mut();
-        let id = state.next_id;
-        state.next_id = state.next_id.wrapping_add(1);
-        state.listeners.push((id, Rc::new(listener)));
-        drop(state);
+        let mut queue = notifications.queue.borrow_mut();
+        let id = queue.next_id;
+        queue.next_id = queue.next_id.wrapping_add(1);
+        queue.listeners.push((id, Rc::new(listener)));
+        drop(queue);
         DraggableNotificationSubscription {
             state: Rc::downgrade(&notifications),
             id,
@@ -968,20 +972,20 @@ impl DraggableScrollableState {
 
     fn dispatch_notification(&self, notification: DraggableScrollableNotification) {
         let shared = self.state.borrow().listeners.clone();
-        shared.borrow_mut().pending.push_back(notification);
+        shared.queue.borrow_mut().pending.push_back(notification);
         let Some(_drain) = DrainGuard::acquire(&shared) else {
             // A drain loop owns delivery and will reach this payload.
             return;
         };
         loop {
             let (current, listeners) = {
-                let mut notifications = shared.borrow_mut();
-                let Some(current) = notifications.pending.pop_front() else {
+                let mut queue = shared.queue.borrow_mut();
+                let Some(current) = queue.pending.pop_front() else {
                     // Queue empty: return through the guard, which
                     // releases the drain.
                     return;
                 };
-                let listeners = notifications.listeners.clone();
+                let listeners = queue.listeners.clone();
                 (current, listeners)
             };
             for (_, listener) in &listeners {
