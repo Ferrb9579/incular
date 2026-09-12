@@ -16,6 +16,7 @@ mod request_channel;
 mod request_registry;
 mod restoration;
 mod route_focus;
+mod route_outlet;
 mod route_tasks;
 mod simulation;
 mod tasks;
@@ -119,6 +120,7 @@ pub use restoration::{
     RestorationStore, RestorationStoreError,
 };
 pub use route_focus::{RouteFocusOwner, RouteFocusState};
+pub use route_outlet::RouteOutlet;
 pub use route_tasks::RouteTaskBinding;
 pub use simulation::{Screenshot, Simulation, SimulationError};
 pub use tasks::{
