@@ -15,6 +15,7 @@ mod request_admission;
 mod request_channel;
 mod request_registry;
 mod restoration;
+mod route_tasks;
 mod simulation;
 mod tasks;
 mod transient_presentation;
@@ -116,6 +117,7 @@ pub use restoration::{
     Restorable, RestorationConfig, RestorationDiagnostics, RestorationHandle, RestorationMigration,
     RestorationStore, RestorationStoreError,
 };
+pub use route_tasks::RouteTaskBinding;
 pub use simulation::{Screenshot, Simulation, SimulationError};
 pub use tasks::{
     AsyncState, AsyncValue, RuntimeDiagnostics, RuntimeSpawner, RuntimeWake, Task, TaskFailure,

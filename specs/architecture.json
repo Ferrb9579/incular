@@ -270,6 +270,7 @@
         "incular-config",
         "incular-core",
         "incular-devtools-protocol",
+        "incular-navigation",
         "incular-platform",
         "incular-rendering",
         "incular-semantics",
