@@ -413,6 +413,94 @@ fn draggable_sheet_reset_inner_listener_mutation_orders_events() {
 }
 
 #[test]
+fn draggable_sheet_two_listeners_observe_fifo_commit_order() {
+    // Listener A performs one reentrant extent change; listener B records
+    // payloads with live state. Both paths must deliver commit order to
+    // every listener: the outer payload first even though the live state
+    // already moved on, then the reentrant payload.
+    for reset_path in [false, true] {
+        let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+        assert!(state.set_size(0.8, true));
+        let state_for_a = state.clone();
+        let _a = state.add_notification_listener(move |notification| {
+            if notification.extent < 0.9 {
+                let _ = state_for_a.set_size(0.9, true);
+            }
+            false
+        });
+        let recorded = Rc::new(RefCell::new(Vec::new()));
+        let recorded_for_b = recorded.clone();
+        let state_for_b = state.clone();
+        let _b = state.add_notification_listener(move |notification| {
+            recorded_for_b
+                .borrow_mut()
+                .push((notification.extent, state_for_b.extent().current_size));
+            false
+        });
+        let outer = if reset_path {
+            assert!(state.reset());
+            0.5
+        } else {
+            assert!(state.set_size(0.7, true));
+            0.7
+        };
+        let events = recorded.borrow();
+        assert_eq!(events.len(), 2, "reset_path={reset_path}");
+        // Arrival is FIFO in commit order for B as well: the outer payload
+        // first (live state already reentrant), then the reentrant one.
+        assert!(approx(events[0].0, outer));
+        assert!(approx(events[0].1, 0.9));
+        assert!(approx(events[1].0, 0.9));
+        assert!(approx(events[1].1, 0.9));
+        assert!(approx(state.extent().current_size, 0.9));
+    }
+}
+
+#[test]
+fn draggable_sheet_reset_listener_inner_move_is_overwritten_by_pending_restore() {
+    // Pending-work rule, sheet-notify side: only the inner restore is
+    // still pending when sheet listeners run, so a sheet listener that
+    // moves the inner position is overwritten by it.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    state.set_inner_extents(1_000.0, 200.0);
+    assert!(state.set_size(0.8, true));
+    assert!(state.inner_controller().jump_to(50.0));
+    let state_for_listener = state.clone();
+    let _subscription = state.add_notification_listener(move |_| {
+        assert!(state_for_listener.inner_controller().jump_to(100.0));
+        false
+    });
+    assert!(state.reset());
+    assert!(approx(state.extent().current_size, 0.5));
+    assert_eq!(
+        state.inner_controller().offset(),
+        0.0,
+        "the pending inner restore overwrites sheet-listener moves"
+    );
+}
+
+#[test]
+fn draggable_sheet_inner_listener_inner_move_survives() {
+    // Pending-work rule, inner-notify side: nothing is pending when inner
+    // listeners run, so an inner listener that repositions survives. To
+    // reposition after a reset, listen on the inner channel.
+    let (state, _) = text_sheet("v1").extents(0.25, 1.0, 0.5).mount();
+    state.set_inner_extents(1_000.0, 200.0);
+    assert!(state.set_size(0.8, true));
+    assert!(state.inner_controller().jump_to(50.0));
+    let state_for_listener = state.clone();
+    let _subscription = state
+        .inner_controller()
+        .add_notification_listener(move |_| {
+            let _ = state_for_listener.inner_controller().jump_to(100.0);
+            false
+        });
+    assert!(state.reset());
+    assert!(approx(state.extent().current_size, 0.5));
+    assert_eq!(state.inner_controller().offset(), 100.0);
+}
+
+#[test]
 fn draggable_sheet_notifications_carry_full_state_and_unsubscribe() {
     let (state, _) = text_sheet("v1")
         .extents(0.25, 1.0, 0.5)

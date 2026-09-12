@@ -16,11 +16,12 @@ use incular_scroll::{ScrollController, ScrollPhysics};
 
 /// A notification emitted whenever a sheet extent changes.
 ///
-/// Notifications are historical committed events dispatched in commit
-/// order, like scroll notifications: each payload describes the change
-/// that just committed, and a later payload always supersedes an
-/// earlier one. Payloads are never delayed past newer events, so
-/// applying them in arrival order reconstructs the final state.
+/// Notifications are historical committed events delivered FIFO in
+/// commit order to every listener through a sheet-owned drain: nested
+/// commits enqueue behind in-flight events, so a later payload always
+/// supersedes an earlier one and none arrives delayed past newer state.
+/// A payload still describes its own commit, not the live state — a
+/// reentrant change may already have moved on by delivery time.
 /// Listeners needing the latest state read it from
 /// [`DraggableScrollableState::extent`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +46,28 @@ type ExtentListener = Rc<dyn Fn(DraggableScrollableNotification) -> bool>;
 struct NotificationState {
     listeners: Vec<(u64, ExtentListener)>,
     next_id: u64,
+    /// Committed payloads awaiting delivery, in commit order.
+    pending: Vec<DraggableScrollableNotification>,
+    /// Whether a drain loop owns delivery. Reentrant dispatches enqueue
+    /// behind in-flight events and return; the outermost drain delivers
+    /// everything FIFO, so every listener observes commit order.
+    draining: bool,
+}
+
+/// Releases a stuck drain if a listener panics mid-delivery, so later
+/// dispatches recover instead of blackholing. Payloads queued by the
+/// aborted pass are dropped with it; borrows are never held across
+/// callbacks, so the release always succeeds.
+struct DrainGuard {
+    shared: Rc<RefCell<NotificationState>>,
+}
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        if let Ok(mut notifications) = self.shared.try_borrow_mut() {
+            notifications.draining = false;
+            notifications.pending.clear();
+        }
+    }
 }
 
 /// RAII subscription for sheet notifications.
@@ -869,12 +892,16 @@ impl DraggableScrollableState {
     ///
     /// Notification ordering: the sheet commits, clears flags, and
     /// notifies before the inner position restores, reusing the
-    /// notification returned by the commit. The reset payload therefore
-    /// precedes any reentrant events in commit order and can never arrive
-    /// delayed past newer state. Inner listeners observe the
+    /// notification returned by the commit. Inner listeners observe the
     /// already-committed sheet. No sheet-extent state mutates after
     /// callbacks begin, so reentrant drags survive and nested resets see
     /// committed state.
+    ///
+    /// Pending-work rule: when sheet listeners run, only the inner
+    /// restore is still pending — a sheet listener that moves the inner
+    /// position is overwritten by it, while sheet-extent changes
+    /// survive. When inner listeners run, nothing is pending, so every
+    /// reentrant change (including inner repositioning) survives.
     pub fn reset(&self) -> bool {
         // The report covers every observable reset mutates: a cancelled
         // activity, a moved inner position, cleared drag/change flags, and
@@ -922,10 +949,33 @@ impl DraggableScrollableState {
     }
 
     fn dispatch_notification(&self, notification: DraggableScrollableNotification) {
-        let listeners = self.state.borrow().listeners.borrow().listeners.clone();
-        for (_, listener) in listeners {
-            if listener(notification) {
-                break;
+        let shared = self.state.borrow().listeners.clone();
+        {
+            let mut notifications = shared.borrow_mut();
+            notifications.pending.push(notification);
+            if notifications.draining {
+                return;
+            }
+            notifications.draining = true;
+        }
+        let _guard = DrainGuard {
+            shared: shared.clone(),
+        };
+        loop {
+            let (current, listeners) = {
+                let mut notifications = shared.borrow_mut();
+                if notifications.pending.is_empty() {
+                    notifications.draining = false;
+                    return;
+                }
+                let current = notifications.pending.remove(0);
+                let listeners = notifications.listeners.clone();
+                (current, listeners)
+            };
+            for (_, listener) in &listeners {
+                if listener(current) {
+                    break;
+                }
             }
         }
     }

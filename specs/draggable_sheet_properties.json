@@ -471,7 +471,7 @@
       "default": "required, starting and reset fraction",
       "validation": "mount starts here; reset restores here with pristine flags",
       "comparison": {
-        "prose": "Mount and reset share the initial value; replacement preserves the live size instead of re-applying it. Reset commits, clears flags, and notifies with the commit's own payload before the inner position restores, so the reset event precedes any reentrant events in commit order and never arrives delayed past newer state (inner listeners still observe the committed sheet). No sheet-extent state mutates after callbacks begin, so reentrant drags survive and nested resets see committed state.",
+        "prose": "Mount and reset share the initial value; replacement preserves the live size instead of re-applying it. Delivery is FIFO in commit order to every listener through a sheet-owned drain: nested commits enqueue behind in-flight events, so the reset event precedes any reentrant events and never arrives delayed past newer state (inner listeners still observe the committed sheet). Payloads describe their own commit; listeners read extent() for live state. At sheet-notify time only the inner restore is still pending, so sheet-listener inner moves are overwritten while sheet-extent changes survive; at inner-notify time nothing is pending. No sheet-extent state mutates after callbacks begin, so nested resets see committed state.",
         "refs": [
           {
             "path": "crates/incular-widgets/src/advanced_scrolling/draggable.rs",
@@ -515,6 +515,18 @@
         {
           "path": "crates/incular-widgets/tests/draggable_sheet.rs",
           "name": "draggable_sheet_reset_inner_listener_mutation_orders_events"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_two_listeners_observe_fifo_commit_order"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_reset_listener_inner_move_is_overwritten_by_pending_restore"
+        },
+        {
+          "path": "crates/incular-widgets/tests/draggable_sheet.rs",
+          "name": "draggable_sheet_inner_listener_inner_move_survives"
         }
       ],
       "status": "implemented"
