@@ -208,7 +208,7 @@ fn deepest_active_nested_dispatcher_handles_back_once() {
     child_navigator.push_page(Page::new("detail", page()));
     let root = BackDispatcher::new(root_navigator.clone());
     let child = BackDispatcher::new(child_navigator.clone());
-    root.attach_child(&child);
+    root.attach_child(&child).unwrap();
     root.set_active_child(Some(&child));
 
     let first = root.dispatch_back();
@@ -226,6 +226,123 @@ fn deepest_active_nested_dispatcher_handles_back_once() {
     assert!(!third.handled);
     assert_eq!(third.depth, 0);
 }
+fn back_navigator() -> Navigator {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("base", page()));
+    navigator.push_page(Page::new("top", page()));
+    navigator
+}
+
+#[test]
+fn attach_child_rejects_self_attachment_unchanged() {
+    let root = BackDispatcher::new(back_navigator());
+    let child = BackDispatcher::new(back_navigator());
+    root.attach_child(&child).unwrap();
+    root.set_active_child(Some(&child));
+    assert_eq!(
+        root.attach_child(&root),
+        Err(BackAttachError::SelfAttachment)
+    );
+    // Rejection leaves the topology untouched: dispatch still routes to
+    // the attached active child.
+    let report = root.dispatch_back();
+    assert!(report.handled);
+    assert_eq!(report.depth, 1);
+}
+
+#[test]
+fn attach_child_rejects_two_node_and_longer_cycles() {
+    let first = BackDispatcher::new(back_navigator());
+    let second = BackDispatcher::new(back_navigator());
+    first.attach_child(&second).unwrap();
+    assert_eq!(second.attach_child(&first), Err(BackAttachError::Cycle));
+    // The rejected parent still dispatches its own stack at depth zero.
+    let report = second.dispatch_back();
+    assert!(report.handled);
+    assert_eq!(report.depth, 0);
+
+    let third = BackDispatcher::new(back_navigator());
+    second.attach_child(&third).unwrap();
+    assert_eq!(third.attach_child(&first), Err(BackAttachError::Cycle));
+    // A diamond is acyclic and stays permitted.
+    assert!(first.attach_child(&third).is_ok());
+    first.set_active_child(Some(&second));
+    second.set_active_child(Some(&third));
+    let report = first.dispatch_back();
+    assert!(report.handled);
+    assert_eq!(report.depth, 2);
+}
+
+#[test]
+fn duplicate_attachment_is_idempotent_and_detachable() {
+    let root = BackDispatcher::new(back_navigator());
+    let child = BackDispatcher::new(back_navigator());
+    assert!(root.attach_child(&child).is_ok());
+    assert!(root.attach_child(&child).is_ok());
+    root.set_active_child(Some(&child));
+    let report = root.dispatch_back();
+    assert_eq!(report.depth, 1);
+    // One detach removes the single stored edge.
+    root.detach_child(&child);
+    let report = root.dispatch_back();
+    assert_eq!(report.depth, 0);
+    // Reattachment after detachment dispatches again.
+    child.navigator().push_page(Page::new("top", page()));
+    root.attach_child(&child).unwrap();
+    root.set_active_child(Some(&child));
+    let report = root.dispatch_back();
+    assert_eq!(report.depth, 1);
+}
+
+#[test]
+fn dead_children_do_not_break_attach_or_dispatch() {
+    let root = BackDispatcher::new(back_navigator());
+    {
+        let ephemeral = BackDispatcher::new(back_navigator());
+        root.attach_child(&ephemeral).unwrap();
+    }
+    // The dead weak entry is skipped: attaching and dispatching through a
+    // live child still work.
+    let live = BackDispatcher::new(back_navigator());
+    root.attach_child(&live).unwrap();
+    root.set_active_child(Some(&live));
+    let report = root.dispatch_back();
+    assert!(report.handled);
+    assert_eq!(report.depth, 1);
+}
+
+#[test]
+fn deep_active_chain_dispatches_once_at_depth() {
+    const DEPTH: usize = 50;
+    let dispatchers: Vec<BackDispatcher> = (0..=DEPTH)
+        .map(|_| BackDispatcher::new(back_navigator()))
+        .collect();
+    for pair in dispatchers.windows(2) {
+        pair[0].attach_child(&pair[1]).unwrap();
+        pair[0].set_active_child(Some(&pair[1]));
+    }
+    // An acyclic chain always terminates, visiting each level once.
+    let report = dispatchers[0].dispatch_back();
+    assert!(report.handled);
+    assert!(!report.blocked);
+    assert_eq!(report.depth, DEPTH);
+}
+
+#[test]
+fn inactive_branch_never_handles_back() {
+    let root = BackDispatcher::new(back_navigator());
+    let active = BackDispatcher::new(back_navigator());
+    let idle = BackDispatcher::new(back_navigator());
+    root.attach_child(&active).unwrap();
+    root.attach_child(&idle).unwrap();
+    root.set_active_child(Some(&active));
+    let report = root.dispatch_back();
+    assert_eq!(report.depth, 1);
+    assert_eq!(active.navigator().current().unwrap().name, "base");
+    assert_eq!(idle.navigator().current().unwrap().name, "top");
+    assert_eq!(root.navigator().current().unwrap().name, "top");
+}
+
 #[test]
 fn declarative_pages_preserve_keyed_route_identity() {
     let home = PageKey::new("home").unwrap();

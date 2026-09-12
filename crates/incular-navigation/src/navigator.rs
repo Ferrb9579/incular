@@ -716,13 +716,40 @@ impl BackDispatchReport {
     }
 }
 
+/// Why a child attachment was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackAttachError {
+    /// A dispatcher cannot parent itself.
+    SelfAttachment,
+    /// The child already reaches the parent, so the edge would close a
+    /// directed cycle and back dispatch could recurse through it forever.
+    Cycle,
+}
+impl fmt::Display for BackAttachError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SelfAttachment => {
+                formatter.write_str("a back dispatcher cannot attach to itself")
+            }
+            Self::Cycle => formatter.write_str(
+                "attaching this child would cycle back dispatch: it already reaches its parent",
+            ),
+        }
+    }
+}
+impl std::error::Error for BackAttachError {}
+
 /// Coordinates one navigator and its nested navigator descendants for a
 /// platform back action.
 ///
-/// Each dispatcher owns no routes itself: a child navigator remains entirely
-/// independent. Applications attach children where their route hierarchy
-/// creates them, then mark the focused child active. Back travels through that
-/// active branch first and only reaches an ancestor when the child cannot pop.
+/// The attachment topology is an acyclic graph: a child may be shared,
+/// but no directed cycle may exist. Each dispatcher owns no routes
+/// itself: a child navigator remains entirely independent. Applications
+/// attach children where their route hierarchy creates them, then mark
+/// the focused child active. Back travels through that active branch
+/// first and only reaches an ancestor when the child cannot pop. Because
+/// every active edge follows an attachment edge, an acyclic graph makes
+/// dispatch descend strictly and always terminate.
 #[derive(Clone)]
 pub struct BackDispatcher {
     state: Rc<RefCell<BackDispatcherState>>,
@@ -746,11 +773,18 @@ impl BackDispatcher {
         self.state.borrow().navigator.clone()
     }
 
-    /// Attaches a nested navigator dispatcher. Reattaching the same child is
-    /// harmless; dispatching remains deterministic in attachment order.
-    pub fn attach_child(&self, child: &BackDispatcher) {
+    /// Attaches a nested navigator dispatcher.
+    ///
+    /// Reattaching the same child is an idempotent no-op. Attachments
+    /// that would cycle back dispatch — self-attachment, or a child that
+    /// already reaches this dispatcher — are rejected before any
+    /// mutation, leaving children and the active selection unchanged.
+    pub fn attach_child(&self, child: &BackDispatcher) -> Result<(), BackAttachError> {
         if Rc::ptr_eq(&self.state, &child.state) {
-            return;
+            return Err(BackAttachError::SelfAttachment);
+        }
+        if child.reaches(self) {
+            return Err(BackAttachError::Cycle);
         }
         let mut state = self.state.borrow_mut();
         state
@@ -763,6 +797,30 @@ impl BackDispatcher {
         {
             state.children.push(Rc::downgrade(&child.state));
         }
+        Ok(())
+    }
+
+    /// Whether `target` is reachable from this dispatcher by following
+    /// attachment edges. Dead entries are skipped, never traversed.
+    fn reaches(&self, target: &BackDispatcher) -> bool {
+        let mut visited: HashSet<*const RefCell<BackDispatcherState>> = HashSet::new();
+        let mut stack = vec![self.state.clone()];
+        while let Some(node) = stack.pop() {
+            if Rc::ptr_eq(&node, &target.state) {
+                return true;
+            }
+            if !visited.insert(Rc::as_ptr(&node)) {
+                continue;
+            }
+            let children: Vec<Rc<RefCell<BackDispatcherState>>> = node
+                .borrow()
+                .children
+                .iter()
+                .filter_map(std::rc::Weak::upgrade)
+                .collect();
+            stack.extend(children);
+        }
+        false
     }
 
     /// Marks an attached child as the focused branch for subsequent back

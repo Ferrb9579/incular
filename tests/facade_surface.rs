@@ -216,7 +216,7 @@ fn facade_exposes_nested_navigation_contracts() {
     ));
     let root = BackDispatcher::new(root_navigation);
     let child = BackDispatcher::new(child_navigation);
-    root.attach_child(&child);
+    root.attach_child(&child).unwrap();
     root.set_active_child(Some(&child));
     assert_eq!(root.dispatch_back().depth, 1);
     let observer = root.navigator().observe(|event| {

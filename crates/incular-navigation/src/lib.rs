@@ -9,8 +9,8 @@ mod registry;
 mod route_data;
 
 pub use navigator::{
-    BackDispatchReport, BackDispatcher, DuplicatePageKey, NavigationEvent, Navigator,
-    NavigatorObserver, PopDecision, PopResult,
+    BackAttachError, BackDispatchReport, BackDispatcher, DuplicatePageKey, NavigationEvent,
+    Navigator, NavigatorObserver, PopDecision, PopResult,
 };
 pub use presentation::{
     BottomSheet, BottomSheetBuilder, Dialog, DialogBuilder, ModalBarrier, ModalBarrierBuilder,
