@@ -1927,7 +1927,10 @@ impl Runtime {
     pub fn diagnostics(&self) -> Diagnostics {
         self.tree.diagnostics()
     }
-    fn rebuild_from_builder(&mut self, id: ElementId) -> Result<(), TreeError> {
+    /// Rebuilds one registered builder outside the frame drain. Route
+    /// outlets use this to refresh mounted content deterministically
+    /// before framing, rather than only when reactive dependencies fire.
+    pub(crate) fn rebuild_from_builder(&mut self, id: ElementId) -> Result<(), TreeError> {
         self.reactive.borrow_mut().refresh(id);
         let widget = {
             let _build_scope = BuildScopeGuard::enter(BuildScope {

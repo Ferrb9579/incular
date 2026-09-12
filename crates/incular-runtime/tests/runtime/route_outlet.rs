@@ -8,7 +8,7 @@ use incular_navigation::{
     ModalBarrier, Navigator, OverlayEntry, Page, PageKey, Route, RoutePresentation, RouteTransition,
 };
 use incular_widgets::{
-    Column, Focus, FocusNode, GestureDetector, SizedBox,
+    Column, Focus, FocusNode, GestureDetector, SizedBox, Stack,
     internal::{Key, OpacityController, TranslationController},
 };
 
@@ -759,6 +759,182 @@ fn outlet_deferred_enablement_converges_without_retries() {
     node_a.set_can_request_focus(true);
     present(&mut harness);
     assert!(node_a.has_focus());
+}
+
+/// Hosts an inner outlet inside outer route A's content: the inner
+/// outlet mounts in a keyed slot of A's subtree, so inner focus sits
+/// strictly below the outer route tag.
+type NestedSetup = (
+    Navigator,
+    Navigator,
+    Runtime,
+    Rc<RefCell<RouteOutlet>>,
+    Rc<RefCell<RouteOutlet>>,
+    FocusNode,
+    FocusNode,
+);
+
+fn nested_inside_setup() -> NestedSetup {
+    let outer = Navigator::new();
+    let inner = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    // The nested outlet mounts through a stateful builder slot: the
+    // builder travels with the descriptor (same kind and key every outer
+    // rebuild, so no remount and no orphaned registration), while the
+    // nested revision handle refreshes content on nested navigation. No
+    // nested attach is needed on top: present frames drive reconciliation,
+    // and the slot builder drives mounting.
+    let inner_revision = outlet_inner.borrow().revision();
+    let outlet_inner_for_slot = outlet_inner.clone();
+    outer.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            Widget::stateful_layout_builder(inner_revision, move |_, _| {
+                outlet_inner_for_slot.borrow().widget()
+            })
+            .with_key(5001_u64),
+        ]),
+    ));
+    let root = runtime.tree().root().expect("root");
+    {
+        let outlet_outer = outlet_outer.clone();
+        runtime
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_outer.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    outlet_outer
+        .borrow_mut()
+        .attach_nested(&outlet_inner.borrow());
+    (
+        outer,
+        inner,
+        runtime,
+        outlet_outer,
+        outlet_inner,
+        node_a,
+        node_b,
+    )
+}
+
+fn present_both(
+    runtime: &mut Runtime,
+    outlet_outer: &Rc<RefCell<RouteOutlet>>,
+    outlet_inner: &Rc<RefCell<RouteOutlet>>,
+) {
+    RouteOutlet::present_frame(
+        outlet_outer,
+        runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present outer");
+    RouteOutlet::present_frame(
+        outlet_inner,
+        runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present inner");
+}
+
+#[test]
+fn nested_inner_focus_not_saved_by_outer() {
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    let node_c = FocusNode::new();
+    inner.push_page(focus_page("b", &node_b));
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    tab_until(&mut runtime, &node_b);
+    // Outer transition while focus sits inside the nested outlet: the
+    // outer save must record nothing (not the inner element), so the
+    // return leaves focus alone instead of yanking it back.
+    outer.push_page(Page::new(
+        "ob",
+        focus_widget(&node_c, Widget::box_(Size::new(40., 40.), BLUE)),
+    ));
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    eprintln!(
+        "PUSHED slot={:?} a={} b={} c={}",
+        runtime.focused_element(),
+        node_a.has_focus(),
+        node_b.has_focus(),
+        node_c.has_focus()
+    );
+    tab_until(&mut runtime, &node_c);
+    eprintln!(
+        "TABBED slot={:?} a={} b={} c={}",
+        runtime.focused_element(),
+        node_a.has_focus(),
+        node_b.has_focus(),
+        node_c.has_focus()
+    );
+    outer.pop();
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    // The return leaves focus alone instead of yanking the inner element
+    // back: the slot is empty (node flags for unmounted elements go stale
+    // through the frame drain, so the slot is authoritative here), outer A
+    // was never focused, and the inner route stays mounted and alive.
+    assert_eq!(runtime.focused_element(), None);
+    assert!(!node_a.has_focus());
+    assert!(inner.current().is_some());
+    let _ = (node_b, node_c);
+}
+
+#[test]
+fn nested_removal_reactivation_preserves_scope() {
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, node_a, node_b) =
+        nested_inside_setup();
+    inner.push_page(focus_page("b", &node_b));
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    tab_until(&mut runtime, &node_a);
+    let oa = outer.current().expect("outer route").id;
+    let ib = inner.current().expect("inner route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(oa)
+        .expect("outer bound");
+    let inner_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ib)
+        .expect("inner bound");
+    // Inner removal cancels only the inner scope; outer focus and scope
+    // survive it.
+    inner.pop();
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    assert!(inner_scope.is_cancelled());
+    assert!(!outer_scope.is_cancelled());
+    assert!(runtime.focused_element().is_some());
+    assert!(node_a.has_focus());
+    // Outer deactivation records its own focus; reactivation restores it
+    // while the inner outlet stays empty and independent.
+    tab_until(&mut runtime, &node_a);
+    let node_c = FocusNode::new();
+    outer.push_page(Page::new(
+        "ob",
+        focus_widget(&node_c, Widget::box_(Size::new(40., 40.), BLUE)),
+    ));
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    tab_until(&mut runtime, &node_c);
+    outer.pop();
+    present_both(&mut runtime, &outlet_outer, &outlet_inner);
+    assert!(node_a.has_focus());
+    assert!(!outer_scope.is_cancelled());
+    assert!(inner_scope.is_cancelled());
 }
 
 #[test]
