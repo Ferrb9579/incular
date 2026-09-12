@@ -1,7 +1,10 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: complete on W4's exit criteria (evidence below; residuals recorded,
-not claimed). Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
+Status: complete — reopened for production-integration packages A–D, then
+re-closed: the outlet drives focus/tasks automatically, the panic policy is
+pinned, and save ownership is validated. Modal focus containment stays
+explicitly separate future work (removing `focus_trap` implemented
+nothing). Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
 `RouteEntry` collection replaces the parallel routes/restorable_routes vectors,
@@ -31,13 +34,13 @@ cycles/duplicates/dead children/deep chains, sheet FIFO drain with panic
 recovery, activation queued-before-install/replacement/closure/reentrancy/
 equal-payload delivery).
 
-Remaining (residual future work, not exit debt): automatic driving of
-`RouteFocusState` by the mount outlet (no Navigator→tree mount point
-exists, so no route content mounts and no attribution exists in-repo —
-saves/restores are host-driven through the oracle seam); modal focus
-containment (no traversal/dispatch scope clamp exists; `focus_trap`
-removed rather than kept as a no-op); further runtime-owner extractions
-only with a demonstrated defect.
+Remaining (residual future work, not exit debt): modal focus containment
+(no traversal/dispatch scope clamp exists; `focus_trap` removed rather
+than kept as a no-op, barrier blocking unchanged); further runtime-owner
+extractions only with a demonstrated defect. The mount-outlet residual is
+closed: `RouteOutlet` mounts navigator content with stable per-route key
+tags and derives ownership from the mounted tree, so ordinary navigation
+needs no application oracle.
 
 Deep-link normal-operation contract closed: queued-before-install,
 replacement, disposal, reentrancy, identical URLs, unmapped URLs, and
@@ -149,6 +152,46 @@ reentrancy regressions); no duplicated lifecycle engine (one router
 transaction, one activation queue, one scheduler; lifetimes are neutral
 handles and both bindings reuse existing owners). Residuals above are
 future product work outside these criteria.
+
+Production integration evidence (reopen → re-close):
+- Focus saves validate ownership: `save_focused` records only
+  oracle-owned focus, so retained records never lie. Restores validate
+  eligibility through the tree's own `focusable_elements` rule —
+  hidden-but-mounted targets restore by framework design
+  (`Visibility`/`Offstage` retain focus), while `IndexedStack`-inactive,
+  disabled, detached, and stale-generation targets fall back. Fallback
+  clears only orphaned focus (dead, unfocusable, or removed-owner
+  targets) and never steals mounted-owned or unattributable focus;
+  removed routes restore nothing even with leftover records.
+- `RouteOutlet` (runtime) hosts one navigator as a key-tagged
+  `IndexedStack` with the active route indexed: post-frame drive saves
+  deactivated routes, restores activated ones after layout, forgets and
+  prunes removals (records, bindings, tags), and binds task scopes for
+  mounted routes — no application oracle or manual drive calls, nested
+  outlets isolated by key namespace, teardown dropping everything per
+  documented policy. Ownership derives from mounted key tags via public
+  tree queries (`element_with_key`, `parent`/`children`).
+- Panic policy: terminal marks precede all delivery, so every removed
+  route is terminal even if a notification aborts. Every effect callback
+  (scope cleanups, lifetime endings, observers) runs isolated with the
+  first panic resuming afterwards — swallowed only while already
+  unwinding, so disposal during an unwind cannot abort the process
+  (previously `STATUS_STACK_BUFFER_OVERRUN`). Mandatory cancellation is
+  attempted exactly once per `end` regardless of sibling failures;
+  `TaskScope::cancel` itself runs no application code. No general event
+  framework was added.
+
+Integration architecture review: navigation owns route identity and
+lifetime (`RouteId`, `PageKey`, `RouteLifetime`, all removal paths; no
+runtime/task/focus/widget-tree types inside); runtime owns task/focus
+integration (`RouteTaskBinding`, `RouteFocusState`, `RouteOutlet`; the
+runtime→navigation edge is allow-listed and one-way); widgets owns
+mounted element eligibility (existence, `focusable_elements`, tree
+queries — runtime only calls them); event `Route` snapshots carry no
+lifetime handle; supported usage runs through the outlet drive contract
+(`widget` in the tree, rebuild after navigation, `after_frame` after
+presenting frames), so cleanup needs no undocumented maintenance
+sequence — manual helpers stay as documented lower-level coverage.
 
 Runtime ownership inventory (`Application` fields → logical owner; the
 common request channel, scheduler, and teardown sequence stay put):

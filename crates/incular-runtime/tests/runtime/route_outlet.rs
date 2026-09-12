@@ -265,6 +265,61 @@ fn outlet_removal_cancels_bound_tasks() {
 }
 
 #[test]
+fn outlet_integrates_focus_tasks_and_lifetimes_together() {
+    // One supported production flow: a covered route keeps its focus
+    // record and its tasks; the way back restores focus, cancels the
+    // removed route's scope (discarding its late completion), and ends
+    // both lifetimes — all driven by navigation plus frames alone.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ra = navigator.current().expect("route A").id;
+    let lifetime_a = navigator.lifetime_of(ra).expect("A mounted");
+    let scope_a = harness
+        .outlet
+        .borrow()
+        .route_task_scope(ra)
+        .expect("A bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness.runtime.spawner().spawn_into_in(
+        &scope_a,
+        async move {
+            std::future::pending::<()>().await;
+        },
+        move |_, _| {
+            completed_for_completion.store(true, Ordering::Release);
+        },
+    );
+    navigator.push_page(focus_page("b", &node_b));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    let rb = navigator.current().expect("route B").id;
+    let lifetime_b = navigator.lifetime_of(rb).expect("B mounted");
+    // Covered, not removed: A's scope stays live with its pending task.
+    assert!(!scope_a.is_cancelled());
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+    assert!(lifetime_a.is_live());
+    assert!(!lifetime_b.is_live());
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), None);
+    assert!(!lifetime_a.is_live());
+    assert!(scope_a.is_cancelled());
+    wait_for_wake(&wake);
+    harness.runtime.process_runtime_work();
+    assert!(!completed.load(Ordering::Acquire));
+}
+
+#[test]
 fn outlet_teardown_releases_focus_and_tasks() {
     // The builder holds the outlet weakly so dropping it models window
     // teardown: content unmounts on the next frame, bindings detach per

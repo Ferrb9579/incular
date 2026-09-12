@@ -2698,11 +2698,16 @@ blocking unchanged). Item 5 (runtime owners): field-to-owner inventory in
 plan-19, `SimulationWaiters` extracted, activation delivery audited
 (service queue as the only queue, exactly-once per live listener, no
 dedup, panic-safe drain), restore/rebuild failures explicit. Residual
-future work, not W4 debt: automatic driving of `RouteFocusState` by the
-mount outlet (no Navigator→tree mount point exists yet, so saves/restores
-are host-driven through the documented seam), modal focus containment
-(no scope clamp exists), and further runtime-owner extractions only with
-a demonstrated defect. See plan-19 for the itemized evidence.
+future work, not W4 debt: modal focus containment (no scope clamp exists;
+kept explicitly separate — removing `focus_trap` implemented nothing),
+and further runtime-owner extractions only with a demonstrated defect.
+The mount-outlet residual is closed by `RouteOutlet`: key-tagged mounting
+with post-frame save/restore/forget/bind automation, proven without
+manual drive calls (including a combined focus+tasks+lifetimes flow),
+plus a pinned panic policy (terminal-first marks, isolated delivery,
+resume-after-cleanup). W4 was reopened for this production integration
+and re-closes on it: supported usage has an actual production path and
+the original exit criteria above are established. See plan-19 for the itemized evidence.
 
 ## W5 — Scroll and animation state transitions
 
