@@ -42,6 +42,15 @@ impl AnimatedModalBarrier {
         Self::with_color(constant_color_animation(Color::rgba(0, 0, 0, 128)))
     }
 
+    /// Creates a barrier with a constant color (no animated transition).
+    ///
+    /// Route outlets use this to veil modal content without owning an
+    /// animation controller per route.
+    #[must_use]
+    pub fn with_flat_color(color: Color) -> Self {
+        Self::with_color(constant_color_animation(color))
+    }
+
     /// Creates a barrier driven by a typed color animation.
     #[must_use]
     pub fn with_color(color: Animation<Color>) -> Self {

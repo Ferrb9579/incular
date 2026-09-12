@@ -103,6 +103,38 @@ impl RoutePresentation {
         matches!(self, Self::Page { opaque: true, .. })
     }
 
+    /// Whether a covered route keeps its mounted content. Pages and popups
+    /// follow their flag; modals always retain (a covered dialog keeps its
+    /// state); overlay entries are portal-managed, so outlet retention does
+    /// not apply to them.
+    #[must_use]
+    pub const fn maintains_state(&self) -> bool {
+        match self {
+            Self::Page { maintain_state, .. } | Self::Popup { maintain_state, .. } => {
+                *maintain_state
+            }
+            Self::Modal { .. } => true,
+            Self::Overlay { .. } => false,
+        }
+    }
+
+    /// The veil for content below this route, if it declares one.
+    #[must_use]
+    pub fn barrier(&self) -> Option<&ModalBarrier> {
+        match self {
+            Self::Popup { barrier, .. } => barrier.as_ref(),
+            Self::Modal { barrier } => Some(barrier),
+            Self::Page { .. } | Self::Overlay { .. } => None,
+        }
+    }
+
+    /// Whether this route's content is portal-managed overlay entries
+    /// rather than outlet-mounted stack content.
+    #[must_use]
+    pub const fn is_overlay(&self) -> bool {
+        matches!(self, Self::Overlay { .. })
+    }
+
     #[must_use]
     pub const fn blocks_background_input(&self) -> bool {
         matches!(self, Self::Modal { .. })

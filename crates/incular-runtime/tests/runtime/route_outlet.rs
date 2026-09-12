@@ -4,8 +4,14 @@
 //! frames; tests assert the observable agreement.
 
 use super::*;
-use incular_navigation::{Navigator, NavigatorObserver, Page, PageKey};
-use incular_widgets::{Column, Focus, FocusNode};
+use incular_navigation::{
+    ModalBarrier, Navigator, NavigatorObserver, OverlayEntry, Page, PageKey, Route,
+    RoutePresentation, RouteTransition,
+};
+use incular_widgets::{
+    Column, Focus, FocusNode, GestureDetector, SizedBox,
+    internal::{Key, OpacityController, TranslationController},
+};
 
 fn focus_child(node: &FocusNode) -> Widget {
     Focus::new(Widget::box_(Size::new(40., 40.), Color::WHITE))
@@ -17,6 +23,10 @@ fn focus_page(name: &str, node: &FocusNode) -> Page {
     Page::new(name, focus_child(node))
 }
 
+fn focus_widget(node: &FocusNode, child: Widget) -> Widget {
+    Focus::new(child).node(node.clone()).into()
+}
+
 fn plain_page(name: &str) -> Page {
     Page::new(name, Widget::box_(Size::new(40., 40.), Color::WHITE))
 }
@@ -25,6 +35,50 @@ fn frame(runtime: &mut Runtime) {
     runtime
         .run_frame(Constraints::tight(Size::new(200., 200.)))
         .expect("frame");
+}
+
+const RED: Color = Color::rgba(255, 0, 0, 255);
+const GREEN: Color = Color::rgba(0, 255, 0, 255);
+const BLUE: Color = Color::rgba(0, 0, 255, 255);
+
+fn repaint(harness: &mut OutletHarness) -> DisplayList {
+    harness
+        .runtime
+        .run_frame(Constraints::tight(Size::new(200., 200.)))
+        .expect("repaint")
+        .0
+}
+
+fn paints(commands: &[PaintCommand], color: Color) -> bool {
+    commands
+        .iter()
+        .any(|command| matches!(command, PaintCommand::Rect { color: c, .. } if *c == color))
+}
+
+fn tap(harness: &mut OutletHarness, x: f32, y: f32) {
+    for phase in [PointerPhase::Down, PointerPhase::Up] {
+        let _ = harness.runtime.handle_input(InputEvent::Pointer {
+            phase,
+            position: Offset::new(x, y),
+        });
+    }
+}
+
+fn tappable_box(color: Color, size: f32, taps: &Rc<Cell<u32>>) -> Widget {
+    tappable_rect(color, size, size, taps)
+}
+
+fn tappable_rect(color: Color, width: f32, height: f32, taps: &Rc<Cell<u32>>) -> Widget {
+    let taps = taps.clone();
+    GestureDetector::new(Widget::box_(Size::new(width, height), color))
+        .on_tap(move || {
+            taps.set(taps.get().wrapping_add(1));
+        })
+        .into()
+}
+
+fn labeled(widget: Widget, label: &str) -> Widget {
+    widget.semantics(ExplicitSemantics::new(SemanticRole::GenericContainer).label(label.to_owned()))
 }
 
 fn tab_until(runtime: &mut Runtime, node: &FocusNode) {
@@ -60,7 +114,14 @@ fn harness(navigator: &Navigator) -> OutletHarness {
     runtime
         .register_builder(root, move || {
             let _ = revision_for_build.get();
-            Column::new(vec![outlet_for_build.borrow().widget()]).into()
+            // Bounded hosting like a production window root: modal veils
+            // size to this area instead of an unbounded column axis.
+            Column::new(vec![SizedBox::from_dimensions(
+                Some(200.),
+                Some(200.),
+                Some(outlet_for_build.borrow().widget()),
+            )])
+            .into()
         })
         .expect("builder registers");
     let observer = navigator.observe(move |_| {
@@ -317,6 +378,288 @@ fn outlet_integrates_focus_tasks_and_lifetimes_together() {
     wait_for_wake(&wake);
     harness.runtime.process_runtime_work();
     assert!(!completed.load(Ordering::Acquire));
+}
+
+#[test]
+fn outlet_opaque_page_retains_without_painting_below() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let taps_a = Rc::new(Cell::new(0_u32));
+    let taps_b = Rc::new(Cell::new(0_u32));
+    navigator.push(
+        Route::new(
+            "a",
+            Column::new(vec![
+                focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                tappable_rect(RED, 200., 160., &taps_a),
+            ]),
+        )
+        .presentation(RoutePresentation::page()),
+    );
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ea = harness.runtime.focused_element().expect("A focused");
+    navigator.push(
+        Route::new(
+            "b",
+            Column::new(vec![
+                focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE)),
+                tappable_rect(BLUE, 200., 40., &taps_b),
+            ]),
+        )
+        .presentation(RoutePresentation::page()),
+    );
+    present(&mut harness);
+    // Mounted lifetime: the covered route stays mounted (retained), but its
+    // opaque cover means no paint below, no focus below, and no input below.
+    assert!(harness.runtime.tree().element_exists(ea));
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(paints(&commands, BLUE));
+    assert!(
+        !paints(&commands, RED),
+        "the opaque cover occludes the retained route"
+    );
+    tab_until(&mut harness.runtime, &node_b);
+    tap(&mut harness, 10., 50.);
+    assert_eq!(taps_b.get(), 1);
+    tap(&mut harness, 100., 100.);
+    assert_eq!(taps_a.get(), 0);
+}
+
+#[test]
+fn outlet_transparent_popup_paints_and_passes_through() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let taps_a = Rc::new(Cell::new(0_u32));
+    let taps_b = Rc::new(Cell::new(0_u32));
+    navigator.push(
+        Route::new("a", labeled(tappable_box(RED, 200., &taps_a), "route-a"))
+            .presentation(RoutePresentation::page()),
+    );
+    navigator.push(
+        Route::new("b", tappable_box(BLUE, 40., &taps_b))
+            .presentation(RoutePresentation::popup(None)),
+    );
+    present(&mut harness);
+    // Visible underlying content paints, keeps semantics, and receives
+    // input where the popup does not cover it.
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(paints(&commands, RED));
+    assert!(paints(&commands, BLUE));
+    assert!(
+        harness
+            .runtime
+            .tree()
+            .semantics_debug_dump()
+            .contains("route-a")
+    );
+    tap(&mut harness, 100., 100.);
+    assert_eq!(taps_a.get(), 1);
+    tap(&mut harness, 10., 10.);
+    assert_eq!(taps_b.get(), 1);
+    assert_eq!(taps_a.get(), 1);
+}
+
+#[test]
+fn outlet_modal_barrier_blocks_input_and_semantics() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let taps_a = Rc::new(Cell::new(0_u32));
+    navigator.push(
+        Route::new("a", labeled(tappable_box(RED, 200., &taps_a), "route-a"))
+            .presentation(RoutePresentation::page()),
+    );
+    navigator.push(
+        Route::new("b", Widget::box_(Size::new(40., 40.), BLUE)).presentation(
+            RoutePresentation::modal(ModalBarrier {
+                dismissible: false,
+                ..Default::default()
+            }),
+        ),
+    );
+    present(&mut harness);
+    // Translucent-safe paint-through still paints below, but the veil
+    // absorbs pointer input and hides background semantics.
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(paints(&commands, BLUE));
+    tap(&mut harness, 100., 100.);
+    assert_eq!(taps_a.get(), 0);
+    assert!(
+        !harness
+            .runtime
+            .tree()
+            .semantics_debug_dump()
+            .contains("route-a")
+    );
+}
+
+#[test]
+fn outlet_dismissible_barrier_tap_pops_its_route() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    navigator.push(Route::new("a", Widget::box_(Size::new(200., 200.), RED)));
+    navigator.push(
+        Route::new("b", Widget::box_(Size::new(40., 40.), BLUE))
+            .presentation(RoutePresentation::modal(ModalBarrier::default())),
+    );
+    present(&mut harness);
+    assert_eq!(navigator.routes().len(), 2);
+    tap(&mut harness, 100., 100.);
+    assert_eq!(
+        navigator.routes().len(),
+        1,
+        "tapping the dismissible veil pops its own route"
+    );
+    assert_eq!(navigator.current().expect("remaining").name, "a");
+}
+
+#[test]
+fn outlet_disposes_unretained_covered_content() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push(
+        Route::new(
+            "a",
+            Column::new(vec![focus_widget(
+                &node_a,
+                Widget::box_(Size::new(40., 40.), RED),
+            )]),
+        )
+        .presentation(RoutePresentation::Page {
+            opaque: true,
+            maintain_state: false,
+            fullscreen_dialog: false,
+        }),
+    );
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ea = harness.runtime.focused_element().expect("A focused");
+    let ra = navigator.current().expect("route A").id;
+    navigator.push(
+        Route::new(
+            "b",
+            Column::new(vec![focus_widget(
+                &node_b,
+                Widget::box_(Size::new(40., 40.), BLUE),
+            )]),
+        )
+        .presentation(RoutePresentation::page()),
+    );
+    present(&mut harness);
+    // Disposal unmounts the covered route (no paint, no focus, no element)
+    // while its navigator lifetime — and lifetime-bound tasks — persist.
+    assert!(!harness.runtime.tree().element_exists(ea));
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(!paints(&commands, RED));
+    tab_until(&mut harness.runtime, &node_b);
+    let lifetime_a = navigator
+        .lifetime_of(ra)
+        .expect("lifetime outlives disposal");
+    assert!(lifetime_a.is_live());
+    let scope_a = harness
+        .outlet
+        .borrow()
+        .route_task_scope(ra)
+        .expect("binding follows the lifetime, not the mount");
+    assert!(!scope_a.is_cancelled());
+}
+
+#[test]
+fn outlet_transition_keeps_route_identity() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let route = Route::new(
+        "a",
+        Column::new(vec![focus_widget(
+            &node_a,
+            Widget::box_(Size::new(40., 40.), RED),
+        )]),
+    )
+    .transition(RouteTransition::FadeSlide {
+        opacity: OpacityController::new(),
+        translation: TranslationController::new(),
+    });
+    navigator.push(route);
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ea = harness.runtime.focused_element().expect("A focused");
+    // Idle frames keep the transitioned element identical, and a covered
+    // return still restores through the stable identity.
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+    navigator.push(Route::new("b", Widget::box_(Size::new(40., 40.), BLUE)));
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_preserves_caller_keys_on_route_content() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push(Route::new(
+        "a",
+        Widget::from(Column::new(vec![focus_widget(
+            &node_a,
+            Widget::box_(Size::new(40., 40.), RED),
+        )]))
+        .with_key(99_u64),
+    ));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let ea = harness.runtime.focused_element().expect("A focused");
+    // The outlet tags its own wrapper, never the presented child: the
+    // caller-keyed column reconciles to the identical element across
+    // rebuilds while focus anchors the inner focus element.
+    let before = harness
+        .runtime
+        .tree()
+        .element_with_key(&Key::from(99_u64))
+        .expect("caller key resolves");
+    present(&mut harness);
+    let after = harness
+        .runtime
+        .tree()
+        .element_with_key(&Key::from(99_u64))
+        .expect("caller key survives outlet tagging");
+    assert_eq!(before, after);
+    navigator.push(Route::new("b", Widget::box_(Size::new(40., 40.), BLUE)));
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), Some(ea));
+}
+
+#[test]
+fn outlet_rejects_overlay_routes_explicitly() {
+    assert_eq!(
+        OutletPlacement::of(&RoutePresentation::overlay(vec![]), true),
+        OutletPlacement::ExternalOverlay
+    );
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    navigator.push(Route::new("a", Widget::box_(Size::new(200., 200.), RED)));
+    navigator.push(
+        Route::new("b", Widget::box_(Size::new(40., 40.), GREEN)).overlay(vec![OverlayEntry::new(
+            Widget::box_(Size::new(40., 40.), GREEN),
+        )]),
+    );
+    present(&mut harness);
+    // The overlay route is active but never outlet-mounted: its content
+    // paints nowhere here (a portal host owns it), while ordinary content
+    // is unaffected.
+    let commands = repaint(&mut harness).commands().to_vec();
+    assert!(paints(&commands, RED));
+    assert!(!paints(&commands, GREEN));
+    assert_eq!(navigator.routes().len(), 2);
 }
 
 #[test]
