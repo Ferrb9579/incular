@@ -5,8 +5,7 @@
 
 use super::*;
 use incular_navigation::{
-    ModalBarrier, Navigator, NavigatorObserver, OverlayEntry, Page, PageKey, Route,
-    RoutePresentation, RouteTransition,
+    ModalBarrier, Navigator, OverlayEntry, Page, PageKey, Route, RoutePresentation, RouteTransition,
 };
 use incular_widgets::{
     Column, Focus, FocusNode, GestureDetector, SizedBox,
@@ -94,12 +93,12 @@ fn tab_until(runtime: &mut Runtime, node: &FocusNode) {
 struct OutletHarness {
     runtime: Runtime,
     outlet: Rc<RefCell<RouteOutlet>>,
-    revision: Signal<u32>,
-    _observer: NavigatorObserver,
 }
 
-/// Hosts `navigator` through an outlet: the root rebuilds outlet content
-/// whenever navigation bumps the revision, exactly like a production host.
+/// Hosts `navigator` through an outlet exactly like a production host:
+/// mount once, attach once, then drive every cycle with the single
+/// `present_frame` operation (which owns invalidation internally, so no
+/// external revision signal or observer subscription is needed).
 fn harness(navigator: &Navigator) -> OutletHarness {
     let mut runtime =
         Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
@@ -107,13 +106,9 @@ fn harness(navigator: &Navigator) -> OutletHarness {
     let parent = runtime.spawner().scope();
     let outlet = Rc::new(RefCell::new(RouteOutlet::new(navigator, &parent)));
     let outlet_for_build = outlet.clone();
-    let revision = Signal::new(0_u32);
-    let revision_for_build = revision.clone();
-    let revision_for_observer = revision.clone();
     let root = runtime.tree().root().expect("root");
     runtime
         .register_builder(root, move || {
-            let _ = revision_for_build.get();
             // Bounded hosting like a production window root: modal veils
             // size to this area instead of an unbounded column axis.
             Column::new(vec![SizedBox::from_dimensions(
@@ -124,26 +119,22 @@ fn harness(navigator: &Navigator) -> OutletHarness {
             .into()
         })
         .expect("builder registers");
-    let observer = navigator.observe(move |_| {
-        revision_for_observer.set(revision_for_observer.get().wrapping_add(1));
-    });
-    OutletHarness {
-        runtime,
-        outlet,
-        revision,
-        _observer: observer,
-    }
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet, &mut runtime).expect("outlet mounted");
+    let mut harness = OutletHarness { runtime, outlet };
+    present(&mut harness);
+    harness
 }
 
-/// Presents one production cycle: rebuild after navigation, then let the
-/// outlet reconcile integration state with the mounted tree.
+/// Presents one production cycle through the single supported operation:
+/// rebuild, frame, and reconcile in enforced order.
 fn present(harness: &mut OutletHarness) {
-    harness.revision.set(harness.revision.get().wrapping_add(1));
-    frame(&mut harness.runtime);
-    harness
-        .outlet
-        .borrow_mut()
-        .after_frame(&mut harness.runtime);
+    RouteOutlet::present_frame(
+        &harness.outlet,
+        &mut harness.runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present frame");
 }
 
 #[test]
@@ -230,36 +221,44 @@ fn outlet_nested_navigators_stay_isolated() {
     let parent = runtime.spawner().scope();
     let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer, &parent)));
     let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner, &parent)));
-    let revision = Signal::new(0_u32);
     let root = runtime.tree().root().expect("root");
     {
         let outlet_outer = outlet_outer.clone();
         let outlet_inner = outlet_inner.clone();
-        let revision = revision.clone();
         runtime
             .register_builder(root, move || {
-                let _ = revision.get();
                 Column::new(vec![
-                    outlet_outer.borrow().widget(),
-                    outlet_inner.borrow().widget(),
+                    SizedBox::from_dimensions(
+                        Some(200.),
+                        Some(100.),
+                        Some(outlet_outer.borrow().widget()),
+                    ),
+                    SizedBox::from_dimensions(
+                        Some(200.),
+                        Some(100.),
+                        Some(outlet_inner.borrow().widget()),
+                    ),
                 ])
                 .into()
             })
             .expect("builder registers");
     }
-    let revision_for_observers = revision.clone();
-    let _outer_observer = outer.observe(move |_| {
-        revision_for_observers.set(revision_for_observers.get().wrapping_add(1));
-    });
-    let revision_for_observers = revision.clone();
-    let _inner_observer = inner.observe(move |_| {
-        revision_for_observers.set(revision_for_observers.get().wrapping_add(1));
-    });
+    frame(&mut runtime);
+    RouteOutlet::attach(&outlet_outer, &mut runtime).expect("outer mounted");
+    RouteOutlet::attach(&outlet_inner, &mut runtime).expect("inner mounted");
     let present_all = |runtime: &mut Runtime| {
-        revision.set(revision.get().wrapping_add(1));
-        frame(runtime);
-        outlet_outer.borrow_mut().after_frame(runtime);
-        outlet_inner.borrow_mut().after_frame(runtime);
+        RouteOutlet::present_frame(
+            &outlet_outer,
+            runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+        .expect("present outer");
+        RouteOutlet::present_frame(
+            &outlet_inner,
+            runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+        .expect("present inner");
     };
 
     let node_a1 = FocusNode::new();
@@ -660,6 +659,106 @@ fn outlet_rejects_overlay_routes_explicitly() {
     assert!(paints(&commands, RED));
     assert!(!paints(&commands, GREEN));
     assert_eq!(navigator.routes().len(), 2);
+}
+
+#[test]
+fn outlet_manual_after_frame_still_drives() {
+    // Escape hatch for custom hosts that own their frame loop: widget()
+    // plus an explicit after_frame, with host-owned invalidation. Prefer
+    // present_frame, which enforces save-before-reconcile ordering.
+    let navigator = Navigator::new();
+    let mut runtime =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent = runtime.spawner().scope();
+    let outlet = Rc::new(RefCell::new(RouteOutlet::new(&navigator, &parent)));
+    let revision = Signal::new(0_u32);
+    let root = runtime.tree().root().expect("root");
+    {
+        let outlet = outlet.clone();
+        let revision = revision.clone();
+        runtime
+            .register_builder(root, move || {
+                let _ = revision.get();
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    let drive = |runtime: &mut Runtime| {
+        revision.set(revision.get().wrapping_add(1));
+        frame(runtime);
+        outlet.borrow_mut().after_frame(runtime);
+    };
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    drive(&mut runtime);
+    tab_until(&mut runtime, &node_a);
+    navigator.push_page(focus_page("b", &node_b));
+    drive(&mut runtime);
+    tab_until(&mut runtime, &node_b);
+    navigator.pop();
+    drive(&mut runtime);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_incoming_autofocus_then_return_restores() {
+    // Phase proof: the incoming route autofocuses on its mount frame while
+    // the outgoing record (saved before reconciliation) survives it; popping
+    // unmounts the incoming focus and the return restores the saved one.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    navigator.push_page(Page::new(
+        "b",
+        Focus::new(Widget::box_(Size::new(40., 40.), BLUE))
+            .node(node_b.clone())
+            .autofocus(true),
+    ));
+    present(&mut harness);
+    assert!(
+        node_b.has_focus(),
+        "incoming autofocus wins its mount frame"
+    );
+    navigator.pop();
+    present(&mut harness);
+    assert!(
+        node_a.has_focus(),
+        "the pre-reconcile save restores on return"
+    );
+    assert!(harness.runtime.focused_element().is_some());
+}
+
+#[test]
+fn outlet_deferred_enablement_converges_without_retries() {
+    // Eligibility deferred past the transition: the target stays recorded
+    // while disabled, and ordinary frames restore it once enabled — no
+    // caller retries, and never by displacing valid focus.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    navigator.push_page(plain_page("b"));
+    present(&mut harness);
+    node_a.set_can_request_focus(false);
+    navigator.pop();
+    present(&mut harness);
+    assert_eq!(harness.runtime.focused_element(), None);
+    node_a.set_can_request_focus(true);
+    present(&mut harness);
+    assert!(node_a.has_focus());
 }
 
 #[test]

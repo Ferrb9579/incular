@@ -361,16 +361,37 @@ fn disabled_target_falls_back_while_mounted() {
 
 #[test]
 fn foreign_target_clears_instead_of_leaking() {
-    let (node_a, node_b, tree, make_state) = two_focus_tree();
+    // Deliberately no autofocus anywhere: the orphan rule alone must clear
+    // the removed route's lingering focus.
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let tree = Widget::from(incular_widgets::Column::new(vec![
+        focus_box(node_a.clone()),
+        focus_box(node_b.clone()),
+    ]));
     let mut runtime = Runtime::new(tree).unwrap();
     frame(&mut runtime);
     let navigator = Navigator::new();
     let ra = push_route(&navigator, "a");
     let rb = push_route(&navigator, "b");
-    let ea = runtime.focused_element().expect("autofocus lands on A");
+    for _ in 0..3 {
+        if node_a.has_focus() {
+            break;
+        }
+        tab(&mut runtime);
+    }
+    let ea = runtime.focused_element().expect("A focused");
     tab(&mut runtime);
     let eb = runtime.focused_element().expect("tab reaches B");
-    let mut focus = make_state(ea, eb, ra, rb);
+    let mut focus = RouteFocusState::new(move |_, id| {
+        if id == ea {
+            Some(ra)
+        } else if id == eb {
+            Some(rb)
+        } else {
+            None
+        }
+    });
     // Route A deactivates while focus sits on B's element: the snapshot is
     // kept, but reactivation must not hand B's focus to A.
     focus.save_focused(&runtime, ra);

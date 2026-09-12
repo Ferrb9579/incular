@@ -25,7 +25,10 @@ pub type RouteFocusOwner = Rc<dyn Fn(&WidgetTree, ElementId) -> Option<RouteId>>
 
 /// Remembers which element was focused per route and restores it on return.
 ///
-/// Three record states, three restore behaviors:
+/// Mount autofocus fires once per window, so route activation is what
+/// focuses incoming autofocus targets — never a background scan. Restore
+/// is otherwise fail-closed, with three record states and three restore
+/// behaviors:
 /// - No saved information (never saved, forgotten, or saved with nothing
 ///   owned): restore leaves focus untouched, except for genuinely orphaned
 ///   focus (see below).
@@ -35,6 +38,9 @@ pub type RouteFocusOwner = Rc<dyn Fn(&WidgetTree, ElementId) -> Option<RouteId>>
 /// - Focus currently owned by another route: saves reject it (a route
 ///   records only its own focus) and restores leave it alone while its
 ///   owner stays mounted.
+/// - No usable record at all: a vacant stage (no focus, or only orphaned
+///   focus) takes the route's own autofocus target when it names one;
+///   valid focus is never displaced for a missing record.
 ///
 /// Eligibility reuses the tree's authoritative focus rule instead of a
 /// parallel predicate: the target must be live in the arena (detached
@@ -95,7 +101,20 @@ impl RouteFocusState {
             }
             return;
         }
-        if let Some(current) = runtime.focused_element()
+        // No usable record. Fresh starts focus the route's own autofocus
+        // target, but only onto a vacant stage — valid focus is never
+        // displaced for a missing record.
+        let current = runtime.focused_element();
+        let vacant =
+            current.is_none_or(|id| Self::orphaned(runtime, navigator, &self.owner_of, id));
+        if vacant
+            && let Some(auto) = runtime.tree().autofocus_element()
+            && (self.owner_of)(runtime.tree(), auto) == Some(route)
+        {
+            runtime.set_focus(Some(auto));
+            return;
+        }
+        if let Some(current) = current
             && Self::orphaned(runtime, navigator, &self.owner_of, current)
         {
             runtime.set_focus(None);
@@ -129,6 +148,28 @@ impl RouteFocusState {
             || !runtime.tree().focusable_elements().contains(&id)
             || owner_of(runtime.tree(), id)
                 .is_some_and(|owner| navigator.lifetime_of(owner).is_none())
+    }
+
+    /// Restores `route` only when no valid focus would be displaced: the
+    /// record exists and current focus is absent or itself orphaned. This
+    /// is how deferred content (mounted or enabled through ordinary frame
+    /// invalidation after the transition) still restores without callers
+    /// retrying arbitrarily — retries never yank live focus.
+    pub(crate) fn restore_if_vacant(
+        &mut self,
+        runtime: &mut Runtime,
+        navigator: &Navigator,
+        route: RouteId,
+    ) {
+        if !matches!(self.saved.get(&route), Some(Some(_))) {
+            return;
+        }
+        let vacant = runtime
+            .focused_element()
+            .is_none_or(|current| Self::orphaned(runtime, navigator, &self.owner_of, current));
+        if vacant {
+            self.restore_saved(runtime, navigator, route);
+        }
     }
 
     /// Drops `route`'s record on permanent removal. A removed route never
