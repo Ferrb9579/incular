@@ -1,7 +1,7 @@
 use incular_core::{Color, Size};
 use incular_navigation::*;
 use incular_widgets::internal::{OpacityController, TranslationController};
-use incular_widgets::{Text, Widget};
+use incular_widgets::{GestureDetector, Text, Widget};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
@@ -1034,6 +1034,181 @@ fn large_keyed_reorder_commits_once_with_exact_permutation() {
     assert_eq!(reordered, expected);
     assert_eq!(navigator.revision(), revision.wrapping_add(1));
     assert_eq!(navigator.current().unwrap().id, ids[0]);
+}
+
+/// Application-owned value whose destruction observes the navigator.
+///
+/// The probe must be the final owner: tests relinquish every cloned
+/// route, page, and widget so dropping the retired entry actually runs
+/// this destructor instead of merely decrementing a shared count.
+struct DropProbe {
+    navigator: Navigator,
+    log: Rc<RefCell<Vec<String>>>,
+}
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        let count = self.navigator.routes().len();
+        self.log
+            .borrow_mut()
+            .push(format!("dropped:routes={count}"));
+        self.navigator.push_page(Page::new("drop-child", page()));
+    }
+}
+
+fn probed_child(navigator: &Navigator, log: &Rc<RefCell<Vec<String>>>) -> Widget {
+    let probe = DropProbe {
+        navigator: navigator.clone(),
+        log: Rc::clone(log),
+    };
+    Widget::from(GestureDetector::new(page()).on_tap(move || {
+        let _ = &probe;
+    }))
+}
+
+#[test]
+fn retired_route_widgets_drop_outside_borrows_with_reentrant_push() {
+    let navigator = Navigator::new();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    navigator.push_page(Page::new("doomed", probed_child(&navigator, &log)));
+    // Reconciling away the probed route retires its widget; destruction
+    // runs after the borrow ends, observes the committed stack, and its
+    // reentrant push survives the outer reconciliation.
+    navigator.set_pages([Page::new("other", page())]).unwrap();
+    assert_eq!(&*log.borrow(), &["dropped:routes=1"]);
+    assert_eq!(
+        navigator
+            .routes()
+            .iter()
+            .map(|route| route.name.clone())
+            .collect::<Vec<_>>(),
+        ["other", "drop-child"]
+    );
+}
+
+#[test]
+fn restoration_replacement_drops_the_old_stack_outside_borrows() {
+    let registry = RouteRegistry::new();
+    registry.register("/seed", || Page::new("seed", page()));
+    let navigator = Navigator::new();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    navigator.push_page(Page::new("doomed", probed_child(&navigator, &log)));
+    // A whole-stack restore retires the probed route the same way:
+    // destruction observes the committed restored stack.
+    let home = registry
+        .register_restorable("/home", restorable_page)
+        .unwrap();
+    let snapshot = NavigatorSnapshot {
+        format_version: NAVIGATOR_SNAPSHOT_FORMAT_VERSION,
+        routes: vec![RestorableRoute::new(home, json!({ "name": "home" }))],
+        active_route: Some(0),
+    };
+    let report = registry.restore_navigator(&navigator, &snapshot);
+    assert_eq!(report.restored_routes, 1);
+    assert_eq!(&*log.borrow(), &["dropped:routes=1"]);
+    assert_eq!(
+        navigator
+            .routes()
+            .iter()
+            .map(|route| route.name.clone())
+            .collect::<Vec<_>>(),
+        ["home", "drop-child"]
+    );
+}
+
+#[test]
+fn keyed_reorder_retires_only_the_replaced_child_outside_borrows() {
+    let navigator = Navigator::new();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let key = PageKey::new("probed").unwrap();
+    navigator.push_page(Page::new("placeholder", page()));
+    // Mount the probed child under a key via reconciliation.
+    navigator
+        .set_pages([
+            Page::new("placeholder", page()).key(PageKey::new("other").unwrap()),
+            Page {
+                name: "probed".to_owned(),
+                child: probed_child(&navigator, &log),
+                key: Some(key.clone()),
+            },
+        ])
+        .unwrap();
+    assert!(log.borrow().is_empty());
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    // Reordering retains both entries: the only destructor is the
+    // replaced child description, which drops exactly once — after the
+    // borrow ends, observing the committed stack — while both lifetimes
+    // survive. (Commit snapshots share the child until events dispatch,
+    // so the drop lands after dispatch rather than during reconcile.)
+    navigator
+        .set_pages([
+            Page {
+                name: "probed".to_owned(),
+                child: page(),
+                key: Some(key),
+            },
+            Page::new("placeholder", page()).key(PageKey::new("other").unwrap()),
+        ])
+        .unwrap();
+    assert_eq!(&*log.borrow(), &["dropped:routes=2"]);
+    let reordered: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_eq!(&reordered[..2], &[ids[1], ids[0]]);
+    // The destructor's reentrant push survives the outer reconciliation.
+    assert_eq!(
+        navigator
+            .routes()
+            .iter()
+            .map(|route| route.name.clone())
+            .collect::<Vec<_>>(),
+        ["probed", "placeholder", "drop-child"]
+    );
+}
+
+#[test]
+fn replaced_guard_drops_outside_borrows_with_reentrant_push() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("base", page()));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let probe = DropProbe {
+        navigator: navigator.clone(),
+        log: Rc::clone(&log),
+    };
+    navigator.set_pop_guard(move |_| {
+        let _ = &probe;
+        PopDecision::Allow
+    });
+    // Replacing the guard retires the probe closure outside the borrow:
+    // destruction observes the committed stack and pushes through.
+    navigator.set_pop_guard(|_| PopDecision::Allow);
+    assert_eq!(&*log.borrow(), &["dropped:routes=1"]);
+    assert_eq!(
+        navigator
+            .routes()
+            .iter()
+            .map(|route| route.name.clone())
+            .collect::<Vec<_>>(),
+        ["base", "drop-child"]
+    );
+    navigator.clear_pop_guard();
+}
+
+#[test]
+fn replaced_cleanup_bridge_drops_outside_borrows() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("base", page()));
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let probe = DropProbe {
+        navigator: navigator.clone(),
+        log: Rc::clone(&log),
+    };
+    navigator.set_route_scope_cleanup(move |_| {
+        let _ = &probe;
+    });
+    // Bridge replacement retires the old closure the same way; the probe
+    // observes the committed stack and its reentrant push survives.
+    navigator.set_route_scope_cleanup(|_| {});
+    assert_eq!(&*log.borrow(), &["dropped:routes=1"]);
+    assert_eq!(navigator.current().unwrap().name, "drop-child");
+    navigator.clear_route_scope_cleanup();
 }
 
 #[test]

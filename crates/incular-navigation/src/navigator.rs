@@ -66,7 +66,9 @@ struct NavigatorObserverEntry {
 /// scope cleanups first, then observer events in commit order. Reentrant
 /// navigation inside a cleanup or observer completes as a nested commit;
 /// nested effects dispatch before the outer dispatch continues, so
-/// committed transitions are never reordered.
+/// committed transitions are never reordered. Events own route
+/// snapshots, so a retired value referenced by an in-flight event drops
+/// when the event does — still outside any borrow.
 #[derive(Default)]
 struct CommitEffects {
     cleanups: Vec<(RouteScopeKey, RouteScopeCleanup)>,
@@ -214,13 +216,20 @@ impl Navigator {
 
     /// Installs a guard consulted before an explicit [`Self::pop`] or
     /// [`Self::replace`]. It is useful for unsaved-work confirmation flows.
+    /// A replaced guard drops after the borrow ends: guard closures may
+    /// own application values whose destructors reenter the navigator.
     pub fn set_pop_guard(&self, guard: impl Fn(&Route) -> PopDecision + 'static) {
-        self.state.borrow_mut().pop_guard = Some(Rc::new(guard));
+        let retired = {
+            let mut state = self.state.borrow_mut();
+            state.pop_guard.replace(Rc::new(guard))
+        };
+        drop(retired);
     }
 
     /// Removes the current pop guard.
     pub fn clear_pop_guard(&self) {
-        self.state.borrow_mut().pop_guard = None;
+        let retired = { self.state.borrow_mut().pop_guard.take() };
+        drop(retired);
     }
     pub fn push(&self, route: Route) -> RouteId {
         self.push_entry(route, None, None)
@@ -281,7 +290,9 @@ impl Navigator {
 
     pub(crate) fn replace_with_restored_routes(&self, routes: Vec<(Page, RestorableRoute)>) {
         debug_assert!(!routes.is_empty());
-        let (previous, current) = {
+        // Retired entries drop after the borrow ends: route children may
+        // own application values whose destructors reenter the navigator.
+        let (previous, current, retired) = {
             let mut state = self.state.borrow_mut();
             let previous = state.routes.last().map(|entry| entry.route.clone());
             let mut next = Vec::with_capacity(routes.len());
@@ -300,11 +311,12 @@ impl Navigator {
                     key: None,
                 });
             }
-            state.routes = next;
+            let retired = std::mem::replace(&mut state.routes, next);
             state.revision = state.revision.wrapping_add(1);
             let current = state.routes.last().map(|entry| entry.route.clone());
-            (previous, current)
+            (previous, current, retired)
         };
+        drop(retired);
         let mut effects = CommitEffects::default();
         effects
             .events
@@ -313,26 +325,31 @@ impl Navigator {
     }
 
     pub(crate) fn replace_with_fallback(&self, page: Page) {
-        let (previous, current) = {
+        let (previous, current, retired) = {
             let mut state = self.state.borrow_mut();
             let previous = state.routes.last().map(|entry| entry.route.clone());
             state.next_id = state.next_id.wrapping_add(1).max(1);
-            state.routes = vec![RouteEntry {
-                route: Route {
-                    id: RouteId(state.next_id),
-                    settings: RouteSettings::new(page.name.clone()),
-                    name: page.name,
-                    child: page.child,
-                    transition: RouteTransition::None,
-                    presentation: RoutePresentation::default(),
-                },
-                restorable: None,
-                key: None,
-            }];
+            let id = RouteId(state.next_id);
+            let retired = std::mem::replace(
+                &mut state.routes,
+                vec![RouteEntry {
+                    route: Route {
+                        id,
+                        settings: RouteSettings::new(page.name.clone()),
+                        name: page.name,
+                        child: page.child,
+                        transition: RouteTransition::None,
+                        presentation: RoutePresentation::default(),
+                    },
+                    restorable: None,
+                    key: None,
+                }],
+            );
             state.revision = state.revision.wrapping_add(1);
             let current = state.routes.last().map(|entry| entry.route.clone());
-            (previous, current)
+            (previous, current, retired)
         };
+        drop(retired);
         let mut effects = CommitEffects::default();
         effects
             .events
@@ -346,14 +363,20 @@ impl Navigator {
     /// The navigation crate does not own persistence storage, so applications
     /// or the runtime can wire this small callback to their restoration manager
     /// without creating a dependency cycle. The callback receives only a
-    /// stable [`RouteScopeKey`], never a [`RouteId`] or live widget.
+    /// stable [`RouteScopeKey`], never a [`RouteId`] or live widget. A
+    /// replaced bridge drops after the borrow ends, like pop guards.
     pub fn set_route_scope_cleanup(&self, cleanup: impl Fn(&RouteScopeKey) + 'static) {
-        self.state.borrow_mut().route_scope_cleanup = Some(Rc::new(cleanup));
+        let retired = {
+            let mut state = self.state.borrow_mut();
+            state.route_scope_cleanup.replace(Rc::new(cleanup))
+        };
+        drop(retired);
     }
 
     /// Removes the optional route-scope cleanup bridge.
     pub fn clear_route_scope_cleanup(&self) {
-        self.state.borrow_mut().route_scope_cleanup = None;
+        let retired = { self.state.borrow_mut().route_scope_cleanup.take() };
+        drop(retired);
     }
 
     /// Returns the versioned persistence payload for the longest fully
@@ -447,7 +470,7 @@ impl Navigator {
                 return Err(DuplicatePageKey { key: key.clone() });
             }
         }
-        let (previous_top, current_top) = {
+        let (previous_top, current_top, retired) = {
             let mut state = self.state.borrow_mut();
             let previous_top = state.routes.last().map(|entry| entry.route.clone());
             let mut previous: Vec<Option<RouteEntry>> = std::mem::take(&mut state.routes)
@@ -495,14 +518,16 @@ impl Navigator {
                     });
                 }
             }
-            // Dropped entries release their restoration metadata here without
+            // Unmatched entries retire outside the borrow below, without
             // the pop-only scope bridge: declarative reconciliation retains
             // persisted scope data by design.
+            let retired: Vec<RouteEntry> = previous.into_iter().flatten().collect();
             state.routes = next;
             state.revision = state.revision.wrapping_add(1);
             let current_top = state.routes.last().map(|entry| entry.route.clone());
-            (previous_top, current_top)
+            (previous_top, current_top, retired)
         };
+        drop(retired);
         let mut effects = CommitEffects::default();
         effects
             .events
