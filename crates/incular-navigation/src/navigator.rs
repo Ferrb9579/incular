@@ -1,9 +1,31 @@
 use std::{
+    any::Any,
     cell::RefCell,
     collections::{HashMap, HashSet},
     fmt,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     rc::Rc,
 };
+
+/// Delivers one effect callback in isolation: every callback runs even when
+/// an earlier one panics. Only the first panic is kept for resuming; later
+/// ones are dropped after their callbacks complete.
+fn deliver_isolated(pending: &mut Option<Box<dyn Any + Send>>, callback: impl FnOnce()) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(callback)) {
+        pending.get_or_insert(payload);
+    }
+}
+
+/// Resumes the first isolated panic, if any — unless already unwinding
+/// (notably disposal during an unwind), where resuming would abort the
+/// process: terminal marks stand and the panic is swallowed by necessity.
+fn resume_isolated(pending: Option<Box<dyn Any + Send>>) {
+    if let Some(payload) = pending
+        && !std::thread::panicking()
+    {
+        resume_unwind(payload);
+    }
+}
 
 use serde_json::Value;
 
@@ -152,8 +174,13 @@ impl RouteLifetime {
     }
 
     /// Ends the lifetime exactly once, invoking removal callbacks outside
-    /// any borrow. Reentrant removal completes as a nested commit first;
-    /// a second `end` is a no-op, so every removal path shares this call.
+    /// any borrow. Terminal commitment precedes delivery: the ended mark is
+    /// set before any callback runs, so a panicking callback cannot leave
+    /// this lifetime (or a sibling's mandatory cancellation) uncommitted.
+    /// Every callback is still attempted in isolation; the first panic
+    /// resumes after delivery unless already unwinding. Reentrant removal
+    /// completes as a nested commit first; a second `end` is a no-op, so
+    /// every removal path shares this call.
     fn end(&self) {
         let callbacks = {
             let mut state = self.state.borrow_mut();
@@ -169,9 +196,11 @@ impl RouteLifetime {
             state.callbacks.clear();
             live
         };
+        let mut pending = None;
         for callback in callbacks {
-            callback();
+            deliver_isolated(&mut pending, move || callback());
         }
+        resume_isolated(pending);
     }
 }
 
@@ -273,7 +302,9 @@ impl Drop for NavigatorState {
     /// lifetime exactly once, invoking removal callbacks. No navigator
     /// clone can be live here — any clone keeps this state alive — so
     /// callbacks observe disposal only through their own side effects,
-    /// never through the navigator.
+    /// never through the navigator. Callback panics resume when unwinding
+    /// is not already in progress; during an existing unwind they are
+    /// swallowed by necessity while the terminal marks stand.
     fn drop(&mut self) {
         let lifetimes: Vec<RouteLifetime> = self
             .routes
@@ -316,7 +347,10 @@ impl Navigator {
         NavigatorObserver { entry }
     }
 
-    fn notify(&self, event: NavigationEvent) {
+    /// Notifies observers of one committed event. Each observer runs
+    /// isolated (a panicking observer cannot veto later ones); panics are
+    /// reported through `pending` for the dispatch to resume afterwards.
+    fn notify(&self, event: NavigationEvent, pending: &mut Option<Box<dyn Any + Send>>) {
         let observers = {
             let mut state = self.state.borrow_mut();
             state.observers.retain(|entry| entry.strong_count() != 0);
@@ -327,20 +361,32 @@ impl Navigator {
                 .collect::<Vec<_>>()
         };
         for observer in observers {
-            (observer.callback)(event.clone());
+            let event = event.clone();
+            deliver_isolated(pending, move || (observer.callback)(event));
         }
     }
 
+    /// Dispatches one commit's effects after its borrow ends: scope
+    /// cleanups, then lifetime endings, then observer events. All callbacks
+    /// run isolated, so every removed route ends and every mandatory
+    /// cancellation fires even when an earlier callback panics; the first
+    /// panic resumes after delivery (swallowed only while unwinding).
+    /// Reentrant navigation inside any callback completes as a nested
+    /// commit first.
     fn dispatch_effects(&self, effects: CommitEffects) {
+        let mut pending = None;
         for (scope_key, cleanup) in effects.cleanups {
-            cleanup(&scope_key);
+            deliver_isolated(&mut pending, move || cleanup(&scope_key));
         }
         for lifetime in effects.lifetimes {
-            lifetime.end();
+            // `end` commits its terminal mark before delivering, and resumes
+            // its own first panic here — caught below, so siblings still end.
+            deliver_isolated(&mut pending, move || lifetime.end());
         }
         for event in effects.events {
-            self.notify(event);
+            self.notify(event, &mut pending);
         }
+        resume_isolated(pending);
     }
 
     /// The active-route event for a committed top transition, if the top

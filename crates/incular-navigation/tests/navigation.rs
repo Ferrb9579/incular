@@ -4,7 +4,11 @@ use incular_widgets::internal::{OpacityController, TranslationController};
 use incular_widgets::{GestureDetector, Text, Widget};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
+};
 
 fn page() -> Widget {
     Widget::box_(Size::new(1., 1.), Color::WHITE)
@@ -1889,6 +1893,119 @@ fn event_route_snapshot_does_not_extend_mounted_lifetime() {
     assert_eq!(*top_ended.borrow(), 1);
     assert!(!top_lifetime.is_live());
     drop(popped);
+}
+
+#[test]
+fn panicking_lifetime_callback_cannot_spare_siblings() {
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("a", page()).key(key("a")),
+            Page::new("b", page()).key(key("b")),
+            Page::new("c", page()).key(key("c")),
+        ])
+        .unwrap();
+    let lifetimes: Vec<RouteLifetime> = navigator
+        .routes()
+        .iter()
+        .map(|route| navigator.lifetime_of(route.id).expect("mounted"))
+        .collect();
+    let ended = Rc::new(RefCell::new(vec![0_usize; 3]));
+    let mut subscriptions = Vec::new();
+    for (index, lifetime) in lifetimes.iter().enumerate() {
+        let ended = ended.clone();
+        if index == 0 {
+            // Retired order follows previous stack order, so this panic
+            // belongs to the first removed route.
+            subscriptions.push(lifetime.on_ended(move || {
+                ended.borrow_mut()[index] += 1;
+                panic!("sibling removal must not spare later lifetimes");
+            }));
+        } else {
+            subscriptions.push(lifetime.on_ended(move || {
+                ended.borrow_mut()[index] += 1;
+            }));
+        }
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        navigator
+            .set_pages([Page::new("gone", page()).key(key("gone"))])
+            .unwrap();
+    }));
+    assert!(
+        result.is_err(),
+        "the first panic resumes after delivery, not instead of it"
+    );
+    // Terminal marks committed before any delivery: every removed route is
+    // terminal and every callback ran exactly once, despite the panic.
+    assert!(lifetimes.iter().all(|lifetime| !lifetime.is_live()));
+    assert_eq!(*ended.borrow(), [1, 1, 1]);
+    drop(subscriptions);
+}
+
+#[test]
+fn panicking_observer_does_not_veto_later_observers() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("a", page()));
+    let id = navigator.routes()[0].id;
+    let lifetime = navigator.lifetime_of(id).expect("mounted");
+    let second_got = Rc::new(RefCell::new(0_usize));
+    let second_got_for_callback = second_got.clone();
+    let _first = navigator.observe(|_| panic!("observer veto attempt"));
+    let _second = navigator.observe(move |_| {
+        *second_got_for_callback.borrow_mut() += 1;
+    });
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        navigator.pop();
+    }));
+    assert!(result.is_err());
+    // Both events (Popped, ActiveRouteChanged) still reach the later
+    // observer, and the removed lifetime still ends.
+    assert_eq!(*second_got.borrow(), 2);
+    assert!(!lifetime.is_live());
+}
+
+#[test]
+fn disposal_during_unwind_swallows_and_marks() {
+    struct DropNavigator(Option<Navigator>);
+    impl Drop for DropNavigator {
+        fn drop(&mut self) {
+            drop(self.0.take());
+        }
+    }
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("a", page()));
+    let id = navigator.routes()[0].id;
+    let lifetime = navigator.lifetime_of(id).expect("mounted");
+    let _subscription = lifetime.on_ended(|| panic!("callback panic during unwind"));
+    let guard = DropNavigator(Some(navigator));
+    let result = catch_unwind(AssertUnwindSafe(move || {
+        let _guard = guard;
+        panic!("boom");
+    }));
+    let error = result.expect_err("the outer panic propagates");
+    assert_eq!(
+        error.downcast_ref::<&str>(),
+        Some(&"boom"),
+        "the disposal panic is swallowed, never replacing the unwind"
+    );
+    assert!(!lifetime.is_live());
+}
+
+#[test]
+fn normal_disposal_resumes_callback_panic() {
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("a", page()));
+    let id = navigator.routes()[0].id;
+    let lifetime = navigator.lifetime_of(id).expect("mounted");
+    let _subscription = lifetime.on_ended(|| panic!("disposal callback"));
+    let result = catch_unwind(AssertUnwindSafe(move || {
+        drop(navigator);
+    }));
+    let error = result.expect_err("disposal resumes the callback panic");
+    assert_eq!(error.downcast_ref::<&str>(), Some(&"disposal callback"));
+    assert!(!lifetime.is_live());
 }
 
 #[test]

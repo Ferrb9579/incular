@@ -1,5 +1,6 @@
 use super::*;
 use incular_navigation::{Navigator, Page, PageKey};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn route_page(name: &str) -> Page {
     Page::new(name, Widget::box_(Size::new(1., 1.), Color::WHITE))
@@ -150,6 +151,48 @@ fn binding_disposal_detaches_later_removal() {
     navigator.pop();
     assert!(!lifetime.is_live());
     assert!(!scope.is_cancelled());
+}
+
+#[test]
+fn panicking_sibling_cannot_spare_bound_scope() {
+    // Mandatory cancellation is terminal commitment, not callback order:
+    // an earlier lifetime callback panicking must not spare a later
+    // route-bound scope. Uses real scopes through the real scheduler path
+    // (cancellation itself, without pumping a completion).
+    let runtime = Runtime::new(Widget::box_(Size::new(1., 1.), Color::WHITE)).unwrap();
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("doomed", Widget::box_(Size::new(1., 1.), Color::WHITE)).key(key("doomed")),
+            Page::new("task", Widget::box_(Size::new(1., 1.), Color::WHITE)).key(key("task")),
+        ])
+        .unwrap();
+    let doomed_id = navigator.routes()[0].id;
+    let task_id = navigator.routes()[1].id;
+    let doomed = navigator.lifetime_of(doomed_id).expect("mounted");
+    let task_lifetime = navigator.lifetime_of(task_id).expect("mounted");
+    let parent = runtime.spawner().scope();
+    let binding = RouteTaskBinding::bind(&parent, &task_lifetime);
+    assert!(!binding.scope().is_cancelled());
+    // Retired order follows previous stack order: the veto attempt belongs
+    // to the first removed route, the binding to the second.
+    let _doomed_subscription =
+        doomed.on_ended(|| panic!("sibling veto attempt must not spare the scope"));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        navigator
+            .set_pages([
+                Page::new("gone", Widget::box_(Size::new(1., 1.), Color::WHITE)).key(key("gone")),
+            ])
+            .unwrap();
+    }));
+    assert!(result.is_err(), "the panic resumes after delivery");
+    assert!(!doomed.is_live());
+    assert!(!task_lifetime.is_live());
+    assert!(
+        binding.scope().is_cancelled(),
+        "no promised route-bound task survives another listener's failure"
+    );
 }
 
 #[test]
