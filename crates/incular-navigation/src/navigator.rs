@@ -1,10 +1,10 @@
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, fmt, rc::Rc};
 
 use serde_json::Value;
 
 use super::{
-    NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigatorSnapshot, Page, RestorableRoute, Route, RouteId,
-    RoutePresentation, RouteScopeKey, RouteSettings, RouteTransition,
+    NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigatorSnapshot, Page, PageKey, RestorableRoute, Route,
+    RouteId, RoutePresentation, RouteScopeKey, RouteSettings, RouteTransition,
 };
 
 /// Observable lifecycle emitted by a [`Navigator`].
@@ -83,11 +83,40 @@ impl fmt::Debug for NavigatorObserver {
 ///
 /// The entry keeps a route and its metadata together so ordinary and
 /// restorable routes can interleave without positional zip bookkeeping.
+/// `key` records the declarative page key that claimed the entry, if any;
+/// entries pushed imperatively carry none unless their page supplied one.
 #[derive(Clone)]
 struct RouteEntry {
     route: Route,
     restorable: Option<RestorableRoute>,
+    key: Option<PageKey>,
 }
+
+/// A declarative page list rejected before touching navigator state.
+///
+/// Carries the first duplicated page key. The stack, revision, and
+/// observers are unchanged: validation runs before any mutation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicatePageKey {
+    key: PageKey,
+}
+impl DuplicatePageKey {
+    /// Returns the duplicated page key.
+    #[must_use]
+    pub fn key(&self) -> &PageKey {
+        &self.key
+    }
+}
+impl fmt::Display for DuplicatePageKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "duplicate page key in one declarative update: {}",
+            self.key
+        )
+    }
+}
+impl std::error::Error for DuplicatePageKey {}
 
 #[derive(Default)]
 struct NavigatorState {
@@ -160,7 +189,20 @@ impl Navigator {
     pub fn clear_pop_guard(&self) {
         self.state.borrow_mut().pop_guard = None;
     }
-    pub fn push(&self, mut route: Route) -> RouteId {
+    pub fn push(&self, route: Route) -> RouteId {
+        self.push_entry(route, None, None)
+    }
+    pub fn push_page(&self, page: Page) -> RouteId {
+        let key = page.key.clone();
+        self.push_entry(page.into(), None, key)
+    }
+
+    fn push_entry(
+        &self,
+        mut route: Route,
+        restorable: Option<RestorableRoute>,
+        key: Option<PageKey>,
+    ) -> RouteId {
         let (id, previous, route) = {
             let mut state = self.state.borrow_mut();
             let previous = state.routes.last().map(|entry| entry.route.clone());
@@ -169,7 +211,8 @@ impl Navigator {
             let id = route.id;
             state.routes.push(RouteEntry {
                 route: route.clone(),
-                restorable: None,
+                restorable,
+                key,
             });
             state.revision = state.revision.wrapping_add(1);
             (id, previous, route)
@@ -180,36 +223,18 @@ impl Navigator {
         self.notify_active_route(previous, Some(route));
         id
     }
-    pub fn push_page(&self, page: Page) -> RouteId {
-        self.push(page.into())
-    }
 
     pub(crate) fn push_registered_restorable(&self, page: Page, route: RestorableRoute) -> RouteId {
-        let (id, previous, pushed) = {
-            let mut state = self.state.borrow_mut();
-            let previous = state.routes.last().map(|entry| entry.route.clone());
-            state.next_id = state.next_id.wrapping_add(1).max(1);
-            let id = RouteId(state.next_id);
-            let pushed = Route {
-                id,
-                settings: RouteSettings::new(page.name.clone()),
-                name: page.name,
-                child: page.child,
-                transition: RouteTransition::None,
-                presentation: RoutePresentation::default(),
-            };
-            state.routes.push(RouteEntry {
-                route: pushed.clone(),
-                restorable: Some(route),
-            });
-            state.revision = state.revision.wrapping_add(1);
-            (id, previous, pushed)
+        let key = page.key.clone();
+        let pushed = Route {
+            id: RouteId(0),
+            settings: RouteSettings::new(page.name.clone()),
+            name: page.name,
+            child: page.child,
+            transition: RouteTransition::None,
+            presentation: RoutePresentation::default(),
         };
-        self.notify(NavigationEvent::Pushed {
-            route: pushed.clone(),
-        });
-        self.notify_active_route(previous, Some(pushed));
-        id
+        self.push_entry(pushed, Some(route), key)
     }
 
     pub(crate) fn replace_with_restored_routes(&self, routes: Vec<(Page, RestorableRoute)>) {
@@ -228,6 +253,7 @@ impl Navigator {
                     presentation: RoutePresentation::default(),
                 },
                 restorable: Some(route),
+                key: None,
             });
         }
         state.routes = next;
@@ -247,6 +273,7 @@ impl Navigator {
                 presentation: RoutePresentation::default(),
             },
             restorable: None,
+            key: None,
         }];
         state.revision = state.revision.wrapping_add(1);
     }
@@ -326,17 +353,42 @@ impl Navigator {
         true
     }
 
-    /// Reconciles the stack to declarative pages. Names identify retained
-    /// route positions, preserving their IDs while replacing child widgets.
-    pub fn set_pages(&self, pages: impl IntoIterator<Item = Page>) {
+    /// Reconciles the stack to declarative pages.
+    ///
+    /// Only page keys identify retained routes: a keyed page reuses the
+    /// live entry carrying that key (preserving its route ID, restoration
+    /// metadata, and presentation while replacing the child widget).
+    /// Names are routing metadata, never identity, so repeated names with
+    /// different keys coexist. Pages without a key carry no identity and
+    /// always mount anew.
+    ///
+    /// The caller's iterator drains fully before any state is borrowed,
+    /// so an iterator may inspect or mutate the navigator; those changes
+    /// complete first and reconciliation then matches against the mutated
+    /// stack. Identity validation runs before any mutation: a duplicated
+    /// key rejects the whole update, leaving the stack, revision, and
+    /// observers untouched.
+    pub fn set_pages(&self, pages: impl IntoIterator<Item = Page>) -> Result<(), DuplicatePageKey> {
+        let pages: Vec<Page> = pages.into_iter().collect();
+        let mut seen = HashSet::new();
+        for page in &pages {
+            if let Some(key) = &page.key
+                && !seen.insert(key.clone())
+            {
+                return Err(DuplicatePageKey { key: key.clone() });
+            }
+        }
         let mut state = self.state.borrow_mut();
         let mut previous = std::mem::take(&mut state.routes);
-        let mut next = Vec::new();
+        let mut next = Vec::with_capacity(pages.len());
         for page in pages {
-            if let Some(index) = previous
-                .iter()
-                .position(|entry| entry.route.name == page.name)
-            {
+            let claimed = match &page.key {
+                Some(key) => previous
+                    .iter()
+                    .position(|entry| entry.key.as_ref() == Some(key)),
+                None => None,
+            };
+            if let Some(index) = claimed {
                 let mut entry = previous.remove(index);
                 entry.route.child = page.child;
                 next.push(entry);
@@ -352,11 +404,13 @@ impl Navigator {
                         presentation: RoutePresentation::default(),
                     },
                     restorable: None,
+                    key: page.key,
                 });
             }
         }
         state.routes = next;
         state.revision = state.revision.wrapping_add(1);
+        Ok(())
     }
     /// Attempts a guarded pop. Unlike [`Self::pop`], this distinguishes an
     /// empty navigator from a blocked operation. If a guard mutates the stack,
@@ -452,6 +506,7 @@ impl Navigator {
             state.routes.push(RouteEntry {
                 route: route.clone(),
                 restorable: None,
+                key: None,
             });
             state.revision = state.revision.wrapping_add(1);
             (previous.route, route, cleanup)

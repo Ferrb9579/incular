@@ -227,12 +227,186 @@ fn deepest_active_nested_dispatcher_handles_back_once() {
     assert_eq!(third.depth, 0);
 }
 #[test]
-fn declarative_pages_preserve_named_route_identity() {
+fn declarative_pages_preserve_keyed_route_identity() {
+    let home = PageKey::new("home").unwrap();
     let navigator = Navigator::new();
-    navigator.set_pages([Page::new("home", page()), Page::new("settings", page())]);
+    navigator
+        .set_pages([
+            Page::new("home", page()).key(home.clone()),
+            Page::new("settings", page()).key(PageKey::new("settings").unwrap()),
+        ])
+        .unwrap();
     let id = navigator.routes()[0].id;
-    navigator.set_pages([Page::new("home", page())]);
+    navigator
+        .set_pages([Page::new("home", page()).key(home)])
+        .unwrap();
     assert_eq!(navigator.routes()[0].id, id);
+}
+
+#[test]
+fn unkeyed_pages_mount_anew_on_every_reconciliation() {
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([Page::new("home", page()), Page::new("settings", page())])
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    navigator
+        .set_pages([Page::new("home", page()), Page::new("settings", page())])
+        .unwrap();
+    let fresh: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_ne!(ids, fresh);
+}
+
+#[test]
+fn keyed_reorder_preserves_route_lifetimes() {
+    let key = |name: &str| PageKey::new(name).unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("home", page()).key(key("home")),
+            Page::new("search", page()).key(key("search")),
+            Page::new("settings", page()).key(key("settings")),
+        ])
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    navigator
+        .set_pages([
+            Page::new("settings", page()).key(key("settings")),
+            Page::new("home", page()).key(key("home")),
+            Page::new("search", page()).key(key("search")),
+        ])
+        .unwrap();
+    let reordered: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_eq!(reordered, vec![ids[2], ids[0], ids[1]]);
+    assert_eq!(
+        navigator.current().unwrap().id,
+        ids[1],
+        "the active route follows its key, not its position"
+    );
+}
+
+#[test]
+fn repeated_names_with_different_keys_coexist_stably() {
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("detail", page()).key(PageKey::new("detail-a").unwrap()),
+            Page::new("detail", page()).key(PageKey::new("detail-b").unwrap()),
+        ])
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_ne!(ids[0], ids[1]);
+    // Reconciling the same keys in the same order keeps both lifetimes,
+    // matched by key rather than by name position.
+    navigator
+        .set_pages([
+            Page::new("detail", page()).key(PageKey::new("detail-a").unwrap()),
+            Page::new("detail", page()).key(PageKey::new("detail-b").unwrap()),
+        ])
+        .unwrap();
+    let stable: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    assert_eq!(stable, ids);
+}
+
+#[test]
+fn duplicate_page_keys_reject_without_mutation_or_events() {
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([Page::new("home", page()).key(PageKey::new("home").unwrap())])
+        .unwrap();
+    let before = navigator.routes();
+    let revision = navigator.revision();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let _observer = navigator.observe({
+        let events = Rc::clone(&events);
+        move |_| events.borrow_mut().push(())
+    });
+    let result = navigator.set_pages([
+        Page::new("home", page()).key(PageKey::new("home").unwrap()),
+        Page::new("settings", page()).key(PageKey::new("home").unwrap()),
+    ]);
+    assert_eq!(result.unwrap_err().key(), &PageKey::new("home").unwrap());
+    assert_eq!(
+        navigator
+            .routes()
+            .iter()
+            .map(|route| route.id)
+            .collect::<Vec<_>>(),
+        before.iter().map(|route| route.id).collect::<Vec<_>>()
+    );
+    assert_eq!(navigator.revision(), revision);
+    assert!(events.borrow().is_empty());
+}
+
+#[test]
+fn removed_and_reinserted_keys_start_new_lifetimes() {
+    let home = PageKey::new("home").unwrap();
+    let navigator = Navigator::new();
+    navigator
+        .set_pages([
+            Page::new("home", page()).key(home.clone()),
+            Page::new("settings", page()).key(PageKey::new("settings").unwrap()),
+        ])
+        .unwrap();
+    let id = navigator.routes()[0].id;
+    navigator
+        .set_pages([Page::new("settings", page()).key(PageKey::new("settings").unwrap())])
+        .unwrap();
+    assert_eq!(navigator.routes().len(), 1);
+    navigator
+        .set_pages([
+            Page::new("settings", page()).key(PageKey::new("settings").unwrap()),
+            Page::new("home", page()).key(home),
+        ])
+        .unwrap();
+    let reinserted = navigator.routes()[1].id;
+    assert_ne!(
+        reinserted, id,
+        "reinsertion mounts a new lifetime rather than resurrecting the removed route"
+    );
+}
+
+#[test]
+fn set_pages_iterators_may_inspect_and_mutate_first() {
+    // The iterator drains fully before any state is borrowed, so reading
+    // the navigator inside it cannot panic and mutations complete first.
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("seed", page()));
+    let seen = navigator.set_pages((0..2).map(|index| {
+        let _ = navigator.routes();
+        Page::new(format!("page-{index}"), page()).key(PageKey::new(format!("k-{index}")).unwrap())
+    }));
+    assert!(seen.is_ok());
+    assert_eq!(navigator.routes().len(), 2);
+
+    // A mutation performed by the iterator lands first; reconciliation
+    // then matches the materialized pages against the mutated stack.
+    let navigator = Navigator::new();
+    navigator.push_page(Page::new("seed", page()).key(PageKey::new("seed").unwrap()));
+    let seed_id = navigator.routes()[0].id;
+    navigator
+        .set_pages(
+            [
+                Page::new("seed", page()).key(PageKey::new("seed").unwrap()),
+                Page::new("extra", page()).key(PageKey::new("extra").unwrap()),
+            ]
+            .into_iter()
+            .inspect(|declared| {
+                if declared.name == "extra" {
+                    navigator.push_page(Page::new("unrelated", page()));
+                }
+            }),
+        )
+        .unwrap();
+    // The pushed route is dropped by the reconciliation (it was not in the
+    // materialized page list) while the keyed seed lifetime survives.
+    let names: Vec<String> = navigator
+        .routes()
+        .iter()
+        .map(|route| route.name.clone())
+        .collect();
+    assert_eq!(names, ["seed", "extra"]);
+    assert_eq!(navigator.routes()[0].id, seed_id);
 }
 #[test]
 fn registry_resolves_a_normalized_location() {
@@ -552,7 +726,7 @@ fn registered_pop_can_clean_up_only_a_stable_route_scope() {
             .scope_key(RouteScopeKey::new("temporary-document").unwrap()),
         )
         .unwrap();
-    navigator.set_pages([]);
+    navigator.set_pages([]).unwrap();
     assert_eq!(&*removed.borrow(), &["document-42"]);
 }
 

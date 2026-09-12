@@ -86,6 +86,66 @@ impl fmt::Display for RestorableRouteIdError {
 }
 impl std::error::Error for RestorableRouteIdError {}
 
+/// Stable declarative reconciliation identity for a [`Page`](super::Page).
+///
+/// Three identities stay separate: the route name is routing/presentation
+/// metadata, the page key is the stable identity reconciled across
+/// declarative builds, and [`RouteId`] identifies one mounted route
+/// lifetime. Two pages may share a name with different keys; one key
+/// names one live entry.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PageKey(String);
+impl PageKey {
+    /// Creates a page key. Empty identifiers and identifiers containing
+    /// control characters are rejected, mirroring restorable route IDs.
+    pub fn new(value: impl AsRef<str>) -> Result<Self, PageKeyError> {
+        let value = value.as_ref();
+        if value.trim().is_empty() {
+            return Err(PageKeyError::Empty);
+        }
+        if value.chars().any(char::is_control) {
+            return Err(PageKeyError::ContainsControlCharacter);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Returns the application-defined key.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl AsRef<str> for PageKey {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+impl fmt::Display for PageKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Why a [`PageKey`] was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageKeyError {
+    /// The key was empty or whitespace only.
+    Empty,
+    /// The key contains a control character.
+    ContainsControlCharacter,
+}
+impl fmt::Display for PageKeyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("a page key must not be empty"),
+            Self::ContainsControlCharacter => {
+                formatter.write_str("a page key must not contain control characters")
+            }
+        }
+    }
+}
+impl std::error::Error for PageKeyError {}
+
 /// A stable, single-segment key for a route-specific restoration scope.
 ///
 /// Route scope keys are optional. Supply one for dynamic route instances that

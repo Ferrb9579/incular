@@ -9,8 +9,8 @@ mod registry;
 mod route_data;
 
 pub use navigator::{
-    BackDispatchReport, BackDispatcher, NavigationEvent, Navigator, NavigatorObserver, PopDecision,
-    PopResult,
+    BackDispatchReport, BackDispatcher, DuplicatePageKey, NavigationEvent, Navigator,
+    NavigatorObserver, PopDecision, PopResult,
 };
 pub use presentation::{
     BottomSheet, BottomSheetBuilder, Dialog, DialogBuilder, ModalBarrier, ModalBarrierBuilder,
@@ -20,8 +20,8 @@ pub use presentation::{
 };
 pub use registry::RouteRegistry;
 pub use route_data::{
-    NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigationRestoreReport, NavigatorSnapshot,
-    RestorableNavigationError, RestorableRoute, RestorableRouteBuildError, RestorableRouteId,
-    RestorableRouteIdError, RestorableRouteRegistrationError, RouteId, RouteScopeKey,
-    RouteScopeKeyError, RouteSettings,
+    NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigationRestoreReport, NavigatorSnapshot, PageKey,
+    PageKeyError, RestorableNavigationError, RestorableRoute, RestorableRouteBuildError,
+    RestorableRouteId, RestorableRouteIdError, RestorableRouteRegistrationError, RouteId,
+    RouteScopeKey, RouteScopeKeyError, RouteSettings,
 };

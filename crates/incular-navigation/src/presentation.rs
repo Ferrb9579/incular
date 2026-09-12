@@ -9,12 +9,15 @@ use incular_widgets::internal::{OpacityController, TranslationController};
 use incular_widgets::{FadeTransition, SlideTransition, Widget};
 use typed_builder::TypedBuilder;
 
-use super::{RouteId, RouteSettings};
+use super::{PageKey, RouteId, RouteSettings};
 
 /// A reusable description of a navigable screen.
 ///
 /// Unlike [`Route`], a page has no runtime identity, allowing the same page
-/// description to be placed in multiple navigators.
+/// description to be placed in multiple navigators. The optional key is the
+/// page's stable reconciliation identity: keyed pages retain their mounted
+/// route across [`set_pages`](super::Navigator::set_pages) builds, while
+/// unkeyed pages carry no identity and mount anew on every reconciliation.
 #[derive(Clone, TypedBuilder)]
 #[builder(builder_type(name = PageDescriptorBuilder))]
 pub struct Page {
@@ -22,6 +25,8 @@ pub struct Page {
     pub name: String,
     #[builder(setter(into))]
     pub child: Widget,
+    #[builder(default, setter(strip_option))]
+    pub key: Option<PageKey>,
 }
 
 /// Rust-native route presentation composition.
@@ -154,7 +159,15 @@ impl Page {
         Self {
             name: name.into(),
             child: child.into(),
+            key: None,
         }
+    }
+
+    /// Assigns the stable reconciliation identity for declarative builds.
+    #[must_use]
+    pub fn key(mut self, key: PageKey) -> Self {
+        self.key = Some(key);
+        self
     }
 }
 
