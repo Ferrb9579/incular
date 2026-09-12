@@ -5,13 +5,14 @@ use incular_core::{Color, Rect, RestorationBackend, RestorationKey, RestorationS
 use incular_widgets::{
     ApplicationBootstrapHost, ApplicationBootstrapSpec, AuxiliaryViewError, AuxiliaryViewHandle,
     AuxiliaryViewHost, AuxiliaryViewOutcome, AuxiliaryViewRequest, BasicRouterDelegate,
-    ErrorWidget, MemoryRouteInformationProvider, MenuDispatchResult, MenuOwnerId,
-    NavigationNotificationKind, NoopPlatformMenuDelegate, PlatformMenu, PlatformMenuBar,
-    PlatformMenuBarController, PlatformMenuDelegate, PlatformMenuEvent, PlatformMenuItem,
-    PlatformMenuSnapshot, PlatformMenuUpdate, RootBackButtonDispatcher, RouteInformation, Router,
-    RouterConfig, RouterDelegate, RouterError, SizedBox, StringRouteInformationParser,
-    TitleController, TitleError, ViewAnchorController, ViewController, ViewId, ViewLifecycle,
-    ViewMetrics, Widget, WidgetsApp, WindowChromeSink,
+    ClosureRouteInformationParser, ErrorWidget, MemoryRouteInformationProvider, MenuDispatchResult,
+    MenuOwnerId, NavigationNotification, NavigationNotificationKind, NoopPlatformMenuDelegate,
+    PlatformMenu, PlatformMenuBar, PlatformMenuBarController, PlatformMenuDelegate,
+    PlatformMenuEvent, PlatformMenuItem, PlatformMenuSnapshot, PlatformMenuUpdate,
+    RootBackButtonDispatcher, RouteInformation, RouteInformationProvider, Router, RouterConfig,
+    RouterDelegate, RouterDelegateListener, RouterDelegateSubscription, RouterError, SizedBox,
+    StringRouteInformationParser, TitleController, TitleError, ViewAnchorController,
+    ViewController, ViewId, ViewLifecycle, ViewMetrics, Widget, WidgetsApp, WindowChromeSink,
 };
 
 #[derive(Default)]
@@ -1003,4 +1004,239 @@ fn basic_delegate_callback_replacement_retires_outside_the_borrow() {
     assert!(delegate.set_new_route_path("/probe".to_owned()).is_err());
     assert_eq!(delegate.current_configuration(), None);
     assert_eq!(*notifications.borrow(), 0);
+}
+
+type NavigationLog = Rc<RefCell<Vec<NavigationNotification>>>;
+
+fn navigation_log() -> NavigationLog {
+    Rc::new(RefCell::new(Vec::new()))
+}
+
+fn notification_summary(notifications: &[NavigationNotification]) -> Vec<(String, Option<String>)> {
+    notifications
+        .iter()
+        .map(|notification| {
+            (
+                format!("{:?}", notification.kind),
+                notification
+                    .route_information
+                    .as_ref()
+                    .map(|information| information.location().to_owned()),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn router_parser_reentrancy_cannot_commit_over_nested_transaction() {
+    // The parser delivers another route while the outer parse is in flight;
+    // the nested commit owns the route state and the outer operation commits
+    // nothing over it — exactly one commit sequence, for the nested route.
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let provider_for_parser = provider.clone();
+    let parser = ClosureRouteInformationParser::new(
+        move |information: &RouteInformation| {
+            if information.location() == "/outer" {
+                provider_for_parser.set_value("/inner");
+            }
+            Ok(information.location().to_owned())
+        },
+        |configuration: &String| Ok(RouteInformation::new(configuration)),
+    );
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|_: String| Ok(()));
+    let router = Router::with_provider_parser(delegate.clone(), provider.clone(), parser);
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/outer");
+
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/inner"));
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [
+            ("DelegateChanged".to_owned(), Some("/inner".to_owned())),
+            (
+                "RouteInformationChanged".to_owned(),
+                Some("/inner".to_owned())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn router_delegate_reentrancy_cannot_commit_over_nested_transaction() {
+    // Same ownership rule through the delegate hook, with restoration
+    // configured: persisted state reflects only the accepted nested commit.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let provider_for_callback = provider.clone();
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(move |configuration: String| {
+        if configuration == "/outer" {
+            provider_for_callback.set_value("/inner");
+        }
+        Ok(())
+    });
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    let _widget: Widget = router.into_widget();
+    log.borrow_mut().clear();
+
+    provider.set_value("/outer");
+
+    assert_eq!(delegate.current_configuration().as_deref(), Some("/inner"));
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/inner").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [
+            ("DelegateChanged".to_owned(), Some("/inner".to_owned())),
+            (
+                "RouteInformationChanged".to_owned(),
+                Some("/inner".to_owned())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn router_delegate_query_reentrancy_does_not_borrow_panic() {
+    use std::cell::Cell;
+
+    struct IntrudingDelegate {
+        inner: BasicRouterDelegate<String>,
+        provider: MemoryRouteInformationProvider,
+        intruded: Cell<bool>,
+    }
+    impl RouterDelegate<String> for IntrudingDelegate {
+        fn build(&self) -> Widget {
+            self.inner.build()
+        }
+        fn current_configuration(&self) -> Option<String> {
+            if !self.intruded.get() {
+                // Fires once: a delegate query is application code and may
+                // deliver another route while the router holds no borrow.
+                self.intruded.set(true);
+                self.provider.set_value("/intruder");
+            }
+            self.inner.current_configuration()
+        }
+        fn set_new_route_path(&self, configuration: String) -> Result<(), RouterError> {
+            self.inner.set_new_route_path(configuration)
+        }
+        fn pop_route(&self) -> bool {
+            false
+        }
+        fn subscribe(&self, listener: RouterDelegateListener) -> RouterDelegateSubscription {
+            self.inner.subscribe(listener)
+        }
+    }
+
+    let provider = MemoryRouteInformationProvider::new("/initial");
+    let delegate = IntrudingDelegate {
+        inner: BasicRouterDelegate::new(|| SizedBox::shrink().into()),
+        provider: provider.clone(),
+        intruded: Cell::new(false),
+    };
+    delegate.inner.on_set_new_route_path(|_: String| Ok(()));
+    let router =
+        Router::with_provider_parser(delegate, provider.clone(), StringRouteInformationParser);
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        notifications.borrow_mut().push(notification);
+    });
+    // The intrusion fires during initialization; the nested transaction owns
+    // the route and no runtime borrow is live across the delegate query.
+    let _widget: Widget = router.into_widget();
+
+    assert_eq!(provider.value().location(), "/intruder");
+    assert!(
+        log.borrow().iter().all(|notification| notification
+            .route_information
+            .as_ref()
+            .is_none_or(|information| { information.location() != "/initial" })),
+        "the preempted initial route commits nothing: {log:?}"
+    );
+    assert!(
+        log.borrow().iter().any(|notification| {
+            notification.kind == NavigationNotificationKind::RouteInformationChanged
+                && notification
+                    .route_information
+                    .as_ref()
+                    .is_some_and(|information| information.location() == "/intruder")
+        }),
+        "the nested transaction commits: {log:?}"
+    );
+}
+
+#[test]
+fn router_restoration_failure_observers_can_claim_the_route() {
+    // A failure observer delivers another route before the provider fallback
+    // runs; the fallback must not overwrite the accepted claim.
+    let restoration_backend = Rc::new(RestorationMemory::default());
+    let scope = RestorationScope::root(restoration_backend.clone());
+    let restoration_key = RestorationKey::new("router").expect("valid key");
+    scope.set_json(&restoration_key, serde_json::json!({"location": 42}));
+    let provider = MemoryRouteInformationProvider::new("/fallback");
+    let provider_for_observer = provider.clone();
+    let delegate = BasicRouterDelegate::new(|| SizedBox::shrink().into());
+    delegate.on_set_new_route_path(|_: String| Ok(()));
+    let config = RouterConfig::with_provider_parser(
+        delegate.clone(),
+        provider.clone(),
+        StringRouteInformationParser,
+    );
+    let router =
+        Router::from_config(config).restoration_scope(scope.clone(), restoration_key.clone());
+    let log = navigation_log();
+    let notifications = log.clone();
+    let _events = router.on_navigation_notification(move |notification| {
+        let claimed = notification.kind == NavigationNotificationKind::ParseFailed;
+        notifications.borrow_mut().push(notification);
+        if claimed {
+            provider_for_observer.set_value("/claimed");
+        }
+    });
+    let _widget: Widget = router.into_widget();
+
+    assert_eq!(
+        delegate.current_configuration().as_deref(),
+        Some("/claimed")
+    );
+    assert_eq!(
+        scope.get_json(&restoration_key),
+        Some(RouteInformation::new("/claimed").to_json())
+    );
+    assert_eq!(
+        notification_summary(&log.borrow()),
+        [
+            ("ParseFailed".to_owned(), None),
+            ("DelegateChanged".to_owned(), Some("/claimed".to_owned())),
+            (
+                "RouteInformationChanged".to_owned(),
+                Some("/claimed".to_owned())
+            ),
+        ]
+    );
 }

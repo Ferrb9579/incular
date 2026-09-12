@@ -1019,6 +1019,10 @@ struct RouterRuntime<T: 'static> {
     listeners: NavigationNotificationListeners,
     current: Option<RouteInformation>,
     revision: Rc<Cell<u64>>,
+    /// Committed-transaction counter.  An operation snapshots it before
+    /// invoking application code and may commit only while it is unchanged:
+    /// a newer commit preempts older operations.  Failed operations never
+    /// bump it, so they preempt nothing.
     transaction: u64,
     subscriptions: Vec<SubscriptionKeepAlive>,
 }
@@ -1143,8 +1147,17 @@ impl<T: 'static> RouterRuntime<T> {
             }
         }
 
-        if let (Some(provider), Some(_parser)) = (provider, parser) {
+        // The restoration attempt above — including its failure observers —
+        // may have installed a route reentrantly; the provider fallback must
+        // not overwrite an accepted commit.
+        let installed = runtime.borrow().current.is_some();
+        if !installed && let (Some(provider), Some(_parser)) = (provider, parser) {
             let information = provider.value();
+            // A reentrant commit during the provider read owns the route; the
+            // fallback must not overwrite it with a stale read.
+            if runtime.borrow().current.is_some() {
+                return;
+            }
             if Self::apply_route(runtime, information, RouteApplyKind::Initial).is_ok() {
                 return;
             }
@@ -1167,14 +1180,21 @@ impl<T: 'static> RouterRuntime<T> {
         information: RouteInformation,
         kind: RouteApplyKind,
     ) -> Result<(), RouterError> {
-        let (parser, delegate) = {
-            let mut state = runtime.borrow_mut();
-            state.transaction = state.transaction.wrapping_add(1);
-            (state.parser.clone(), state.delegate.clone())
+        // Snapshot handles without bumping the transaction: only a commit
+        // owns the next number, so failed operations preempt nothing.
+        let (parser, delegate, transaction) = {
+            let state = runtime.borrow();
+            (
+                state.parser.clone(),
+                state.delegate.clone(),
+                state.transaction,
+            )
         };
         let parser = parser.ok_or_else(|| {
             RouterError::InvalidConfiguration("a route provider requires a route parser".into())
         })?;
+        // The parser is application code and may deliver another route
+        // reentrantly; that nested commit owns the route state afterwards.
         let configuration = match parser.parse_route_information(&information) {
             Ok(configuration) => configuration,
             Err(error) => {
@@ -1190,6 +1210,14 @@ impl<T: 'static> RouterRuntime<T> {
                 return Err(error);
             }
         };
+        if Self::is_superseded(runtime, transaction) {
+            // A nested transaction committed while parsing: the older
+            // operation reports success (a route is installed) but commits
+            // nothing over the newer transaction.
+            return Ok(());
+        }
+        // The delegate hooks are application code with the same reentrancy
+        // contract: a nested commit preempts this operation's commit below.
         let result = match kind {
             RouteApplyKind::Initial => delegate.set_initial_route_path(configuration),
             RouteApplyKind::Restored => delegate.set_restored_route_path(configuration),
@@ -1207,6 +1235,9 @@ impl<T: 'static> RouterRuntime<T> {
             );
             return Err(error);
         }
+        if Self::is_superseded(runtime, transaction) {
+            return Ok(());
+        }
         Self::commit_route(
             runtime,
             information,
@@ -1216,8 +1247,15 @@ impl<T: 'static> RouterRuntime<T> {
                 NavigationNotificationKind::RouteInformationChanged
             },
             None,
+            transaction,
         );
         Ok(())
+    }
+
+    /// Reports whether a newer transaction committed since `transaction` was
+    /// snapshotted, revoking the snapshotting operation's right to commit.
+    fn is_superseded(runtime: &Rc<RefCell<Self>>, transaction: u64) -> bool {
+        runtime.borrow().transaction != transaction
     }
 
     fn commit_route(
@@ -1225,16 +1263,27 @@ impl<T: 'static> RouterRuntime<T> {
         information: RouteInformation,
         kind: NavigationNotificationKind,
         error: Option<RouterError>,
+        transaction: u64,
     ) {
-        let (restoration, can_handle_pop, revision) = {
-            let mut state = runtime.borrow_mut();
-            state.current = Some(information.clone());
+        let (restoration, delegate, revision) = {
+            let state = runtime.borrow();
             (
                 state.restoration.clone(),
-                state.delegate.current_configuration().is_some(),
+                state.delegate.clone(),
                 state.revision.clone(),
             )
         };
+        // A delegate query is application code and may reenter the router,
+        // so it runs outside the borrow and the commit right is rechecked.
+        let can_handle_pop = delegate.current_configuration().is_some();
+        {
+            let mut state = runtime.borrow_mut();
+            if state.transaction != transaction {
+                return;
+            }
+            state.transaction = state.transaction.wrapping_add(1);
+            state.current = Some(information.clone());
+        }
         if let Some(restoration) = restoration {
             restoration
                 .scope
@@ -1253,10 +1302,20 @@ impl<T: 'static> RouterRuntime<T> {
     }
 
     fn delegate_changed(runtime: &Rc<RefCell<Self>>) {
-        let (configuration, parser, provider, restoration, revision) = {
+        // The delegate query is application code and may reenter the router,
+        // so it runs without any runtime borrow held; a nested commit meanwhile
+        // makes this reaction stale before it even starts.
+        let (delegate, transaction) = {
+            let state = runtime.borrow();
+            (state.delegate.clone(), state.transaction)
+        };
+        let configuration = delegate.current_configuration();
+        if Self::is_superseded(runtime, transaction) {
+            return;
+        }
+        let (parser, provider, restoration, revision) = {
             let state = runtime.borrow();
             (
-                state.delegate.current_configuration(),
                 state.parser.clone(),
                 state.provider.clone(),
                 state.restoration.clone(),
@@ -1282,11 +1341,21 @@ impl<T: 'static> RouterRuntime<T> {
         };
         match parser.restore_route_information(&configuration) {
             Ok(information) => {
+                // The restorer is application code: a nested commit meanwhile
+                // owns the route state and this reaction commits nothing.
+                if Self::is_superseded(runtime, transaction) {
+                    return;
+                }
                 if let Some(provider) = provider {
                     let _ = provider.router_reports_new_route_information(
                         information.clone(),
                         RouteInformationReportingType::Navigate,
                     );
+                }
+                // A custom provider report may also reenter the router, so
+                // the commit right is rechecked before writing.
+                if Self::is_superseded(runtime, transaction) {
+                    return;
                 }
                 if let Some(restoration) = restoration {
                     restoration
@@ -1294,6 +1363,10 @@ impl<T: 'static> RouterRuntime<T> {
                         .set_json(&restoration.key, information.to_json());
                 }
                 {
+                    // This reaction never claims a transaction number: inside
+                    // an in-flight application the outer commit owns the
+                    // number, and standalone there is no contender.  Either
+                    // way the newest commit wins by time order.
                     let mut state = runtime.borrow_mut();
                     state.current = Some(information.clone());
                 }
@@ -1362,19 +1435,22 @@ impl<T: 'static> RouterRuntime<T> {
     }
 
     fn build_widget(runtime: &Rc<RefCell<Self>>) -> Widget {
-        let (delegate, data) = {
+        let (delegate, current_route, revision) = {
             let state = runtime.borrow();
             for subscription in &state.subscriptions {
                 subscription.touch();
             }
             (
                 state.delegate.clone(),
-                RouterData {
-                    current_route: state.current.clone(),
-                    can_pop: state.delegate.current_configuration().is_some(),
-                    revision: state.revision.get(),
-                },
+                state.current.clone(),
+                state.revision.get(),
             )
+        };
+        // Delegate queries are application code and run outside the borrow.
+        let data = RouterData {
+            current_route,
+            can_pop: delegate.current_configuration().is_some(),
+            revision,
         };
         Widget::environment_scope(data, delegate.build())
     }
