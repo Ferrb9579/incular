@@ -2676,9 +2676,11 @@ rejected deep links (swallowed in `receive_route_information`),
 focus-restoration ownership, route-scoped
 task ownership. Back attachment is now acyclic-by-construction with typed
 rejection; reorder carries a deterministic large-permutation pin. Item 5
-(runtime owners) is untouched. Activation delivery (service queue as the
-only queue, exactly-once per live listener, no dedup, panic-safe drain)
-is audited with production-path tests. A bounded removal handoff for route
+(runtime owners) is begun but largely untouched: simulation waiter
+settlement moved into a `SimulationWaiters` owner, with the field-to-owner
+inventory and rejected candidates in plan-19. Activation delivery (service
+queue as the only queue, exactly-once per live listener, no dedup,
+panic-safe drain) is audited with production-path tests. A bounded removal handoff for route
 tasks/subscriptions/focus has no target interface yet — no route-lifetime
 consumer exists outside the navigation crate — and is recorded in plan-19,
 not claimed. See plan-19 for the itemized remainder.

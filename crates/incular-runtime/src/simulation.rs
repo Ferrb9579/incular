@@ -13,7 +13,7 @@ use incular_core::{
     PointerPhase, Rect,
 };
 use incular_semantics::SemanticActionKind;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -204,6 +204,140 @@ impl SimulationBridge {
 struct KeyboardState {
     modifiers: Modifiers,
     pressed: HashSet<Code>,
+}
+
+/// Owns per-window simulation waiter settlement: frame, capture, and
+/// GPU-resource replies. Every settle path removes a window's waiters
+/// before replying, so each waiter settles exactly once and window
+/// close/shutdown settle all three kinds together. Frame failure leaves
+/// GPU queries pending by design — they hold no frame debt and resolve
+/// through maintenance, close, or shutdown instead.
+#[derive(Default)]
+pub(crate) struct SimulationWaiters {
+    frame: HashMap<WindowId, Vec<mpsc::SyncSender<Result<(), SimulationError>>>>,
+    capture: HashMap<WindowId, Vec<mpsc::SyncSender<Result<Screenshot, SimulationError>>>>,
+    gpu: HashMap<WindowId, Vec<mpsc::SyncSender<Result<GpuResourceSummary, SimulationError>>>>,
+}
+
+impl SimulationWaiters {
+    fn settle<T: Clone>(
+        waiters: &mut HashMap<WindowId, Vec<mpsc::SyncSender<Result<T, SimulationError>>>>,
+        window_id: WindowId,
+        result: Result<T, SimulationError>,
+    ) {
+        if let Some(pending) = waiters.remove(&window_id) {
+            for reply in pending {
+                let _ = reply.send(result.clone());
+            }
+        }
+    }
+
+    /// Reports whether a simulator is waiting for the next presented frame.
+    #[must_use]
+    pub(crate) fn frame_pending(&self, window_id: WindowId) -> bool {
+        self.frame
+            .get(&window_id)
+            .is_some_and(|waiters| !waiters.is_empty())
+    }
+
+    /// Reports whether a simulator is waiting for a capture.
+    #[must_use]
+    pub(crate) fn capture_pending(&self, window_id: WindowId) -> bool {
+        self.capture
+            .get(&window_id)
+            .is_some_and(|waiters| !waiters.is_empty())
+    }
+
+    /// Registers a frame waiter enlisted by simulation request handling.
+    pub(crate) fn insert_frame(
+        &mut self,
+        window_id: WindowId,
+        reply: mpsc::SyncSender<Result<(), SimulationError>>,
+    ) {
+        self.frame.entry(window_id).or_default().push(reply);
+    }
+
+    /// Registers a capture waiter enlisted by simulation request handling.
+    pub(crate) fn insert_capture(
+        &mut self,
+        window_id: WindowId,
+        reply: mpsc::SyncSender<Result<Screenshot, SimulationError>>,
+    ) {
+        self.capture.entry(window_id).or_default().push(reply);
+    }
+
+    /// Registers a GPU-resource waiter enlisted by simulation request handling.
+    pub(crate) fn insert_gpu(
+        &mut self,
+        window_id: WindowId,
+        reply: mpsc::SyncSender<Result<GpuResourceSummary, SimulationError>>,
+    ) {
+        self.gpu.entry(window_id).or_default().push(reply);
+    }
+
+    /// Completes simulator waiters after the native renderer has presented a
+    /// frame. `capture` is supplied only when a renderer serviced a pending
+    /// capture request.
+    pub(crate) fn complete_frame(
+        &mut self,
+        window_id: WindowId,
+        presented: bool,
+        capture: Option<Result<Screenshot, String>>,
+    ) {
+        if !presented {
+            return;
+        }
+        Self::settle(&mut self.frame, window_id, Ok(()));
+        let result = capture
+            .map(|result| result.map_err(SimulationError::CaptureUnavailable))
+            .unwrap_or_else(|| {
+                Err(SimulationError::CaptureUnavailable(
+                    "the renderer did not return a capture".into(),
+                ))
+            });
+        Self::settle(&mut self.capture, window_id, result);
+    }
+
+    /// Fails simulator requests when a native frame cannot be produced.
+    pub(crate) fn fail_frame(&mut self, window_id: WindowId, message: impl Into<String>) {
+        let error = SimulationError::FrameFailed(message.into());
+        Self::settle(&mut self.frame, window_id, Err(error.clone()));
+        let capture_error = SimulationError::CaptureUnavailable(error.to_string());
+        Self::settle(&mut self.capture, window_id, Err(capture_error));
+    }
+
+    /// Fails all three waiter kinds when a window closes or the
+    /// application shuts down.
+    pub(crate) fn fail_window(&mut self, window_id: WindowId) {
+        let error = SimulationError::WindowClosed(window_id);
+        Self::settle(&mut self.frame, window_id, Err(error.clone()));
+        Self::settle(&mut self.capture, window_id, Err(error.clone()));
+        // Resource queries hold no frame debt: closing settles them here,
+        // through the same close/shutdown paths as every other waiter, so
+        // no maintenance pass is needed to release them.
+        Self::settle(&mut self.gpu, window_id, Err(error));
+    }
+
+    /// Completes pending GPU-resource waiters after the native adapter has
+    /// snapshotted current residency. Never renders.
+    pub(crate) fn complete_gpu(&mut self, window_id: WindowId, summary: GpuResourceSummary) {
+        Self::settle(&mut self.gpu, window_id, Ok(summary));
+    }
+
+    /// Windows holding GPU-resource waiters, for liveness filtering by
+    /// the caller: liveness lives in the window registry, not here.
+    pub(crate) fn gpu_windows(&self) -> Vec<WindowId> {
+        self.gpu.keys().copied().collect()
+    }
+
+    /// Releases one window's GPU-resource waiters for out-of-band
+    /// settlement by the caller. Empty when nothing was pending.
+    pub(crate) fn take_gpu_waiters(
+        &mut self,
+        window_id: WindowId,
+    ) -> Vec<Reply<GpuResourceSummary>> {
+        self.gpu.remove(&window_id).unwrap_or_default()
+    }
 }
 
 /// A cloneable in-process controller for one Incular application window.
@@ -719,10 +853,7 @@ impl Application {
                 if self.contains_window(window_id) {
                     let _ =
                         self.with_window_mut(window_id, |record| record.runtime.request_frame());
-                    self.simulation_frame_waiters
-                        .entry(window_id)
-                        .or_default()
-                        .push(reply);
+                    self.simulation_waiters.insert_frame(window_id, reply);
                 } else {
                     let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
                 }
@@ -731,10 +862,7 @@ impl Application {
                 if self.contains_window(window_id) {
                     let _ =
                         self.with_window_mut(window_id, |record| record.runtime.request_frame());
-                    self.simulation_capture_waiters
-                        .entry(window_id)
-                        .or_default()
-                        .push(reply);
+                    self.simulation_waiters.insert_capture(window_id, reply);
                 } else {
                     let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
                 }
@@ -744,10 +872,7 @@ impl Application {
                 // not present. The native adapter fulfills pending queries
                 // from current state on its maintenance path.
                 if self.contains_window(window_id) {
-                    self.simulation_gpu_resource_waiters
-                        .entry(window_id)
-                        .or_default()
-                        .push(reply);
+                    self.simulation_waiters.insert_gpu(window_id, reply);
                 } else {
                     let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
                 }
@@ -899,9 +1024,7 @@ impl Application {
     }
 
     pub fn simulation_capture_pending(&self, window_id: WindowId) -> bool {
-        self.simulation_capture_waiters
-            .get(&window_id)
-            .is_some_and(|waiters| !waiters.is_empty())
+        self.simulation_waiters.capture_pending(window_id)
     }
 
     /// Returns the live windows with pending GPU-resource queries so the
@@ -913,17 +1036,12 @@ impl Application {
     /// waiters through the shared close/shutdown cleanup, never through
     /// this method.
     pub fn take_gpu_resource_queries(&mut self) -> Vec<WindowId> {
-        let ids: Vec<WindowId> = self
-            .simulation_gpu_resource_waiters
-            .keys()
-            .copied()
-            .collect();
         let mut live = Vec::new();
-        for window_id in ids {
+        for window_id in self.simulation_waiters.gpu_windows() {
             if self.contains_window(window_id) {
                 live.push(window_id);
-            } else if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
-                for reply in waiters {
+            } else {
+                for reply in self.simulation_waiters.take_gpu_waiters(window_id) {
                     let _ = reply.send(Err(SimulationError::WindowNotFound(window_id)));
                 }
             }
@@ -938,19 +1056,13 @@ impl Application {
         window_id: WindowId,
         summary: GpuResourceSummary,
     ) {
-        if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Ok(summary));
-            }
-        }
+        self.simulation_waiters.complete_gpu(window_id, summary);
     }
 
     /// Reports whether a simulator is waiting for the next presented frame.
     #[must_use]
     pub fn simulation_frame_pending(&self, window_id: WindowId) -> bool {
-        self.simulation_frame_waiters
-            .get(&window_id)
-            .is_some_and(|waiters| !waiters.is_empty())
+        self.simulation_waiters.frame_pending(window_id)
     }
 
     /// Completes simulator waiters after the native renderer has presented a
@@ -962,64 +1074,17 @@ impl Application {
         presented: bool,
         capture: Option<Result<Screenshot, String>>,
     ) {
-        if !presented {
-            return;
-        }
-        if let Some(waiters) = self.simulation_frame_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Ok(()));
-            }
-        }
-        if let Some(waiters) = self.simulation_capture_waiters.remove(&window_id) {
-            let result = capture
-                .map(|result| result.map_err(SimulationError::CaptureUnavailable))
-                .unwrap_or_else(|| {
-                    Err(SimulationError::CaptureUnavailable(
-                        "the renderer did not return a capture".into(),
-                    ))
-                });
-            for reply in waiters {
-                let _ = reply.send(result.clone());
-            }
-        }
+        self.simulation_waiters
+            .complete_frame(window_id, presented, capture);
     }
 
     /// Fails simulator requests when a native frame cannot be produced.
     pub fn fail_simulation_frame(&mut self, window_id: WindowId, message: impl Into<String>) {
-        let error = SimulationError::FrameFailed(message.into());
-        if let Some(waiters) = self.simulation_frame_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Err(error.clone()));
-            }
-        }
-        if let Some(waiters) = self.simulation_capture_waiters.remove(&window_id) {
-            let capture_error = SimulationError::CaptureUnavailable(error.to_string());
-            for reply in waiters {
-                let _ = reply.send(Err(capture_error.clone()));
-            }
-        }
+        self.simulation_waiters.fail_frame(window_id, message);
     }
 
     pub(crate) fn fail_simulation_window(&mut self, window_id: WindowId) {
-        let error = SimulationError::WindowClosed(window_id);
-        if let Some(waiters) = self.simulation_frame_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Err(error.clone()));
-            }
-        }
-        if let Some(waiters) = self.simulation_capture_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Err(error.clone()));
-            }
-        }
-        // Resource queries hold no frame debt: closing settles them here,
-        // through the same close/shutdown paths as every other waiter, so
-        // no maintenance pass is needed to release them.
-        if let Some(waiters) = self.simulation_gpu_resource_waiters.remove(&window_id) {
-            for reply in waiters {
-                let _ = reply.send(Err(error.clone()));
-            }
-        }
+        self.simulation_waiters.fail_window(window_id);
     }
 
     pub(crate) fn stop_simulation(&self) {

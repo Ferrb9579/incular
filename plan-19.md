@@ -65,6 +65,39 @@ restore/fallback replacement, and pop/replace paths. Persisted restoration
 data intentionally survives declarative removal; that rule must not be read as
 lifecycle cleanup.
 
+Runtime ownership inventory (`Application` fields → logical owner; the
+common request channel, scheduler, and teardown sequence stay put):
+
+| Domain | Fields | Owner today |
+| --- | --- | --- |
+| Lifecycle | `application_shell`, `activations`, `launch_activation`, `single_instance_policy`, `close_request`, `should_exit`, `last_window_policy`, `primary_window` | Owned services plus the core loop's own policy flags |
+| Scheduling | `scheduler`, `scheduler_counters` | `tasks::TaskScheduler` mechanics; counters are diagnostics |
+| Input | `registry`, `manager`, `command_receiver`, `native_commands`, `request_cancellation_receiver` | `window_state` registry/manager; channels are transport |
+| Restoration | `restoration`, `restoration_window_factories` | `restoration::RestorationManager`; the factories map is app wiring |
+| Diagnostics | `profiler`, `hub` | `profiling` module |
+| Pending replies | `pending_native_requests`; file-dialog receiver/bridge/pending/active/queued/native maps; global-shortcut receiver/bridge/pending/native queue; `simulation_receiver/bridge` plus frame/capture/GPU waiter maps; `display_catalog` | `RequestRegistry` plus per-domain maps on `Application` |
+
+Extraction candidates and their invariants:
+
+- `SimulationWaiters` (frame/capture/GPU maps with settlement) —
+  IMPLEMENTED. Invariant: every waiter settles exactly once through one
+  owner; window close and shutdown settle all three kinds together, while
+  frame failure deliberately leaves GPU queries pending (no frame debt).
+  Previously five methods took all of `Application` for waiter-only
+  state; they are now one-line forwarders preserving the public,
+  desktop-facing, and test API. Pinned by close/shutdown/complete/fail
+  lifecycle tests including a new joint three-kind close test.
+- File-dialog per-window FIFO (active/queued/promote with capability
+  gating, cancellation phases, native handoff) — NOT extracted. The
+  logic needs registry liveness, manager capabilities, and three
+  registries together; splitting threads the same borrows through a new
+  type without removing any. Revisit only with a demonstrated defect.
+- Shutdown settlement fan-out (`fail_all_*` trio) — NOT extracted. The
+  fan-out is the teardown sequence itself; an owner would re-list the
+  domains without enforcing anything new.
+- Native request cancellation filtering — NOT extracted: coherent
+  through `RequestRegistry`, no intermingling found.
+
 Problem/evidence: navigator.rs has parallel routes/restorable_routes, independent
 push/active notifications and borrowed user iteration in set_pages. BackDispatcher
 rejects only a direct self-link, not ancestor cycles.

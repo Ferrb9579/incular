@@ -430,3 +430,47 @@ fn live_window_keeps_query_pending_across_takes() {
     assert!(takes >= 3, "the waiter must survive repeated takes");
     assert_eq!(result, Ok(expected));
 }
+
+/// Closing a window settles every waiter kind exactly once through the
+/// single waiter owner: frame, capture, and GPU-resource waiters all
+/// report `WindowClosed`, and nothing lingers for shutdown to repeat.
+#[test]
+fn window_close_settles_all_waiter_kinds_exactly_once() {
+    let mut application =
+        Application::new(|_| Text::new("frame").into()).expect("application should build");
+    let window = application.primary_window();
+    let frame_worker = {
+        let simulation = application.simulation();
+        std::thread::spawn(move || simulation.wait_for_frame())
+    };
+    let capture_worker = {
+        let simulation = application.simulation();
+        std::thread::spawn(move || simulation.capture())
+    };
+    let gpu_worker = query_in_background(application.simulation());
+    for _ in 0..2_000 {
+        application.process_simulation_requests();
+        if application.simulation_frame_pending(window)
+            && application.simulation_capture_pending(window)
+            && application.take_gpu_resource_queries().contains(&window)
+        {
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(1));
+    }
+    assert!(application.simulation_frame_pending(window));
+    assert!(application.simulation_capture_pending(window));
+    assert!(application.close_window(window));
+    assert_eq!(
+        frame_worker.join().expect("frame worker did not panic"),
+        Err(SimulationError::WindowClosed(window))
+    );
+    assert_eq!(
+        capture_worker.join().expect("capture worker did not panic"),
+        Err(SimulationError::WindowClosed(window))
+    );
+    assert_eq!(
+        gpu_worker.join().expect("gpu worker did not panic"),
+        Err(SimulationError::WindowClosed(window))
+    );
+}
