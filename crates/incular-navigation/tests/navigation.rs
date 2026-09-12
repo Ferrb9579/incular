@@ -1366,6 +1366,44 @@ fn reentrant_cleanup_orders_before_observer_events_for_both() {
 }
 
 #[test]
+fn non_top_child_replacement_retires_outside_borrows() {
+    // The lower route's replaced child has no top-snapshot protection:
+    // it must retire through the explicit collection, dropping after the
+    // borrow ends with no panic, committed-state observation, and a
+    // surviving reentrant push.
+    let navigator = Navigator::new();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let low = PageKey::new("low").unwrap();
+    let top = PageKey::new("top").unwrap();
+    navigator.push_page(Page::new("lower", probed_child(&navigator, &log)).key(low.clone()));
+    navigator.push_page(Page::new("top", page()).key(top.clone()));
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    navigator
+        .set_pages([
+            Page {
+                name: "lower".to_owned(),
+                child: page(),
+                key: Some(low),
+            },
+            Page::new("top", page()).key(top),
+        ])
+        .unwrap();
+    assert_eq!(&*log.borrow(), &["dropped:routes=2"]);
+    let routes = navigator.routes();
+    assert_eq!(
+        routes.iter().map(|route| route.id).collect::<Vec<_>>(),
+        vec![ids[0], ids[1], routes[2].id]
+    );
+    assert_eq!(
+        routes
+            .iter()
+            .map(|route| route.name.clone())
+            .collect::<Vec<_>>(),
+        ["lower", "top", "drop-child"]
+    );
+}
+
+#[test]
 fn snapshot_excludes_transient_routes_and_their_suffix() {
     let registry = RouteRegistry::new();
     let home = registry

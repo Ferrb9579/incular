@@ -7,6 +7,8 @@ use std::{
 
 use serde_json::Value;
 
+use incular_widgets::Widget;
+
 use super::{
     NAVIGATOR_SNAPSHOT_FORMAT_VERSION, NavigatorSnapshot, Page, PageKey, RestorableRoute, Route,
     RouteId, RoutePresentation, RouteScopeKey, RouteSettings, RouteTransition,
@@ -473,7 +475,7 @@ impl Navigator {
                 return Err(DuplicatePageKey { key: key.clone() });
             }
         }
-        let (previous_top, current_top, retired) = {
+        let (previous_top, current_top, retired, retired_children) = {
             let mut state = self.state.borrow_mut();
             let previous_top = state.routes.last().map(|entry| entry.route.clone());
             let mut previous: Vec<Option<RouteEntry>> = std::mem::take(&mut state.routes)
@@ -487,6 +489,11 @@ impl Navigator {
                 }
             }
             let mut next = Vec::with_capacity(pages.len());
+            // Replaced children retire outside the borrow below: assignment
+            // would drop the old child here, where its destructor could
+            // reenter the navigator. Top-route snapshots do not protect
+            // non-top children.
+            let mut retired_children: Vec<Widget> = Vec::new();
             for page in pages {
                 // Pop takes the topmost claimant: slots ascend, so the
                 // last slot is the most recently pushed entry.
@@ -503,7 +510,7 @@ impl Navigator {
                     // presentation, and the route ID are preserved.
                     entry.route.name = page.name.clone();
                     entry.route.settings.rename(page.name.clone());
-                    entry.route.child = page.child;
+                    retired_children.push(std::mem::replace(&mut entry.route.child, page.child));
                     next.push(entry);
                 } else {
                     state.next_id = state.next_id.wrapping_add(1).max(1);
@@ -528,9 +535,10 @@ impl Navigator {
             state.routes = next;
             state.revision = state.revision.wrapping_add(1);
             let current_top = state.routes.last().map(|entry| entry.route.clone());
-            (previous_top, current_top, retired)
+            (previous_top, current_top, retired, retired_children)
         };
         drop(retired);
+        drop(retired_children);
         let mut effects = CommitEffects::default();
         effects
             .events

@@ -2666,8 +2666,9 @@ storage, explicit `PageKey` identity with pre-mutation duplicate rejection,
 same-key rename, topmost-wins duplicate claims, indexed lookup, and a shared
 commit/effect path (cleanups before observer events, after borrows) for
 push/pop/replace/set_pages/restoration, with guarded-pop checks preserved and
-retirement (entries, replaced children, restored stacks, callback
-registrations) outside borrows. Item 4 is partially covered (two-observer
+retirement outside borrows (unmatched entries, restored stacks, replaced
+callback registrations, plus an explicit retired-children collection for
+keyed child replacement at any stack position). Item 4 is partially covered (two-observer
 event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
 keyed reorder, removal, restored routes, destructor reentrancy); remaining:
 deep-link delivery exactly once, focus-restoration ownership, route-scoped

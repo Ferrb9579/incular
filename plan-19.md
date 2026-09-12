@@ -11,12 +11,16 @@ any borrow; unkeyed pages mount anew), same-key rename preserving unrelated
 metadata, topmost-wins for duplicate live claims, and transaction-local
 indexed lookup; one shared commit/effect path (cleanups before observer events,
 both after borrows end) for push, pop, replace, set_pages, and restoration;
-retirement of entries, replaced children, restored stacks, and replaced
-callback registrations outside borrows with destructor regressions proving no
-RefCell panic, committed-state observation, reentrant survival, and exact-once
-release. Events are historical nested delivery in commit order, pinned with two
-observers plus reentrant cleanup across all operations. Guarded-pop
-candidate/revision checks are preserved. Evidence:
+retirement of unmatched entries, restored stacks, and replaced callback
+registrations outside borrows, plus an explicit retired-children collection
+for keyed child replacement (top-route snapshots alone protect only the top
+child; non-top replaced children previously dropped under the borrow), with
+destructor regressions proving no RefCell panic, committed-state observation,
+reentrant survival, and exact-once release. Remaining drops under borrows
+hold inert data only (ids, strings, JSON values, weak refs). Events are
+historical nested delivery in commit order, pinned with two observers plus
+reentrant cleanup across all operations. Guarded-pop candidate/revision checks
+are preserved. Evidence:
 `crates/incular-navigation/tests/navigation.rs` (observer sequences, reentrant
 observer/cleanup navigation, keyed reorder, repeated names, duplicate rejection
 without mutation or events, retained IDs, removal/reinsertion, iterator
