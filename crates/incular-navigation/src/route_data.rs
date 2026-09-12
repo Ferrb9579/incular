@@ -447,6 +447,13 @@ impl RouteSettings {
         self
     }
 
+    /// Renames the settings mirror in place, preserving arguments and
+    /// scope. Keyed reconciliation uses this so a renamed page keeps the
+    /// entry's unrelated metadata instead of dropping it.
+    pub(crate) fn rename(&mut self, name: impl Into<String>) {
+        self.name = name.into();
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name

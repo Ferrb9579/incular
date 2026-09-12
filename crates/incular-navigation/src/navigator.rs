@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashSet, fmt, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt,
+    rc::Rc,
+};
 
 use serde_json::Value;
 
@@ -220,6 +225,11 @@ impl Navigator {
     pub fn push(&self, route: Route) -> RouteId {
         self.push_entry(route, None, None)
     }
+    /// Pushes a declarative page as a new route lifetime.
+    ///
+    /// Imperative pushes perform no identity validation: pushing the same
+    /// key twice creates two live entries claiming it. A later keyed
+    /// reconciliation keeps the topmost claim and drops the rest.
     pub fn push_page(&self, page: Page) -> RouteId {
         let key = page.key.clone();
         self.push_entry(page.into(), None, key)
@@ -420,6 +430,13 @@ impl Navigator {
     /// stack. Identity validation runs before any mutation: a duplicated
     /// key rejects the whole update, leaving the stack, revision, and
     /// observers untouched.
+    ///
+    /// Claim lookup is indexed, not a repeated linear search: each live
+    /// entry is visited once to build the table, then each page resolves
+    /// in constant time. When several live entries claim one key (only
+    /// possible through imperative pushes, which perform no identity
+    /// validation), the topmost claim wins as the presented route; the
+    /// others are dropped as unclaimed.
     pub fn set_pages(&self, pages: impl IntoIterator<Item = Page>) -> Result<(), DuplicatePageKey> {
         let pages: Vec<Page> = pages.into_iter().collect();
         let mut seen = HashSet::new();
@@ -433,17 +450,33 @@ impl Navigator {
         let (previous_top, current_top) = {
             let mut state = self.state.borrow_mut();
             let previous_top = state.routes.last().map(|entry| entry.route.clone());
-            let mut previous = std::mem::take(&mut state.routes);
+            let mut previous: Vec<Option<RouteEntry>> = std::mem::take(&mut state.routes)
+                .into_iter()
+                .map(Some)
+                .collect();
+            let mut by_key: HashMap<PageKey, Vec<usize>> = HashMap::new();
+            for (index, entry) in previous.iter().enumerate() {
+                if let Some(key) = entry.as_ref().and_then(|entry| entry.key.clone()) {
+                    by_key.entry(key).or_default().push(index);
+                }
+            }
             let mut next = Vec::with_capacity(pages.len());
             for page in pages {
+                // Pop takes the topmost claimant: slots ascend, so the
+                // last slot is the most recently pushed entry.
                 let claimed = match &page.key {
-                    Some(key) => previous
-                        .iter()
-                        .position(|entry| entry.key.as_ref() == Some(key)),
+                    Some(key) => by_key.get_mut(key).and_then(|slots| slots.pop()),
                     None => None,
                 };
                 if let Some(index) = claimed {
-                    let mut entry = previous.remove(index);
+                    let mut entry = previous[index]
+                        .take()
+                        .expect("a claimed slot holds its entry exactly once");
+                    // A renamed page updates the name and its settings
+                    // mirror; arguments, scope, restoration metadata,
+                    // presentation, and the route ID are preserved.
+                    entry.route.name = page.name.clone();
+                    entry.route.settings.rename(page.name.clone());
                     entry.route.child = page.child;
                     next.push(entry);
                 } else {

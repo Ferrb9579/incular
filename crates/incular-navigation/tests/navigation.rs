@@ -948,6 +948,95 @@ fn rejected_operations_produce_no_effects() {
 }
 
 #[test]
+fn same_key_rename_updates_name_and_keeps_metadata() {
+    fn keyed_page(key: &str, arguments: &Value) -> Result<Page, RestorableRouteBuildError> {
+        let name = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RestorableRouteBuildError::invalid_arguments("missing name"))?;
+        Ok(Page::new(name, page()).key(PageKey::new(key).unwrap()))
+    }
+    let registry = RouteRegistry::new();
+    let detail = registry
+        .register_restorable("/detail", |arguments| keyed_page("detail", arguments))
+        .unwrap();
+    let navigator = Navigator::new();
+    registry
+        .navigate_restorable(
+            &navigator,
+            RestorableRoute::new(detail, json!({ "name": "detail" }))
+                .state(json!({ "document": 7 })),
+        )
+        .unwrap();
+    let id = navigator.routes()[0].id;
+
+    // A renamed page with the same key updates the name and its settings
+    // mirror while preserving the route ID and restoration metadata.
+    navigator
+        .set_pages([Page::new("detail-renamed", page()).key(PageKey::new("detail").unwrap())])
+        .unwrap();
+    let routes = navigator.routes();
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0].id, id);
+    assert_eq!(routes[0].name, "detail-renamed");
+    assert_eq!(routes[0].settings.name(), "detail-renamed");
+    assert!(routes[0].presentation.is_opaque());
+    assert_eq!(
+        navigator.current_restorable_route().unwrap().state,
+        json!({ "document": 7 })
+    );
+    let snapshot = navigator.restoration_snapshot();
+    assert_eq!(snapshot.routes.len(), 1);
+    assert_eq!(snapshot.routes[0].state, json!({ "document": 7 }));
+}
+
+#[test]
+fn duplicate_live_key_claims_keep_the_topmost_entry() {
+    // Imperative pushes perform no identity validation, so two live
+    // entries may claim one key. Reconciliation keeps the topmost
+    // (presented) claim deterministically instead of the first.
+    let navigator = Navigator::new();
+    let first = navigator.push_page(Page::new("detail", page()).key(PageKey::new("k").unwrap()));
+    let second =
+        navigator.push_page(Page::new("detail-again", page()).key(PageKey::new("k").unwrap()));
+    assert_ne!(first, second);
+    navigator
+        .set_pages([Page::new("detail", page()).key(PageKey::new("k").unwrap())])
+        .unwrap();
+    let routes = navigator.routes();
+    assert_eq!(routes.len(), 1);
+    assert_eq!(routes[0].id, second);
+    assert_eq!(routes[0].name, "detail");
+}
+
+#[test]
+fn large_keyed_reorder_commits_once_with_exact_permutation() {
+    let navigator = Navigator::new();
+    let count = 200usize;
+    navigator
+        .set_pages((0..count).map(|index| {
+            Page::new(format!("page-{index}"), page())
+                .key(PageKey::new(format!("k-{index}")).unwrap())
+        }))
+        .unwrap();
+    let ids: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    let revision = navigator.revision();
+    // Reverse the whole stack: one commit, every lifetime preserved at
+    // its mirrored position.
+    navigator
+        .set_pages((0..count).rev().map(|index| {
+            Page::new(format!("page-{index}"), page())
+                .key(PageKey::new(format!("k-{index}")).unwrap())
+        }))
+        .unwrap();
+    let reordered: Vec<RouteId> = navigator.routes().iter().map(|route| route.id).collect();
+    let expected: Vec<RouteId> = ids.iter().rev().copied().collect();
+    assert_eq!(reordered, expected);
+    assert_eq!(navigator.revision(), revision.wrapping_add(1));
+    assert_eq!(navigator.current().unwrap().id, ids[0]);
+}
+
+#[test]
 fn snapshot_excludes_transient_routes_and_their_suffix() {
     let registry = RouteRegistry::new();
     let home = registry
