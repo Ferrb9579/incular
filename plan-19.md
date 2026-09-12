@@ -70,15 +70,60 @@ repeated equal payloads): the service queue is the only queue, delivery is
 exactly-once per live listener with no dedup, and a dispatch guard releases
 the drain on listener panic without losing the queue.
 
-Removal-handoff finding (not implemented, not claimed): no route-lifetime
-consumer exists outside the navigation crate — nothing owns route-scoped
-tasks, subscriptions, or focus by route lifetime in runtime, desktop, or
-widgets, and the restoration-scope bridge is pop-only by design. A bounded
-removal handoff therefore has no interface to target yet: it needs per-entry
-lifetime tokens observed by a runtime owner, affecting the set_pages removal,
-restore/fallback replacement, and pop/replace paths. Persisted restoration
-data intentionally survives declarative removal; that rule must not be read as
-lifecycle cleanup.
+Route-lifetime ownership decision (traced to code; interface work remains,
+so W4 stays open — see exact work below, not a placeholder):
+
+Guarantees that exist today:
+- Focus is a per-window slot (`runtime/frame.rs`). An unmounted focused
+  element clears focus to `None` with text-capture release in the same
+  frame (`clear_focus_if_unmounted`) — no stale focus, but no fallback and
+  no per-route save/restore. Autofocus resolves once at window mount only;
+  later route changes never re-trigger it. `FocusScopeNode` keeps
+  scope-local `last_focused` with save/restore, but nothing binds a scope
+  to a route. `RoutePresentation::Modal.focus_trap` is declared
+  (`navigation/presentation.rs`) and never read — dead until enforced or
+  removed.
+- Tasks have app/window/element scopes only (`runtime/tasks.rs`; zero
+  route references). Element unmount cancels that element's owner scope in
+  the frame drain (`frame.rs` build/layout drains), so element-owned work
+  inside a removed route subtree is cancelled through rebuild —
+  emergently, not by route lifetime. Work spawned in an app/window scope
+  for a route, or detached from element ownership, survives route removal
+  by design.
+- Window close fails per-window simulation/file-dialog/native requests,
+  cancels the window scope, and clears focus; app-scoped global shortcuts
+  are untouched. Shutdown fails all dialogs/shortcuts/native requests,
+  disposes every window, and cancels the application scope with a bounded
+  Tokio stop (`application.rs`, `tasks.rs`).
+- The navigator issues no per-route lifetime token. Removal runs cleanups
+  (restoration-scope deletion, pop-only by design) plus observer events;
+  declarative reconciliation retains persisted scope data, which must not
+  be read as lifecycle cleanup.
+
+Ownership that belongs to mounted route lifetime but is missing: (a) focus
+save/restore across push/pop — which element was focused per route, and
+the fallback policy when it is gone; (b) cancellation of
+route-associated work that outlives its elements or never had an element
+owner. Route-scoped focus/task APIs are therefore still planned, not
+supported: no route-keyed API exists in runtime, desktop, or widgets.
+
+Minimal interface for the remainder (exact implementation work; no code
+yet because the only route-lifetime interface — the restoration bridge —
+is pop-only by design, so a handoff today would have no consumer, and
+absence of a consumer does not satisfy the requirement):
+1. The navigator emits a per-entry lifetime token in `CommitEffects` on
+   every permanent-removal path (pop, replace, `set_pages` removal,
+   restore/fallback replacement) — declarative reorder and retention must
+   not cancel — plus route activation events for focus save/restore.
+2. A runtime focus owner observes activation: saves the focused element
+   per route on deactivation, restores it on reactivation with an explicit
+   fallback (autofocus query vs. none), and decides `focus_trap`
+   enforcement or removal.
+3. A task owner cancels the route scope on permanent removal only.
+4. Item 5 remainder: the field-to-owner inventory above stands with one
+   extraction done (`SimulationWaiters`); file-dialog FIFO, shutdown
+   fan-out, and cancellation filtering stay rejected for the recorded
+   reasons — further extractions only with a demonstrated defect.
 
 Runtime ownership inventory (`Application` fields → logical owner; the
 common request channel, scheduler, and teardown sequence stay put):

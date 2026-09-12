@@ -2672,19 +2672,26 @@ keyed child replacement at any stack position). Item 4 is partially covered (two
 event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
 keyed reorder, removal, restored routes, destructor reentrancy, deep-link
 normal operation end-to-end, plus restoration/builder failure reporting
-with fallback and recovery); remaining: platform-input failure surfacing
-for rejected live deep links (swallowed in `receive_route_information`),
-focus-restoration ownership, route-scoped
+with fallback and recovery, and exactly-once failure reporting per attempt
+— the earlier swallowed-platform-failure claim is retracted: every apply
+failure notifies inside `apply_route`, `receive_route_information` adds
+nothing, the missing-parser path is unreachable by construction
+(`try_from_parts` pairing guard), and superseded transactions report `Ok`
+by design); remaining: focus-restoration ownership, route-scoped
 task ownership. Back attachment is now acyclic-by-construction with typed
 rejection; reorder carries a deterministic large-permutation pin. Item 5
 (runtime owners) is begun but largely untouched: simulation waiter
 settlement moved into a `SimulationWaiters` owner, with the field-to-owner
 inventory and rejected candidates in plan-19. Activation delivery (service
 queue as the only queue, exactly-once per live listener, no dedup,
-panic-safe drain) is audited with production-path tests. A bounded removal handoff for route
-tasks/subscriptions/focus has no target interface yet — no route-lifetime
-consumer exists outside the navigation crate — and is recorded in plan-19,
-not claimed. See plan-19 for the itemized remainder.
+panic-safe drain) is audited with production-path tests. Item 4's
+route-lifetime decision is recorded in plan-19: focus clearing and
+element-owned task cancellation follow element unmount today (no stale
+focus, no per-route save/restore, no fallback); a per-entry lifetime token
+with a runtime focus owner and a removal-only task owner is specified
+there as exact remaining work, with no handoff implemented because the
+only route-lifetime interface is pop-only by design. W4 stays open on that
+interface work and the remaining runtime owners. See plan-19 for the itemized remainder.
 
 ## W5 — Scroll and animation state transitions
 
