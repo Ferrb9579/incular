@@ -1,6 +1,7 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: in progress. Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
+Status: complete on W4's exit criteria (evidence below; residuals recorded,
+not claimed). Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
 
 Completed (navigator stack; BackDispatcher topology untouched): one private
 `RouteEntry` collection replaces the parallel routes/restorable_routes vectors,
@@ -30,8 +31,13 @@ cycles/duplicates/dead children/deep chains, sheet FIFO drain with panic
 recovery, activation queued-before-install/replacement/closure/reentrancy/
 equal-payload delivery).
 
-Remaining: runtime ownership mapping; focus restoration and route-scoped
-task ownership.
+Remaining (residual future work, not exit debt): automatic driving of
+`RouteFocusState` by the mount outlet (no Navigator→tree mount point
+exists, so no route content mounts and no attribution exists in-repo —
+saves/restores are host-driven through the oracle seam); modal focus
+containment (no traversal/dispatch scope clamp exists; `focus_trap`
+removed rather than kept as a no-op); further runtime-owner extractions
+only with a demonstrated defect.
 
 Deep-link normal-operation contract closed: queued-before-install,
 replacement, disposal, reentrancy, identical URLs, unmapped URLs, and
@@ -70,8 +76,9 @@ repeated equal payloads): the service queue is the only queue, delivery is
 exactly-once per live listener with no dedup, and a dispatch guard releases
 the drain on listener panic without losing the queue.
 
-Route-lifetime ownership decision (traced to code; interface work remains,
-so W4 stays open — see exact work below, not a placeholder):
+Route-lifetime ownership decision (implemented — the interface work below
+is done; only the mount outlet that would drive it automatically remains,
+recorded above):
 
 Guarantees that exist today:
 - Focus is a per-window slot (`runtime/frame.rs`). An unmounted focused
@@ -107,23 +114,41 @@ route-associated work that outlives its elements or never had an element
 owner. Route-scoped focus/task APIs are therefore still planned, not
 supported: no route-keyed API exists in runtime, desktop, or widgets.
 
-Minimal interface for the remainder (exact implementation work; no code
-yet because the only route-lifetime interface — the restoration bridge —
-is pop-only by design, so a handoff today would have no consumer, and
-absence of a consumer does not satisfy the requirement):
-1. The navigator emits a per-entry lifetime token in `CommitEffects` on
-   every permanent-removal path (pop, replace, `set_pages` removal,
-   restore/fallback replacement) — declarative reorder and retention must
-   not cancel — plus route activation events for focus save/restore.
-2. A runtime focus owner observes activation: saves the focused element
-   per route on deactivation, restores it on reactivation with an explicit
-   fallback (autofocus query vs. none), and decides `focus_trap`
-   enforcement or removal.
-3. A task owner cancels the route scope on permanent removal only.
-4. Item 5 remainder: the field-to-owner inventory above stands with one
-   extraction done (`SimulationWaiters`); file-dialog FIFO, shutdown
-   fan-out, and cancellation filtering stay rejected for the recorded
-   reasons — further extractions only with a demonstrated defect.
+Implemented against that decision:
+1. The navigator issues a neutral per-entry `RouteLifetime` moved with
+   keyed reuse and ended exactly once on every permanent-removal path
+   (pop, replace, `set_pages` removal, restore/fallback replacement, plus
+   explicit disposal) through one retirement slot in `CommitEffects` —
+   declarative reorder and retention never end it, restoration-data
+   retention stays independent, event `Route` snapshots carry no handle,
+   and callbacks run post-borrow. No task/focus types in the navigation
+   crate, no exposed effects type, no registry.
+2. A runtime `RouteFocusState` (one per `Navigator`) saves the focused
+   element per route on deactivation and restores on reactivation only
+   when the target remains mounted (generational), focusable, enabled,
+   and oracle-owned by the route — deterministic clear fallback
+   otherwise, no-op without a record, records dropped on removal and
+   with the state. `focus_trap` is removed (accepted no-op) with a
+   migration row; barrier input blocking is unchanged.
+3. A runtime `RouteTaskBinding` couples one `TaskScope` child to one
+   lifetime with no new engine: removal cancels, reorder/deactivation do
+   not, late completions discard through the existing cancelled-scope
+   path, close/shutdown cascade unchanged, disposal detaches by policy.
+4. Item 5 stands: the field-to-owner inventory with `SimulationWaiters`
+   done; file-dialog FIFO, shutdown fan-out, and cancellation filtering
+   stay rejected for the recorded reasons — further extractions only with
+   a demonstrated defect.
+
+W4 exit reconciliation (criteria, not just green tests): no parallel
+route arrays (single `RouteEntry` collection, no zip bookkeeping);
+no name-as-identity ambiguity (`PageKey` identity with pre-mutation
+typed rejection, names as routing metadata only); no callbacks under
+mutable domain borrows (retirement outside borrows across navigator,
+router, delegate, sheet, and activation paths, pinned by destructor and
+reentrancy regressions); no duplicated lifecycle engine (one router
+transaction, one activation queue, one scheduler; lifetimes are neutral
+handles and both bindings reuse existing owners). Residuals above are
+future product work outside these criteria.
 
 Runtime ownership inventory (`Application` fields → logical owner; the
 common request channel, scheduler, and teardown sequence stay put):

@@ -47,10 +47,13 @@ pub enum RoutePresentation {
         maintain_state: bool,
     },
     /// A modal presentation that isolates background input.
-    Modal {
-        barrier: ModalBarrier,
-        focus_trap: bool,
-    },
+    ///
+    /// Focus containment was removed: the `focus_trap` flag promised modal
+    /// focus trapping that no traversal or dispatch path implemented (see
+    /// `docs/API_MIGRATIONS.md`). Modal routes still block background input
+    /// through the barrier; constraining traversal to the modal subtree is
+    /// future work with no accepted no-op standing in for it.
+    Modal { barrier: ModalBarrier },
     /// A route backed by one or more existing overlay entries.
     Overlay { entries: Vec<OverlayEntry> },
 }
@@ -85,10 +88,7 @@ impl RoutePresentation {
 
     #[must_use]
     pub fn modal(barrier: ModalBarrier) -> Self {
-        Self::Modal {
-            barrier,
-            focus_trap: true,
-        }
+        Self::Modal { barrier }
     }
 
     #[must_use]

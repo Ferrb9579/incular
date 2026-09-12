@@ -1329,7 +1329,7 @@ impl Runtime {
             cursor => cursor,
         }
     }
-    fn set_focus(&mut self, next: Option<ElementId>) {
+    pub(crate) fn set_focus(&mut self, next: Option<ElementId>) {
         // Explicit input (including clearing focus) wins over a pending initial
         // autofocus request, even when it leaves the focused element unchanged.
         self.initial_focus = InitialFocus::Settled;

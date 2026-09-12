@@ -140,11 +140,12 @@ pub mod prelude {
         NativeOperationCompletionStatus, NativeOperationRequest, NativeWindowCommand,
         PerformanceHub, PerformanceSnapshot, ProfilerMode, RenderFrameMetrics, Restorable,
         RestorableWindowFactory, RestorationConfig, RestorationDiagnostics, RestorationHandle,
-        RestorationMigration, RestorationStore, RestorationStoreError, RouteTaskBinding, Runtime,
-        RuntimeDiagnostics, RuntimeErrorReport, SchedulerCounters, Signal, Task, TaskFailure,
-        TaskHandle, TaskScope, TokioHandle, UiDispatcher, UndoHistoryController, UndoHistoryState,
-        WindowCommandEnqueueError, WindowDiagnostics, WindowError, WindowHandle, WindowOpener,
-        WindowPlacementError, WindowRestorationId,
+        RestorationMigration, RestorationStore, RestorationStoreError, RouteFocusOwner,
+        RouteFocusState, RouteTaskBinding, Runtime, RuntimeDiagnostics, RuntimeErrorReport,
+        SchedulerCounters, Signal, Task, TaskFailure, TaskHandle, TaskScope, TokioHandle,
+        UiDispatcher, UndoHistoryController, UndoHistoryState, WindowCommandEnqueueError,
+        WindowDiagnostics, WindowError, WindowHandle, WindowOpener, WindowPlacementError,
+        WindowRestorationId,
     };
     #[cfg(feature = "desktop")]
     pub use incular_runtime::{

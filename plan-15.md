@@ -2661,37 +2661,48 @@ W3 scope: every family row below is inventoried and complete.
 Exit: no parallel route arrays, no name-as-identity ambiguity, no callbacks under
 mutable domain borrows, and no duplicated lifecycle engine.
 
-Progress (W4 not complete): items 1–3 are implemented — single `RouteEntry`
-storage, explicit `PageKey` identity with pre-mutation duplicate rejection,
-same-key rename, topmost-wins duplicate claims, indexed lookup, and a shared
-commit/effect path (cleanups before observer events, after borrows) for
-push/pop/replace/set_pages/restoration, with guarded-pop checks preserved and
-retirement outside borrows (unmatched entries, restored stacks, replaced
-callback registrations, plus an explicit retired-children collection for
-keyed child replacement at any stack position). Item 4 is partially covered (two-observer
-event ordering with reentrant cleanup, reentrant guards/observers/cleanup,
-keyed reorder, removal, restored routes, destructor reentrancy, deep-link
-normal operation end-to-end, plus restoration/builder failure reporting
-with fallback and recovery, and exactly-once failure reporting per attempt
-— the earlier swallowed-platform-failure claim is retracted: every apply
-failure notifies inside `apply_route`, `receive_route_information` adds
-nothing, the missing-parser path is unreachable by construction
-(`try_from_parts` pairing guard), and superseded transactions report `Ok`
-by design); remaining: focus-restoration ownership, route-scoped
-task ownership. Back attachment is now acyclic-by-construction with typed
-rejection; reorder carries a deterministic large-permutation pin. Item 5
-(runtime owners) is begun but largely untouched: simulation waiter
-settlement moved into a `SimulationWaiters` owner, with the field-to-owner
-inventory and rejected candidates in plan-19. Activation delivery (service
-queue as the only queue, exactly-once per live listener, no dedup,
-panic-safe drain) is audited with production-path tests. Item 4's
-route-lifetime decision is recorded in plan-19: focus clearing and
-element-owned task cancellation follow element unmount today (no stale
-focus, no per-route save/restore, no fallback); a per-entry lifetime token
-with a runtime focus owner and a removal-only task owner is specified
-there as exact remaining work, with no handoff implemented because the
-only route-lifetime interface is pop-only by design. W4 stays open on that
-interface work and the remaining runtime owners. See plan-19 for the itemized remainder.
+Progress (W4 complete on its exit criteria; residuals recorded below):
+items 1–3 are implemented — single `RouteEntry` storage, explicit `PageKey`
+identity with pre-mutation duplicate rejection, same-key rename,
+topmost-wins duplicate claims, indexed lookup, and a shared commit/effect
+path (cleanups before observer events, after borrows) for
+push/pop/replace/set_pages/restoration, with guarded-pop checks preserved
+and retirement outside borrows (unmatched entries, restored stacks,
+replaced callback registrations, plus an explicit retired-children
+collection for keyed child replacement at any stack position). Item 4 is
+covered: two-observer event ordering with reentrant cleanup, reentrant
+guards/observers/cleanup, keyed reorder, removal, restored routes,
+destructor reentrancy, deep-link normal operation end-to-end,
+restoration/builder failure reporting with fallback and recovery, and
+exactly-once failure reporting per attempt — the earlier
+swallowed-platform-failure claim is retracted: every apply failure
+notifies inside `apply_route`, `receive_route_information` adds nothing,
+the missing-parser path is unreachable by construction (`try_from_parts`
+pairing guard), and superseded transactions report `Ok` by design. Router
+transactions attribute delegate reactions to the open application (staged
+reactions complete, diverge-adopt, or discard; ordinary completions are
+never suppressed), and `BasicRouterDelegate` acceptance is atomic with
+retirement outside borrows. Back attachment is acyclic-by-construction
+with typed rejection; reorder carries a deterministic
+large-permutation pin. Route lifetimes are neutral per-entry handles that
+survive keyed reorder, end exactly once on every removal path (pop,
+replace, declarative, restored-stack, fallback) plus explicit disposal,
+and never leak through event snapshots. Route-scoped tasks bind lifetimes
+to `TaskScope` children with no new engine (removal cancels, reorder and
+deactivation do not, late completions discard, shutdown/close cascade
+unchanged). Focus restoration ownership is a runtime `RouteFocusState`:
+per-route saves restore only validated targets (mounted, focusable,
+enabled, oracle-owned) with deterministic clear fallback and drop
+disposal; `focus_trap` is removed as an accepted no-op (barrier input
+blocking unchanged). Item 5 (runtime owners): field-to-owner inventory in
+plan-19, `SimulationWaiters` extracted, activation delivery audited
+(service queue as the only queue, exactly-once per live listener, no
+dedup, panic-safe drain), restore/rebuild failures explicit. Residual
+future work, not W4 debt: automatic driving of `RouteFocusState` by the
+mount outlet (no Navigator→tree mount point exists yet, so saves/restores
+are host-driven through the documented seam), modal focus containment
+(no scope clamp exists), and further runtime-owner extractions only with
+a demonstrated defect. See plan-19 for the itemized evidence.
 
 ## W5 — Scroll and animation state transitions
 

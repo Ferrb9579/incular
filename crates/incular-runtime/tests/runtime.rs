@@ -48,6 +48,7 @@ mod runtime {
     mod reactive_scheduling;
     mod restoration_tasks;
     mod retained_interactions;
+    mod route_focus;
     mod route_task_binding;
 }
 
