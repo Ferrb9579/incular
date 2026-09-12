@@ -2,6 +2,21 @@ use super::*;
 use incular_navigation::{Navigator, Page, PageKey};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+/// Pumps runtime work until `done` or a timeout: wake counters may already
+/// be satisfied by earlier frames, so waiting on them alone can return
+/// before the task under test settles.
+fn pump_until(runtime: &mut Runtime, done: &AtomicBool) {
+    let start = Instant::now();
+    while !done.load(Ordering::Acquire) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "runtime work never settled"
+        );
+        runtime.process_runtime_work();
+        std::thread::yield_now();
+    }
+}
+
 fn route_page(name: &str) -> Page {
     Page::new(name, Widget::box_(Size::new(1., 1.), Color::WHITE))
 }
@@ -38,8 +53,15 @@ fn route_removal_cancels_bound_scope_and_discards_late_completion() {
     // instead of updating the removed route.
     navigator.pop();
     assert!(binding.scope().is_cancelled());
-    wait_for_wake(&wake);
-    runtime.process_runtime_work();
+    let start = Instant::now();
+    while runtime.runtime_diagnostics().tasks_cancelled < 1 {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "cancelled task never discarded"
+        );
+        runtime.process_runtime_work();
+        std::thread::yield_now();
+    }
     assert!(!completed.load(Ordering::Acquire));
     assert_eq!(runtime.runtime_diagnostics().tasks_cancelled, 1);
 }
@@ -80,9 +102,7 @@ fn reorder_and_deactivation_do_not_cancel_bound_tasks() {
     assert!(lifetime.is_live());
     navigator.push_page(route_page("cover"));
     assert!(lifetime.is_live());
-    wait_for_wake(&wake);
-    runtime.process_runtime_work();
-    assert!(completed.load(Ordering::Acquire));
+    pump_until(&mut runtime, &completed);
     assert!(!binding.scope().is_cancelled());
 }
 

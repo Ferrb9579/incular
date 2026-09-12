@@ -128,7 +128,8 @@ impl RouteOutlet {
             // attribution is by ancestry — sibling route subtrees never
             // contain each other, so any matched own tag is the nearest.
             // Scans stay bounded: one ancestor walk plus one reverse lookup
-            // per tag, at transition rate only, never per route per frame.
+            // per tag, on transitions and vacant retries only — never a
+            // per-route sweep.
             let mut chain = Vec::new();
             let mut cursor = Some(id);
             while let Some(current) = cursor {

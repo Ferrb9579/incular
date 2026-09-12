@@ -80,6 +80,37 @@ fn labeled(widget: Widget, label: &str) -> Widget {
     widget.semantics(ExplicitSemantics::new(SemanticRole::GenericContainer).label(label.to_owned()))
 }
 
+/// Pumps runtime work until `done` or a timeout: wake counters may already
+/// be satisfied by earlier frames, so waiting on them alone can return
+/// before the task under test settles.
+fn pump_until(runtime: &mut Runtime, done: &AtomicBool) {
+    let start = Instant::now();
+    while !done.load(Ordering::Acquire) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "runtime work never settled"
+        );
+        runtime.process_runtime_work();
+        std::thread::yield_now();
+    }
+}
+
+/// Pumps until the scheduler records the single cancelled task: proves a
+/// discard ran rather than merely observing silence. Absolute rather than
+/// baseline-relative, because the discard may already have drained during
+/// an intervening frame.
+fn pump_until_discarded(harness: &mut OutletHarness) {
+    let start = Instant::now();
+    while harness.runtime.runtime_diagnostics().tasks_cancelled < 1 {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "cancelled task never discarded"
+        );
+        harness.runtime.process_runtime_work();
+        std::thread::yield_now();
+    }
+}
+
 fn tab_until(runtime: &mut Runtime, node: &FocusNode) {
     for _ in 0..4 {
         if node.has_focus() {
@@ -318,8 +349,7 @@ fn outlet_removal_cancels_bound_tasks() {
     navigator.pop();
     assert!(scope.is_cancelled());
     present(&mut harness);
-    wait_for_wake(&wake);
-    harness.runtime.process_runtime_work();
+    pump_until_discarded(&mut harness);
     assert!(!completed.load(Ordering::Acquire));
     assert!(harness.outlet.borrow().route_task_scope(id).is_none());
 }
@@ -374,8 +404,7 @@ fn outlet_integrates_focus_tasks_and_lifetimes_together() {
     assert_eq!(harness.runtime.focused_element(), None);
     assert!(!lifetime_a.is_live());
     assert!(scope_a.is_cancelled());
-    wait_for_wake(&wake);
-    harness.runtime.process_runtime_work();
+    pump_until_discarded(&mut harness);
     assert!(!completed.load(Ordering::Acquire));
 }
 
@@ -935,6 +964,161 @@ fn nested_removal_reactivation_preserves_scope() {
     assert!(node_a.has_focus());
     assert!(!outer_scope.is_cancelled());
     assert!(inner_scope.is_cancelled());
+}
+
+#[test]
+fn outlet_reorder_keeps_tasks_and_completes() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    let key = |name: &str| PageKey::new(name).unwrap();
+    // Keyed from the start: unkeyed pushes carry no identity for a later
+    // keyed reconciliation to retain (their lifetimes correctly end).
+    navigator
+        .set_pages([
+            Page::new("a", Widget::box_(Size::new(40., 40.), RED)).key(key("a")),
+            Page::new("b", Widget::box_(Size::new(40., 40.), BLUE)).key(key("b")),
+        ])
+        .unwrap();
+    present(&mut harness);
+    let a_id = navigator.routes()[0].id;
+    let scope_a = harness
+        .outlet
+        .borrow()
+        .route_task_scope(a_id)
+        .expect("A bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness
+        .runtime
+        .spawner()
+        .spawn_into_in(&scope_a, async { 7_u8 }, move |result, _| {
+            assert_eq!(result.expect("reorder never cancels"), 7_u8);
+            completed_for_completion.store(true, Ordering::Release);
+        });
+    // Keyed reorder is not removal: the scope stays live and the task
+    // completes normally through the real scheduler.
+    navigator
+        .set_pages([
+            Page::new("b", Widget::box_(Size::new(40., 40.), BLUE)).key(key("b")),
+            Page::new("a", Widget::box_(Size::new(40., 40.), RED)).key(key("a")),
+        ])
+        .unwrap();
+    present(&mut harness);
+    pump_until(&mut harness.runtime, &completed);
+    assert!(!scope_a.is_cancelled());
+}
+
+#[test]
+fn outlet_modal_tasks_cancel_on_pop() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    navigator.push(Route::new("a", Widget::box_(Size::new(200., 200.), RED)));
+    navigator.push(
+        Route::new("b", Widget::box_(Size::new(40., 40.), BLUE))
+            .presentation(RoutePresentation::modal(ModalBarrier::default())),
+    );
+    present(&mut harness);
+    let modal_id = navigator.current().expect("modal").id;
+    let scope = harness
+        .outlet
+        .borrow()
+        .route_task_scope(modal_id)
+        .expect("modal bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness.runtime.spawner().spawn_into_in(
+        &scope,
+        async move {
+            std::future::pending::<()>().await;
+        },
+        move |_, _| {
+            completed_for_completion.store(true, Ordering::Release);
+        },
+    );
+    navigator.pop();
+    present(&mut harness);
+    assert!(scope.is_cancelled());
+    pump_until_discarded(&mut harness);
+    assert!(!completed.load(Ordering::Acquire));
+}
+
+#[test]
+fn outlet_unretained_task_survives_unmount() {
+    // Task lifetime follows navigator removal, not outlet retention: the
+    // task below completes normally after its content unmounts.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let wake = Arc::new(TestWake::default());
+    harness.runtime.set_wake_handler(wake.clone());
+    navigator.push(
+        Route::new("a", Widget::box_(Size::new(40., 40.), RED)).presentation(
+            RoutePresentation::Page {
+                opaque: true,
+                maintain_state: false,
+                fullscreen_dialog: false,
+            },
+        ),
+    );
+    present(&mut harness);
+    let ra = navigator.current().expect("route A").id;
+    let scope_a = harness
+        .outlet
+        .borrow()
+        .route_task_scope(ra)
+        .expect("A bound");
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_for_completion = completed.clone();
+    harness
+        .runtime
+        .spawner()
+        .spawn_into_in(&scope_a, async { 7_u8 }, move |result, _| {
+            assert_eq!(result.expect("unmount never cancels"), 7_u8);
+            completed_for_completion.store(true, Ordering::Release);
+        });
+    navigator.push(Route::new("b", Widget::box_(Size::new(40., 40.), BLUE)));
+    present(&mut harness);
+    pump_until(&mut harness.runtime, &completed);
+    assert!(!scope_a.is_cancelled());
+}
+
+#[test]
+fn outlet_shutdown_cancels_bindings() {
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    navigator.push_page(plain_page("task"));
+    present(&mut harness);
+    let id = navigator.current().expect("mounted").id;
+    let scope = harness.outlet.borrow().route_task_scope(id).expect("bound");
+    harness.runtime.shutdown();
+    assert!(scope.is_cancelled());
+}
+
+#[test]
+fn outlet_transient_routes_never_bind() {
+    // Navigation between construction and frame completion: routes pushed
+    // and popped before any frame never mount, never bind, and leave no
+    // records — bindings represent mounted ownership, not snapshots.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    navigator.push_page(plain_page("a"));
+    let transient = navigator.push_page(plain_page("transient"));
+    navigator.pop();
+    present(&mut harness);
+    assert!(navigator.lifetime_of(transient).is_none());
+    assert!(
+        harness
+            .outlet
+            .borrow()
+            .route_task_scope(transient)
+            .is_none()
+    );
+    let id = navigator.current().expect("route A").id;
+    assert!(harness.outlet.borrow().route_task_scope(id).is_some());
+    assert_eq!(harness.runtime.focused_element(), None);
 }
 
 #[test]

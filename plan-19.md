@@ -1,8 +1,9 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: complete — reopened for production-integration packages A–D, then
-re-closed: the outlet drives focus/tasks automatically, the panic policy is
-pinned, and save ownership is validated. Modal focus containment stays
+Status: complete — reopened twice for production integration, re-closed
+again: presentation policy, single-operation frame drive, and
+nearest-outlet ownership are now established alongside the earlier
+outlet/panic/save-ownership work. Modal focus containment stays
 explicitly separate future work (removing `focus_trap` implemented
 nothing). Audit Q04/Q05; specializes plan 15 W4. Depends on plan 18.
 
@@ -187,11 +188,49 @@ runtime/task/focus/widget-tree types inside); runtime owns task/focus
 integration (`RouteTaskBinding`, `RouteFocusState`, `RouteOutlet`; the
 runtime→navigation edge is allow-listed and one-way); widgets owns
 mounted element eligibility (existence, `focusable_elements`, tree
-queries — runtime only calls them); event `Route` snapshots carry no
-lifetime handle; supported usage runs through the outlet drive contract
-(`widget` in the tree, rebuild after navigation, `after_frame` after
-presenting frames), so cleanup needs no undocumented maintenance
+queries — runtime only calls them) and the barrier/visibility primitives
+the outlet composes (no second presentation engine); event `Route`
+snapshots carry no lifetime handle; supported usage runs through the
+outlet drive contract, so cleanup needs no undocumented maintenance
 sequence — manual helpers stay as documented lower-level coverage.
+
+Second production-integration pass (reopen → re-close):
+- Presentation is an explicit `OutletPlacement` policy, not an
+  unconditional stack: opaque pages occlude (covered content paints
+  nothing), transparent popups paint through and pass input through,
+  modals veil through the shared animated barrier (sized to the bounded
+  host area; covered routes keep dimming correctly), unretained covered
+  routes unmount while their lifetimes and task scopes persist by design,
+  transitions wrap inside stable tag boundaries, caller keys are never
+  overwritten (tags sit on outlet-owned wrappers), and overlay entries
+  are explicitly rejected to portal hosts. Verified across mounted
+  lifetime, paint, input, and semantics — not just top identity.
+- One ordered operation: `RouteOutlet::present_frame` (attach once,
+  then rebuild, frame, and reconcile per cycle) replaces the manual
+  widget/frame/after_frame protocol; saves precede reconciliation so
+  disposal-unmounts cannot erase them, restores follow layout, deferred
+  enablement converges through frame scheduling without caller retries,
+  and incoming autofocus resolves through the same path. `after_frame`
+  stays as a documented manual escape hatch with one pinning test.
+- Nearest-outlet ownership: `attach_nested` registers child outlet roots
+  so inner focus resolves to the inner outlet (namespaces alone do not
+  suffice — proven by removing the registration). Nested mounting uses
+  stateful-builder slots keyed stably: builder-owned children survive
+  ancestor rebuilds by framework contract, while replacing register
+  builders remount every outer frame and orphan their registrations
+  (diagnosed live, documented on `attach_nested`).
+- Lifecycle verification: combined focus+task+lifetime flows, reorder
+  and modal task behavior, unretained-task survival, real shutdown,
+  transient pre-frame navigation (never bound, never recorded), and
+  teardown release. Task-completion tests pump until settled rather than
+  trusting wake counters already satisfied by setup frames. Panic policy
+  re-reviewed unchanged: terminal-first marks, isolated delivery,
+  resume-after-cleanup; `TaskScope::cancel` runs no application code.
+  Window `close_window` itself remains untestable without an Application
+  window-scope accessor — shutdown plus the real window-scope cascade
+  cover the mechanism; node flags for unmounted elements go stale
+  through the frame drain (explicit `set_focus` clears them), so tests
+  assert slot state there.
 
 Runtime ownership inventory (`Application` fields → logical owner; the
 common request channel, scheduler, and teardown sequence stay put):
