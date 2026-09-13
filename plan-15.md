@@ -2737,24 +2737,31 @@ partial.
 Exit: deterministic transition table tests; no stuck activity or duplicate
 start/end; one view cannot silently overwrite another's geometry.
 
-Attachment ownership inventory (W5.1 decision, Package B — no behavior
-change; enforcement follows in Package C for the ordinary path):
+Attachment ownership inventory (implemented guarantees — corrective
+packages A–D):
 
-| Family | Position record | Extent writers | Multi-attach today | Replacement | Unmount / window close |
-| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus authoritative `metric_owner` tree id | claiming viewport layouts first; public `update_extents` stays open for hosts | enforced: second live viewport fails typed before overwriting (same-tree names the owner element; cross-tree names the owner tree — pinned) | render takes the new controller; old keeps isolated record (pinned) | unmount releases; tree drop releases owned slots |
-| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | claiming wheel layouts feed the ordinary record; headless model layouts bypass (no element) | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount all pinned) | same as ordinary, cross-tree included | unmount releases; tree drop releases owned slots |
-| Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | N/A by construction | per axis, as ordinary | nothing |
-| Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | sheet attach tracked; inner shared with the inner list by design | previous handle detaches | sheet state drops with the tree |
+| Family | Position record | Extent writers | Multi-attach | Replacement | Unmount / window close |
+| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | claiming viewport layouts (attached writes); public `update_extents` stays open for hosts and headless model use | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned) | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then releases the old handle silently — its activity and metrics survive | unmount detaches owned leases (release, then `End`); tree drop tears down owned leases (release, then silent clear). Stale handles release/end/abort nothing — pinned |
+| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | retained wheel layouts claim like ordinary (attached writes); headless model layouts write without claiming | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount all pinned) | same as ordinary, cross-tree included | same as ordinary |
+| Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | REMAINING: no attachment enforcement — explicitly out of scope until these foundations pass review | per axis, unenforced | nothing |
+| Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | REMAINING: sheet/inner coordination beyond the existing attach model — explicitly out of scope until these foundations pass review | previous handle detaches | sheet state drops with the tree |
+
+Contested headless writes (defined interaction, pinned): metric writes
+are last-writer-wins but never touch ownership. A headless write to an
+owned controller changes geometry — which the owner's next real layout
+restores — without transferring, clearing, or disturbing the live
+attachment, its owner tree, or its activity. Clean relayouts stay
+no-ops, so contested values stand until the owner really lays out
+again. "Headless" can therefore never become an ownership bypass.
 
 Sharing that is coordination, not attachment (left alone): scrollbar
 read-only geometry reads; `parent_controllers` receiving leftover
-deltas; 2D H/V independence; `FixedExtent` wrapping (same handle);
-sheet/inner-list sharing owned by sheet state. Chosen contract:
-ordinary path takes a single live viewport attachment (reject a second
-live attachment before it overwrites geometry; deterministic release on
-unmount via liveness); clones are the same attachment, never new ones.
-Wheel/2D/draggable keep their models (wheel inner follows the ordinary
-rule in principle — future family work, explicitly out of scope).
+deltas; 2D H/V independence; `FixedExtent` wrapping (same handle —
+the wrapper itself never claims, pinned); sheet/inner-list sharing
+owned by sheet state. Chosen contract: one live viewport attachment
+per controller (reject a second live attachment before it overwrites
+geometry; deterministic release on unmount, replacement, and tree
+drop); clones are the same controller, never new attachments.
 
 Activity transition table, ordinary `ScrollController` (W5.2, actual
 code only — no ballistic driver exists in production:
@@ -2768,32 +2775,30 @@ own generation tokens, untouched):
 | idle → end → idle | none | |
 | * → programmatic move → * | Update (or nothing if unmoved) | takeover inside open activity needs no End |
 | * → unchanged-offset jump → * | none | offset-unchanged never moves the flag either way |
-| active → viewport detach → idle | End | unmount ends app-open activities after unmount work (Scroll + sliver kinds); only owned leases trigger it; re-begin starts fresh |
-| active → tree/window drop → idle | none (silent) | ownership released; activity cleared without notifying (listeners belong to torn-down context; `Drop` must not panic); next begin starts fresh |
-| * → controller replacement → * | none | old handle keeps its isolated flag; new starts fresh |
+| active → viewport detach → idle | End | unmount detaches owned leases after unmount work (Scroll + sliver kinds): ownership commits before `End` dispatches, so a listener reattaching during `End` finds the controller free; stale handles end nothing; re-begin starts fresh |
+| active → tree/window drop → idle | none (silent) | teardown releases owned leases, then clears activity without notifying (listeners belong to torn-down context; silence from `Drop` is this host's chosen policy, not a universal rule); stale handles abort nothing; next begin starts fresh |
+| * → controller replacement → * | none from the transfer | new attachment commits before the old handle releases; the old handle keeps its activity and metrics (silent transfer); failed replacement preserves lease, ownership, activity, and metrics exactly; new starts fresh |
 | wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
 | reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |
 
 Clocks: ordinary activity is fully synchronous (no timers), so
-determinism needs no clock control — sequences are exact. First
-defect implemented through the existing owner (viewport unmount ends
-the controller's activity after unmount work, covering both `Scroll`
-and sliver render kinds). Completed scope: ordinary activity
-lifecycle + ordinary attachment enforcement. Remaining families,
-explicit: wheel/2D/draggable attachment rules; window-close activity
-sweep; broader animation (ballistic driver) policy; scrollbar-thumb
-drags stay unbracketed programmatic moves by current design.
+determinism needs no clock control — sequences are exact.
 
-Enforced versus audited (Package D): ordinary Scroll viewports —
-enforced (duplicate, replacement, unmount, remount, failure, clones,
-pre-attach, teardown); wheel viewports — enforced (two wheels,
-ordinary+wheel, replacement, unmount, pre-attachment ops, read-only
-consumers; the `FixedExtent` wrapper itself never claims, proven by
-`metric_owner` staying empty through wrapper-only use); headless
-model layouts bypass by construction (no element to attribute).
-Explicitly pending, untouched: two-dimensional viewports, draggable
-sheet/inner coordination beyond the existing attach model, ballistic
-animation policy, and scrollbar-thumb activity bracketing.
+Implemented guarantees (corrective packages A–D): enforced claim via
+opaque non-cloneable attachment handles (`try_attach` fails on
+occupied; only the live handle releases; stale handles change
+nothing; unchecked ownership setters removed); acquire-before-release
+replacement with silent transfer and fully-preserving failure;
+conditional teardown with explicit detach (release + `End`) versus
+teardown (release + silent clear) paths; steady-state lease reuse
+without re-acquire or scans; ordinary, sliver, and wheel viewports all
+claiming through the one mechanism; contested headless writes defined
+to never disturb ownership; combined ordinary→wheel→replacement→
+teardown→remount lifecycle pinned. Remaining work, explicitly
+untouched: two-dimensional viewport attachment, draggable
+sheet/inner coordination beyond the existing attach model, broader
+animation (ballistic driver) policy; scrollbar-thumb drags stay
+unbracketed programmatic moves by current design.
 
 ## W6 — Input, text and semantic consistency
 

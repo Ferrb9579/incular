@@ -21,11 +21,14 @@ impl WidgetTree {
                         .render_live(child, "retained render must remain live")
                         .size;
                     let size = scroll_size(axis, constraints, content);
-                    // Single-attachment enforcement lives here (not in
-                    // `update_extents`, which stays open for hosts, wheel,
-                    // 2D, and draggable writers): a render without an
-                    // element cannot be attributed, so it proceeds
-                    // unchecked rather than failing spuriously.
+                    // Attached metric write: the claim attributes this
+                    // publication to a live viewport. A render without an
+                    // element cannot be attributed, so it writes without
+                    // claiming — an unattributed write that neither names
+                    // an attachment nor disturbs a live owner (the owner's
+                    // next real layout restores its geometry). The open
+                    // `update_extents` API stays available for hosts and
+                    // headless model use by design.
                     if let Some(viewport) = self.element_for_render(id) {
                         self.claim_scroll_viewport(viewport, &controller)?;
                     }

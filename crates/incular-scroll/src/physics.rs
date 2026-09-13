@@ -428,6 +428,10 @@ impl ScrollController {
     ///
     /// The method is public so independent viewport implementations can share
     /// a controller; applications normally use `jump_to` or `scroll_by`.
+    /// Writes are last-writer-wins but never touch ownership: a headless
+    /// write to an owned controller changes geometry — which the owner's
+    /// next real layout restores — without transferring, clearing, or
+    /// disturbing the live attachment, its owner, or its activity.
     pub fn update_extents(&self, content: f32, viewport: f32) {
         self.update_extents_with_physics(content, viewport, ScrollPhysics::default());
     }

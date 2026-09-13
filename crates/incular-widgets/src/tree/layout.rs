@@ -165,10 +165,11 @@ impl WidgetTree {
         element_id: ElementId,
         viewport_size: Size,
     ) -> Result<(), TreeError> {
-        // Same metric-owner principle as ordinary viewports: a wheel
-        // viewport claims its controller before measuring feeds geometry.
-        // Headless model layouts bypass this (no element to attribute);
-        // only retained mounting claims.
+        // Attached metric write under the same single-owner contract as
+        // ordinary viewports: a retained wheel viewport claims its
+        // controller before measuring feeds geometry. Headless model
+        // layouts have no element to attribute, so they write without
+        // claiming and never disturb a live owner.
         let controller = self
             .wheel_state_live_mut(id)
             .viewport

@@ -476,6 +476,150 @@ fn fixed_extent_wrapper_shares_without_claiming() {
 }
 
 #[test]
+fn contested_headless_write_never_disturbs_the_live_owner() {
+    // Metric writes are last-writer-wins, but ownership is not: a
+    // headless wheel-model layout over an owned controller writes
+    // geometry without claiming, so the live attachment (identity, tree,
+    // offset) is undisturbed — and the owner's next layout restores its
+    // geometry deterministically.
+    let controller = ScrollController::new();
+    let ordinary = |content_height: f32| -> Widget {
+        let scrolled: Widget =
+            SingleChildScrollView::new(Widget::box_(Size::new(200., content_height), Color::WHITE))
+                .controller(controller.clone())
+                .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Column::new(vec![ordinary(300.)]).into())
+        .expect("mount defers attachment");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert!(controller.jump_to(30.));
+    assert_eq!(controller.max_offset(), 200.);
+    let attachment = controller.attachment_id().expect("ordinary owns X");
+    assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    // Headless contest: no element, no claim — but the write lands.
+    let mut model = ListWheelViewport::new(
+        controller.clone(),
+        20.0,
+        WheelChildDelegate::children(wheel_children(8)),
+    );
+    let written = model.layout(Size::new(100.0, 100.0));
+    assert!(written.selected_index.is_some());
+    assert_eq!(controller.max_offset(), 140.);
+    // Ownership intact: same attachment, same tree, same offset. A
+    // clean relayout is correctly a no-op, so the contested values
+    // stand until the owner really lays out again.
+    assert_eq!(controller.attachment_id(), Some(attachment));
+    assert_eq!(controller.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(controller.offset(), 30.);
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(controller.max_offset(), 140.);
+    // The owner's next real layout restores authoritative geometry on
+    // the untouched attachment: new content overwrites the contested
+    // values with the owner's own measurements.
+    tree.update(root, Column::new(vec![ordinary(320.)]).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(controller.content_extent(), 320.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 220.);
+    assert_eq!(controller.attachment_id(), Some(attachment));
+}
+
+#[test]
+fn ordinary_to_wheel_lifecycle_through_teardown_and_remount() {
+    // One controller across families and teardown: ordinary owns X; a
+    // wheel claim on X is rejected without disturbing the owner; after
+    // detach the wheel takes X; the wheel swaps X for Y; dropping the
+    // tree (window-teardown shape) frees the live controller silently;
+    // the replaced-away handle remounts as a wheel elsewhere.
+    let owned = ScrollController::new();
+    let next = ScrollController::new();
+    let ordinary = |controller: ScrollController| -> Widget {
+        let scrolled: Widget =
+            SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+                .controller(controller)
+                .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled)).into()
+    };
+    let wheel = |controller: ScrollController| -> Widget {
+        let view: Widget = ListWheelScrollView::new(
+            controller,
+            20.0,
+            WheelChildDelegate::children(wheel_children(8)),
+        )
+        .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(view)).into()
+    };
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(Column::new(vec![ordinary(owned.clone())]).into())
+        .expect("mount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(owned.max_offset(), 200.);
+    let first_attachment = owned.attachment_id().expect("ordinary owns X");
+    tree.update(
+        root,
+        Column::new(vec![ordinary(owned.clone()), wheel(owned.clone())]).into(),
+    )
+    .expect("update");
+    match tree
+        .layout(Constraints::tight(Size::new(200., 250.)))
+        .unwrap_err()
+    {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert!(owner.is_some());
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert_eq!(owned.attachment_id(), Some(first_attachment));
+    assert_eq!(owned.max_offset(), 200.);
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(owned.metric_owner(), None);
+    let root = tree
+        .mount(Column::new(vec![wheel(owned.clone())]).into())
+        .expect("remount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(owned.max_offset(), 140.);
+    let wheel_attachment = owned.attachment_id().expect("wheel owns X");
+    assert_ne!(wheel_attachment, first_attachment);
+    tree.update(root, Column::new(vec![wheel(next.clone())]).into())
+        .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(next.max_offset(), 140.);
+    assert_eq!(owned.metric_owner(), None);
+    assert!(next.begin_activity());
+    drop(tree);
+    assert_eq!(next.metric_owner(), None);
+    assert!(next.begin_activity());
+    assert!(next.end_activity());
+    let mut abroad = WidgetTree::new();
+    abroad
+        .mount(Column::new(vec![wheel(owned.clone())]).into())
+        .expect("mount");
+    abroad
+        .layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(owned.max_offset(), 140.);
+}
+
+#[test]
 fn wheel_replacement_unmount_and_preattach_behave() {
     // Replacement swaps the driver with the old handle freed; unmount
     // releases for remount; deferred pre-attachment jumps apply on first

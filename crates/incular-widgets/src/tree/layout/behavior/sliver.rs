@@ -121,9 +121,10 @@ impl WidgetTree {
                 // never resize from content, so they have no cross-attempt
                 // size to reconcile.
                 //
-                // Ordinary-path attachment, claimed once per layout
-                // (idempotent): the publish closure below inherits this
-                // claim for every publication it makes.
+                // Attached metric write, claimed once per layout: the
+                // publish closure below inherits this claim for every
+                // publication it makes, including the bounded-fallback
+                // republish, which restates identical values.
                 if let Some(viewport) = self.element_for_render(id) {
                     self.claim_scroll_viewport(viewport, &config.controller)?;
                 }
