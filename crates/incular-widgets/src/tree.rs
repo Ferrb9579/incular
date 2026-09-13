@@ -1015,12 +1015,16 @@ impl WidgetTree {
 
 impl Drop for WidgetTree {
     /// Releases every scroll attachment this tree owns, so app-retained
-    /// controllers remount cleanly elsewhere after teardown. Controllers
-    /// owned by other trees are never touched.
+    /// controllers remount cleanly elsewhere after teardown. Open
+    /// activities clear silently — listeners belong to torn-down context,
+    /// and notifying from `Drop` could panic during unwinding — so the
+    /// next begin starts fresh instead of bricking. Controllers owned by
+    /// other trees are never touched.
     fn drop(&mut self) {
         let tree = self.tree_id;
         for controller in std::mem::take(&mut self.scroll_attachments).into_values() {
             controller.clear_metric_owner(tree);
+            controller.abort_activity();
         }
     }
 }

@@ -139,6 +139,22 @@ impl ScrollController {
 }
 
 impl ScrollController {
+    /// Silently clears an open activity without notifying, for tree
+    /// disposal: listeners belong to torn-down context by then, and
+    /// notifying from `Drop` would risk panics during unwinding. The next
+    /// `begin_activity` starts fresh instead of bricking on a stuck flag.
+    /// Framework-internal.
+    #[doc(hidden)]
+    pub fn abort_activity(&self) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.activity_active {
+            state.activity_active = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the widget-tree id currently owning metric publication,
     /// if any. Framework-internal: viewport layouts use this to enforce
     /// single-owner attachment across trees.

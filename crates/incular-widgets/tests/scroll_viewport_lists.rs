@@ -908,6 +908,55 @@ fn unmount_ends_open_activity() {
 }
 
 #[test]
+fn reentrant_begin_during_detach_end_survives() {
+    // Release runs before callbacks: a listener observing End sees no
+    // owner (`metric_owner` already cleared) and may begin a new
+    // activity on the spot — the trailing cleanup cancels nothing new.
+    // Exact sequence: Start, End, then the nested Start.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let saw_free = std::rc::Rc::new(std::cell::Cell::new(false));
+    let events_for_listener = events.clone();
+    let controller_for_listener = controller.clone();
+    let saw_free_for_listener = saw_free.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        use incular_scroll::ScrollNotificationType::End;
+        events_for_listener.borrow_mut().push(notification.kind);
+        if notification.kind == End {
+            saw_free_for_listener.set(controller_for_listener.metric_owner().is_none());
+            assert!(controller_for_listener.begin_activity());
+        }
+        false
+    });
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.begin_activity());
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let framed: Vec<incular_scroll::ScrollNotificationType> = events
+        .borrow()
+        .iter()
+        .copied()
+        .filter(|kind| matches!(kind, Start | End))
+        .collect();
+    assert_eq!(framed.as_slice(), &[Start, End, Start]);
+    assert!(saw_free.get(), "ownership released before callbacks");
+    assert!(
+        !controller.begin_activity(),
+        "new activity survives cleanup"
+    );
+    assert!(controller.end_activity());
+}
+
+#[test]
 fn sliver_unmount_ends_open_activity() {
     // Same through a sliver viewport render kind.
     let controller = ScrollController::new();

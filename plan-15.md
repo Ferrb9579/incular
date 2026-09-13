@@ -2768,7 +2768,8 @@ own generation tokens, untouched):
 | idle → end → idle | none | |
 | * → programmatic move → * | Update (or nothing if unmoved) | takeover inside open activity needs no End |
 | * → unchanged-offset jump → * | none | offset-unchanged never moves the flag either way |
-| active → viewport detach → idle | End | first defect: unmount ends app-open activities; re-begin starts fresh |
+| active → viewport detach → idle | End | unmount ends app-open activities after unmount work (Scroll + sliver kinds); only owned leases trigger it; re-begin starts fresh |
+| active → tree/window drop → idle | none (silent) | ownership released; activity cleared without notifying (listeners belong to torn-down context; `Drop` must not panic); next begin starts fresh |
 | * → controller replacement → * | none | old handle keeps its isolated flag; new starts fresh |
 | wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
 | reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |

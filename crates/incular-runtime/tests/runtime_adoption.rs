@@ -140,6 +140,36 @@ fn editing_focus_ime_and_semantics_match_for_both_entries_and_multiple_windows()
     }
 }
 #[test]
+fn scroll_controller_survives_window_close_for_reuse() {
+    // Window teardown releases the viewport attachment (and silently
+    // clears any open activity — listeners are gone with the tree): the
+    // externally retained controller remounts cleanly in a fresh window
+    // with its offset record intact.
+    use incular_scroll::ScrollController;
+    use incular_widgets::SingleChildScrollView;
+    let controller = ScrollController::new();
+    let viewport = |controller: ScrollController| {
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(controller)
+    };
+    let runtime = Runtime::new(viewport(controller.clone()).into()).unwrap();
+    let mut app = Application::from_runtime(runtime, |_| {});
+    frame(&mut app);
+    assert!(controller.begin_activity());
+    app.close_window(app.primary_window());
+    drop(app);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    let runtime = Runtime::new(viewport(controller.clone()).into()).unwrap();
+    let mut app = Application::from_runtime(runtime, |_| {});
+    frame(&mut app);
+    assert_eq!(controller.max_offset(), 200.);
+    assert!(controller.jump_to(200.));
+    drop(app);
+}
+
+#[test]
 fn adopted_window_scope_still_cancels_existing_tasks_on_close() {
     let runtime = Runtime::new(Widget::box_(Size::new(20., 20.), Color::WHITE)).unwrap();
     let task = runtime

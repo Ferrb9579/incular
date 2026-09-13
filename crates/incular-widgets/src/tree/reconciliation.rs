@@ -1498,10 +1498,13 @@ impl WidgetTree {
                 }
             }
         }
+        // Release ownership before notifying: a listener reattaching
+        // the same controller during End must find it free, and no
+        // trailing cleanup may cancel an activity the listener starts.
         let tree = self.tree_id;
         for controller in ended_activities {
-            controller.end_activity();
             controller.clear_metric_owner(tree);
+            controller.end_activity();
         }
     }
     pub(super) fn check_keys_borrowed<'a>(
