@@ -20,9 +20,13 @@
 //! to the focus slot synchronously and flags follow-up work through the
 //! existing scheduler (`set_focus` marks another frame); the next frame
 //! then finalizes styling, semantics, and keyboard dispatch from restored
-//! focus. No unconditional extra frame runs: follow-up is flagged exactly
-//! when reconciliation changed focus, and deferred content converges
-//! through its own invalidation afterwards.
+//! focus. No unconditional extra frame runs: follow-up is flagged when
+//! reconciliation changed focus, or when the presented output is older
+//! than live navigation (mid-build navigation flags exactly once per
+//! revision, nested staleness wakes the root driver, and quiet frames
+//! flag nothing). Errors schedule no follow-up at all, so rejected
+//! stacks cannot spin a retry loop. Deferred content converges through
+//! its own invalidation afterwards.
 
 use std::{
     cell::{Cell, RefCell},
@@ -347,13 +351,18 @@ pub struct RouteOutlet {
     /// promotes it (see `consumed`) only on the success path, so failed
     /// composition publishes nothing.
     composing: RefCell<Option<FrameAttempt>>,
-    /// Newest navigation snapshot a frame carried through reconciliation
-    /// for this outlet. Comparing it against live state answers whether
-    /// newer navigation still requires a frame (see [`Self::needs_frame`])
+    /// Last composition a frame carried through reconciliation for this
+    /// outlet. Comparing it against live state answers whether newer
+    /// navigation still requires a frame (see [`Self::needs_frame`])
     /// independently of the pending save above. Each outlet promotes its
     /// own: nested slot builders promote when they execute and reconcile,
     /// skipped builders keep the previous publication.
     consumed: Option<FrameAttempt>,
+    /// Live revision last scheduled for. Follow-up scheduling is
+    /// edge-triggered per outlet: a stale revision flags exactly once no
+    /// matter how many frames observe it, so unconsumable staleness
+    /// (content no present can compose) idles instead of spinning.
+    signaled: Cell<u64>,
     namespace: u64,
     /// Monotonic tag counter. Freed tags are never reassigned (unlike the
     /// map length, which shrinks on removal), so element identity can never
@@ -428,6 +437,7 @@ impl RouteOutlet {
             pending: None,
             composing: RefCell::default(),
             consumed: None,
+            signaled: Cell::new(0),
             namespace,
             tag_sequence: Cell::new(0),
             root_key: Key::String(format!("route-outlet-root-{namespace}")),
@@ -981,6 +991,11 @@ impl RouteOutlet {
         // of silently omitting its content.
         outlet.borrow().preflight_tree()?;
         outlet.borrow_mut().reconcile_tree(runtime);
+        // Successful-but-stale output schedules its own follow-up: paint
+        // may lag the bookkeeping by a frame, and the run_frame reset
+        // wipes anything flagged mid-frame. Quiet frames schedule
+        // nothing; errors never reach here.
+        outlet.borrow().flag_stale_frames(runtime);
         Ok(output)
     }
 
@@ -1113,6 +1128,30 @@ impl RouteOutlet {
             pending.attempt = composing.clone();
         }
         self.consumed = Some(composing);
+    }
+
+    /// Schedules follow-up frames for stale output through the runtime's
+    /// own invalidation (`request_frame`) — but only for revisions never
+    /// scheduled before. Successful output older than live navigation
+    /// still requires a frame, and ordinary hosts must not poll
+    /// [`Self::needs_frame`] to discover it; the edge trigger keeps
+    /// unconsumable staleness (and every quiet frame) from scheduling
+    /// anything. Errors return before reconciliation, so rejected stacks
+    /// schedule no retry loop. Nested staleness wakes the root driver
+    /// through the same cascade.
+    fn flag_stale_frames(&self, runtime: &mut Runtime) {
+        let live = self.navigator.revision();
+        let stale = match &self.consumed {
+            None => !self.navigator.routes().is_empty(),
+            Some(consumed) => consumed.revision != live,
+        };
+        if stale && self.signaled.get() != live {
+            self.signaled.set(live);
+            runtime.request_frame();
+        }
+        for nested in self.live_nested() {
+            nested.borrow().flag_stale_frames(runtime);
+        }
     }
 
     /// Post-frame reconciliation: adopt the consumed snapshot, commit the

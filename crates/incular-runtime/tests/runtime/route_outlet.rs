@@ -856,6 +856,21 @@ fn present_outer_tree(runtime: &mut Runtime, outlet_outer: &Rc<RefCell<RouteOutl
     .expect("present outer tree");
 }
 
+/// Like [`present_outer_tree`], returning the produced display list so
+/// tests can assert which content actually painted.
+fn present_outer_tree_output(
+    runtime: &mut Runtime,
+    outlet_outer: &Rc<RefCell<RouteOutlet>>,
+) -> DisplayList {
+    RouteOutlet::present_frame(
+        outlet_outer,
+        runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present outer tree")
+    .0
+}
+
 #[test]
 fn nested_inner_focus_not_saved_by_outer() {
     let (outer, inner, mut runtime, outlet_outer, _outlet_inner, node_a, node_b) =
@@ -3369,6 +3384,159 @@ fn outlet_nested_layout_navigation_keeps_build_consumption() {
     assert!(!outlet_inner.borrow().needs_frame());
     assert!(!outlet_outer.borrow().needs_frame());
     let _ = (outer, node_a);
+}
+
+#[test]
+fn outlet_mid_build_navigation_schedules_followup_frame() {
+    // A→B in flight while B's builder pushes a yellow C: the presenting
+    // frame paints pre-push content but schedules a follow-up through the
+    // production scheduler (not a polling loop); the follow-up renders C
+    // and goes idle. Focus never moves, so only the stale wake flags.
+    // (All three routes stay transparent, keeping the saved focus valid
+    // so restoration sweeps never flag either.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    navigator.push(
+        Route::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator.push(
+                            Route::new("c", Widget::box_(Size::new(40., 40.), YELLOW))
+                                .presentation(RoutePresentation::popup(None)),
+                        );
+                    }
+                    Widget::box_(Size::new(40., 40.), BLUE)
+                }
+            }))]),
+        )
+        .presentation(RoutePresentation::popup(None)),
+    );
+    // Stale but successful: no yellow yet, follow-up scheduled.
+    let first = present(&mut harness);
+    assert!(!paints(first.commands(), YELLOW));
+    assert!(paints(first.commands(), BLUE));
+    assert!(
+        harness.runtime.frame_requested(),
+        "mid-build navigation schedules a follow-up"
+    );
+    // Follow-up renders the newer content, then goes idle.
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), YELLOW));
+    assert!(
+        !harness.runtime.frame_requested(),
+        "stable completion schedules nothing"
+    );
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_nested_stale_content_wakes_root_driver() {
+    // A layout trip inside NESTED content pushes mid-frame: the outer
+    // navigator never moves, yet the outer present flags a follow-up —
+    // nested staleness wakes the root driver. Recovery renders and idles,
+    // with no focus anywhere (so only the stale wake can flag).
+    let (_outer, inner, mut runtime, outlet_outer, outlet_inner, _node_a, _node_b) =
+        nested_inside_setup();
+    let node_ib = FocusNode::new();
+    let node_ib_for_build = node_ib.clone();
+    let trip = Rc::new(Cell::new(true));
+    inner.push_page(Page::new(
+        "ib",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let inner = inner.clone();
+            move |_, _| {
+                if trip.take() {
+                    inner.push_page(Page::new("ic", Widget::box_(Size::new(40., 40.), YELLOW)));
+                }
+                focus_widget(&node_ib_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }
+        }))]),
+    ));
+    // Stale but successful: no yellow yet, follow-up scheduled although
+    // the outer navigator never moved.
+    let first = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(!paints(first.commands(), YELLOW));
+    assert!(
+        runtime.frame_requested(),
+        "nested staleness wakes the root driver"
+    );
+    let ic = inner.current().expect("pushed route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(ic).is_some(),
+        "the live route binds although never mounted"
+    );
+    // Recovery renders the newer content, then goes idle.
+    let second = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(second.commands(), YELLOW));
+    assert!(
+        !runtime.frame_requested(),
+        "stable completion schedules nothing"
+    );
+    // The inner outlet still works end to end afterwards.
+    inner.pop();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    tab_until(&mut runtime, &node_ib);
+}
+
+#[test]
+fn outlet_rejected_configuration_schedules_no_retry() {
+    // An overlay pushed mid-build fails the post-frame validation: the
+    // error returns with no follow-up scheduled — repeated failures
+    // accumulate no work, so rejected stacks cannot spin a retry loop —
+    // and popping the offender recovers cleanly.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let node_a = FocusNode::new();
+    navigator.push_page(focus_page("a", &node_a));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    navigator.push_page(Page::new(
+        "b",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let navigator = navigator.clone();
+            move |_, _| {
+                if trip.take() {
+                    navigator.push(
+                        Route::new("overlay", Widget::box_(Size::new(40., 40.), GREEN)).overlay(
+                            vec![OverlayEntry::new(Widget::box_(Size::new(40., 40.), GREEN))],
+                        ),
+                    );
+                }
+                Widget::box_(Size::new(40., 40.), BLUE)
+            }
+        }))]),
+    ));
+    for _ in 0..2 {
+        let error = RouteOutlet::present_frame(
+            &harness.outlet,
+            &mut harness.runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+        .expect_err("mid-build overlay fails explicitly");
+        assert!(
+            matches!(error, OutletError::UnsupportedPresentation { .. }),
+            "errors stay typed, never silent"
+        );
+        assert!(
+            !harness.runtime.frame_requested(),
+            "rejected stacks schedule no retry"
+        );
+    }
+    assert!(node_a.has_focus());
+    navigator.pop();
+    present(&mut harness);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
 }
 
 #[test]
