@@ -4,13 +4,17 @@ use incular::widgets::internal::TextEditingController as RetainedTextEditingCont
 #[test]
 fn test_controllers_contract() {
     let scroll_ctrl = ScrollController::new();
-    scroll_ctrl.update_extents(1000.0, 300.0);
+    scroll_ctrl
+        .update_extents(1000.0, 300.0)
+        .expect("free controller publishes");
     assert_eq!(scroll_ctrl.max_offset(), 700.0);
     scroll_ctrl.jump_to(150.0);
     assert_eq!(scroll_ctrl.offset(), 150.0);
 
     let page_ctrl = PageController::new();
-    page_ctrl.update_extents(1000.0, 300.0);
+    page_ctrl
+        .update_extents(1000.0, 300.0)
+        .expect("free controller publishes");
     page_ctrl.jump_to(200.0);
     assert_eq!(page_ctrl.offset(), 200.0);
 

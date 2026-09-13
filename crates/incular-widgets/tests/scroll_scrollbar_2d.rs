@@ -245,7 +245,9 @@ fn raw_scrollbar_geometry_covers_orientations() {
     ] {
         let controller = ScrollController::new();
         controller.set_metrics_context(Axis::Vertical, false);
-        controller.update_extents(500., 100.);
+        controller
+            .update_extents(500., 100.)
+            .expect("free controller publishes");
         let mut bar = RawScrollbar::new(controller);
         bar.set_style(RawScrollbarStyle {
             orientation,
@@ -266,7 +268,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
     // the track end.
     let controller = ScrollController::new();
     controller.set_metrics_context(Axis::Vertical, true);
-    controller.update_extents(500., 100.);
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     controller.jump_to(0.);
     let bar = RawScrollbar::new(controller);
     let geometry = bar.geometry(Size::new(120., 100.));
@@ -276,7 +280,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
     // Nothing scrollable means nothing painted and no input accepted.
     let controller = ScrollController::new();
     controller.set_metrics_context(Axis::Vertical, false);
-    controller.update_extents(0., 0.);
+    controller
+        .update_extents(0., 0.)
+        .expect("free controller publishes");
     let mut bar = RawScrollbar::new(controller);
     assert!(!bar.geometry(Size::new(120., 100.)).visible);
     assert!(!bar.pointer_down(Size::new(120., 100.), Offset::new(116., 50.)));
@@ -288,7 +294,9 @@ fn raw_scrollbar_reversed_and_empty_extents() {
 fn raw_scrollbar_drag_track_and_replacement() {
     let controller = ScrollController::new();
     controller.set_metrics_context(Axis::Vertical, false);
-    controller.update_extents(500., 100.);
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     controller.jump_to(200.);
     let mut bar = RawScrollbar::new(controller.clone());
     let size = Size::new(120., 100.);
@@ -317,7 +325,9 @@ fn raw_scrollbar_drag_track_and_replacement() {
     // the old one keeps driving its own controller in isolation.
     let other = ScrollController::new();
     other.set_metrics_context(Axis::Vertical, false);
-    other.update_extents(500., 100.);
+    other
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     let other_bar = RawScrollbar::new(other.clone());
     assert!(controller.jump_to(50.));
     assert_eq!(bar.controller().offset(), 50.);

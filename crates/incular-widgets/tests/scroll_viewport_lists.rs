@@ -1130,7 +1130,7 @@ fn authority_boundary_lifecycle_end_to_end() {
     };
     // 1. Unattached headless publication succeeds while free.
     owned
-        .try_update_unattached_extents(300., 100., ScrollPhysics::clamping())
+        .update_extents_with_physics(300., 100., ScrollPhysics::clamping())
         .expect("free controller accepts headless publication");
     assert_eq!(owned.max_offset(), 200.);
     // 2. An ordinary viewport attaches.
@@ -1146,7 +1146,7 @@ fn authority_boundary_lifecycle_end_to_end() {
     // 3a. Headless publication is rejected without mutation.
     let revision = owned.revision();
     let error = owned
-        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .update_extents_with_physics(900., 50., ScrollPhysics::clamping())
         .unwrap_err();
     assert_eq!(error.owner_tree(), Some(tree.tree_id()));
     assert_eq!(owned.content_extent(), 300.);
@@ -2008,7 +2008,7 @@ fn unattached_publication_rejected_while_viewport_owns() {
     let revision = controller.revision();
     events.borrow_mut().clear();
     let error = controller
-        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .update_extents_with_physics(900., 50., ScrollPhysics::clamping())
         .unwrap_err();
     assert_eq!(error.owner_tree(), Some(tree.tree_id()));
     assert_eq!(controller.content_extent(), 300.);
@@ -2023,7 +2023,7 @@ fn unattached_publication_rejected_while_viewport_owns() {
     tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect("layout");
     controller
-        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .update_extents_with_physics(900., 50., ScrollPhysics::clamping())
         .expect("freed controller accepts headless publication");
     assert_eq!(controller.max_offset(), 850.);
 }

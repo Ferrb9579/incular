@@ -35,9 +35,13 @@ fn restoration_scope() -> RestorationScope {
 #[test]
 fn extents_clamp_an_existing_offset() {
     let controller = ScrollController::new();
-    controller.update_extents(100., 20.);
+    controller
+        .update_extents(100., 20.)
+        .expect("free controller publishes");
     assert!(controller.jump_to(80.));
-    controller.update_extents(40., 20.);
+    controller
+        .update_extents(40., 20.)
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 20.);
 }
 
@@ -46,22 +50,32 @@ fn unchanged_metrics_preserve_bouncing_but_changed_ranges_still_clamp() {
     let physics = ScrollPhysics::clamping().bouncing();
     for (start, delta) in [(0., -40.), (100., 40.)] {
         let controller = ScrollController::new();
-        controller.update_extents_with_physics(200., 100., physics);
+        controller
+            .update_extents_with_physics(200., 100., physics)
+            .expect("free controller publishes");
         controller.jump_to(start);
         controller.apply_physics(physics, delta);
         let overscroll = controller.offset();
         let revision = controller.revision();
         assert!(!(0. ..=100.).contains(&overscroll));
-        controller.update_extents_with_physics(200., 100., physics);
+        controller
+            .update_extents_with_physics(200., 100., physics)
+            .expect("free controller publishes");
         assert_eq!(controller.offset(), overscroll);
         assert_eq!(controller.revision(), revision);
-        controller.update_extents_with_physics(200., 120., physics);
+        controller
+            .update_extents_with_physics(200., 120., physics)
+            .expect("free controller publishes");
         assert_eq!(controller.offset(), overscroll.clamp(0., 80.));
     }
     let controller = ScrollController::new();
-    controller.update_extents_with_physics(200., 100., physics);
+    controller
+        .update_extents_with_physics(200., 100., physics)
+        .expect("free controller publishes");
     controller.apply_physics(physics, -40.);
-    controller.update_extents_with_physics(200., 100., ScrollPhysics::clamping());
+    controller
+        .update_extents_with_physics(200., 100., ScrollPhysics::clamping())
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 0.);
 }
 
@@ -76,7 +90,9 @@ fn scroll_notifications_follow_activity_lifecycle_and_unsubscribe() {
         false
     });
 
-    controller.update_extents(500., 100.);
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     assert!(controller.begin_activity());
     assert!(!controller.begin_activity());
     assert!(controller.notify_user_scroll(12.));
@@ -138,7 +154,9 @@ fn programmatic_movement_needs_no_bracket() {
     // Jumps and driven steps emit bare Updates: takeover inside an open
     // activity needs no extra End, and closing still pairs exactly once.
     let controller = ScrollController::new();
-    controller.update_extents(200., 100.);
+    controller
+        .update_extents(200., 100.)
+        .expect("free controller publishes");
     let (log, _subscription) = kind_log(&controller);
     assert!(controller.jump_to(30.));
     assert_eq!(log.borrow().as_slice(), &[ScrollNotificationType::Update]);
@@ -162,7 +180,9 @@ fn unchanged_offset_leaves_activity_unchanged() {
     // offset-unchanged is not activity-unchanged in reverse — the flag
     // only moves on begin/end.
     let controller = ScrollController::new();
-    controller.update_extents(200., 100.);
+    controller
+        .update_extents(200., 100.)
+        .expect("free controller publishes");
     let (log, _subscription) = kind_log(&controller);
     assert!(!controller.jump_to(0.));
     assert!(log.borrow().is_empty());
@@ -188,7 +208,9 @@ fn reentrant_jump_nests_inside_start() {
     // then Update, while B observes Update before the enclosing Start
     // reaches it. Pinned exactly as implemented.
     let controller = ScrollController::new();
-    controller.update_extents(200., 100.);
+    controller
+        .update_extents(200., 100.)
+        .expect("free controller publishes");
     let log_a = Rc::new(RefCell::new(Vec::new()));
     let log_b = Rc::new(RefCell::new(Vec::new()));
     let controller_for_jump = controller.clone();
@@ -231,7 +253,9 @@ fn reentrant_jump_nests_inside_start() {
 #[test]
 fn scrollbar_round_trips_offset() {
     let controller = ScrollController::new();
-    controller.update_extents(200., 100.);
+    controller
+        .update_extents(200., 100.)
+        .expect("free controller publishes");
     controller.jump_to(50.);
     let geometry = scrollbar_geometry(
         Size::new(100., 100.),
@@ -251,11 +275,15 @@ fn restored_offsets_wait_for_layout_and_survive_temporary_short_content() {
     let controller = ScrollController::restored(scope.clone(), key.clone());
     assert_eq!(controller.offset(), 0.);
 
-    controller.update_extents(40., 20.);
+    controller
+        .update_extents(40., 20.)
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 20.);
     assert_eq!(scope.get_json(&key), Some(json!({ "offset": 80. })));
 
-    controller.update_extents(120., 20.);
+    controller
+        .update_extents(120., 20.)
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 80.);
     assert!(controller.jump_to(50.));
     assert_eq!(scope.get_json(&key), Some(json!({ "offset": 50. })));
@@ -324,7 +352,9 @@ fn clamping_and_scrollability_policies_return_precise_unused_delta() {
 #[test]
 fn always_scrollable_accepts_small_content() {
     let controller = ScrollController::new();
-    controller.update_extents(40., 100.);
+    controller
+        .update_extents(40., 100.)
+        .expect("free controller publishes");
     let result = controller.apply_physics(ScrollPhysics::clamping().always_scrollable(), 12.);
     assert!(result.accepted);
     assert_eq!(result.position, 0.);
@@ -334,7 +364,9 @@ fn always_scrollable_accepts_small_content() {
 #[test]
 fn never_scrollable_rejects_user_drag_but_controller_jump_still_works() {
     let controller = ScrollController::new();
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     let result = controller.apply_physics(ScrollPhysics::clamping().never_scrollable(), 40.);
     assert!(!result.accepted);
     assert_eq!(controller.offset(), 0.);
@@ -361,7 +393,9 @@ fn bouncing_is_resistant_bounded_and_returns_with_monotonic_spring_steps() {
     }
     assert!((position - 0.).abs() < 0.01);
     let controller = ScrollController::new();
-    controller.update_extents(200., 100.);
+    controller
+        .update_extents(200., 100.)
+        .expect("free controller publishes");
     let result = controller.apply_physics(physics, -20.);
     assert!(result.position < 0.);
     assert!(controller.offset() < 0.);
@@ -391,17 +425,23 @@ fn page_physics_targets_the_current_viewport_page() {
 fn range_maintaining_preserves_trailing_edge_when_extents_change() {
     let controller = ScrollController::new();
     let physics = ScrollPhysics::clamping().range_maintaining();
-    controller.update_extents_with_physics(300., 100., physics);
+    controller
+        .update_extents_with_physics(300., 100., physics)
+        .expect("free controller publishes");
     assert!(controller.jump_to(200.));
 
     // Growing content keeps the visible end anchored.
-    controller.update_extents_with_physics(420., 100., physics);
+    controller
+        .update_extents_with_physics(420., 100., physics)
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 320.);
     assert_eq!(controller.offset(), 320.);
 
     // A viewport resize that shrinks the range keeps the same edge
     // anchored and never leaves the valid range.
-    controller.update_extents_with_physics(420., 180., physics);
+    controller
+        .update_extents_with_physics(420., 180., physics)
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 240.);
     assert_eq!(controller.offset(), 240.);
 }
@@ -410,7 +450,9 @@ fn range_maintaining_preserves_trailing_edge_when_extents_change() {
 fn range_maintaining_adjusts_anchor_for_insertions_before_viewport() {
     let controller = ScrollController::new();
     let physics = ScrollPhysics::clamping().range_maintaining();
-    controller.update_extents_with_physics(1_000., 100., physics);
+    controller
+        .update_extents_with_physics(1_000., 100., physics)
+        .expect("free controller publishes");
     controller.jump_to(400.);
     assert!(controller.adjust_for_content_change(48., physics));
     assert_eq!(controller.offset(), 448.);
@@ -437,7 +479,9 @@ fn physics_composition_order_is_deterministic() {
 #[test]
 fn controller_settle_returns_bounce_or_page_positions_to_stable_targets() {
     let controller = ScrollController::new();
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     let bounce = ScrollPhysics::clamping().bouncing();
     assert!(controller.apply_physics(bounce, -40.).position < 0.);
     assert!(controller.settle_physics(bounce, 0.));
@@ -453,8 +497,12 @@ fn controller_settle_returns_bounce_or_page_positions_to_stable_targets() {
 fn nested_coordinator_transfers_only_unconsumed_delta_to_the_outer_viewport() {
     let inner = ScrollController::new();
     let outer = ScrollController::new();
-    inner.update_extents(300., 100.);
-    outer.update_extents(1_000., 100.);
+    inner
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
+    outer
+        .update_extents(1_000., 100.)
+        .expect("free controller publishes");
     inner.jump_to(0.);
     outer.jump_to(200.);
     let mut coordinator = NestedScrollCoordinator::new([inner.clone(), outer.clone()]);

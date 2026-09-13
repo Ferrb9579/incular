@@ -1365,11 +1365,13 @@ impl WidgetTree {
 
     /// Publishes metric extents for a viewport layout. A live lease
     /// publishes through its attachment; a render without an element has
-    /// no lease to publish through, so it uses the legacy unrestricted
-    /// write (documented last-writer-wins geometry that never transfers
-    /// ownership). The lease is live whenever the caller claimed above:
-    /// only this tree releases its handles, and no releasing code runs
-    /// between claim and publication.
+    /// no lease to publish through, so it attempts the checked
+    /// unattached write instead: a free controller publishes exactly as
+    /// before, while a controller owned elsewhere keeps its geometry —
+    /// an unattributed render must never clobber a live owner's record.
+    /// The lease is live whenever the caller claimed above: only this
+    /// tree releases its handles, and no releasing code runs between
+    /// claim and publication.
     pub(super) fn publish_scroll_extents(
         &self,
         element: Option<ElementId>,
@@ -1382,7 +1384,13 @@ impl WidgetTree {
             Some(lease) => lease
                 .update_extents(content, viewport, physics)
                 .expect("viewport lease claimed above is live"),
-            None => controller.update_extents_with_physics(content, viewport, physics),
+            None => match controller.update_extents_with_physics(content, viewport, physics) {
+                Ok(()) => {}
+                Err(_) => {
+                    // Owned by a live viewport elsewhere: drop the
+                    // unattributed write rather than overwriting it.
+                }
+            },
         }
     }
 

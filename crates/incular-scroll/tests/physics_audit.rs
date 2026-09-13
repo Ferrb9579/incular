@@ -247,7 +247,9 @@ fn builders_are_consistent_with_constructors_and_defaults() {
 #[test]
 fn controller_distinguishes_input_from_programmatic_movement() {
     let controller = ScrollController::new();
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     let kinds = Rc::new(RefCell::new(Vec::new()));
     let kinds_for_listener = kinds.clone();
     let _subscription = controller.add_listener(move |notification| {
@@ -289,7 +291,9 @@ fn controller_distinguishes_input_from_programmatic_movement() {
 fn extents_sanitize_ranges_and_apply_pending_jumps() {
     let controller = ScrollController::new();
     // Negative content/viewport collapse to an empty range at zero.
-    controller.update_extents(-50., -10.);
+    controller
+        .update_extents(-50., -10.)
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 0.);
     assert_eq!(controller.offset(), 0.);
 
@@ -297,12 +301,16 @@ fn extents_sanitize_ranges_and_apply_pending_jumps() {
     // once the range exists.
     let controller = ScrollController::new();
     assert!(controller.deferred_jump_to(150.));
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 150.);
 
     // Shrinking the range clamps a live offset back inside.
     assert!(controller.jump_to(200.));
-    controller.update_extents(120., 100.);
+    controller
+        .update_extents(120., 100.)
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 20.);
     assert_eq!(controller.offset(), 20.);
 }
@@ -310,7 +318,9 @@ fn extents_sanitize_ranges_and_apply_pending_jumps() {
 #[test]
 fn settle_and_anchor_adjustment_follow_their_gates() {
     let controller = ScrollController::new();
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     // Viewport-relative settle uses the live viewport extent.
     assert!(controller.jump_to(149.));
     assert!(controller.settle_physics(ScrollPhysics::clamping().page(), 0.));
@@ -333,9 +343,14 @@ fn coordinator_spans_ranges_innermost_first_with_conservation() {
     let inner = ScrollController::new();
     let mid = ScrollController::new();
     let outer = ScrollController::new();
-    inner.update_extents(120., 100.);
-    mid.update_extents(300., 100.);
-    outer.update_extents(1_000., 100.);
+    inner
+        .update_extents(120., 100.)
+        .expect("free controller publishes");
+    mid.update_extents(300., 100.)
+        .expect("free controller publishes");
+    outer
+        .update_extents(1_000., 100.)
+        .expect("free controller publishes");
     let mut coordinator = NestedScrollCoordinator::new([inner.clone(), mid.clone(), outer.clone()]);
     // 20 + 200 + remainder: inner takes 20, mid takes 200, outer the rest.
     let result = coordinator.apply_drag_delta(400.);

@@ -183,7 +183,9 @@ fn torn_down_controller_state_stays_usable() {
     // Externally retained state survives teardown: geometry persists and
     // every programmatic operation keeps working for the next owner.
     let controller = ScrollController::new();
-    controller.update_extents(300., 100.);
+    controller
+        .update_extents(300., 100.)
+        .expect("free controller publishes");
     assert!(controller.jump_to(40.));
     let attachment = controller
         .try_attach(owner(1))
@@ -194,7 +196,9 @@ fn torn_down_controller_state_stays_usable() {
     assert_eq!(controller.max_offset(), 200.);
     assert!(controller.jump_to(60.));
     assert!(controller.deferred_jump_to(10.));
-    controller.update_extents(500., 100.);
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     assert_eq!(controller.max_offset(), 400.);
     let renewed = controller.try_attach(owner(2)).expect("reattaches cleanly");
     assert!(renewed.release());
@@ -241,7 +245,7 @@ fn unattached_publication_succeeds_only_while_free() {
     let controller = ScrollController::new();
     let (log, _guard) = notification_log(&controller);
     controller
-        .try_update_unattached_extents(300., 100., ScrollPhysics::default())
+        .update_extents_with_physics(300., 100., ScrollPhysics::default())
         .expect("free controller accepts headless publication");
     assert_eq!(controller.max_offset(), 200.);
     log.borrow_mut().clear();
@@ -252,7 +256,7 @@ fn unattached_publication_succeeds_only_while_free() {
     let revision = controller.revision();
     log.borrow_mut().clear();
     let error = controller
-        .try_update_unattached_extents(900., 50., ScrollPhysics::default())
+        .update_extents_with_physics(900., 50., ScrollPhysics::default())
         .expect_err("owned controller refuses headless publication");
     assert_eq!(error.owner_tree(), Some(3));
     assert_eq!(controller.content_extent(), 300.);
@@ -265,7 +269,7 @@ fn unattached_publication_succeeds_only_while_free() {
     assert!(log.borrow().is_empty(), "rejection emits nothing");
     assert!(attachment.release());
     controller
-        .try_update_unattached_extents(900., 50., ScrollPhysics::default())
+        .update_extents_with_physics(900., 50., ScrollPhysics::default())
         .expect("released controller accepts again");
     assert_eq!(controller.max_offset(), 850.);
 }

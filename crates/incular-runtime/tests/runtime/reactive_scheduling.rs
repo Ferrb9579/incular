@@ -677,7 +677,9 @@ fn recursive_memo_fails_explicitly_and_restores_pure_scope() {
 fn focus_and_scroll_reads_invalidate_runtime_builders() {
     let focus = incular_widgets::FocusNode::new();
     let scroll = incular_widgets::ScrollController::new();
-    scroll.update_extents(100., 10.);
+    scroll
+        .update_extents(100., 10.)
+        .expect("free controller publishes");
     let observed = Rc::new(Cell::new((false, 0.0_f32)));
     let mut runtime = Application::new({
         let focus = focus.clone();

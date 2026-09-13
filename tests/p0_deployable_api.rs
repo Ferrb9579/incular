@@ -91,7 +91,8 @@ fn composable_scroll_physics_and_paging_preserve_core_semantics() {
     assert_eq!(blocked.unconsumed, 20.);
 
     let page = ScrollController::new();
-    page.update_extents_with_physics(1_000., 250., ScrollPhysics::clamping().page());
+    page.update_extents_with_physics(1_000., 250., ScrollPhysics::clamping().page())
+        .expect("free controller publishes");
     page.jump_to(270.);
     assert!(page.settle_physics(ScrollPhysics::clamping().page(), 0.));
     assert_eq!(page.offset(), 250.);

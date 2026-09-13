@@ -701,11 +701,12 @@ impl<T> ListWheelViewport<T> {
 
     /// Performs a layout pass with a child measurement callback.
     ///
-    /// Headless legacy entry: publishes through the unrestricted extent
-    /// API. Retained viewports publish through their attachment instead
-    /// (see the tree's wheel preparation); ownership-respecting headless
-    /// callers use [`layout_unattached`](Self::layout_unattached), which
-    /// refuses to disturb a live owner.
+    /// Headless entry over a controller the caller drives outright: the
+    /// publication below expects a free controller. Retained viewports
+    /// publish through their attachment instead (see the tree's wheel
+    /// preparation); ownership-respecting headless callers use
+    /// [`layout_unattached`](Self::layout_unattached), which refuses to
+    /// disturb a live owner.
     pub fn layout_with_measure(
         &mut self,
         size: Size,
@@ -719,11 +720,12 @@ impl<T> ListWheelViewport<T> {
         // The wheel's centered first/last item makes its controller range equal
         // to `(count - 1) * itemExtent`, so add the viewport extent back when
         // feeding the ordinary content-minus-viewport controller.
-        self.controller.update_extents_with_physics(
-            max_scroll_extent + size.height,
-            size.height,
-            self.physics,
-        );
+        // Headless entry: the caller owns this controller outright, so
+        // a live owner here is a caller error. Retained viewports never
+        // reach this write (they publish through their lease).
+        self.controller
+            .update_extents_with_physics(max_scroll_extent + size.height, size.height, self.physics)
+            .expect("headless wheel layout needs a free controller");
         let scroll_offset = self.controller.offset();
         let consumed_revision = self.controller.revision();
         self.layout_with_offset(size, measure, scroll_offset, consumed_revision)
@@ -739,7 +741,7 @@ impl<T> ListWheelViewport<T> {
     {
         self.controller.set_metrics_context(Axis::Vertical, false);
         let max_scroll_extent = self.max_scroll_extent();
-        self.controller.try_update_unattached_extents(
+        self.controller.update_extents_with_physics(
             max_scroll_extent + size.height,
             size.height,
             self.physics,

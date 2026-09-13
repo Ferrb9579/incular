@@ -221,6 +221,11 @@ impl TwoDimensionalScrollable {
     }
 
     /// Updates both controller ranges after a viewport layout pass.
+    ///
+    /// Pre-attachment-integration: two-dimensional viewports do not hold
+    /// leases yet, so both controllers must be free here. Per-axis
+    /// attachment lands with the 2D migration; until then a live owner
+    /// on either axis is a caller error.
     pub fn update_extents(
         &self,
         horizontal_content: f32,
@@ -228,16 +233,16 @@ impl TwoDimensionalScrollable {
         vertical_content: f32,
         vertical_viewport: f32,
     ) {
-        self.horizontal_controller.update_extents_with_physics(
-            horizontal_content,
-            horizontal_viewport,
-            self.horizontal_physics,
-        );
-        self.vertical_controller.update_extents_with_physics(
-            vertical_content,
-            vertical_viewport,
-            self.vertical_physics,
-        );
+        self.horizontal_controller
+            .update_extents_with_physics(
+                horizontal_content,
+                horizontal_viewport,
+                self.horizontal_physics,
+            )
+            .expect("2D horizontal controller must be free pre-attachment");
+        self.vertical_controller
+            .update_extents_with_physics(vertical_content, vertical_viewport, self.vertical_physics)
+            .expect("2D vertical controller must be free pre-attachment");
     }
 
     /// Applies a diagonal logical delta according to the configured behavior.
@@ -637,16 +642,22 @@ impl<T> TwoDimensionalViewport<T> {
         );
         self.vertical_controller
             .set_metrics_context(Axis::Vertical, self.vertical_axis_direction.is_reversed());
-        self.horizontal_controller.update_extents_with_physics(
-            self.columns.total_extent(),
-            size.width,
-            self.horizontal_physics,
-        );
-        self.vertical_controller.update_extents_with_physics(
-            self.rows.total_extent(),
-            size.height,
-            self.vertical_physics,
-        );
+        // Pre-attachment-integration (see `update_extents`): both
+        // controllers must be free here until per-axis leases land.
+        self.horizontal_controller
+            .update_extents_with_physics(
+                self.columns.total_extent(),
+                size.width,
+                self.horizontal_physics,
+            )
+            .expect("2D horizontal controller must be free pre-attachment");
+        self.vertical_controller
+            .update_extents_with_physics(
+                self.rows.total_extent(),
+                size.height,
+                self.vertical_physics,
+            )
+            .expect("2D vertical controller must be free pre-attachment");
 
         let (cache_x, cache_y) = self.cache_padding(size);
         let row_range =
@@ -697,16 +708,20 @@ impl<T> TwoDimensionalViewport<T> {
                 .columns
                 .set_measured_extent(index, extent.max(f32::EPSILON));
         }
-        self.horizontal_controller.update_extents_with_physics(
-            self.columns.total_extent(),
-            size.width,
-            self.horizontal_physics,
-        );
-        self.vertical_controller.update_extents_with_physics(
-            self.rows.total_extent(),
-            size.height,
-            self.vertical_physics,
-        );
+        self.horizontal_controller
+            .update_extents_with_physics(
+                self.columns.total_extent(),
+                size.width,
+                self.horizontal_physics,
+            )
+            .expect("2D horizontal controller must be free pre-attachment");
+        self.vertical_controller
+            .update_extents_with_physics(
+                self.rows.total_extent(),
+                size.height,
+                self.vertical_physics,
+            )
+            .expect("2D vertical controller must be free pre-attachment");
 
         let cache_rect = Rect::from_origin_size(
             Offset::new(

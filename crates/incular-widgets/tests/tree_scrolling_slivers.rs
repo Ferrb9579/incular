@@ -606,7 +606,9 @@ fn page_controller_alias_restores_its_logical_position() {
     scope.set_json(&key, json!({ "offset": 200. }));
 
     let controller = incular_widgets::PageController::restored(scope, key);
-    controller.update_extents(500., 100.);
+    controller
+        .update_extents(500., 100.)
+        .expect("free controller publishes");
     assert_eq!(controller.offset(), 200.);
 }
 

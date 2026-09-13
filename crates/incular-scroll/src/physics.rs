@@ -438,24 +438,23 @@ impl ScrollController {
         self.dispatch_notification(ScrollNotificationType::Update, step.position - previous, 0.);
         true
     }
-    /// Updates content and viewport extents after a viewport layout pass.
-    ///
-    /// The method is public so independent viewport implementations can share
-    /// a controller; applications normally use `jump_to` or `scroll_by`.
-    ///
-    /// Migration: retained viewports publish through their
-    /// [`MetricAttachment`](crate::MetricAttachment); headless publishers
-    /// that must not disturb a live owner use
-    /// [`try_update_unattached_extents`](Self::try_update_unattached_extents).
-    /// This unrestricted method remains for hosts, tests, and models that
-    /// own their controller outright — it writes regardless of attachment,
-    /// with last-writer-wins geometry that never transfers ownership.
-    pub fn update_extents(&self, content: f32, viewport: f32) {
-        self.update_extents_with_physics(content, viewport, ScrollPhysics::default());
+    /// Updates content and viewport extents while no attachment owns the
+    /// controller, failing without mutating anything otherwise. This is
+    /// the unattached-publication entry: free controllers (headless
+    /// models, tests, hosts driving their own position) publish here,
+    /// while attached viewports publish through their
+    /// [`MetricAttachment`](crate::MetricAttachment). A rejection
+    /// preserves extents, offset, revision, ownership, and emits no
+    /// notifications — authority is validated before any mutation,
+    /// clamping, or dispatch.
+    pub fn update_extents(&self, content: f32, viewport: f32) -> Result<(), MetricWriteError> {
+        self.update_extents_with_physics(content, viewport, ScrollPhysics::default())
     }
 
     /// Updates content and viewport extents while applying the configured
-    /// range-maintaining policy.
+    /// range-maintaining policy, subject to the same attachment rule as
+    /// [`update_extents`](Self::update_extents): writes only while no
+    /// attachment owns the controller.
     ///
     /// A plain extent update clamps a position when the new range becomes
     /// smaller.  [`ScrollPhysics::range_maintaining`] additionally keeps a
@@ -464,28 +463,7 @@ impl ScrollController {
     /// content grows, shrinks, or whose viewport is resized while the user is
     /// at the end.  The ordinary `update_extents` API remains available for
     /// callers that want simple clamping.
-    ///
-    /// Migration: same as [`update_extents`](Self::update_extents) — this
-    /// unrestricted method writes regardless of attachment. Retained
-    /// viewports publish through their attachment; ownership-respecting
-    /// headless publishers use
-    /// [`try_update_unattached_extents`](Self::try_update_unattached_extents).
-    pub fn update_extents_with_physics(&self, content: f32, viewport: f32, physics: ScrollPhysics) {
-        let publication = {
-            let mut state = self.state.borrow_mut();
-            Self::commit_extent_state(&mut state, content, viewport, physics)
-        };
-        self.finish_extent_publication(publication);
-    }
-
-    /// Checked headless publication: writes only while no attachment owns
-    /// the controller, failing without mutating anything otherwise. A
-    /// rejection preserves extents, offset, revision, ownership, and
-    /// emits no notifications — authority is validated before any
-    /// mutation, clamping, or dispatch. Framework-internal: headless
-    /// models and hosts that must not disturb a live owner.
-    #[doc(hidden)]
-    pub fn try_update_unattached_extents(
+    pub fn update_extents_with_physics(
         &self,
         content: f32,
         viewport: f32,

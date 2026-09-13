@@ -297,14 +297,19 @@ fn wheel_fixed_extent_controller_paths() {
     let fixed = FixedExtentScrollController::with_item_extent(3, 20.0);
     let controller = fixed.controller();
     assert_eq!(fixed.selected_item(20.0), 3);
-    controller.update_extents(260.0, 100.0);
+    controller
+        .update_extents(260.0, 100.0)
+        .expect("free controller publishes");
     assert_eq!(fixed.selected_item(20.0), 3);
 
     // Pre-layout jumps defer instead of clamping away; the pending offset
     // applies once the range exists.
     let fixed = FixedExtentScrollController::new(0);
     assert!(fixed.jump_to_item(7, 20.0));
-    fixed.controller().update_extents(260.0, 100.0);
+    fixed
+        .controller()
+        .update_extents(260.0, 100.0)
+        .expect("free controller publishes");
     assert_eq!(fixed.selected_item(20.0), 7);
 
     // Post-layout jumps apply immediately through the shared controller.

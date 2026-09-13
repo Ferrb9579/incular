@@ -59,7 +59,9 @@ fn wheel_projects_children_and_selects_by_fixed_extent() {
 
     let fixed = FixedExtentScrollController::with_item_extent(3, 20.0);
     let fixed_controller = fixed.controller();
-    fixed_controller.update_extents(260.0, 100.0);
+    fixed_controller
+        .update_extents(260.0, 100.0)
+        .expect("free controller publishes");
     assert_eq!(fixed.selected_item(20.0), 3);
     assert!(fixed.jump_to_item(7, 20.0));
     assert_eq!(fixed.selected_item(20.0), 7);
@@ -69,7 +71,9 @@ fn wheel_projects_children_and_selects_by_fixed_extent() {
 fn raw_scrollbar_maps_vertical_and_horizontal_thumb_drags() {
     let controller = ScrollController::new();
     controller.set_metrics_context(Axis::Vertical, false);
-    controller.update_extents(500.0, 100.0);
+    controller
+        .update_extents(500.0, 100.0)
+        .expect("free controller publishes");
     controller.jump_to(200.0);
     let mut scrollbar = RawScrollbar::new(controller.clone());
     let size = Size::new(120.0, 100.0);

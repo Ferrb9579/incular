@@ -136,7 +136,9 @@ fn draggable_sheet_boundary_handoff_accounts_every_delta() {
     assert!(state.set_size(1.0, false));
     assert!(state.inner_controller().jump_to(0.0));
     let parent = ScrollController::new();
-    parent.update_extents(600.0, 400.0);
+    parent
+        .update_extents(600.0, 400.0)
+        .expect("free controller publishes");
     assert!(parent.jump_to(100.0));
     state.set_parent_controllers([parent.clone()]);
     let nested = state.apply_user_offset(-100.0);
