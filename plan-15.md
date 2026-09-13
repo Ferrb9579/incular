@@ -2741,8 +2741,8 @@ Attachment ownership inventory (implemented guarantees — corrective
 packages A–D):
 
 | Family | Position record | Extent writers | Multi-attach | Replacement | Unmount / window close |
-| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | claiming viewport layouts (attached writes); public `update_extents` stays open for hosts and headless model use | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned) | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then detaches the replaced-away tenure (release + `End`) so no flag strands — metrics survive | unmount detaches owned leases (release, then `End`); tree drop tears down owned leases (release, then silent clear). Stale handles release/end/abort nothing — pinned |
-| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | retained wheel layouts claim like ordinary (attached writes); headless model layouts write without claiming | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount all pinned) | same as ordinary, cross-tree included | same as ordinary |
+| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | lease-authorized publication (`MetricAttachment::update_extents`, live-handle-only); checked headless publication (`try_update_unattached_extents`, free-only); legacy open `update_extents*` for hosts/tests/outright-owned models | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned); rejections preserve extents, offset, revision, ownership, and silence — pinned | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then detaches the replaced-away tenure (release + `End`) so no flag strands — metrics survive | unmount detaches owned leases (release, then `End`); tree drop drains leases with per-handle silent teardown. Stale handles release/end/abort nothing — pinned |
+| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | retained wheel layouts claim then publish through the lease (one shared layout tail); `layout_unattached` publishes checked-headless; legacy `layout`/`layout_with_measure` stay unrestricted | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount, checked-headless rejection all pinned) | same as ordinary, cross-tree included | same as ordinary |
 | Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | REMAINING: no attachment enforcement — explicitly out of scope until these foundations pass review | per axis, unenforced | nothing |
 | Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | REMAINING: sheet/inner coordination beyond the existing attach model — explicitly out of scope until these foundations pass review | previous handle detaches | sheet state drops with the tree |
 
@@ -2784,18 +2784,46 @@ own generation tokens, untouched):
 Clocks: ordinary activity is fully synchronous (no timers), so
 determinism needs no clock control — sequences are exact.
 
+API review (no unchecked ownership mutation remains): `try_attach`
+fails on occupied; `release`/`detach`/`teardown` and lease publication
+act only through the live handle; unattached publication acts only
+while free. Deliberately open, not escape hatches: offset control
+(`jump_to`/`scroll_by`/deferred/settle) moves values, never ownership
+or extents; activity `begin`/`end` brackets stay app-driven with tenure
+transitions owned by the detach paths; legacy unrestricted extent
+writes remain for hosts, tests, outright-owned models, the
+element-less render fallback, and the deferred 2D/draggable families —
+documented last-writer-wins geometry that never transfers ownership.
+Diagnostics (`metric_owner`, `attachment_id`, conflict owner trees,
+`MetricAttachment::controller`) are read-only: naming an owner grants
+no power to mutate it, and controller clones claim nothing.
+
+Migration notes: new code publishes through `MetricAttachment` (one
+shared extent algorithm behind attached, unattached-checked, and
+legacy paths) or `try_update_unattached_extents` for
+ownership-respecting headless publishers; `ListWheelViewport` offers
+`layout_unattached` beside the legacy unrestricted `layout` family.
+2D viewports and draggable sheet/inner coordination keep their current
+models — attachment enforcement there waits for this foundation's
+review, and must not expand until then.
+
 Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on
 occupied; only the live handle releases; stale handles change
-nothing; unchecked ownership setters removed); acquire-before-release
-replacement with viewport-tenure detach (`End` on the old tenure, never
-a stranded flag) and fully-preserving failure;
+nothing; unchecked ownership setters removed); lease-authorized metric
+publication with a checked headless path and one shared extent
+algorithm; scoped cleanup (explicit detach may notify, drop follows
+silent teardown, checked identity allocation without wraparound);
+acquire-before-release replacement with viewport-tenure detach (`End`
+on the old tenure, never a stranded flag) and fully-preserving
+failure;
 conditional teardown with explicit detach (release + `End`) versus
 teardown (release + silent clear) paths; steady-state lease reuse
 without re-acquire or scans; ordinary, sliver, and wheel viewports all
-claiming through the one mechanism; contested headless writes defined
-to never disturb ownership; combined ordinary→wheel→replacement→
-teardown→remount lifecycle pinned. Remaining work, explicitly
+claiming through the one mechanism; checked headless publication
+rejected without mutation (headless wheel included); combined
+headless→attach→reject→replace→wheel→detach/teardown→remount
+authority-boundary lifecycle pinned. Remaining work, explicitly
 untouched: two-dimensional viewport attachment, draggable
 sheet/inner coordination beyond the existing attach model, broader
 animation (ballistic driver) policy; scrollbar-thumb drags stay

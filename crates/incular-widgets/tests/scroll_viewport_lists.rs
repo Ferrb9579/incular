@@ -16,7 +16,8 @@ use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_semantics::SemanticRole;
 use incular_widgets::internal::TreeError;
 use incular_widgets::{
-    Column, ListView, RawScrollbar, Scrollable, Semantics, SingleChildScrollView, Viewport,
+    Column, ListView, ListWheelScrollView, RawScrollbar, Scrollable, Semantics,
+    SingleChildScrollView, Viewport, WheelChildDelegate,
 };
 use std::time::Instant;
 
@@ -1083,6 +1084,171 @@ fn unwinding_through_detach_releases_remaining_leases_silently() {
     assert!(second.end_activity());
     assert!(first.begin_activity());
     assert!(first.end_activity());
+}
+
+#[test]
+fn authority_boundary_lifecycle_end_to_end() {
+    // The complete authority boundary through public paths only:
+    // headless publication succeeds while free; an ordinary viewport
+    // attaches; headless and second-viewport writes are rejected without
+    // mutation; replacement succeeds transactionally; a wheel attaches
+    // after release and publishes through its lease; explicit detach
+    // notifies while implicit teardown stays silent; the retained
+    // controller remounts successfully.
+    let owned = ScrollController::new();
+    let next = ScrollController::new();
+    let owned_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let next_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_owned = owned_ends.clone();
+    let counted_next = next_ends.clone();
+    let _owned_subscription = owned.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_owned.set(counted_owned.get() + 1);
+        }
+        false
+    });
+    let _next_subscription = next.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_next.set(counted_next.get() + 1);
+        }
+        false
+    });
+    let wheel = |controller: ScrollController| -> Widget {
+        let view: Widget = ListWheelScrollView::new(
+            controller,
+            20.0,
+            WheelChildDelegate::children(
+                (0..8)
+                    .map(|index| {
+                        Widget::box_(Size::new(80., 20.), Color::WHITE).with_key(index as u64)
+                    })
+                    .collect(),
+            ),
+        )
+        .into();
+        SizedBox::from_dimensions(Some(200.), Some(100.), Some(view)).into()
+    };
+    // 1. Unattached headless publication succeeds while free.
+    owned
+        .try_update_unattached_extents(300., 100., ScrollPhysics::clamping())
+        .expect("free controller accepts headless publication");
+    assert_eq!(owned.max_offset(), 200.);
+    // 2. An ordinary viewport attaches.
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(owned.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    let attachment = owned.attachment_id().expect("viewport owns");
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
+    // 3a. Headless publication is rejected without mutation.
+    let revision = owned.revision();
+    let error = owned
+        .try_update_unattached_extents(900., 50., ScrollPhysics::clamping())
+        .unwrap_err();
+    assert_eq!(error.owner_tree(), Some(tree.tree_id()));
+    assert_eq!(owned.content_extent(), 300.);
+    assert_eq!(owned.viewport_extent(), 100.);
+    assert_eq!(owned.max_offset(), 200.);
+    assert_eq!(owned.offset(), 0.);
+    assert_eq!(owned.revision(), revision);
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    // 3b. A second viewport is rejected without mutation.
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(owned.clone(), 200., 100., 300.),
+            sized_viewport(owned.clone(), 200., 100., 300.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 300.)))
+        .unwrap_err();
+    let kids = tree.children(root).expect("viewports").to_vec();
+    let viewport_of =
+        |sized: incular_widgets::internal::ElementId| tree.children(sized).expect("viewport")[0];
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, Some(viewport_of(kids[0])));
+            assert_eq!(attempted, viewport_of(kids[1]));
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert_eq!(owned.content_extent(), 300.);
+    assert_eq!(owned.max_offset(), 200.);
+    assert_eq!(owned.attachment_id(), Some(attachment));
+    // 4. Replacement succeeds transactionally: the new controller takes
+    // over with its geometry while the old tenure ends and goes free.
+    assert!(owned.begin_activity());
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(next.clone(), 200., 100., 500.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(next.content_extent(), 500.);
+    assert_eq!(next.max_offset(), 400.);
+    assert_eq!(next.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(owned.metric_owner(), None);
+    assert_eq!(owned_ends.get(), 1, "old tenure ended by the transfer");
+    assert_eq!(owned.content_extent(), 300.);
+    assert_eq!(owned.max_offset(), 200.);
+    // 5. A wheel attaches after release and publishes through its lease.
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(next.clone(), 200., 100., 500.),
+            wheel(owned.clone()),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 250.)))
+        .expect("layout");
+    assert_eq!(owned.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(owned.max_offset(), 140.);
+    let wheel_attachment = owned.attachment_id().expect("wheel owns");
+    assert_ne!(wheel_attachment, attachment);
+    // 6a. Explicit detach notifies: open an activity, unmount the wheel.
+    assert!(owned.begin_activity());
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(next.clone(), 200., 100., 500.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(owned.metric_owner(), None);
+    assert_eq!(owned_ends.get(), 2, "explicit detach ends the open tenure");
+    // 6b. Implicit teardown stays silent: drop the tree holding the next
+    // controller with its activity open.
+    assert!(next.begin_activity());
+    drop(tree);
+    assert_eq!(next.metric_owner(), None);
+    assert_eq!(next_ends.get(), 0, "teardown emits no End");
+    assert!(next.begin_activity());
+    assert!(next.end_activity());
+    // 7. The retained controller remounts successfully.
+    let mut fresh = WidgetTree::new();
+    mount_tight(
+        &mut fresh,
+        sized_viewport(next.clone(), 200., 100., 500.),
+        200.,
+        100.,
+    );
+    assert_eq!(next.content_extent(), 500.);
+    assert_eq!(next.max_offset(), 400.);
+    assert!(next.jump_to(100.));
 }
 
 #[test]
