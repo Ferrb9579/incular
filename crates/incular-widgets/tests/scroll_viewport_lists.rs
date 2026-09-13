@@ -1036,6 +1036,231 @@ fn cross_tree_duplicate_attachment_is_rejected() {
     assert_eq!(other.max_offset(), 350.);
 }
 
+#[test]
+fn replacement_during_activity_preserves_both() {
+    // Transfer as replacement: the viewport takes the new controller
+    // (its geometry wins) while the old controller's open activity is
+    // untouched — and the new handle starts fresh.
+    let old = ScrollController::new();
+    let new = ScrollController::new();
+    let log_old = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log_new = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut subscriptions = Vec::new();
+    for (controller, log) in [(&old, &log_old), (&new, &log_new)] {
+        let log = log.clone();
+        subscriptions.push(controller.add_listener(move |notification| {
+            log.borrow_mut().push(notification.kind);
+            false
+        }));
+    }
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(old.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert_eq!(old.max_offset(), 200.);
+    assert!(old.begin_activity());
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(new.clone(), 200., 100., 500.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(new.content_extent(), 500.);
+    assert_eq!(new.max_offset(), 400.);
+    // Old activity untouched by the transfer; new handle starts fresh.
+    assert!(!old.begin_activity());
+    assert!(new.begin_activity());
+    assert!(old.end_activity());
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let framed =
+        |log: &std::rc::Rc<std::cell::RefCell<Vec<incular_scroll::ScrollNotificationType>>>| {
+            log.borrow()
+                .iter()
+                .copied()
+                .filter(|kind| matches!(kind, Start | End))
+                .collect::<Vec<_>>()
+        };
+    assert_eq!(framed(&log_old).as_slice(), &[Start, End]);
+    assert_eq!(framed(&log_new).as_slice(), &[Start]);
+    assert!(new.end_activity());
+    drop(subscriptions);
+    // Repeated unchanged layouts stay clean and stable.
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(new.max_offset(), 400.);
+    assert_eq!(new.offset(), 0.);
+}
+
+#[test]
+fn replacement_with_owned_controller_keeps_old() {
+    // The new claim is validated before the old one releases: same-tree
+    // owned and foreign-owned replacements both fail with the old
+    // attachment (and its activity) fully preserved, then recover.
+    let first = ScrollController::new();
+    let other = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![
+            sized_viewport(first.clone(), 200., 100., 300.),
+            sized_viewport(other.clone(), 200., 100., 500.),
+        ])
+        .into(),
+        200.,
+        300.,
+    );
+    assert!(first.begin_activity());
+    // Same-tree owned: V1 attempts V2's controller.
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(other.clone(), 200., 100., 300.),
+            sized_viewport(other.clone(), 200., 100., 500.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 300.)))
+        .unwrap_err();
+    let kids = tree.children(root).expect("viewports").to_vec();
+    let viewport_of =
+        |sized: incular_widgets::internal::ElementId| tree.children(sized).expect("viewport")[0];
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, Some(viewport_of(kids[1])));
+            assert_eq!(attempted, viewport_of(kids[0]));
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    // Old attachment and activity fully preserved; recovery works.
+    assert_eq!(first.content_extent(), 300.);
+    assert_eq!(first.max_offset(), 200.);
+    assert!(!first.begin_activity());
+    assert!(first.end_activity());
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(first.clone(), 200., 100., 300.),
+            sized_viewport(other.clone(), 200., 100., 500.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+    assert_eq!(first.max_offset(), 200.);
+    // Foreign-owned: a third controller owned by another tree cannot be
+    // taken either, and the failure persists until the widget changes
+    // back.
+    let abroad = ScrollController::new();
+    let mut foreign = WidgetTree::new();
+    mount_tight(
+        &mut foreign,
+        sized_viewport(abroad.clone(), 200., 100., 500.),
+        200.,
+        100.,
+    );
+    assert_ne!(foreign.tree_id(), tree.tree_id());
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(abroad.clone(), 200., 100., 300.),
+            sized_viewport(first.clone(), 200., 100., 500.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 300.)))
+        .unwrap_err();
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: _,
+        } => {
+            assert_eq!(owner_tree, foreign.tree_id());
+            assert_eq!(owner, None);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    assert_eq!(first.max_offset(), 200.);
+    // The failure persists on relayout until the widget changes back.
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect_err("still owned abroad");
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(first.clone(), 200., 100., 300.),
+            sized_viewport(other.clone(), 200., 100., 500.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+}
+
+#[test]
+fn rejected_viewport_unmount_keeps_owner_activity() {
+    // Only an owned lease triggers detach behavior: unmounting the
+    // rejected second viewport must not end the owner's open activity,
+    // disturb its metrics, or poison later layouts.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree = WidgetTree::new();
+    let root = tree
+        .mount(
+            Column::new(vec![
+                sized_viewport(controller.clone(), 200., 100., 300.),
+                sized_viewport(controller.clone(), 200., 150., 500.),
+            ])
+            .into(),
+        )
+        .expect("mount defers attachment");
+    assert!(controller.begin_activity());
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect_err("second viewport rejected");
+    // Unmount the rejected viewport: the owner's activity survives.
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+    assert!(!controller.begin_activity(), "owner activity untouched");
+    assert_eq!(controller.max_offset(), 200.);
+    assert!(controller.end_activity());
+    use incular_scroll::ScrollNotificationType::{End, Start};
+    let framed: Vec<incular_scroll::ScrollNotificationType> = events
+        .borrow()
+        .iter()
+        .copied()
+        .filter(|kind| matches!(kind, Start | End))
+        .collect();
+    assert_eq!(framed.as_slice(), &[Start, End]);
+}
+
 fn sized_viewport(
     controller: ScrollController,
     width: f32,
