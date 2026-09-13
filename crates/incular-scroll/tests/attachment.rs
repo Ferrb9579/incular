@@ -4,10 +4,29 @@
 //! fills it or reports the live owner; only the returned handle releases,
 //! and a stale handle changes nothing.
 
-use incular_scroll::{MetricOwner, ScrollController};
+use std::{cell::Cell, rc::Rc};
+
+use incular_scroll::{MetricOwner, ScrollController, ScrollNotificationType};
 
 fn owner(tree: u64) -> MetricOwner {
     MetricOwner::of_tree(tree)
+}
+
+fn end_counter(
+    controller: &ScrollController,
+) -> (
+    Rc<Cell<usize>>,
+    incular_scroll::ScrollNotificationSubscription,
+) {
+    let ends = Rc::new(Cell::new(0));
+    let counted = ends.clone();
+    let subscription = controller.add_listener(move |notification| {
+        if notification.kind == ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    (ends, subscription)
 }
 
 #[test]
@@ -90,6 +109,78 @@ fn stale_attachment_cannot_release_a_newer_attachment() {
     // Only the live handle releases.
     assert!(second.release());
     assert_eq!(controller.metric_owner(), None);
+}
+
+#[test]
+fn stale_handle_cannot_abort_a_new_owners_activity() {
+    // A stale tree record must not cancel a newer attachment: teardown
+    // through an old handle releases nothing and aborts nothing.
+    let controller = ScrollController::new();
+    let (ends, _guard) = end_counter(&controller);
+    let old = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    assert!(controller.begin_activity());
+    assert!(old.release());
+    let fresh = controller
+        .try_attach(owner(2))
+        .expect("released controller attaches again");
+    old.teardown();
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), Some(2));
+    assert_eq!(controller.attachment_id(), Some(fresh.id()));
+    assert!(!controller.begin_activity());
+    // The live teardown itself is silent by policy, then starts fresh.
+    fresh.teardown();
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn detach_notifies_once_and_repeated_cleanup_is_harmless() {
+    // Normal detach ends the open activity with exactly one End; every
+    // later cleanup through the same handle is a silent no-op.
+    let controller = ScrollController::new();
+    let (ends, _guard) = end_counter(&controller);
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    assert!(controller.begin_activity());
+    attachment.detach();
+    assert_eq!(ends.get(), 1);
+    assert_eq!(controller.metric_owner(), None);
+    attachment.detach();
+    attachment.teardown();
+    assert!(!attachment.release());
+    assert_eq!(ends.get(), 1);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert_eq!(ends.get(), 2);
+}
+
+#[test]
+fn torn_down_controller_state_stays_usable() {
+    // Externally retained state survives teardown: geometry persists and
+    // every programmatic operation keeps working for the next owner.
+    let controller = ScrollController::new();
+    controller.update_extents(300., 100.);
+    assert!(controller.jump_to(40.));
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    assert!(controller.begin_activity());
+    attachment.teardown();
+    assert_eq!(controller.offset(), 40.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert!(controller.jump_to(60.));
+    assert!(controller.deferred_jump_to(10.));
+    controller.update_extents(500., 100.);
+    assert_eq!(controller.max_offset(), 400.);
+    let renewed = controller.try_attach(owner(2)).expect("reattaches cleanly");
+    assert!(renewed.release());
 }
 
 #[test]

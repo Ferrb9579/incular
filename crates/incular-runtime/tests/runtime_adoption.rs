@@ -155,9 +155,18 @@ fn scroll_controller_survives_window_close_for_reuse() {
     let runtime = Runtime::new(viewport(controller.clone()).into()).unwrap();
     let mut app = Application::from_runtime(runtime, |_| {});
     frame(&mut app);
+    let ends = Rc::new(RefCell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            *counted.borrow_mut() += 1;
+        }
+        false
+    });
     assert!(controller.begin_activity());
     app.close_window(app.primary_window());
     drop(app);
+    assert_eq!(*ends.borrow(), 0, "window teardown stays silent");
     assert_eq!(controller.metric_owner(), None);
     assert!(controller.begin_activity());
     assert!(controller.end_activity());

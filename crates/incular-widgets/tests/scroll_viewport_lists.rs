@@ -957,6 +957,98 @@ fn reentrant_begin_during_detach_end_survives() {
 }
 
 #[test]
+fn detaching_end_listener_can_reattach_and_begin_fresh() {
+    // Ownership commits before End dispatches: a listener observes a
+    // free controller, attaches it, and begins a fresh activity — and
+    // that activity survives the rest of detach.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let tree_id = tree.tree_id();
+    let reattached = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let reattached_for_listener = reattached.clone();
+    let controller_for_listener = controller.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End
+            && reattached_for_listener.borrow().is_none()
+        {
+            let handle = controller_for_listener
+                .try_attach(incular_scroll::MetricOwner::of_tree(tree_id))
+                .expect("ownership released before End");
+            assert!(controller_for_listener.begin_activity());
+            *reattached_for_listener.borrow_mut() = Some(handle);
+        }
+        false
+    });
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.begin_activity());
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    let handle = reattached
+        .borrow_mut()
+        .take()
+        .expect("listener reattached during End");
+    assert_eq!(controller.metric_owner(), Some(tree_id));
+    assert_eq!(controller.attachment_id(), Some(handle.id()));
+    assert!(
+        !controller.begin_activity(),
+        "listener-started activity survives detach"
+    );
+    // Unsubscribe before cleanup: ending the fresh activity would
+    // otherwise re-fire the listener, which is exactly what the guard
+    // above no longer suppresses once the slot is taken.
+    drop(_subscription);
+    assert!(handle.release());
+    assert!(controller.end_activity());
+    assert_eq!(controller.metric_owner(), None);
+}
+
+#[test]
+fn dropping_tree_with_open_activity_stays_silent_and_reusable() {
+    // Teardown policy: dropping the tree releases ownership and clears
+    // the open activity with no End notification — then the retained
+    // controller remounts and drives normally.
+    let controller = ScrollController::new();
+    let ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted = ends.clone();
+    let _subscription = controller.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted.set(counted.get() + 1);
+        }
+        false
+    });
+    {
+        let mut tree = WidgetTree::new();
+        mount_tight(
+            &mut tree,
+            sized_viewport(controller.clone(), 200., 100., 300.),
+            200.,
+            100.,
+        );
+        assert!(controller.begin_activity());
+    }
+    assert_eq!(ends.get(), 0, "teardown emits no End");
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        sized_viewport(controller.clone(), 200., 150., 500.),
+        200.,
+        150.,
+    );
+    assert_eq!(controller.max_offset(), 350.);
+    assert!(controller.jump_to(100.));
+}
+
+#[test]
 fn sliver_unmount_ends_open_activity() {
     // Same through a sliver viewport render kind.
     let controller = ScrollController::new();

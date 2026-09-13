@@ -1524,12 +1524,13 @@ impl WidgetTree {
                 }
             }
         }
-        // Release ownership before notifying: a listener reattaching
-        // the same controller during End must find it free, and no
-        // trailing cleanup may cancel an activity the listener starts.
+        // Normal detach: ownership releases before notifying, so a
+        // listener reattaching the same controller during End finds it
+        // free, and no trailing cleanup may cancel an activity the
+        // listener starts. Only live attachments notify — a stale handle
+        // can never end another owner's activity.
         for attachment in detached {
-            let _ = attachment.release();
-            attachment.controller().end_activity();
+            attachment.detach();
         }
     }
     pub(super) fn check_keys_borrowed<'a>(

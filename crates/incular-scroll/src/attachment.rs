@@ -131,6 +131,33 @@ impl MetricAttachment {
             _ => false,
         }
     }
+
+    /// Normal detach: releases ownership, then ends any open activity
+    /// with its documented `End` notification. Ownership commits before
+    /// the callback runs, so a listener reattaching during `End` finds
+    /// the controller free; nothing after the callback can cancel an
+    /// activity it starts. A stale handle ends nothing — it can never
+    /// close another owner's activity. Framework-internal.
+    #[doc(hidden)]
+    pub fn detach(&self) {
+        if self.release() {
+            self.controller.end_activity();
+        }
+    }
+
+    /// Teardown/unwind: releases ownership, then silently clears any
+    /// open activity without notifying. Listeners belong to torn-down
+    /// context by then — notifying from `Drop` could panic during
+    /// unwinding — so the next `begin_activity` starts fresh instead of
+    /// bricking on a stuck flag. A stale handle aborts nothing, so it
+    /// can never cancel a new owner's activity. Repeated calls are
+    /// harmless. Framework-internal.
+    #[doc(hidden)]
+    pub fn teardown(&self) {
+        if self.release() {
+            self.controller.abort_activity();
+        }
+    }
 }
 
 /// The controller's current owner record: attachment identity plus the

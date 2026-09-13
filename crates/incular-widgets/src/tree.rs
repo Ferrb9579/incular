@@ -1016,17 +1016,16 @@ impl WidgetTree {
 }
 
 impl Drop for WidgetTree {
-    /// Releases every scroll attachment this tree owns, so app-retained
-    /// controllers remount cleanly elsewhere after teardown. Open
-    /// activities clear silently — listeners belong to torn-down context,
-    /// and notifying from `Drop` could panic during unwinding — so the
-    /// next begin starts fresh instead of bricking. Handles owned by
-    /// other trees can never sit in this map: only a live attachment
-    /// releases, so foreign owners are unreachable here.
+    /// Tears down every scroll attachment this tree owns, so app-retained
+    /// controllers remount cleanly elsewhere after teardown. Teardown is
+    /// silent by policy here — listeners belong to torn-down context,
+    /// and notifying from `Drop` could panic during unwinding — not by a
+    /// universal Rust rule. Handles owned by other trees can never sit
+    /// in this map: only a live attachment releases, so foreign owners
+    /// are unreachable here.
     fn drop(&mut self) {
         for attachment in std::mem::take(&mut self.scroll_attachments).into_values() {
-            let _ = attachment.release();
-            attachment.controller().abort_activity();
+            attachment.teardown();
         }
     }
 }
