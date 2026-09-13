@@ -2620,3 +2620,272 @@ fn outlet_unsupported_introduced_mid_build_fails_explicitly() {
     present(&mut harness);
     assert!(node_a.has_focus());
 }
+
+#[test]
+fn outlet_same_id_replacement_paints_old_then_new() {
+    // Replacement lands during layout, after the rebuild composed: the
+    // first present paints the OLD child while the bookkeeping already
+    // commits (same identities cover), with newer work left scheduled —
+    // the second present paints the NEW child. Output and bookkeeping
+    // disagree for exactly one frame, by design.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let ka = PageKey::new("a").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let node_a = FocusNode::new();
+    let node_old = FocusNode::new();
+    let node_new = FocusNode::new();
+    navigator.push_page(Page::new("a", focus_child(&node_a)).key(ka.clone()));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_a_for_build = node_a.clone();
+    let node_new_for_build = node_new.clone();
+    navigator.push_page(
+        Page::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                let ka = ka.clone();
+                let kb = kb.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator
+                            .set_pages([
+                                Page::new("a", focus_child(&node_a_for_build)).key(ka.clone()),
+                                Page::new(
+                                    "b",
+                                    focus_widget(
+                                        &node_new_for_build,
+                                        Widget::box_(Size::new(40., 40.), GREEN),
+                                    ),
+                                )
+                                .key(kb.clone()),
+                            ])
+                            .unwrap();
+                    }
+                    focus_widget(&node_old, Widget::box_(Size::new(40., 40.), RED))
+                }
+            }))]),
+        )
+        .key(kb.clone()),
+    );
+    // First present: stale paint (OLD child), committed bookkeeping, and
+    // newer work still scheduled.
+    let first = present(&mut harness);
+    assert!(paints(first.commands(), RED));
+    assert!(
+        !paints(first.commands(), GREEN),
+        "the presenting frame predates the mid-build replacement"
+    );
+    let rb = navigator.current().expect("route B").id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(rb).is_some(),
+        "the transition commits against the composed snapshot"
+    );
+    assert!(
+        harness.outlet.borrow().needs_frame(),
+        "the replacement still requires a frame"
+    );
+    // Second present: the NEW child paints and nothing remains scheduled.
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), GREEN));
+    assert!(!harness.outlet.borrow().needs_frame());
+    tab_until(&mut harness.runtime, &node_new);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_transparent_top_reorder_paints_and_hits_in_order() {
+    // Two opaque lowers under a small transparent popup top: reordering
+    // the lowers commits, and the returned frame must prove the new order
+    // in paint commands and hit-testing — not just in focus bookkeeping.
+    // (A mid-build reorder under a keyed transparent top is inexpressible:
+    // pushed pages are opaque and `set_pages` preserves entry
+    // presentation, so keyed popups cannot be built; mid-build coverage
+    // lives in the replacement and retry tests.)
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let ka = PageKey::new("a").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let taps_a = Rc::new(Cell::new(0_u32));
+    let taps_b = Rc::new(Cell::new(0_u32));
+    // Full-area tappable boxes with a small focus target at the origin;
+    // taps at the center avoid both the focus boxes and the popup corner.
+    let lower = |node: &FocusNode, color: Color, taps: &Rc<Cell<u32>>| -> Widget {
+        Stack::new(vec![
+            tappable_rect(color, 200., 200., taps),
+            focus_widget(node, Widget::box_(Size::new(40., 40.), color)),
+        ])
+        .into()
+    };
+    navigator
+        .set_pages([
+            Page::new("a", lower(&node_a, RED, &taps_a)).key(ka.clone()),
+            Page::new("b", lower(&node_b, BLUE, &taps_b)).key(kb.clone()),
+        ])
+        .unwrap();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    // Reorder below the (forthcoming) transparent top: A occludes B now.
+    navigator
+        .set_pages([
+            Page::new("b", lower(&node_b, BLUE, &taps_b)).key(kb.clone()),
+            Page::new("a", lower(&node_a, RED, &taps_a)).key(ka.clone()),
+        ])
+        .unwrap();
+    let reordered = present(&mut harness);
+    assert!(paints(reordered.commands(), RED));
+    assert!(
+        !paints(reordered.commands(), BLUE),
+        "A now occludes B"
+    );
+    assert!(!harness.outlet.borrow().needs_frame());
+    // Transparent popup top: lowers keep painting and receiving hits.
+    navigator.push(
+        Route::new("t", Widget::box_(Size::new(40., 40.), GREEN))
+            .presentation(RoutePresentation::popup(None)),
+    );
+    let covered = present(&mut harness);
+    assert!(paints(covered.commands(), RED));
+    assert!(paints(covered.commands(), GREEN));
+    tap(&mut harness, 100., 100.);
+    assert_eq!(taps_a.get(), 1);
+    assert_eq!(taps_b.get(), 0);
+    // Bookkeeping agrees too: the popup cycle restores focus.
+    tab_until(&mut harness.runtime, &node_a);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_modal_pushed_mid_build_abandons_before_veil_paint() {
+    // A→B in flight while B's builder pushes a modal: membership changes,
+    // so the capture abandons — and the modal never mounts this frame, so
+    // no veil paints, focus stays, yet the live modal binds. Recovery
+    // mounts veil plus content; the way back restores A.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let ka = PageKey::new("a").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator.push_page(Page::new("a", focus_child(&node_a)).key(ka.clone()));
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(
+        Page::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new({
+                let navigator = navigator.clone();
+                move |_, _| {
+                    if trip.take() {
+                        navigator.push(
+                            Route::new("m", Widget::box_(Size::new(40., 40.), YELLOW)).modal(
+                                ModalBarrier {
+                                    color: GREEN,
+                                    ..Default::default()
+                                },
+                            ),
+                        );
+                    }
+                    focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+                }
+            }))]),
+        )
+        .key(kb.clone()),
+    );
+    let first = present(&mut harness);
+    assert!(
+        !paints(first.commands(), GREEN),
+        "the abandoned frame mounts no veil for the unbuilt modal"
+    );
+    assert!(node_a.has_focus());
+    let modal_id = navigator.current().expect("modal on top").id;
+    assert!(
+        harness.outlet.borrow().route_task_scope(modal_id).is_some(),
+        "the live modal binds by lifetime although its activation abandoned"
+    );
+    assert!(harness.outlet.borrow().needs_frame());
+    // Recovery presents veil plus content; the way back restores A.
+    let second = present(&mut harness);
+    assert!(paints(second.commands(), GREEN));
+    assert!(!harness.outlet.borrow().needs_frame());
+    navigator.pop();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    present(&mut harness);
+    assert!(node_a.has_focus());
+}
+
+#[test]
+fn outlet_retry_after_below_removal_commits_promptly() {
+    // A→B captured, the frame fails, then a covered route is removed
+    // below (same active route, smaller member set): the retry builds the
+    // current stack, so it must commit promptly against the refreshed
+    // snapshot — not abandon against the stale one. Proved by the return:
+    // only a P2 commit leaves the record the way back restores.
+    let navigator = Navigator::new();
+    let mut harness = harness(&navigator);
+    let kx = PageKey::new("x").unwrap();
+    let ka = PageKey::new("a").unwrap();
+    let kb = PageKey::new("b").unwrap();
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    navigator
+        .set_pages([
+            Page::new("x", Widget::box_(Size::new(40., 40.), RED)).key(kx.clone()),
+            Page::new("a", focus_child(&node_a)).key(ka.clone()),
+        ])
+        .unwrap();
+    present(&mut harness);
+    tab_until(&mut harness.runtime, &node_a);
+    let trip = Rc::new(Cell::new(true));
+    let node_b_for_build = node_b.clone();
+    navigator.push_page(
+        Page::new(
+            "b",
+            Column::new(vec![Widget::from(LayoutBuilder::new(move |_, _| {
+                if trip.take() {
+                    panic!("retry boom");
+                }
+                focus_widget(&node_b_for_build, Widget::box_(Size::new(40., 40.), BLUE))
+            }))]),
+        )
+        .key(kb.clone()),
+    );
+    let outlet = harness.outlet.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        RouteOutlet::present_frame(
+            &outlet,
+            &mut harness.runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+    }));
+    result.expect_err("builder panic unwinds the frame");
+    // Same active route, smaller stack: X goes away below the transition.
+    navigator
+        .set_pages([
+            Page::new("a", focus_child(&node_a)).key(ka.clone()),
+            Page::new("b", focus_child(&node_b)).key(kb.clone()),
+        ])
+        .unwrap();
+    present(&mut harness);
+    // Move focus away: only a promptly committed P2 leaves the record the
+    // way back restores (an abandon leaves nothing behind).
+    tab_until(&mut harness.runtime, &node_b);
+    navigator.pop();
+    present(&mut harness);
+    assert!(
+        node_a.has_focus(),
+        "the way back restores the promptly committed save"
+    );
+}

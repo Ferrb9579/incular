@@ -82,37 +82,18 @@ impl OutletPlacement {
     }
 }
 
-/// Composition-relevant route configuration as built: exactly the flags
-/// [`RouteOutlet::widget`] branches on when composing content.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RouteConfig {
-    overlay: bool,
-    opaque: bool,
-    retained: bool,
-    modal: bool,
-}
-
-impl RouteConfig {
-    fn of(presentation: &RoutePresentation) -> Self {
-        Self {
-            overlay: presentation.is_overlay(),
-            opaque: presentation.is_opaque(),
-            retained: presentation.maintains_state(),
-            modal: presentation.blocks_background_input(),
-        }
-    }
-}
-
-/// The navigation state one frame attempt built content from: the stack
-/// revision plus the route identities and configurations the frame
-/// actually composed. The commit compares against this — not against the
-/// bare active id — so navigation during the attempt resolves explicitly
-/// instead of by assumption.
+/// The navigation state one frame attempt builds content from: the
+/// authoritative stack revision plus the ordered route identities the
+/// frame composes. Immutable once captured; refreshed (never re-read for
+/// focus) at every build boundary so retries describe the content they
+/// actually present. Presentation is deliberately not snapshotted: it is
+/// fixed for a route identity, so revision plus identities is
+/// authoritative — no boolean approximation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FrameAttempt {
     revision: u64,
     active: Option<RouteId>,
-    members: Vec<(RouteId, RouteConfig)>,
+    members: Vec<RouteId>,
 }
 
 impl FrameAttempt {
@@ -121,23 +102,19 @@ impl FrameAttempt {
         Self {
             revision: navigator.revision(),
             active: routes.last().map(|route| route.id),
-            members: routes
-                .iter()
-                .map(|route| (route.id, RouteConfig::of(&route.presentation)))
-                .collect(),
+            members: routes.iter().map(|route| route.id).collect(),
         }
     }
 
-    /// Whether `navigator` still authorizes committing content built from
-    /// this attempt. Same revision means nothing moved. Otherwise the
-    /// member set (identities plus configurations) must match with the
-    /// same active route: order-only changes (a lower-route reorder
-    /// beneath an unchanged top) and same-identity child replacement keep
-    /// the per-route bookkeeping valid, while membership or configuration
-    /// changes — pushes, pops, removals, presentation swaps — abandon.
-    /// Push-then-pop back to the original top with no pending transition
-    /// never reaches the commit; with one in flight the ids differ and
-    /// the capture abandons cleanly.
+    /// Whether the live navigator still matches this attempt closely
+    /// enough to commit. Same revision means nothing moved. Otherwise the
+    /// member set must match under the same active route: order-only
+    /// churn (a lower-route reorder beneath an unchanged top) and
+    /// same-identity child replacement keep the per-route bookkeeping
+    /// valid, while membership changes — pushes, pops, removals —
+    /// abandon. Push-then-pop back to the original top with no pending
+    /// transition never reaches the commit; with one in flight the ids
+    /// differ and the capture abandons cleanly.
     fn covers(&self, navigator: &Navigator) -> bool {
         if navigator.revision() == self.revision {
             return true;
@@ -145,20 +122,23 @@ impl FrameAttempt {
         let current = Self::capture(navigator);
         current.active == self.active
             && current.members.len() == self.members.len()
-            && self
-                .members
-                .iter()
-                .all(|member| current.members.contains(member))
+            && self.members.iter().all(|id| current.members.contains(id))
     }
 }
 
-/// One uncommitted frame transition: the outgoing route whose focus was
-/// captured pre-frame, the incoming route to restore on success, the
-/// captured focus itself, and the attempt snapshot the frame built from.
+/// One uncommitted frame transition, tracking four independent concerns:
+/// - the outgoing focus save (`previous`/`saved`), which survives retries
+///   untouched — a retry refreshes the snapshot below without re-reading;
+/// - the navigation snapshot for this attempt (`attempt`), refreshed at
+///   every build boundary the frame crosses;
+/// - newer-work detection, via the snapshot revision versus live state
+///   (see `built` and [`RouteOutlet::needs_frame`]);
+/// - lifetime eligibility, checked at commit (incoming) and at restore
+///   (records never restore for removed routes).
+///
 /// The save lives here — not in the records — until the frame presenting
 /// it commits, so failed attempts and navigation mid-frame can never
-/// disturb committed state, and a retry never re-reads (and overwrites)
-/// the outgoing focus captured before the attempt.
+/// disturb committed state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingTransition {
     previous: Option<RouteId>,
@@ -308,6 +288,12 @@ pub struct RouteOutlet {
     presented: Option<RouteId>,
     /// Uncommitted capture: `Some` while a frame transition is in flight.
     pending: Option<PendingTransition>,
+    /// Newest navigation snapshot any frame composed for this outlet:
+    /// refreshed after every successful rebuild, never by capture or by a
+    /// failed attempt. Comparing it against live state answers whether
+    /// newer navigation still requires a frame (see
+    /// [`Self::needs_frame`]) independently of the pending save above.
+    built: Option<FrameAttempt>,
     namespace: u64,
     /// Monotonic tag counter. Freed tags are never reassigned (unlike the
     /// map length, which shrinks on removal), so element identity can never
@@ -379,6 +365,7 @@ impl RouteOutlet {
             task_parent: task_parent.clone(),
             presented: None,
             pending: None,
+            built: None,
             namespace,
             tag_sequence: Cell::new(0),
             root_key: Key::String(format!("route-outlet-root-{namespace}")),
@@ -541,6 +528,26 @@ impl RouteOutlet {
     #[must_use]
     pub fn id(&self) -> OutletId {
         OutletId(self.namespace)
+    }
+
+    /// Whether navigation arrived that no frame composed yet — for this
+    /// outlet or any nested outlet. True before the first present with a
+    /// non-empty stack, and after navigation newer than the last composed
+    /// snapshot (including navigation during a build, whose paint lags one
+    /// frame behind the bookkeeping). False once a frame composes current
+    /// state. Advisory scheduling help for hosts; it does not report
+    /// failed frames (their error return does that).
+    #[must_use]
+    pub fn needs_frame(&self) -> bool {
+        let stale = match &self.built {
+            None => !self.navigator.routes().is_empty(),
+            Some(built) => built.revision != self.navigator.revision(),
+        };
+        stale
+            || self
+                .live_nested()
+                .iter()
+                .any(|nested| nested.borrow().needs_frame())
     }
 
     /// Rejects this outlet's stack when it contains portal-managed overlay
@@ -791,16 +798,26 @@ impl RouteOutlet {
         // dependencies alone cannot cover content the host descriptors
         // never mention, and an explicit rebuild keeps mounting ordered
         // with the capture above. A vanished mount detaches gracefully
-        // instead of erroring every frame.
+        // instead of erroring forever.
         let attached = outlet.borrow().mount.get();
+        let mut rebuilt = false;
         if let Some(mount) = attached {
             match runtime.rebuild_from_builder(mount) {
-                Ok(()) => {}
+                Ok(()) => {
+                    rebuilt = true;
+                }
                 Err(TreeError::MissingElement(_)) => {
                     outlet.borrow_mut().mount.set(None);
                 }
                 Err(error) => return Err(OutletError::Frame(error)),
             }
+        }
+        if rebuilt {
+            // The build boundary: the rebuild just composed current
+            // navigator state, so the attempt snapshot refreshes to what
+            // the frame will present. The outgoing save is untouched —
+            // retries describe new content without re-reading old focus.
+            outlet.borrow_mut().refresh_attempt();
         }
         let output = runtime.run_frame(constraints)?;
         // A preflight snapshot cannot authorize later content: builders
@@ -836,6 +853,22 @@ impl RouteOutlet {
     pub fn restore_active(&mut self, runtime: &mut Runtime) {
         if let Some(id) = self.navigator.current().map(|route| route.id) {
             self.focus.restore_saved(runtime, &self.navigator, id);
+        }
+    }
+
+    /// Refreshes the attempt snapshot (and the composed-snapshot record)
+    /// to current navigator state without touching the outgoing save.
+    /// Runs after every successful rebuild — including retries, whose
+    /// pending capture otherwise describes a superseded stack — so the
+    /// commit always judges the content the frame actually presents.
+    fn refresh_attempt(&mut self) {
+        let attempt = FrameAttempt::capture(&self.navigator);
+        if let Some(pending) = self.pending.as_mut() {
+            pending.attempt = attempt.clone();
+        }
+        self.built = Some(attempt);
+        for nested in self.live_nested() {
+            nested.borrow_mut().refresh_attempt();
         }
     }
 
