@@ -1538,10 +1538,10 @@ impl WidgetTree {
                     if let Some(render) = self.renders.remove(render_id.0) {
                         render.object.layers.remove(&mut self.compositor);
                     }
-                    // Leases leave with their viewport in Enter above; the
-                    // viewport going away frees its controller for remounts
-                    // elsewhere.
-                    let _ = self.scroll_attachments.remove(&id);
+                    // Leases leave with their viewport in Enter above; a
+                    // handle stranded here (never in practice) tears
+                    // itself down silently on drop.
+                    drop(self.scroll_attachments.remove(&id));
                     self.unmounted.push(id);
                     self.diagnostics.unmounts += 1;
                 }

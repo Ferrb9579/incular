@@ -982,7 +982,12 @@ pub struct WidgetTree {
     /// Scroll viewport attachments: viewport element to its live
     /// attachment handle. One live viewport per controller; the handle
     /// is the only key that releases, so entries here always name live
-    /// ownership. Entries leave on unmount, replacement, and tree drop.
+    /// ownership. Entries leave on unmount and replacement; tree drop
+    /// drains the map, and each handle's `Drop` runs silent teardown —
+    /// so app-retained controllers remount cleanly elsewhere. Silence
+    /// from drop is this host's chosen policy (listeners belong to
+    /// torn-down context), not a universal Rust rule. Handles owned by
+    /// other trees can never sit in this map.
     scroll_attachments: HashMap<ElementId, MetricAttachment>,
     mouse_hover: HashMap<GestureArenaKey, Vec<ElementId>>,
     consumed_tap_pointers: HashSet<GestureArenaKey>,
@@ -1012,21 +1017,6 @@ impl WidgetTree {
     #[must_use]
     pub fn tree_id(&self) -> u64 {
         self.tree_id
-    }
-}
-
-impl Drop for WidgetTree {
-    /// Tears down every scroll attachment this tree owns, so app-retained
-    /// controllers remount cleanly elsewhere after teardown. Teardown is
-    /// silent by policy here — listeners belong to torn-down context,
-    /// and notifying from `Drop` could panic during unwinding — not by a
-    /// universal Rust rule. Handles owned by other trees can never sit
-    /// in this map: only a live attachment releases, so foreign owners
-    /// are unreachable here.
-    fn drop(&mut self) {
-        for attachment in std::mem::take(&mut self.scroll_attachments).into_values() {
-            attachment.teardown();
-        }
     }
 }
 

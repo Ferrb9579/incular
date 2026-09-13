@@ -1010,6 +1010,82 @@ fn detaching_end_listener_can_reattach_and_begin_fresh() {
 }
 
 #[test]
+fn unwinding_through_detach_releases_remaining_leases_silently() {
+    // A listener panicking during the first viewport's End aborts the
+    // update midway — yet nothing leaks and nothing double-frees.
+    // Ownership already committed before the callback, so the first
+    // controller is free despite the unwind; the never-reached second
+    // viewport stays mounted and owned with its activity open; dropping
+    // the tree then tears its lease down silently.
+    let first = ScrollController::new();
+    let second = ScrollController::new();
+    let first_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let second_ends = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let counted_first = first_ends.clone();
+    let counted_second = second_ends.clone();
+    let _first_subscription = first.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_first.set(counted_first.get() + 1);
+            panic!("listener unwinds through detach");
+        }
+        false
+    });
+    let _second_subscription = second.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End {
+            counted_second.set(counted_second.get() + 1);
+        }
+        false
+    });
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![
+            sized_viewport(first.clone(), 200., 100., 300.),
+            sized_viewport(second.clone(), 200., 100., 300.),
+        ])
+        .into(),
+        200.,
+        300.,
+    );
+    assert!(first.begin_activity());
+    assert!(second.begin_activity());
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.update(root, Column::new(Vec::<Widget>::new()).into())
+            .expect("unmount");
+    }));
+    assert!(outcome.is_err(), "listener panic propagates");
+    // The first release committed before its End dispatched: free
+    // despite the unwind, with exactly one End delivered.
+    assert_eq!(
+        (first.metric_owner(), first.attachment_id()),
+        (None, None),
+        "first state after unwind"
+    );
+    assert_eq!(first_ends.get(), 1, "first End dispatched before unwinding");
+    // The aborted update never reached the second viewport: still
+    // mounted and owned, activity open, undisturbed.
+    assert_eq!(second.metric_owner(), Some(tree.tree_id()));
+    assert!(second.attachment_id().is_some());
+    assert!(
+        !second.begin_activity(),
+        "unreached viewport keeps its activity"
+    );
+    assert_eq!(second_ends.get(), 0);
+    // Tree teardown releases the remaining lease silently. Drop the
+    // subscriptions first: the panicking listener has served its
+    // purpose, and final cleanup must not re-fire it.
+    drop(_first_subscription);
+    drop(_second_subscription);
+    drop(tree);
+    assert_eq!(second.metric_owner(), None);
+    assert_eq!(second_ends.get(), 0, "remaining lease tears down silently");
+    assert!(second.begin_activity());
+    assert!(second.end_activity());
+    assert!(first.begin_activity());
+    assert!(first.end_activity());
+}
+
+#[test]
 fn dropping_tree_with_open_activity_stays_silent_and_reusable() {
     // Teardown policy: dropping the tree releases ownership and clears
     // the open activity with no End notification — then the retained

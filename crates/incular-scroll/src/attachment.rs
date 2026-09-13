@@ -2,10 +2,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{controller::ScrollController, physics::ScrollPhysics};
 
-/// Process-wide sequence minting attachment identities. One live
-/// attachment exists per controller, but identities are never reused, so
-/// a handle kept past its release can never alias a later attachment —
-/// including one created by another tree.
+/// Process-wide sequence minting attachment identities. Allocation is
+/// checked: exhaustion panics explicitly rather than wrapping, so an
+/// identity is never reused and a handle kept past its release can never
+/// alias a later attachment — including one created by another tree.
+/// The 64-bit space makes exhaustion unreachable in practice; the panic
+/// exists so wraparound can never silently break that guarantee.
 static ATTACHMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Diagnostic owner identity for an attachment request: names the widget
@@ -124,10 +126,27 @@ impl AttachmentConflict {
 /// handles observe without owning. Only the live attachment releases;
 /// a stale handle reports `false` and changes nothing, so an older
 /// generation can never release a newer attachment.
+///
+/// Cleanup is scoped: explicit [`detach`](Self::detach) may notify,
+/// while dropping a handle follows the silent teardown policy
+/// ([`teardown`](Self::teardown)) and affects only its own live claim.
+/// Explicit release followed by drop is therefore harmless, and a stale
+/// drop can never touch a new owner.
 pub struct MetricAttachment {
     controller: ScrollController,
     id: u64,
     tree: u64,
+}
+
+impl Drop for MetricAttachment {
+    /// Implicit silent teardown: releases the claim only if this handle
+    /// is still the live attachment, then clears any open activity
+    /// without notifying. Stale drops change nothing. This runs during
+    /// unwinding too, so abandoned leases release deterministically
+    /// instead of bricking the controller behind a dead owner.
+    fn drop(&mut self) {
+        self.teardown();
+    }
 }
 
 impl std::fmt::Debug for MetricAttachment {
@@ -250,9 +269,13 @@ pub(crate) struct StoredAttachment {
 
 impl StoredAttachment {
     pub(crate) fn mint(tree: u64) -> Self {
-        Self {
-            id: ATTACHMENT_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-            tree,
+        match ATTACHMENT_SEQUENCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        {
+            Ok(id) => Self { id, tree },
+            Err(_) => {
+                panic!("scroll attachment identity space exhausted: refusing to reuse an identity")
+            }
         }
     }
 }

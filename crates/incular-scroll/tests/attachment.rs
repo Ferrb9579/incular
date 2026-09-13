@@ -271,6 +271,95 @@ fn unattached_publication_succeeds_only_while_free() {
 }
 
 #[test]
+fn dropping_a_live_lease_tears_down_silently() {
+    // Implicit cleanup follows the silent teardown policy: dropping the
+    // handle releases the claim and clears the open activity with no
+    // End notification.
+    let controller = ScrollController::new();
+    let (ends, _guard) = end_counter(&controller);
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    assert!(controller.begin_activity());
+    drop(attachment);
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn explicit_release_then_drop_is_harmless() {
+    // Release-then-drop releases once: the drop finds a stale handle and
+    // changes nothing, so the next attachment starts clean.
+    let controller = ScrollController::new();
+    let (ends, _guard) = end_counter(&controller);
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    let retired = attachment.id();
+    assert!(attachment.release());
+    drop(attachment);
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), None);
+    let renewed = controller.try_attach(owner(2)).expect("reattaches cleanly");
+    assert_ne!(renewed.id(), retired);
+    assert!(renewed.release());
+}
+
+#[test]
+fn stale_drop_touches_no_new_owner() {
+    // A dropped stale handle can never release or abort a newer
+    // attachment: ownership and the open activity survive it.
+    let controller = ScrollController::new();
+    let (ends, _guard) = end_counter(&controller);
+    let old = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    assert!(controller.begin_activity());
+    assert!(old.release());
+    let fresh = controller
+        .try_attach(owner(2))
+        .expect("released controller attaches again");
+    drop(old);
+    assert_eq!(ends.get(), 0);
+    assert_eq!(controller.metric_owner(), Some(2));
+    assert_eq!(controller.attachment_id(), Some(fresh.id()));
+    assert!(!controller.begin_activity());
+    assert!(fresh.release());
+    assert!(controller.end_activity());
+    assert_eq!(ends.get(), 1);
+}
+
+#[test]
+fn dropped_lease_frees_the_controller_for_reattachment() {
+    // A dropped lease is a complete silent teardown: the retained
+    // controller reattaches elsewhere with a new identity, publishes
+    // through the new lease, and starts activities fresh.
+    let controller = ScrollController::new();
+    let attachment = controller
+        .try_attach(owner(1))
+        .expect("free controller attaches");
+    attachment
+        .update_extents(300., 100., ScrollPhysics::default())
+        .expect("live lease publishes");
+    assert!(controller.begin_activity());
+    drop(attachment);
+    assert_eq!(controller.metric_owner(), None);
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    let renewed = controller
+        .try_attach(owner(2))
+        .expect("reattaches after drop");
+    renewed
+        .update_extents(500., 100., ScrollPhysics::default())
+        .expect("new lease publishes");
+    assert_eq!(controller.max_offset(), 400.);
+    assert!(renewed.release());
+}
+
+#[test]
 fn attachment_identities_stay_unique_across_controllers() {
     let first_controller = ScrollController::new();
     let second_controller = ScrollController::new();
