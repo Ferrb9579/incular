@@ -3862,6 +3862,162 @@ fn outlet_rejected_configuration_schedules_no_retry() {
 }
 
 #[test]
+fn outlet_failed_present_resets_schedule_suppression() {
+    // P1: inner trip pushes mid-frame → inner stale, follow-up flagged.
+    // P2: outer rebuild fails → the error return resets the schedule
+    // memo. P3: slotless success leaves inner stale → must RE-FLAG
+    // (without the reset the stale revision stays suppressed and no host
+    // ever learns work is outstanding). P4 remount consumes and idles.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, _node_a, _node_b) =
+        nested_inside_setup();
+    let trip = Rc::new(Cell::new(true));
+    inner.push_page(Page::new(
+        "ib",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let inner = inner.clone();
+            move |_, _| {
+                if trip.take() {
+                    inner.push_page(Page::new("ic", Widget::box_(Size::new(40., 40.), YELLOW)));
+                }
+                Widget::box_(Size::new(40., 40.), BLUE)
+            }
+        }))]),
+    ));
+    let first = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(!paints(first.commands(), YELLOW));
+    assert!(
+        runtime.frame_requested(),
+        "mid-frame inner navigation schedules a follow-up"
+    );
+    outer.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("duplicate keys fail the rebuild");
+    // Slotless success with inner work still outstanding: the follow-up
+    // executes (outer converges) without consuming the inner revision —
+    // and must schedule again for it.
+    outer
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), RED))])
+        .unwrap();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "inner work is still outstanding"
+    );
+    assert!(
+        runtime.frame_requested(),
+        "the reset lets the outstanding revision schedule again"
+    );
+    // Remounting consumes the pending revision through the cascade, then
+    // idles with no focus anywhere to flag anything else.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer
+        .set_pages([Page::new(
+            "a",
+            Column::new(vec![
+                Widget::box_(Size::new(40., 40.), RED),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    let recovered = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(recovered.commands(), YELLOW));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(
+        !runtime.frame_requested(),
+        "consumed work schedules nothing further"
+    );
+    let _ = outer;
+}
+
+#[test]
+fn outlet_panicking_present_resets_schedule_suppression() {
+    // Same shape through a panic instead of a typed error: the frame
+    // unwinds (resetting the memo on its way out), the slotless follow-up
+    // executes without consuming the inner revision yet re-flags it, and
+    // remounting converges and idles.
+    let (outer, inner, mut runtime, outlet_outer, outlet_inner, _node_a, _node_b) =
+        nested_inside_setup();
+    let trip = Rc::new(Cell::new(true));
+    inner.push_page(Page::new(
+        "ib",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let inner = inner.clone();
+            move |_, _| {
+                if trip.take() {
+                    inner.push_page(Page::new("ic", Widget::box_(Size::new(40., 40.), YELLOW)));
+                }
+                Widget::box_(Size::new(40., 40.), BLUE)
+            }
+        }))]),
+    ));
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(
+        runtime.frame_requested(),
+        "mid-frame inner navigation schedules a follow-up"
+    );
+    let panic_trip = Rc::new(Cell::new(true));
+    outer.push_page(Page::new(
+        "d",
+        Column::new(vec![Widget::from(LayoutBuilder::new(move |_, _| {
+            if panic_trip.take() {
+                panic!("schedule boom");
+            }
+            Widget::box_(Size::new(40., 40.), GREEN)
+        }))]),
+    ));
+    let outlet = outlet_outer.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        RouteOutlet::present_frame(
+            &outlet,
+            &mut runtime,
+            Constraints::tight(Size::new(200., 200.)),
+        )
+    }));
+    result.expect_err("builder panic unwinds the frame");
+    drop(outlet);
+    outer
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), RED))])
+        .unwrap();
+    present_outer_tree(&mut runtime, &outlet_outer);
+    assert!(
+        outlet_inner.borrow().needs_frame(),
+        "inner work is still outstanding"
+    );
+    assert!(
+        runtime.frame_requested(),
+        "the panic reset lets the outstanding revision schedule again"
+    );
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer
+        .set_pages([Page::new(
+            "a",
+            Column::new(vec![
+                Widget::box_(Size::new(40., 40.), RED),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    let recovered = present_outer_tree_output(&mut runtime, &outlet_outer);
+    assert!(paints(recovered.commands(), YELLOW));
+    assert!(!runtime.frame_requested());
+    let _ = outer;
+}
+
+#[test]
 fn outlet_retry_after_below_removal_commits_promptly() {
     // A→B captured, the frame fails, then a covered route is removed
     // below (same active route, smaller member set): the retry builds the

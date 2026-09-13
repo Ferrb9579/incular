@@ -382,7 +382,10 @@ pub struct RouteOutlet {
     /// Live revision last scheduled for. Follow-up scheduling is
     /// edge-triggered per outlet: a stale revision flags exactly once no
     /// matter how many frames observe it, so unconsumable staleness
-    /// (content no present can compose) idles instead of spinning.
+    /// (content no present can compose) idles instead of spinning. Reset
+    /// whenever a present fails: a failed frame consumes nothing, so the
+    /// next success must re-evaluate from scratch instead of inheriting
+    /// the failure's suppression.
     signaled: Cell<u64>,
     namespace: u64,
     /// Monotonic tag counter. Freed tags are never reassigned (unlike the
@@ -992,45 +995,64 @@ impl RouteOutlet {
             let mut outlet = outlet.borrow_mut();
             outlet.begin_frame(runtime);
         }
-        // Rebuild outlet content explicitly before framing: reactive
-        // dependencies alone cannot cover content the host descriptors
-        // never mention, and an explicit rebuild keeps mounting ordered
-        // with the capture above. A vanished mount detaches gracefully
-        // instead of erroring forever.
-        // A vanished mount (unmounted content prunes its builder) detaches
-        // gracefully instead of erroring — or panicking — every frame.
-        // The existence check precedes the rebuild because pruned builders
-        // no longer fail with `MissingElement`.
-        let attached = outlet
-            .borrow()
-            .mount
-            .get()
-            .filter(|mount| runtime.tree().element_exists(*mount));
-        if attached.is_none() {
-            outlet.borrow_mut().mount.set(None);
-        }
-        if let Some(mount) = attached {
-            match runtime.rebuild_from_builder(mount) {
-                Ok(()) => {}
-                Err(TreeError::MissingElement(_)) => {
-                    outlet.borrow_mut().mount.set(None);
-                }
-                Err(error) => return Err(OutletError::Frame(error)),
+        // The fallible section runs builders, layout, and reconciliation —
+        // all application-reachable code. Failures reset the schedule
+        // memos (a failed present consumes nothing, so the next success
+        // must re-evaluate outstanding work); panics reset and resume, so
+        // a panicking frame loses no future wakeup either. Neither path
+        // repairs tree state — recovery stays the retry's job.
+        let driven = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Rebuild outlet content explicitly before framing: reactive
+            // dependencies alone cannot cover content the host descriptors
+            // never mention, and an explicit rebuild keeps mounting ordered
+            // with the capture above. A vanished mount (unmounted content
+            // prunes its builder) detaches gracefully instead of erroring —
+            // or panicking — every frame. The existence check precedes the
+            // rebuild because pruned builders no longer fail with
+            // `MissingElement`.
+            let attached = outlet
+                .borrow()
+                .mount
+                .get()
+                .filter(|mount| runtime.tree().element_exists(*mount));
+            if attached.is_none() {
+                outlet.borrow_mut().mount.set(None);
             }
-        }
-        // No post-rebuild sampling here: each outlet's builders publish
-        // what they actually consume (see `consumed`), and reconciliation
-        // adopts it. Sampling afterward would credit the rebuild with
-        // navigation it never saw.
-        let output = runtime.run_frame(constraints)?;
-        // A preflight snapshot cannot authorize later content: builders
-        // may have navigated mid-frame, so the tree re-validates before
-        // anything commits. On failure the pending capture survives for a
-        // retry (which preflights first anyway) and no commit, bind,
-        // prune, or restore runs — the error names the offender instead
-        // of silently omitting its content.
-        outlet.borrow().preflight_tree()?;
-        outlet.borrow_mut().reconcile_tree(runtime);
+            if let Some(mount) = attached {
+                match runtime.rebuild_from_builder(mount) {
+                    Ok(()) => {}
+                    Err(TreeError::MissingElement(_)) => {
+                        outlet.borrow_mut().mount.set(None);
+                    }
+                    Err(error) => return Err(OutletError::Frame(error)),
+                }
+            }
+            // No post-rebuild sampling here: each outlet's builders publish
+            // what they actually consume (see `consumed`), and
+            // reconciliation adopts it. Sampling afterward would credit the
+            // rebuild with navigation it never saw.
+            let output = runtime.run_frame(constraints)?;
+            // A preflight snapshot cannot authorize later content: builders
+            // may have navigated mid-frame, so the tree re-validates before
+            // anything commits. On failure the pending capture survives for
+            // a retry (which preflights first anyway) and no commit, bind,
+            // prune, or restore runs — the error names the offender instead
+            // of silently omitting its content.
+            outlet.borrow().preflight_tree()?;
+            outlet.borrow_mut().reconcile_tree(runtime);
+            Ok(output)
+        }));
+        let output = match driven {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                outlet.borrow().reset_signaled_tree();
+                return Err(error);
+            }
+            Err(payload) => {
+                outlet.borrow().reset_signaled_tree();
+                std::panic::resume_unwind(payload);
+            }
+        };
         // Successful-but-stale output schedules its own follow-up: paint
         // may lag the bookkeeping by a frame, and the run_frame reset
         // wipes anything flagged mid-frame. Quiet frames schedule
@@ -1195,6 +1217,16 @@ impl RouteOutlet {
         }
         for nested in self.live_nested() {
             nested.borrow().flag_stale_frames(runtime);
+        }
+    }
+
+    /// Clears schedule memos across the tree. A failed present consumes
+    /// nothing, so its suppression must not survive: the next success
+    /// re-evaluates outstanding work from scratch.
+    fn reset_signaled_tree(&self) {
+        self.signaled.set(0);
+        for nested in self.live_nested() {
+            nested.borrow().reset_signaled_tree();
         }
     }
 
