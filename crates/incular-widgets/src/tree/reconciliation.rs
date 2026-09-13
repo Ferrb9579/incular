@@ -1336,16 +1336,20 @@ impl WidgetTree {
                     return Err(self.attachment_conflict(conflict, element));
                 }
             };
-            // The new ownership commits before the old attachment
-            // releases: swap the lease, then release the previous handle
-            // with no map borrow held. The release is silent — unlike
-            // unmount-detach, a transfer leaves the old controller's
-            // activity and metrics exactly as they were, since the
-            // app-retained handle may drive another viewport next. The
-            // replaced-away handle stays free across trees.
+            // Viewport-tenure policy: an open activity belongs to the
+            // viewport driving the controller. The new ownership commits
+            // first (map swap, no borrow held across what follows), then
+            // the replaced-away tenure detaches — release plus `End` —
+            // instead of stranding its flag. A stranded flag would brick
+            // the handle's next tenure (a remount's fresh `begin` would
+            // fail); the incoming tenure instead starts clean and heals
+            // from the next input sample. Reentrant `End` listeners can
+            // attach and begin fresh: nothing after the detach can cancel
+            // what they start. The replaced-away handle stays free across
+            // trees, with its metrics intact for whoever drives it next.
             let previous = self.scroll_attachments.insert(element, replacement);
             if let Some(previous) = previous {
-                let _ = previous.release();
+                previous.detach();
             }
             return Ok(());
         }

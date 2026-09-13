@@ -1254,10 +1254,13 @@ fn cross_tree_duplicate_attachment_is_rejected() {
 }
 
 #[test]
-fn replacement_during_activity_preserves_both() {
-    // Transfer as replacement: the viewport takes the new controller
-    // (its geometry wins) while the old controller's open activity is
-    // untouched — and the new handle starts fresh.
+fn replacement_detaches_the_old_tenure_activity() {
+    // Viewport-tenure policy: an open activity belongs to the viewport
+    // driving the controller. Replacing the controller ends the old
+    // tenure with `End` — after the new attachment commits — instead of
+    // stranding its flag to brick the handle's next tenure. The incoming
+    // tenure starts fresh, and the replaced-away handle reattaches
+    // cleanly elsewhere with its metrics intact.
     let old = ScrollController::new();
     let new = ScrollController::new();
     let log_old = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -1288,10 +1291,18 @@ fn replacement_during_activity_preserves_both() {
         .expect("layout");
     assert_eq!(new.content_extent(), 500.);
     assert_eq!(new.max_offset(), 400.);
-    // Old activity untouched by the transfer; new handle starts fresh.
-    assert!(!old.begin_activity());
-    assert!(new.begin_activity());
+    // Ownership moved; the old handle is free with metrics intact.
+    assert_eq!(old.metric_owner(), None);
+    assert_eq!(new.metric_owner(), Some(tree.tree_id()));
+    assert_eq!(old.content_extent(), 300.);
+    assert_eq!(old.max_offset(), 200.);
+    // The transfer closed the old tenure: its only End is accounted for
+    // here, so a further end finds nothing and a fresh begin succeeds.
+    assert!(!old.end_activity());
+    assert!(old.begin_activity());
     assert!(old.end_activity());
+    // The new tenure starts fresh.
+    assert!(new.begin_activity());
     use incular_scroll::ScrollNotificationType::{End, Start};
     let framed =
         |log: &std::rc::Rc<std::cell::RefCell<Vec<incular_scroll::ScrollNotificationType>>>| {
@@ -1301,10 +1312,21 @@ fn replacement_during_activity_preserves_both() {
                 .filter(|kind| matches!(kind, Start | End))
                 .collect::<Vec<_>>()
         };
-    assert_eq!(framed(&log_old).as_slice(), &[Start, End]);
+    assert_eq!(framed(&log_old).as_slice(), &[Start, End, Start, End]);
     assert_eq!(framed(&log_new).as_slice(), &[Start]);
     assert!(new.end_activity());
     drop(subscriptions);
+    // The replaced-away handle reattaches cleanly elsewhere.
+    let mut abroad = WidgetTree::new();
+    mount_tight(
+        &mut abroad,
+        sized_viewport(old.clone(), 200., 100., 300.),
+        200.,
+        100.,
+    );
+    assert_eq!(old.max_offset(), 200.);
+    assert!(old.begin_activity());
+    assert!(old.end_activity());
     // Repeated unchanged layouts stay clean and stable.
     tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect("layout");
@@ -1312,6 +1334,62 @@ fn replacement_during_activity_preserves_both() {
         .expect("layout");
     assert_eq!(new.max_offset(), 400.);
     assert_eq!(new.offset(), 0.);
+}
+
+#[test]
+fn reentrant_attach_during_replacement_end_survives() {
+    // During the transfer's End on the old controller, a listener
+    // attaches it and begins a fresh tenure — no trailing cleanup
+    // cancels what the listener starts.
+    let old = ScrollController::new();
+    let new = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let tree_id = tree.tree_id();
+    let reattached = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let reattached_for_listener = reattached.clone();
+    let old_for_listener = old.clone();
+    let _subscription = old.add_listener(move |notification| {
+        if notification.kind == incular_scroll::ScrollNotificationType::End
+            && reattached_for_listener.borrow().is_none()
+        {
+            let handle = old_for_listener
+                .try_attach(incular_scroll::MetricOwner::of_tree(tree_id))
+                .expect("tenure released before End");
+            assert!(old_for_listener.begin_activity());
+            *reattached_for_listener.borrow_mut() = Some(handle);
+        }
+        false
+    });
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(old.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(old.begin_activity());
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(new.clone(), 200., 100., 500.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    // The listener's tenure on the old controller is live and open;
+    // the new controller drives the viewport with no activity yet.
+    let handle = reattached
+        .borrow_mut()
+        .take()
+        .expect("listener attached during transfer End");
+    assert_eq!(old.metric_owner(), Some(tree_id));
+    assert_eq!(old.attachment_id(), Some(handle.id()));
+    assert!(!old.begin_activity());
+    assert_eq!(new.metric_owner(), Some(tree_id));
+    assert!(new.begin_activity());
+    assert!(new.end_activity());
+    drop(_subscription);
+    assert!(handle.release());
+    assert!(old.end_activity());
+    assert_eq!(old.metric_owner(), None);
 }
 
 #[test]

@@ -2741,7 +2741,7 @@ Attachment ownership inventory (implemented guarantees — corrective
 packages A–D):
 
 | Family | Position record | Extent writers | Multi-attach | Replacement | Unmount / window close |
-| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | claiming viewport layouts (attached writes); public `update_extents` stays open for hosts and headless model use | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned) | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then releases the old handle silently — its activity and metrics survive | unmount detaches owned leases (release, then `End`); tree drop tears down owned leases (release, then silent clear). Stale handles release/end/abort nothing — pinned |
+| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) plus one authoritative attachment slot (opaque id; owner tree is diagnostic only) | claiming viewport layouts (attached writes); public `update_extents` stays open for hosts and headless model use | enforced: occupied rejects every newcomer (same-tree names the owner element; cross-tree names the owner tree — pinned); steady layouts reuse the lease without re-acquiring (attachment id stable — pinned) | acquire-before-release: failure leaves lease, ownership, activity, and metrics untouched (local + foreign conflicts pinned with third-tree ownership proof); success commits first, then detaches the replaced-away tenure (release + `End`) so no flag strands — metrics survive | unmount detaches owned leases (release, then `End`); tree drop tears down owned leases (release, then silent clear). Stale handles release/end/abort nothing — pinned |
 | Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | retained wheel layouts claim like ordinary (attached writes); headless model layouts write without claiming | enforced like ordinary (two wheels, ordinary+wheel, replacement, unmount all pinned) | same as ordinary, cross-tree included | same as ordinary |
 | Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | REMAINING: no attachment enforcement — explicitly out of scope until these foundations pass review | per axis, unenforced | nothing |
 | Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | REMAINING: sheet/inner coordination beyond the existing attach model — explicitly out of scope until these foundations pass review | previous handle detaches | sheet state drops with the tree |
@@ -2777,7 +2777,7 @@ own generation tokens, untouched):
 | * → unchanged-offset jump → * | none | offset-unchanged never moves the flag either way |
 | active → viewport detach → idle | End | unmount detaches owned leases after unmount work (Scroll + sliver kinds): ownership commits before `End` dispatches, so a listener reattaching during `End` finds the controller free; stale handles end nothing; re-begin starts fresh |
 | active → tree/window drop → idle | none (silent) | teardown releases owned leases, then clears activity without notifying (listeners belong to torn-down context; silence from `Drop` is this host's chosen policy, not a universal rule); stale handles abort nothing; next begin starts fresh |
-| * → controller replacement → * | none from the transfer | new attachment commits before the old handle releases; the old handle keeps its activity and metrics (silent transfer); failed replacement preserves lease, ownership, activity, and metrics exactly; new starts fresh |
+| * → controller replacement → * | `End` on the old controller | viewport-tenure policy: an open activity belongs to the viewport driving the controller. The new attachment commits first, then the replaced-away tenure detaches (release + `End`) instead of stranding its flag to brick the handle's next tenure; metrics survive for whoever drives it next. Failed replacement preserves lease, ownership, activity, and metrics exactly; the new tenure starts fresh and heals from the next input sample |
 | wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
 | reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |
 
@@ -2788,7 +2788,8 @@ Implemented guarantees (corrective packages A–D): enforced claim via
 opaque non-cloneable attachment handles (`try_attach` fails on
 occupied; only the live handle releases; stale handles change
 nothing; unchecked ownership setters removed); acquire-before-release
-replacement with silent transfer and fully-preserving failure;
+replacement with viewport-tenure detach (`End` on the old tenure, never
+a stranded flag) and fully-preserving failure;
 conditional teardown with explicit detach (release + `End`) versus
 teardown (release + silent clear) paths; steady-state lease reuse
 without re-acquire or scans; ordinary, sliver, and wheel viewports all
