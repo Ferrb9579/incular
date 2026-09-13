@@ -9,8 +9,13 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
+    sync::atomic::AtomicU64,
     time::{Duration, Instant},
 };
+
+/// Sequence numbering widget trees so scroll-attachment owners stay
+/// distinct across trees (and runtimes) even when arena indices overlap.
+static TREE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 use icu_segmenter::GraphemeClusterSegmenter;
 use incular_animation::AnimationController;
@@ -221,14 +226,16 @@ pub enum TreeError {
     },
     /// A second live viewport attempted to attach a scroll controller
     /// that already drives another viewport. One offset/extent record
-    /// cannot silently stand for unrelated viewports: the first viewport
-    /// keeps its geometry, and the newcomer fails here before overwriting
-    /// anything. Carries the owning viewport element and the rejected
-    /// one. Cloned handles are the same controller (never a second
+    /// cannot silently stand for unrelated viewports: the owner keeps its
+    /// geometry, and the newcomer fails here before overwriting anything.
+    /// Carries the owning tree (always) with its viewport element when
+    /// the owner lives in this tree, plus the rejected element here.
+    /// Cloned handles are the same controller (never a second
     /// attachment); read-only coordination such as scrollbars never
     /// claims.
     DuplicateScrollAttachment {
-        owner: ElementId,
+        owner_tree: u64,
+        owner: Option<ElementId>,
         attempted: ElementId,
     },
     InvalidGeneratedChild {
@@ -255,10 +262,14 @@ impl std::fmt::Display for TreeError {
                 }
                 Ok(())
             }
-            Self::DuplicateScrollAttachment { owner, attempted } => {
+            Self::DuplicateScrollAttachment {
+                owner_tree,
+                owner,
+                attempted,
+            } => {
                 write!(
                     formatter,
-                    "scroll controller already drives viewport {owner:?}: \
+                    "scroll controller already drives tree-{owner_tree} viewport {owner:?}: \
                      refusing second live attachment at {attempted:?} \
                      (detach or unmount the first viewport, or use a separate controller)"
                 )
@@ -943,6 +954,9 @@ impl DeepTraceCapture {
 
 /// Persistent UI state. IDs become invalid immediately after unmount.
 pub struct WidgetTree {
+    /// Stable identity distinguishing attachment owners across trees
+    /// whose arena indices may overlap. Never reused within a process.
+    tree_id: u64,
     elements: Arena<Element>,
     renders: Arena<RenderNode>,
     root: Option<ElementId>,
@@ -988,6 +1002,27 @@ pub struct WidgetTree {
     recursion_diagnostics: RecursionDiagnostics,
     #[cfg(feature = "devtools")]
     deep_trace: Option<DeepTraceCapture>,
+}
+
+impl WidgetTree {
+    /// Stable identity of this tree for scroll-attachment ownership:
+    /// pairs with viewport elements to name owners across trees.
+    #[must_use]
+    pub fn tree_id(&self) -> u64 {
+        self.tree_id
+    }
+}
+
+impl Drop for WidgetTree {
+    /// Releases every scroll attachment this tree owns, so app-retained
+    /// controllers remount cleanly elsewhere after teardown. Controllers
+    /// owned by other trees are never touched.
+    fn drop(&mut self) {
+        let tree = self.tree_id;
+        for controller in std::mem::take(&mut self.scroll_attachments).into_values() {
+            controller.clear_metric_owner(tree);
+        }
+    }
 }
 
 struct FocusCandidate {

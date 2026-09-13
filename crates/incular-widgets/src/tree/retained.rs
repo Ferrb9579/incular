@@ -2,6 +2,8 @@
 
 use super::*;
 
+use std::sync::atomic::Ordering;
+
 use crate::environment::{ContentSensitivity, SensitiveContentHost};
 use crate::platform_widgets::PlatformMenuRetainedMarker;
 use crate::transient::{
@@ -22,6 +24,7 @@ impl WidgetTree {
         let environment = RuntimeEnvironment::default();
         super::context::install_runtime_environment(&dependency_root, &environment);
         Self {
+            tree_id: super::TREE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
             elements: Arena::new(),
             renders: Arena::new(),
             root: None,

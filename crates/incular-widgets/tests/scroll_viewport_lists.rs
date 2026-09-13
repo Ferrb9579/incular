@@ -846,10 +846,14 @@ fn duplicate_viewport_attachment_is_rejected() {
     let viewport_of =
         |sized: incular_widgets::internal::ElementId| tree.children(sized).expect("viewport")[0];
     match error {
-        TreeError::DuplicateScrollAttachment { owner, attempted } => {
-            assert_eq!(owner, viewport_of(kids[0]));
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted,
+        } => {
+            assert_eq!(owner_tree, tree.tree_id());
+            assert_eq!(owner, Some(viewport_of(kids[0])));
             assert_eq!(attempted, viewport_of(kids[1]));
-            assert_ne!(owner, attempted);
         }
         other => panic!("unexpected failure: {other:?}"),
     }
@@ -936,6 +940,100 @@ fn sliver_unmount_ends_open_activity() {
     );
     assert!(controller.begin_activity());
     assert!(controller.end_activity());
+}
+
+#[test]
+fn cross_tree_duplicate_attachment_is_rejected() {
+    // Two trees, one controller, different geometry: the second tree's
+    // viewport fails naming the owning tree (arena indices may overlap
+    // across trees, so the tree id carries identity). The legitimate
+    // owner's metrics, offset, and activity stay exactly intact, and the
+    // rejected tree recovers with its own controller.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree1 = WidgetTree::new();
+    let mut tree2 = WidgetTree::new();
+    assert_ne!(tree1.tree_id(), tree2.tree_id());
+    mount_tight(
+        &mut tree1,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    // Mount defers attachment: only layout claims.
+    let root2 = tree2
+        .mount(Column::new(vec![sized_viewport(controller.clone(), 200., 150., 500.)]).into())
+        .expect("mount defers attachment");
+    assert!(controller.jump_to(150.));
+    assert!(controller.begin_activity());
+    // Re-layout: tree1 converges (same pair reclaims); tree2 fails naming
+    // tree1 as the owner with no element (foreign elements are opaque).
+    tree1
+        .layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("owner re-layout converges");
+    let error = tree2
+        .layout(Constraints::tight(Size::new(200., 150.)))
+        .unwrap_err();
+    let kids = tree2.children(root2).expect("viewports").to_vec();
+    let attempted = tree2.children(kids[0]).expect("viewport")[0];
+    match error {
+        TreeError::DuplicateScrollAttachment {
+            owner_tree,
+            owner,
+            attempted: got,
+        } => {
+            assert_eq!(owner_tree, tree1.tree_id());
+            assert_eq!(owner, None);
+            assert_eq!(got, attempted);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    // Legitimate owner untouched: metrics, offset, and activity.
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    assert_eq!(controller.offset(), 150.);
+    assert!(!controller.begin_activity(), "still active, not disturbed");
+    assert!(controller.end_activity());
+    let framed: Vec<incular_scroll::ScrollNotificationType> = events
+        .borrow()
+        .iter()
+        .copied()
+        .filter(|kind| {
+            matches!(
+                kind,
+                incular_scroll::ScrollNotificationType::Start
+                    | incular_scroll::ScrollNotificationType::End
+            )
+        })
+        .collect();
+    assert_eq!(
+        framed.as_slice(),
+        &[
+            incular_scroll::ScrollNotificationType::Start,
+            incular_scroll::ScrollNotificationType::End,
+        ],
+        "exactly one balanced activity around the rejection"
+    );
+    // The rejected tree recovers with its own controller.
+    let other = ScrollController::new();
+    tree2
+        .update(
+            root2,
+            Column::new(vec![sized_viewport(other.clone(), 200., 150., 500.)]).into(),
+        )
+        .expect("update");
+    tree2
+        .layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
+    assert_eq!(other.max_offset(), 350.);
 }
 
 fn sized_viewport(

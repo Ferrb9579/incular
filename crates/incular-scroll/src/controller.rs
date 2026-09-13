@@ -57,6 +57,12 @@ pub(crate) struct ScrollState {
     pub(crate) scrollbar_style: ScrollbarStyle,
     pub(crate) scrollbar_thumb_visibility: bool,
     pub(crate) revision: u64,
+    /// Authoritative metric owner: the widget-tree id currently driving
+    /// geometry, if any. Plain data by design — widget element types must
+    /// not leak into this crate. Viewport layouts claim and release it;
+    /// clones, scrollbar readers, and coordination handles never touch
+    /// it. No global registry: one slot per controller.
+    pub(crate) metric_owner: Option<u64>,
     pub(crate) restoration: Option<ScrollRestoration>,
     pub(crate) pending_restored_offset: Option<f32>,
     pub(crate) pending_jump_offset: Option<f32>,
@@ -129,6 +135,38 @@ impl ScrollController {
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.state.borrow().revision
+    }
+}
+
+impl ScrollController {
+    /// Returns the widget-tree id currently owning metric publication,
+    /// if any. Framework-internal: viewport layouts use this to enforce
+    /// single-owner attachment across trees.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn metric_owner(&self) -> Option<u64> {
+        self.state.borrow().metric_owner
+    }
+
+    /// Records a widget tree as the metric owner. Framework-internal:
+    /// callers verify conflicts first.
+    #[doc(hidden)]
+    pub fn set_metric_owner(&self, tree: u64) {
+        self.state.borrow_mut().metric_owner = Some(tree);
+    }
+
+    /// Releases the metric owner when it matches `tree` (teardown and
+    /// unmount paths). Framework-internal: foreign owners are never
+    /// cleared here.
+    #[doc(hidden)]
+    pub fn clear_metric_owner(&self, tree: u64) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.metric_owner == Some(tree) {
+            state.metric_owner = None;
+            true
+        } else {
+            false
+        }
     }
 }
 

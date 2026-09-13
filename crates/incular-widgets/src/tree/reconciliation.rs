@@ -1304,34 +1304,52 @@ impl WidgetTree {
     /// Claims `controller` for the viewport at `element`, enforcing the
     /// single-live-attachment contract for ordinary scroll viewports: a
     /// second live viewport fails before overwriting shared geometry.
-    /// Cloned handles compare equal (never new attachments); read-only
-    /// coordination never calls here. Dead owners release
-    /// deterministically on unmount, with this liveness gate for safety.
+    /// Authority lives in the controller (`metric_owner` names the owning
+    /// tree, so cross-tree conflicts need no scan and overlapping arena
+    /// indices cannot collide); this tree's lease map only resolves the
+    /// same-tree owner element. Cloned handles compare equal (never new
+    /// attachments); read-only coordination never calls here. Dead owners
+    /// release deterministically on unmount and tree drop, with the
+    /// liveness gate below for safety.
     pub(super) fn claim_scroll_viewport(
         &mut self,
         element: ElementId,
         controller: &ScrollController,
     ) -> Result<(), TreeError> {
-        let dead: Vec<ElementId> = self
-            .scroll_attachments
-            .keys()
-            .copied()
-            .filter(|owner| !self.element_exists(*owner))
-            .collect();
-        for owner in dead {
-            self.scroll_attachments.remove(&owner);
+        match controller.metric_owner() {
+            Some(owner) if owner != self.tree_id => {
+                return Err(TreeError::DuplicateScrollAttachment {
+                    owner_tree: owner,
+                    owner: None,
+                    attempted: element,
+                });
+            }
+            Some(_) => {
+                let dead: Vec<ElementId> = self
+                    .scroll_attachments
+                    .keys()
+                    .copied()
+                    .filter(|owner| !self.element_exists(*owner))
+                    .collect();
+                for owner in dead {
+                    self.scroll_attachments.remove(&owner);
+                }
+                if let Some(owner) = self
+                    .scroll_attachments
+                    .iter()
+                    .find(|(owner, attached)| **owner != element && *attached == controller)
+                    .map(|(owner, _)| *owner)
+                {
+                    return Err(TreeError::DuplicateScrollAttachment {
+                        owner_tree: self.tree_id,
+                        owner: Some(owner),
+                        attempted: element,
+                    });
+                }
+            }
+            None => {}
         }
-        if let Some(owner) = self
-            .scroll_attachments
-            .iter()
-            .find(|(owner, attached)| **owner != element && *attached == controller)
-            .map(|(owner, _)| *owner)
-        {
-            return Err(TreeError::DuplicateScrollAttachment {
-                owner,
-                attempted: element,
-            });
-        }
+        controller.set_metric_owner(self.tree_id);
         self.scroll_attachments.insert(element, controller.clone());
         Ok(())
     }
@@ -1394,9 +1412,12 @@ impl WidgetTree {
 
         // Controllers whose viewports go away below: an app-driven
         // activity left open must end with the viewport, not linger as a
-        // stuck flag that swallows the next gesture's Start. Collected
-        // here, ended after the work loop so no listener observes a
-        // half-removed tree.
+        // stuck flag that swallows the next gesture's Start. Only owned
+        // leases trigger this — a render merely carrying a controller
+        // (rejected duplicate, replaced-but-unlaid-out) must not end
+        // another viewport's activity. Collected here, ended and released
+        // after the work loop so no listener observes a half-removed
+        // tree.
         let mut ended_activities: Vec<ScrollController> = Vec::new();
         let mut work = vec![UnmountWork::Enter(id)];
         while let Some(next) = work.pop() {
@@ -1404,7 +1425,7 @@ impl WidgetTree {
                 UnmountWork::Enter(id) => {
                     self.raw_input_unmounted(id);
                     self.external_drop_target_unmounted(id);
-                    if let Some(controller) = self.scroll_controller_for_element(id) {
+                    if let Some(controller) = self.scroll_attachments.get(&id).cloned() {
                         ended_activities.push(controller);
                     }
                     let Some(element) = self.elements.remove(id.0) else {
@@ -1477,8 +1498,10 @@ impl WidgetTree {
                 }
             }
         }
+        let tree = self.tree_id;
         for controller in ended_activities {
             controller.end_activity();
+            controller.clear_metric_owner(tree);
         }
     }
     pub(super) fn check_keys_borrowed<'a>(
