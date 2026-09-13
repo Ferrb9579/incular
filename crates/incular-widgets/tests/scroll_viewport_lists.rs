@@ -12,9 +12,9 @@ mod common;
 use common::*;
 use incular_config::{Axis, Constraints, EdgeInsets};
 use incular_core::{Color, Offset, Size};
-use incular_scroll::ScrollPhysics;
+use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_semantics::SemanticRole;
-use incular_widgets::{ListView, Scrollable, Semantics, Viewport};
+use incular_widgets::{Column, ListView, Scrollable, Semantics, SingleChildScrollView, Viewport};
 use std::time::Instant;
 
 fn rows(count: usize) -> Vec<Widget> {
@@ -809,4 +809,57 @@ fn scroll_paint_hit_semantics_agree_without_repaint() {
         diagnostics_after.items_mounted,
         diagnostics_before.items_mounted
     );
+}
+
+#[test]
+fn shared_controller_last_layout_wins_geometry() {
+    // Current behavior, recorded before enforcement (W5.1 gap): two live
+    // viewports sharing one controller both publish extents — the last
+    // layout wins the shared record — while the offset stays shared.
+    // Metrics and visible behavior below pin this exactly; the supported
+    // contract (single live viewport attachment) replaces it.
+    let controller = ScrollController::new();
+    // V1: 100px viewport over 300px content (own max 200). V2: 150px
+    // viewport over 500px content (own max 350).
+    let scrolled1: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 300.), Color::WHITE))
+            .controller(controller.clone())
+            .into();
+    let v1: Widget = SizedBox::from_dimensions(Some(200.), Some(100.), Some(scrolled1)).into();
+    let scrolled2: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(200., 500.), Color::BLACK))
+            .controller(controller.clone())
+            .into();
+    let v2: Widget = SizedBox::from_dimensions(Some(200.), Some(150.), Some(scrolled2)).into();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(&mut tree, Column::new(vec![v1, v2]).into(), 200., 300.);
+    // The second viewport laid out last: its geometry owns the record.
+    assert_eq!(controller.content_extent(), 500.);
+    assert_eq!(controller.viewport_extent(), 150.);
+    assert_eq!(controller.max_offset(), 350.);
+    // The shared range ignores per-viewport bounds: jumping past V1's own
+    // max clamps to the shared record instead.
+    assert!(controller.jump_to(350.));
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+    assert_eq!(controller.offset(), 350.);
+    // Visible behavior follows the single shared offset in both
+    // viewports — V1 scrolls 150px past the end of its own content.
+    // (SizedBox > viewport > content: two levels down.)
+    let kids = tree.children(root).expect("viewports").to_vec();
+    assert_eq!(kids.len(), 2);
+    let content = |sized: incular_widgets::internal::ElementId| {
+        let viewport = tree.children(sized).expect("viewport")[0];
+        tree.children(viewport).expect("content").to_vec()
+    };
+    let v1_origin = tree
+        .element_bounds(content(kids[0])[0])
+        .expect("bounds")
+        .origin;
+    let v2_origin = tree
+        .element_bounds(content(kids[1])[0])
+        .expect("bounds")
+        .origin;
+    assert_eq!(v1_origin, Offset::new(0., -350.));
+    assert_eq!(v2_origin, Offset::new(0., 100. - 350.));
 }

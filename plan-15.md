@@ -2737,6 +2737,25 @@ partial.
 Exit: deterministic transition table tests; no stuck activity or duplicate
 start/end; one view cannot silently overwrite another's geometry.
 
+Attachment ownership inventory (W5.1 decision, Package B — no behavior
+change; enforcement follows in Package C for the ordinary path):
+
+| Family | Position record | Extent writers | Multi-attach today | Replacement | Unmount / window close |
+| Ordinary `ScrollController` (+`PageController` alias) | shared `ScrollState` (clones are one handle, `PartialEq` by `Rc` identity) | every laying-out viewport, last wins; public `update_extents` for hosts | allowed, unenforced (pinned: `shared_controller_last_layout_wins_geometry`) | render takes the new controller; old keeps its isolated record (pinned) | nothing scroll-specific; app-owned `Rc` survives |
+| Wheel (`FixedExtentScrollController` over an inner `ScrollController`) | same inner record | wheel layout feeds the ordinary record | allowed, unenforced | same as ordinary | nothing |
+| Two-dimensional (H/V pair) | two independent `ScrollController`s | 2D layout per axis | N/A by construction | per axis, as ordinary | nothing |
+| Draggable sheet (+ inner list) | controller↔sheet binding (`attach`/`detach_from` on handle change) plus sheet-owned inner `ScrollController` | sheet extent logic; `set_inner_extents` | sheet attach tracked; inner shared with the inner list by design | previous handle detaches | sheet state drops with the tree |
+
+Sharing that is coordination, not attachment (left alone): scrollbar
+read-only geometry reads; `parent_controllers` receiving leftover
+deltas; 2D H/V independence; `FixedExtent` wrapping (same handle);
+sheet/inner-list sharing owned by sheet state. Chosen contract:
+ordinary path takes a single live viewport attachment (reject a second
+live attachment before it overwrites geometry; deterministic release on
+unmount via liveness); clones are the same attachment, never new ones.
+Wheel/2D/draggable keep their models (wheel inner follows the ordinary
+rule in principle — future family work, explicitly out of scope).
+
 ## W6 — Input, text and semantic consistency
 
 1. Trace formatter/controller/history/IME/native command ownership end to end;
