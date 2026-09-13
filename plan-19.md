@@ -1,8 +1,8 @@
 # Plan 19 - Navigation transactions and valid back topology
 
-Status: reopened for the receipt/scheduling pass (A–D below) — not
-re-closed: consumed-frame identity, scheduling, declarative
-presentation, and recovery each need the new receipt and scheduling
+Status: reopened for the ownership-proof pass (A–D below) — not
+re-closed: mounted-consumption receipts, sustained scheduling,
+attempt cleanup, and the integrated ownership flow each need their
 contracts evidenced first. Earlier passes established transactional
 frames, the restoration frame contract, owned nested lifecycles,
 explicit unsupported/teardown behavior, topology and driver ownership,
@@ -368,6 +368,42 @@ Receipt/scheduling pass (reopened — not re-closed), evidence by contract:
   descriptors, skipped nested composition, failure plus retry,
   navigation changes, and teardown — asserting paint, focus, task
   lifetime, and scheduler state together.
+- Not re-closed while: non-key update errors stay best-effort partial;
+  subtree identity across reorder stays a framework property.
+
+Ownership-proof pass (reopened — not re-closed), evidence by package:
+- A — descriptor construction is side-effect free: `widget()` builds
+  purely while only the mounting builders (`attach`, nested slots)
+  acknowledge via `compose_and_record`. The epoch stays as attempt
+  context (restored after proving both halves necessary: purity kills
+  speculative pollution, the gate kills failed-attempt leftovers).
+  Same-attempt discard tests (root and nested) fail on the recording
+  `widget()` and pass on the pure one; outgoing focus survives
+  retries; no new timestamps or flags added.
+- B — scheduling participation is proven, suppression kept: two
+  consecutive non-consuming successes flag once then stay silent,
+  detached outlets freeze without losing deferred revisions,
+  reactivation consumes in one present and idles. The permanent
+  per-revision suppression loses no outstanding demand (failures and
+  panics reset it; every remount arrives with a new revision), so no
+  replacement was needed — verdict documented on the scheduler hook.
+- C — one scoped attempt guard owns cleanup: it replaced the
+  `catch_unwind` plus three scattered reset sites, resetting schedule
+  memos on every early return and on panic unwind (panics still
+  propagate; application panics never become frames). Surviving state
+  is explicit (save, snapshot, pending, driver claim, live
+  navigation). Failure before rebuilding (preflight, no drives),
+  during rebuilding (duplicate keys), during layout (panic), and
+  during post-frame integration (overlay rejection) each pinned; only
+  bookkeeping recovery is claimed, never atomic tree recovery.
+- D — one combined ownership flow (discard, skipped nesting, stale
+  success, failure plus retry, replacement, detach/reactivation,
+  teardown) asserts paint, consumed identity, focus, task lifetime,
+  and scheduler state together. The state-transition table and field
+  inventory stay aligned with the implementation; `composing`,
+  `consumed`, and `pending.attempt` keep distinct documented roles
+  (in-flight slot, framed publication, transition-adopted copy plus
+  mount-None basis). Non-key partial updates stay precisely partial.
 - Not re-closed while: non-key update errors stay best-effort partial;
   subtree identity across reorder stays a framework property.
 

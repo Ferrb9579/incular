@@ -2203,6 +2203,245 @@ fn outlet_combined_receipt_scheduling_closeout() {
 }
 
 #[test]
+fn outlet_combined_ownership_flow() {
+    // One production flow through every ownership contract: discarded
+    // descriptors, skipped nested composition, a successful stale frame,
+    // failure plus retry, navigation replacement, detach plus
+    // reactivation, and window teardown — asserting paint, consumed
+    // identity, focus, task lifetime, and scheduler state together.
+    let mut runtime1 =
+        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
+            .unwrap();
+    let parent_scope = runtime1.window_task_scope();
+    let outer_nav = Navigator::new();
+    let inner_nav = Navigator::new();
+    let outlet_outer = Rc::new(RefCell::new(RouteOutlet::new(&outer_nav, &parent_scope)));
+    let outlet_inner = Rc::new(RefCell::new(RouteOutlet::new(&inner_nav, &parent_scope)));
+    let node_a = FocusNode::new();
+    let node_b = FocusNode::new();
+    let node_d = FocusNode::new();
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "a",
+        Column::new(vec![
+            focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+            RouteOutlet::nested_widget(&outlet_inner_for_page),
+        ]),
+    ));
+    drop(outlet_inner_for_page);
+    {
+        let outlet_for_build = outlet_outer.clone();
+        let root = runtime1.tree().root().expect("root");
+        runtime1
+            .register_builder(root, move || {
+                Column::new(vec![SizedBox::from_dimensions(
+                    Some(200.),
+                    Some(200.),
+                    Some(outlet_for_build.borrow().widget()),
+                )])
+                .into()
+            })
+            .expect("builder registers");
+    }
+    frame(&mut runtime1);
+    RouteOutlet::attach(&outlet_outer, &mut runtime1).expect("outer attaches");
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    // Baseline: both bound, A focused, tree idle.
+    inner_nav.push_page(Page::new(
+        "b",
+        focus_widget(&node_b, Widget::box_(Size::new(40., 40.), BLUE)),
+    ));
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_a);
+    let ib = inner_nav.current().expect("inner route").id;
+    let inner_b_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ib)
+        .expect("inner bound");
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(!runtime1.frame_requested(), "quiet tree idles");
+    // Same-attempt discard plus mid-frame navigation: T covers with a
+    // trip pushing C; the discarded descriptors authorize nothing.
+    let trip = Rc::new(Cell::new(true));
+    let outlet_for_trip = outlet_outer.clone();
+    let outlet_inner_for_trip = outlet_inner.clone();
+    outer_nav.push_page(Page::new(
+        "t",
+        Column::new(vec![Widget::from(LayoutBuilder::new({
+            let outer_nav = outer_nav.clone();
+            let outlet_for_trip = outlet_for_trip.clone();
+            let outlet_inner_for_trip = outlet_inner_for_trip.clone();
+            move |_, _| {
+                if trip.take() {
+                    outer_nav.push_page(plain_page("c"));
+                    let _ = outlet_for_trip.borrow().widget();
+                    let _ = outlet_inner_for_trip.borrow().widget();
+                }
+                Widget::box_(Size::new(40., 40.), GREEN)
+            }
+        }))]),
+    ));
+    drop(outlet_for_trip);
+    drop(outlet_inner_for_trip);
+    let covered = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(covered.commands(), GREEN));
+    assert!(!paints(covered.commands(), RED));
+    assert!(!paints(covered.commands(), BLUE));
+    assert!(node_a.has_focus());
+    assert!(outlet_outer.borrow().needs_frame());
+    assert!(
+        runtime1.frame_requested(),
+        "stale output schedules its follow-up"
+    );
+    // Skipped nested composition: solo outer, inner advancing slotless.
+    outer_nav
+        .set_pages([Page::new(
+            "solo",
+            Widget::box_(Size::new(200., 200.), YELLOW),
+        )])
+        .unwrap();
+    inner_nav.push_page(Page::new(
+        "d",
+        focus_widget(&node_d, Widget::box_(Size::new(40., 40.), GREEN)),
+    ));
+    let slotless = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(slotless.commands(), YELLOW));
+    assert!(!paints(slotless.commands(), GREEN));
+    assert_eq!(runtime1.focused_element(), None);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(runtime1.frame_requested());
+    let id = inner_nav.current().expect("inner route").id;
+    assert!(
+        outlet_inner.borrow().route_task_scope(id).is_some(),
+        "slotless routes still bind by lifetime"
+    );
+    // Failure plus retry: the error schedules nothing; dropping the
+    // offender converges with the inner revision still outstanding —
+    // and scheduling again for exactly that revision.
+    outer_nav.push(Route::new(
+        "bad",
+        Column::new(vec![
+            Widget::box_(Size::new(40., 40.), BLUE).with_key(7_u64),
+            Widget::box_(Size::new(40., 40.), GREEN).with_key(7_u64),
+        ]),
+    ));
+    RouteOutlet::present_frame(
+        &outlet_outer,
+        &mut runtime1,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect_err("duplicate keys fail the rebuild");
+    assert!(!inner_b_scope.is_cancelled());
+    outer_nav
+        .set_pages([Page::new(
+            "solo",
+            Widget::box_(Size::new(200., 200.), YELLOW),
+        )])
+        .unwrap();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        runtime1.frame_requested(),
+        "reset work schedules again after failure"
+    );
+    // Navigation replacement: remount consumes, paints, idles.
+    let outlet_inner_for_page = outlet_inner.clone();
+    outer_nav
+        .set_pages([Page::new(
+            "a2",
+            Column::new(vec![
+                focus_widget(&node_a, Widget::box_(Size::new(40., 40.), RED)),
+                RouteOutlet::nested_widget(&outlet_inner_for_page),
+            ]),
+        )])
+        .unwrap();
+    drop(outlet_inner_for_page);
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested attaches");
+    let remounted = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(remounted.commands(), RED));
+    assert!(paints(remounted.commands(), GREEN));
+    assert!(!outlet_inner.borrow().needs_frame());
+    assert!(!outlet_outer.borrow().needs_frame());
+    assert!(!runtime1.frame_requested(), "consumed work idles");
+    let oa2 = outer_nav.current().expect("outer route").id;
+    let outer_scope = outlet_outer
+        .borrow()
+        .route_task_scope(oa2)
+        .expect("outer bound");
+    let inner_d_scope = outlet_inner
+        .borrow()
+        .route_task_scope(id)
+        .expect("inner bound");
+    tab_until(&mut runtime1, &node_d);
+    inner_nav.pop();
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    tab_until(&mut runtime1, &node_b);
+    // Detach plus reactivation: frozen drives, no scheduling, deferred
+    // work retained — then one present consumes the newcomer and idles.
+    RouteOutlet::detach_nested(&outlet_outer, &outlet_inner);
+    let inner_drives = outlet_inner.borrow().frame_drive_count();
+    inner_nav.push_page(Page::new("e", Widget::box_(Size::new(40., 40.), YELLOW)));
+    let ie = inner_nav.current().expect("inner route").id;
+    present_outer_tree(&mut runtime1, &outlet_outer);
+    assert_eq!(
+        outlet_inner.borrow().frame_drive_count(),
+        inner_drives,
+        "detached outlets receive no frame work"
+    );
+    assert!(outlet_inner.borrow().needs_frame());
+    assert!(
+        !runtime1.frame_requested(),
+        "nonparticipating outlets schedule nothing"
+    );
+    assert!(
+        outlet_inner.borrow().route_task_scope(ie).is_none(),
+        "detached routes bind on reactivation, not before"
+    );
+    RouteOutlet::attach_nested(&outlet_outer, &outlet_inner).expect("nested reattaches");
+    let reactivated = present_outer_tree_output(&mut runtime1, &outlet_outer);
+    assert!(paints(reactivated.commands(), RED));
+    assert!(paints(reactivated.commands(), YELLOW));
+    assert!(!paints(reactivated.commands(), GREEN));
+    assert!(
+        outlet_inner.borrow().frame_drive_count() > inner_drives,
+        "reactivation drives again"
+    );
+    assert!(!outlet_inner.borrow().needs_frame());
+    // No staleness flag here: the covering sweep clears focus through the
+    // scheduler instead, which is focus scheduling, not stale output.
+    let inner_e_scope = outlet_inner
+        .borrow()
+        .route_task_scope(ie)
+        .expect("reactivated route binds");
+    // Window teardown cancels by lifetime, then everything releases.
+    let weak_outer = Rc::downgrade(&outlet_outer);
+    let weak_inner = Rc::downgrade(&outlet_inner);
+    let mut app = Application::from_runtime(runtime1, |_| {});
+    app.close_window(app.primary_window());
+    assert!(outer_scope.is_cancelled());
+    assert!(inner_e_scope.is_cancelled());
+    assert!(inner_b_scope.is_cancelled());
+    assert!(
+        inner_d_scope.is_cancelled(),
+        "popped lifetimes already ended before close"
+    );
+    outer_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    inner_nav
+        .set_pages([Page::new("solo", Widget::box_(Size::new(40., 40.), BLUE))])
+        .unwrap();
+    drop(outer_nav);
+    drop(inner_nav);
+    drop(outlet_outer);
+    drop(outlet_inner);
+    drop(app);
+    assert!(weak_outer.upgrade().is_none());
+    assert!(weak_inner.upgrade().is_none());
+    let _ = (node_a, node_b, node_d);
+}
+
+#[test]
 fn outlet_dropped_bindings_ignore_later_removal() {
     // Bindings detach with the outlet, independent of mounting: bind
     // through bookkeeping-only presents (no attach, no mounted content),

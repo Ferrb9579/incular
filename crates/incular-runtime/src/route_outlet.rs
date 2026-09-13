@@ -36,7 +36,7 @@
 //! | Unattached, empty | none | none | false | — | navigate → stale |
 //! | Unattached, routes live | per capture | older/none | true | on success | attach → attached |
 //! | Attached, idle | none | current | false | — | navigate → pending |
-//! | Attempt pending | some | just composed | false | — | commit → consumed; mid-frame nav → stale |
+//! | Attempt pending | some | just composed | false, true after mid-frame nav | — | commit → consumed; stale → follow-up |
 //! | Failed (error/panic) | kept | older | true | reset, re-evaluates | retry → pending/consumed |
 //! | Successful-but-stale | recaptured/none | older | true | once per rev | follow-up → consumed |
 //! | Detached | kept (own) | frozen | own tree only | own claims | reattach or drive standalone |
@@ -958,14 +958,6 @@ impl RouteOutlet {
     /// descriptor can never authorize a frame.
     fn compose_and_record(&self) -> Widget {
         let (widget, attempt) = self.compose();
-        eprintln!(
-            "PROBE-C outlet={} epoch={} rev={} n={}\n{:?}",
-            self.namespace,
-            self.epoch.get(),
-            attempt.revision,
-            attempt.members.len(),
-            std::backtrace::Backtrace::force_capture()
-        );
         *self.composing.borrow_mut() = Some((self.epoch.get(), attempt));
         widget
     }
