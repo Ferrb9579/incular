@@ -720,52 +720,6 @@ fn outlet_rejects_overlay_routes_explicitly() {
 }
 
 #[test]
-fn outlet_manual_after_frame_still_drives() {
-    // Escape hatch for custom hosts that own their frame loop: widget()
-    // plus an explicit after_frame, with host-owned invalidation. Prefer
-    // present_frame, which enforces save-before-reconcile ordering.
-    let navigator = Navigator::new();
-    let mut runtime =
-        Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
-            .unwrap();
-    let parent = runtime.spawner().scope();
-    let outlet = Rc::new(RefCell::new(RouteOutlet::new(&navigator, &parent)));
-    let revision = Signal::new(0_u32);
-    let root = runtime.tree().root().expect("root");
-    {
-        let outlet = outlet.clone();
-        let revision = revision.clone();
-        runtime
-            .register_builder(root, move || {
-                let _ = revision.get();
-                Column::new(vec![SizedBox::from_dimensions(
-                    Some(200.),
-                    Some(200.),
-                    Some(outlet.borrow().widget()),
-                )])
-                .into()
-            })
-            .expect("builder registers");
-    }
-    let drive = |runtime: &mut Runtime| {
-        revision.set(revision.get().wrapping_add(1));
-        frame(runtime);
-        outlet.borrow_mut().after_frame(runtime);
-    };
-    let node_a = FocusNode::new();
-    let node_b = FocusNode::new();
-    navigator.push_page(focus_page("a", &node_a));
-    drive(&mut runtime);
-    tab_until(&mut runtime, &node_a);
-    navigator.push_page(focus_page("b", &node_b));
-    drive(&mut runtime);
-    tab_until(&mut runtime, &node_b);
-    navigator.pop();
-    drive(&mut runtime);
-    assert!(node_a.has_focus());
-}
-
-#[test]
 fn outlet_incoming_autofocus_then_return_restores() {
     // Phase proof: the incoming route autofocuses on its mount frame while
     // the outgoing record (saved before reconciliation) survives it; popping
@@ -1820,60 +1774,34 @@ fn outlet_failed_attempt_output_and_followup_agree() {
 }
 
 #[test]
-fn outlet_teardown_releases_focus_and_tasks() {
-    // The builder holds the outlet weakly so dropping it models window
-    // teardown: content unmounts on the next frame, bindings detach per
-    // documented policy, and later navigation moves nothing.
+fn outlet_dropped_bindings_ignore_later_removal() {
+    // Bindings detach with the outlet, independent of mounting: bind
+    // through bookkeeping-only presents (no attach, no mounted content),
+    // drop the outlet, then remove — the scope survives because the
+    // removal callback went with the binding. All through present_frame.
     let navigator = Navigator::new();
     let mut runtime =
         Runtime::new(Column::new(vec![Widget::box_(Size::new(200., 200.), Color::WHITE)]).into())
             .unwrap();
     let parent = runtime.spawner().scope();
     let outlet = Rc::new(RefCell::new(RouteOutlet::new(&navigator, &parent)));
-    let weak = Rc::downgrade(&outlet);
-    let revision = Signal::new(0_u32);
-    let root = runtime.tree().root().expect("root");
-    {
-        let revision = revision.clone();
-        runtime
-            .register_builder(root, move || {
-                let _ = revision.get();
-                Column::new(vec![
-                    weak.upgrade()
-                        .map(|outlet| outlet.borrow().widget())
-                        .unwrap_or_else(|| Widget::box_(Size::new(200., 200.), Color::WHITE)),
-                ])
-                .into()
-            })
-            .expect("builder registers");
-    }
-    let observer = navigator.observe({
-        let revision = revision.clone();
-        move |_| {
-            revision.set(revision.get().wrapping_add(1));
-        }
-    });
-    let present_teardown = |runtime: &mut Runtime| {
-        revision.set(revision.get().wrapping_add(1));
-        frame(runtime);
-    };
-    let node_a = FocusNode::new();
-    navigator.push_page(focus_page("a", &node_a));
-    present_teardown(&mut runtime);
-    outlet.borrow_mut().after_frame(&mut runtime);
-    tab_until(&mut runtime, &node_a);
+    navigator.push_page(plain_page("task"));
+    RouteOutlet::present_frame(
+        &outlet,
+        &mut runtime,
+        Constraints::tight(Size::new(200., 200.)),
+    )
+    .expect("present binds live routes");
     let id = navigator.current().expect("mounted").id;
     let scope = outlet.borrow().route_task_scope(id).expect("bound");
-    drop(outlet);
-    // Teardown: content unmounts (runtime clears the dead focus itself),
-    // and the detached binding ignores the later removal.
-    present_teardown(&mut runtime);
-    assert_eq!(runtime.focused_element(), None);
-    navigator.pop();
-    present_teardown(&mut runtime);
     assert!(!scope.is_cancelled());
-    assert_eq!(runtime.focused_element(), None);
-    drop(observer);
+    let weak = Rc::downgrade(&outlet);
+    drop(outlet);
+    assert!(weak.upgrade().is_none());
+    // Later removal ends the lifetime, but no binding remains to cancel
+    // through: the scope outlives its route's removal by policy.
+    navigator.pop();
+    assert!(!scope.is_cancelled());
 }
 
 /// Topology-only outlets: no mounting, no frames — attachment policy is
@@ -2740,10 +2668,7 @@ fn outlet_transparent_top_reorder_paints_and_hits_in_order() {
         .unwrap();
     let reordered = present(&mut harness);
     assert!(paints(reordered.commands(), RED));
-    assert!(
-        !paints(reordered.commands(), BLUE),
-        "A now occludes B"
-    );
+    assert!(!paints(reordered.commands(), BLUE), "A now occludes B");
     assert!(!harness.outlet.borrow().needs_frame());
     // Transparent popup top: lowers keep painting and receiving hits.
     navigator.push(

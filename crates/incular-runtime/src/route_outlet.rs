@@ -6,12 +6,13 @@
 //! task bindings from live navigator state, and derives element ownership
 //! from the mounted tags — applications never maintain element-id oracles.
 //!
-//! Drive contract: include [`RouteOutlet::widget`] in the window tree,
-//! rebuild it after navigation (observer or revision), and call
-//! [`RouteOutlet::after_frame`] after every frame presenting outlet
-//! content. Covered routes without retention unmount (disposal); retained
-//! ones stay mounted inert while invisible; only permanent removal ends
-//! lifetimes.
+//! Drive contract: mount [`RouteOutlet::widget`] in the window tree,
+//! attach once with [`RouteOutlet::attach`], then drive every cycle with
+//! the single [`RouteOutlet::present_frame`] operation — rebuild, frame,
+//! and reconcile in enforced order, with tree-wide validation before and
+//! after the frame. Covered routes without retention unmount (disposal);
+//! retained ones stay mounted inert while invisible; only permanent
+//! removal ends lifetimes.
 //!
 //! Frame contract: a frame runs build, layout, composite, semantics, then
 //! paint, so restoration — which reconciles after the frame returns —
@@ -669,8 +670,9 @@ impl RouteOutlet {
         for (route, visible) in routes.iter().zip(visible) {
             // Overlay entries never mount here: `present_frame` rejects
             // their stacks typed (before and after the frame), so reaching
-            // this skip means manual driving — still omitted, never
-            // half-mounted, and never silent through the supported path.
+            // this skip means setup-time composition ahead of validation —
+            // still omitted, never half-mounted, and never silent through
+            // the supported path.
             let OutletPlacement::Stacked { visible, barrier } =
                 OutletPlacement::of(&route.presentation, visible)
             else {
@@ -829,31 +831,6 @@ impl RouteOutlet {
         outlet.borrow().preflight_tree()?;
         outlet.borrow_mut().reconcile_tree(runtime);
         Ok(output)
-    }
-
-    /// Reconciles integration state with live navigator state after a
-    /// frame: captures and commits transitions, forgets records, bindings,
-    /// and tags for removed routes, binds newly live routes, and
-    /// restores the activated route's eligible focus (whose targets mounted
-    /// in the frame just presented). Manual-driving escape hatch for custom
-    /// hosts; prefer [`Self::present_frame`], whose pre-frame capture also
-    /// survives disposal-unmounts and which alone runs the tree preflight
-    /// (this hatch validates nothing — unsupported stacks stay omitted).
-    /// Use one driver per outlet.
-    pub fn after_frame(&mut self, runtime: &mut Runtime) {
-        self.capture_tree(runtime);
-        // Manual driving has no fallible step between capture and commit,
-        // so reconciliation commits immediately.
-        self.reconcile_tree(runtime);
-    }
-
-    /// Restores the active route's saved focus now, for content that
-    /// mounted after the transition frame. Ordinary flows go through
-    /// [`Self::present_frame`] (or [`Self::after_frame`]).
-    pub fn restore_active(&mut self, runtime: &mut Runtime) {
-        if let Some(id) = self.navigator.current().map(|route| route.id) {
-            self.focus.restore_saved(runtime, &self.navigator, id);
-        }
     }
 
     /// Refreshes the attempt snapshot (and the composed-snapshot record)
@@ -1018,14 +995,6 @@ impl RouteOutlet {
         self.nested
             .borrow_mut()
             .retain(|weak| weak.upgrade().is_some());
-    }
-
-    /// Captures pending transitions top-down without bumping revisions.
-    fn capture_tree(&mut self, runtime: &Runtime) {
-        self.capture_transition(runtime);
-        for nested in self.live_nested() {
-            nested.borrow_mut().capture_tree(runtime);
-        }
     }
 
     /// Stable mount tag for a route, assigned once while the outlet lives.
