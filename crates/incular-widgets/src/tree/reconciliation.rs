@@ -1301,6 +1301,41 @@ impl WidgetTree {
         depth
     }
 
+    /// Claims `controller` for the viewport at `element`, enforcing the
+    /// single-live-attachment contract for ordinary scroll viewports: a
+    /// second live viewport fails before overwriting shared geometry.
+    /// Cloned handles compare equal (never new attachments); read-only
+    /// coordination never calls here. Dead owners release
+    /// deterministically on unmount, with this liveness gate for safety.
+    pub(super) fn claim_scroll_viewport(
+        &mut self,
+        element: ElementId,
+        controller: &ScrollController,
+    ) -> Result<(), TreeError> {
+        let dead: Vec<ElementId> = self
+            .scroll_attachments
+            .keys()
+            .copied()
+            .filter(|owner| !self.element_exists(*owner))
+            .collect();
+        for owner in dead {
+            self.scroll_attachments.remove(&owner);
+        }
+        if let Some(owner) = self
+            .scroll_attachments
+            .iter()
+            .find(|(owner, attached)| **owner != element && *attached == controller)
+            .map(|(owner, _)| *owner)
+        {
+            return Err(TreeError::DuplicateScrollAttachment {
+                owner,
+                attempted: element,
+            });
+        }
+        self.scroll_attachments.insert(element, controller.clone());
+        Ok(())
+    }
+
     pub(super) fn scroll_controller_for_element(&self, id: ElementId) -> Option<ScrollController> {
         let render = self.elements.get(id.0)?.render;
         match &self.renders.get(render.0)?.object.kind {
@@ -1425,6 +1460,9 @@ impl WidgetTree {
                     if let Some(render) = self.renders.remove(render_id.0) {
                         render.object.layers.remove(&mut self.compositor);
                     }
+                    // Deterministic attachment release: a viewport going
+                    // away frees its controller for remounting elsewhere.
+                    self.scroll_attachments.remove(&id);
                     self.unmounted.push(id);
                     self.diagnostics.unmounts += 1;
                 }

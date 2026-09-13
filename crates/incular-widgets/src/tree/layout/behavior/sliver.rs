@@ -120,6 +120,13 @@ impl WidgetTree {
                 // Only shrink-wrapping viewports need it: fixed viewports
                 // never resize from content, so they have no cross-attempt
                 // size to reconcile.
+                //
+                // Ordinary-path attachment, claimed once per layout
+                // (idempotent): the publish closure below inherits this
+                // claim for every publication it makes.
+                if let Some(viewport) = self.element_for_render(id) {
+                    self.claim_scroll_viewport(viewport, &config.controller)?;
+                }
                 let mut last_published: Option<PublishedViewportAttempt> = None;
                 let mut publish = |size: Size,
                                    viewport: f32,

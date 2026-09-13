@@ -40,6 +40,7 @@ impl WidgetTree {
             raw_recognizers: HashMap::new(),
             raw_gesture_streams: HashMap::new(),
             raw_pointer_routes: HashMap::new(),
+            scroll_attachments: HashMap::new(),
             mouse_hover: HashMap::new(),
             consumed_tap_pointers: HashSet::new(),
             pointer_captures: HashMap::new(),

@@ -219,6 +219,18 @@ pub enum TreeError {
         key: Key,
         parent: Option<ElementId>,
     },
+    /// A second live viewport attempted to attach a scroll controller
+    /// that already drives another viewport. One offset/extent record
+    /// cannot silently stand for unrelated viewports: the first viewport
+    /// keeps its geometry, and the newcomer fails here before overwriting
+    /// anything. Carries the owning viewport element and the rejected
+    /// one. Cloned handles are the same controller (never a second
+    /// attachment); read-only coordination such as scrollbars never
+    /// claims.
+    DuplicateScrollAttachment {
+        owner: ElementId,
+        attempted: ElementId,
+    },
     InvalidGeneratedChild {
         owner: ElementId,
         child: GeneratedChildIdentity,
@@ -242,6 +254,14 @@ impl std::fmt::Display for TreeError {
                     write!(formatter, " under parent {parent:?}")?;
                 }
                 Ok(())
+            }
+            Self::DuplicateScrollAttachment { owner, attempted } => {
+                write!(
+                    formatter,
+                    "scroll controller already drives viewport {owner:?}: \
+                     refusing second live attachment at {attempted:?} \
+                     (detach or unmount the first viewport, or use a separate controller)"
+                )
             }
             Self::InvalidGeneratedChild {
                 owner,
@@ -944,6 +964,10 @@ pub struct WidgetTree {
     raw_recognizers: HashMap<ElementId, HashMap<TypeId, Box<dyn GestureRecognizer>>>,
     raw_gesture_streams: HashMap<GestureArenaKey, ActiveRawGesture>,
     raw_pointer_routes: HashMap<GestureArenaKey, Vec<ElementId>>,
+    /// Ordinary scroll viewport attachments: viewport element to the
+    /// controller it drives. One live viewport per controller; entries
+    /// release on unmount with a liveness gate at claim time.
+    scroll_attachments: HashMap<ElementId, ScrollController>,
     mouse_hover: HashMap<GestureArenaKey, Vec<ElementId>>,
     consumed_tap_pointers: HashSet<GestureArenaKey>,
     pointer_captures: HashMap<GestureArenaKey, ElementId>,

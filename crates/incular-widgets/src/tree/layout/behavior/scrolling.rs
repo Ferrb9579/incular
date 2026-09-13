@@ -21,6 +21,14 @@ impl WidgetTree {
                         .render_live(child, "retained render must remain live")
                         .size;
                     let size = scroll_size(axis, constraints, content);
+                    // Single-attachment enforcement lives here (not in
+                    // `update_extents`, which stays open for hosts, wheel,
+                    // 2D, and draggable writers): a render without an
+                    // element cannot be attributed, so it proceeds
+                    // unchecked rather than failing spuriously.
+                    if let Some(viewport) = self.element_for_render(id) {
+                        self.claim_scroll_viewport(viewport, &controller)?;
+                    }
                     controller.update_extents_with_physics(
                         axis.main_extent(content),
                         scroll_viewport_extent(axis, size),

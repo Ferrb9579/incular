@@ -14,7 +14,10 @@ use incular_config::{Axis, Constraints, EdgeInsets};
 use incular_core::{Color, Offset, Size};
 use incular_scroll::{ScrollController, ScrollPhysics};
 use incular_semantics::SemanticRole;
-use incular_widgets::{Column, ListView, Scrollable, Semantics, SingleChildScrollView, Viewport};
+use incular_widgets::internal::TreeError;
+use incular_widgets::{
+    Column, ListView, RawScrollbar, Scrollable, Semantics, SingleChildScrollView, Viewport,
+};
 use std::time::Instant;
 
 fn rows(count: usize) -> Vec<Widget> {
@@ -812,12 +815,11 @@ fn scroll_paint_hit_semantics_agree_without_repaint() {
 }
 
 #[test]
-fn shared_controller_last_layout_wins_geometry() {
-    // Current behavior, recorded before enforcement (W5.1 gap): two live
-    // viewports sharing one controller both publish extents — the last
-    // layout wins the shared record — while the offset stays shared.
-    // Metrics and visible behavior below pin this exactly; the supported
-    // contract (single live viewport attachment) replaces it.
+fn duplicate_viewport_attachment_is_rejected() {
+    // W5.1 contract: one live viewport per ordinary controller. The
+    // second viewport fails at layout before overwriting anything — with
+    // both viewport identities — while the first keeps its geometry and
+    // stays programmatically drivable.
     let controller = ScrollController::new();
     // V1: 100px viewport over 300px content (own max 200). V2: 150px
     // viewport over 500px content (own max 350).
@@ -832,34 +834,219 @@ fn shared_controller_last_layout_wins_geometry() {
             .into();
     let v2: Widget = SizedBox::from_dimensions(Some(200.), Some(150.), Some(scrolled2)).into();
     let mut tree = WidgetTree::new();
-    let root = mount_tight(&mut tree, Column::new(vec![v1, v2]).into(), 200., 300.);
-    // The second viewport laid out last: its geometry owns the record.
+    let root = tree
+        .mount(Column::new(vec![v1, v2]).into())
+        .expect("mount defers attachment");
+    let error = tree
+        .layout(Constraints::tight(Size::new(200., 300.)))
+        .unwrap_err();
+    // Both viewport identities, with the first viewport owning.
+    let kids = tree.children(root).expect("viewports").to_vec();
+    assert_eq!(kids.len(), 2);
+    let viewport_of =
+        |sized: incular_widgets::internal::ElementId| tree.children(sized).expect("viewport")[0];
+    match error {
+        TreeError::DuplicateScrollAttachment { owner, attempted } => {
+            assert_eq!(owner, viewport_of(kids[0]));
+            assert_eq!(attempted, viewport_of(kids[1]));
+            assert_ne!(owner, attempted);
+        }
+        other => panic!("unexpected failure: {other:?}"),
+    }
+    // The first viewport laid out first and keeps its geometry exactly;
+    // the rejected second wrote nothing.
+    assert_eq!(controller.content_extent(), 300.);
+    assert_eq!(controller.viewport_extent(), 100.);
+    assert_eq!(controller.max_offset(), 200.);
+    // Programmatic use of the shared handle still works (clones are not
+    // attachments).
+    assert!(controller.jump_to(200.));
+    assert_eq!(controller.offset(), 200.);
+}
+
+fn sized_viewport(
+    controller: ScrollController,
+    width: f32,
+    height: f32,
+    content_height: f32,
+) -> Widget {
+    let scrolled: Widget =
+        SingleChildScrollView::new(Widget::box_(Size::new(width, content_height), Color::WHITE))
+            .controller(controller)
+            .into();
+    SizedBox::from_dimensions(Some(width), Some(height), Some(scrolled)).into()
+}
+
+#[test]
+fn replaced_controller_frees_the_old_handle() {
+    // Replacement swaps the driver: the viewport follows the new
+    // controller's geometry, and the old handle attaches cleanly
+    // elsewhere — no record lingers.
+    let old = ScrollController::new();
+    let new = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    // Stable wrappers (reconciliation matches element kinds): only the
+    // controllers and contents change across updates.
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(old.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert_eq!(old.max_offset(), 200.);
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(new.clone(), 200., 100., 500.)]).into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(new.max_offset(), 400.);
+    // The old handle is free: a second viewport takes it without error.
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(new.clone(), 200., 100., 500.),
+            sized_viewport(old.clone(), 200., 100., 300.),
+        ])
+        .into(),
+    )
+    .expect("update");
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout");
+    assert_eq!(new.max_offset(), 400.);
+    assert_eq!(old.max_offset(), 200.);
+}
+
+#[test]
+fn unmount_releases_attachment_for_remount() {
+    // Deterministic release: unmounting drops the claim, so the same
+    // controller remounts elsewhere with the new geometry.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert_eq!(controller.max_offset(), 200.);
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    tree.update(
+        root,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 150., 500.)]).into(),
+    )
+    .expect("remount");
+    tree.layout(Constraints::tight(Size::new(200., 150.)))
+        .expect("layout");
     assert_eq!(controller.content_extent(), 500.);
     assert_eq!(controller.viewport_extent(), 150.);
     assert_eq!(controller.max_offset(), 350.);
-    // The shared range ignores per-viewport bounds: jumping past V1's own
-    // max clamps to the shared record instead.
-    assert!(controller.jump_to(350.));
+}
+
+#[test]
+fn failed_update_preserves_attachment() {
+    // A rejected update changes nothing, including the attachment map: a
+    // duplicate-key failure elsewhere leaves the viewport driving, and a
+    // valid retry works without spurious conflicts.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![
+            sized_viewport(controller.clone(), 200., 100., 300.),
+            Widget::box_(Size::new(200., 40.), Color::WHITE),
+        ])
+        .into(),
+        200.,
+        300.,
+    );
+    assert_eq!(controller.max_offset(), 200.);
+    tree.update(
+        root,
+        Column::new(vec![
+            sized_viewport(controller.clone(), 200., 100., 300.),
+            Widget::box_(Size::new(200., 40.), Color::WHITE).with_key(7_u64),
+            Widget::box_(Size::new(200., 40.), Color::BLACK).with_key(7_u64),
+        ])
+        .into(),
+    )
+    .expect_err("duplicate keys fail before mutation");
     tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("layout still clean");
+    assert_eq!(controller.max_offset(), 200.);
+    assert!(controller.jump_to(200.));
+    tree.layout(Constraints::tight(Size::new(200., 300.)))
+        .expect("retry works");
+    assert_eq!(controller.offset(), 200.);
+}
+
+#[test]
+fn scrollbar_and_app_clones_are_not_attachments() {
+    // Read-only coordination never claims: a headless scrollbar sharing
+    // the controller plus programmatic jumps compose with a mounted
+    // viewport without conflict.
+    let controller = ScrollController::new();
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        sized_viewport(controller.clone(), 200., 100., 300.),
+        200.,
+        100.,
+    );
+    let alias = controller.clone();
+    assert!(alias.jump_to(50.));
+    let bar = RawScrollbar::new(controller.clone());
+    let geometry = bar.geometry(Size::new(120., 100.));
+    assert!(geometry.thumb.size.height > 0.);
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
         .expect("layout");
-    assert_eq!(controller.offset(), 350.);
-    // Visible behavior follows the single shared offset in both
-    // viewports — V1 scrolls 150px past the end of its own content.
-    // (SizedBox > viewport > content: two levels down.)
-    let kids = tree.children(root).expect("viewports").to_vec();
-    assert_eq!(kids.len(), 2);
-    let content = |sized: incular_widgets::internal::ElementId| {
-        let viewport = tree.children(sized).expect("viewport")[0];
-        tree.children(viewport).expect("content").to_vec()
-    };
-    let v1_origin = tree
-        .element_bounds(content(kids[0])[0])
-        .expect("bounds")
-        .origin;
-    let v2_origin = tree
-        .element_bounds(content(kids[1])[0])
-        .expect("bounds")
-        .origin;
-    assert_eq!(v1_origin, Offset::new(0., -350.));
-    assert_eq!(v2_origin, Offset::new(0., 100. - 350.));
+    assert_eq!(controller.offset(), 50.);
+    assert_eq!(alias.offset(), 50.);
+}
+
+#[test]
+fn deferred_jump_applies_on_first_attached_layout() {
+    // Programmatic use before attachment: the deferred request survives
+    // until the first layout establishes bounds, then applies.
+    let controller = ScrollController::new();
+    assert!(controller.deferred_jump_to(80.));
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        sized_viewport(controller.clone(), 200., 100., 300.),
+        200.,
+        100.,
+    );
+    assert_eq!(controller.offset(), 80.);
+}
+
+#[test]
+fn dropped_tree_releases_attachments() {
+    // Window-teardown shape: dropping the whole tree releases every
+    // claim, so the app-owned controller mounts cleanly in a fresh tree.
+    let controller = ScrollController::new();
+    {
+        let mut tree = WidgetTree::new();
+        mount_tight(
+            &mut tree,
+            sized_viewport(controller.clone(), 200., 100., 300.),
+            200.,
+            100.,
+        );
+        assert_eq!(controller.max_offset(), 200.);
+    }
+    let mut tree = WidgetTree::new();
+    mount_tight(
+        &mut tree,
+        sized_viewport(controller.clone(), 200., 150., 500.),
+        200.,
+        150.,
+    );
+    assert_eq!(controller.content_extent(), 500.);
+    assert_eq!(controller.viewport_extent(), 150.);
+    assert_eq!(controller.max_offset(), 350.);
 }
