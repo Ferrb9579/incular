@@ -116,6 +116,118 @@ fn scroll_notifications_follow_activity_lifecycle_and_unsubscribe() {
     assert_eq!(events.borrow().len(), 5);
 }
 
+fn kind_log(
+    controller: &ScrollController,
+) -> (
+    Rc<RefCell<Vec<ScrollNotificationType>>>,
+    ScrollNotificationSubscription,
+) {
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let subscription = controller.add_listener({
+        let log = log.clone();
+        move |notification| {
+            log.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    (log, subscription)
+}
+
+#[test]
+fn programmatic_movement_needs_no_bracket() {
+    // Jumps and driven steps emit bare Updates: takeover inside an open
+    // activity needs no extra End, and closing still pairs exactly once.
+    let controller = ScrollController::new();
+    controller.update_extents(200., 100.);
+    let (log, _subscription) = kind_log(&controller);
+    assert!(controller.jump_to(30.));
+    assert_eq!(log.borrow().as_slice(), &[ScrollNotificationType::Update]);
+    assert!(controller.begin_activity());
+    assert!(controller.jump_to(60.));
+    assert!(controller.end_activity());
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[
+            ScrollNotificationType::Update,
+            ScrollNotificationType::Start,
+            ScrollNotificationType::Update,
+            ScrollNotificationType::End,
+        ]
+    );
+}
+
+#[test]
+fn unchanged_offset_leaves_activity_unchanged() {
+    // A no-op jump reports nothing and disturbs neither idle nor active:
+    // offset-unchanged is not activity-unchanged in reverse — the flag
+    // only moves on begin/end.
+    let controller = ScrollController::new();
+    controller.update_extents(200., 100.);
+    let (log, _subscription) = kind_log(&controller);
+    assert!(!controller.jump_to(0.));
+    assert!(log.borrow().is_empty());
+    assert!(controller.begin_activity());
+    assert!(!controller.jump_to(0.));
+    assert_eq!(log.borrow().as_slice(), &[ScrollNotificationType::Start]);
+    assert!(controller.end_activity());
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[ScrollNotificationType::Start, ScrollNotificationType::End]
+    );
+    assert!(!controller.end_activity());
+    assert_eq!(
+        log.borrow().as_slice(),
+        &[ScrollNotificationType::Start, ScrollNotificationType::End]
+    );
+}
+
+#[test]
+fn reentrant_jump_nests_inside_start() {
+    // A listener jumping while Start dispatches delivers the nested
+    // Update immediately (depth-first, like the tree): A observes Start
+    // then Update, while B observes Update before the enclosing Start
+    // reaches it. Pinned exactly as implemented.
+    let controller = ScrollController::new();
+    controller.update_extents(200., 100.);
+    let log_a = Rc::new(RefCell::new(Vec::new()));
+    let log_b = Rc::new(RefCell::new(Vec::new()));
+    let controller_for_jump = controller.clone();
+    let _subscription_a = controller.add_listener({
+        let log_a = log_a.clone();
+        move |notification| {
+            log_a.borrow_mut().push(notification.kind);
+            if notification.kind == ScrollNotificationType::Start {
+                assert!(controller_for_jump.jump_to(10.));
+            }
+            false
+        }
+    });
+    let _subscription_b = controller.add_listener({
+        let log_b = log_b.clone();
+        move |notification| {
+            log_b.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    assert!(controller.begin_activity());
+    assert_eq!(
+        log_a.borrow().as_slice(),
+        &[
+            ScrollNotificationType::Start,
+            ScrollNotificationType::Update
+        ]
+    );
+    assert_eq!(
+        log_b.borrow().as_slice(),
+        &[
+            ScrollNotificationType::Update,
+            ScrollNotificationType::Start
+        ]
+    );
+    assert!(controller.end_activity());
+    assert_eq!(log_b.borrow().as_slice()[2], ScrollNotificationType::End);
+}
+
 #[test]
 fn scrollbar_round_trips_offset() {
     let controller = ScrollController::new();

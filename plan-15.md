@@ -2756,6 +2756,33 @@ unmount via liveness); clones are the same attachment, never new ones.
 Wheel/2D/draggable keep their models (wheel inner follows the ordinary
 rule in principle — future family work, explicitly out of scope).
 
+Activity transition table, ordinary `ScrollController` (W5.2, actual
+code only — no ballistic driver exists in production:
+`apply_spring_step` has no production callers; sheet motion uses its
+own generation tokens, untouched):
+
+| From → event → to | Notifications | Notes |
+| idle → begin → active | Start | duplicate begin: `false`, nothing |
+| active → begin → active | none | idempotent while open |
+| active → end → idle | End | duplicate end: `false`, nothing |
+| idle → end → idle | none | |
+| * → programmatic move → * | Update (or nothing if unmoved) | takeover inside open activity needs no End |
+| * → unchanged-offset jump → * | none | offset-unchanged never moves the flag either way |
+| active → viewport detach → idle | End | first defect: unmount ends app-open activities; re-begin starts fresh |
+| * → controller replacement → * | none | old handle keeps its isolated flag; new starts fresh |
+| wheel sample | Start, UserScroll, Update?, End | each sample is a complete activity by adapter policy |
+| reentrant jump during Start | nested Update delivered immediately | pinned exactly (A sees Start,Update; B sees Update,Start) |
+
+Clocks: ordinary activity is fully synchronous (no timers), so
+determinism needs no clock control — sequences are exact. First
+defect implemented through the existing owner (viewport unmount ends
+the controller's activity after unmount work, covering both `Scroll`
+and sliver render kinds). Completed scope: ordinary activity
+lifecycle + ordinary attachment enforcement. Remaining families,
+explicit: wheel/2D/draggable attachment rules; window-close activity
+sweep; broader animation (ballistic driver) policy; scrollbar-thumb
+drags stay unbracketed programmatic moves by current design.
+
 ## W6 — Input, text and semantic consistency
 
 1. Trace formatter/controller/history/IME/native command ownership end to end;

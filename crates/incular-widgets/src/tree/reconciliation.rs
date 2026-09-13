@@ -1392,12 +1392,21 @@ impl WidgetTree {
             Exit(ElementId, RenderObjectId),
         }
 
+        // Controllers whose viewports go away below: an app-driven
+        // activity left open must end with the viewport, not linger as a
+        // stuck flag that swallows the next gesture's Start. Collected
+        // here, ended after the work loop so no listener observes a
+        // half-removed tree.
+        let mut ended_activities: Vec<ScrollController> = Vec::new();
         let mut work = vec![UnmountWork::Enter(id)];
         while let Some(next) = work.pop() {
             match next {
                 UnmountWork::Enter(id) => {
                     self.raw_input_unmounted(id);
                     self.external_drop_target_unmounted(id);
+                    if let Some(controller) = self.scroll_controller_for_element(id) {
+                        ended_activities.push(controller);
+                    }
                     let Some(element) = self.elements.remove(id.0) else {
                         continue;
                     };
@@ -1467,6 +1476,9 @@ impl WidgetTree {
                     self.diagnostics.unmounts += 1;
                 }
             }
+        }
+        for controller in ended_activities {
+            controller.end_activity();
         }
     }
     pub(super) fn check_keys_borrowed<'a>(

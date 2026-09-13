@@ -864,6 +864,80 @@ fn duplicate_viewport_attachment_is_rejected() {
     assert_eq!(controller.offset(), 200.);
 }
 
+#[test]
+fn unmount_ends_open_activity() {
+    // App-driven begin, then viewport detach: End fires on unmount, and
+    // the next begin starts fresh — no stuck flag swallowing Starts.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree = WidgetTree::new();
+    let root = mount_tight(
+        &mut tree,
+        Column::new(vec![sized_viewport(controller.clone(), 200., 100., 300.)]).into(),
+        200.,
+        100.,
+    );
+    assert!(controller.begin_activity());
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 100.)))
+        .expect("layout");
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[
+            incular_scroll::ScrollNotificationType::Metrics,
+            incular_scroll::ScrollNotificationType::Start,
+            incular_scroll::ScrollNotificationType::End,
+        ]
+    );
+    // Fresh start afterwards: the flag did not linger.
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+    assert_eq!(events.borrow().len(), 5);
+}
+
+#[test]
+fn sliver_unmount_ends_open_activity() {
+    // Same through a sliver viewport render kind.
+    let controller = ScrollController::new();
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _subscription = controller.add_listener({
+        let events = events.clone();
+        move |notification| {
+            events.borrow_mut().push(notification.kind);
+            false
+        }
+    });
+    let mut tree = WidgetTree::new();
+    let slivers: Widget = CustomScrollView::new(slivers(3))
+        .controller(controller.clone())
+        .into();
+    let root = mount_tight(&mut tree, Column::new(vec![slivers]).into(), 200., 200.);
+    assert!(controller.begin_activity());
+    tree.update(root, Column::new(Vec::<Widget>::new()).into())
+        .expect("unmount");
+    tree.layout(Constraints::tight(Size::new(200., 200.)))
+        .expect("layout");
+    let kinds: Vec<_> = events
+        .borrow()
+        .iter()
+        .map(|kind| format!("{kind:?}"))
+        .collect();
+    assert!(
+        kinds.ends_with(&["Start".to_owned(), "End".to_owned()]),
+        "unmount ends the open activity: {kinds:?}"
+    );
+    assert!(controller.begin_activity());
+    assert!(controller.end_activity());
+}
+
 fn sized_viewport(
     controller: ScrollController,
     width: f32,
